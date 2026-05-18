@@ -26,8 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -59,7 +58,7 @@ func initBackend(withLocal bool) *EthAPIBackend {
 	var (
 		// Create a database pre-initialize with a genesis block
 		db     = rawdb.NewMemoryDatabase()
-		engine = beacon.New(ethash.NewFaker())
+		engine = randomx.NewFaker()
 	)
 	chain, _ := core.NewBlockChain(db, gspec, engine, nil)
 
