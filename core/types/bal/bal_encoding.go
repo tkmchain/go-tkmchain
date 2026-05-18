@@ -200,19 +200,15 @@ func (e *AccountAccess) validate(rules params.Rules) error {
 		return errors.New("code changes not in ascending order by tx index")
 	}
 	for _, change := range e.CodeChanges {
-		var sizeLimit int
-		switch {
-		case rules.IsAmsterdam:
-			sizeLimit = params.MaxCodeSizeAmsterdam
-		default:
-			sizeLimit = params.MaxCodeSize
-		}
+		// Use default MaxCodeSize since IsAmsterdam is not available in RandomX-only chain
+		sizeLimit := params.MaxCodeSize
 		if len(change.Code) > sizeLimit {
-			return errors.New("code change contained oversized code")
+			return fmt.Errorf("code change contained oversized code: %d > %d", len(change.Code), sizeLimit)
 		}
 	}
 	return nil
 }
+
 
 // Copy returns a deep copy of the account access
 func (e *AccountAccess) Copy() AccountAccess {

@@ -1,3 +1,7 @@
+git.gammaspectra.live/P2Pool/go-randomx/v3 v3.1.1 h1:+2EGBS7FBbDrRdCy8T/rIpiDcaOi3Lgw+LwzvU1H35U=
+git.gammaspectra.live/P2Pool/go-randomx/v3 v3.1.1/go.mod h1:lI7wXwIUhh/dhz/tqrJPxUCvr0MNx0jqRxAScI+jQBI=
+git.gammaspectra.live/P2Pool/softfloat64 v1.0.1 h1:aEluzcRqCzwFaBy9PPC+HVcS8GRoSH4qzv3NHTunxhc=
+git.gammaspectra.live/P2Pool/softfloat64 v1.0.1/go.mod h1:ZhnGqXOS6F6aJpiiT38Cvk5eHoBNqjkKfp3w3AcnomA=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.7.0 h1:8q4SaHjFsClSvuVne0ID/5Ka8u3fcIHyqkLjcFpNRHQ=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.7.0/go.mod h1:bjGvMhVMb+EEm3VRNQawDMUyMMjo+S5ewNjflkep/0Q=
 github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.3.0 h1:vcYCAze6p19qBW7MhZybIsqD8sMV8js0NyQM8JDnVtg=
