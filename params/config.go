@@ -92,6 +92,8 @@ type ChainConfig struct {
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
+	DepositContractAddress common.Address `json:"depositContractAddress,omitempty"`
+
 	// RandomX consensus engine
 	RandomX            *RandomXConfig      `json:"randomx,omitempty"`
 	BlobScheduleConfig *BlobScheduleConfig `json:"blobSchedule,omitempty"`
@@ -201,6 +203,7 @@ var MainnetChainConfig = &ChainConfig{
 	BPO5Time:            nil,
 	AmsterdamTime:       nil,
 	UBTTime:             nil,
+	DepositContractAddress: common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	RandomX:             DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,

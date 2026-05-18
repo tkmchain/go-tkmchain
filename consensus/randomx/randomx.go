@@ -32,9 +32,9 @@ import (
         "github.com/ethereum/go-ethereum/consensus"
         "github.com/ethereum/go-ethereum/consensus/misc"
         "github.com/ethereum/go-ethereum/consensus/misc/eip1559"
-        "github.com/ethereum/go-ethereum/core/state"
         "github.com/ethereum/go-ethereum/core/tracing"
         "github.com/ethereum/go-ethereum/core/types"
+        "github.com/ethereum/go-ethereum/core/vm"
         "github.com/ethereum/go-ethereum/crypto"
         "github.com/ethereum/go-ethereum/crypto/keccak"
         "github.com/ethereum/go-ethereum/log"
@@ -153,7 +153,7 @@ func (r *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
-func (r *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
+func (r *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
         if r.fakeMode {
                 if r.fakeDelay != nil {
                         time.Sleep(*r.fakeDelay)
@@ -174,11 +174,11 @@ func (r *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.
                 return consensus.ErrUnknownAncestor
         }
 
-        return r.verifyHeader(chain, header, parent, false, seal, time.Now().Unix())
+        return r.verifyHeader(chain, header, parent, false, true, time.Now().Unix())
 }
 
 // VerifyHeaders verifies a batch of headers concurrently.
-func (r *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+func (r *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) (chan<- struct{}, <-chan error) {
         if r.fakeMode || len(headers) == 0 {
                 abort, results := make(chan struct{}), make(chan error, len(headers))
                 for i := 0; i < len(headers); i++ {
@@ -204,7 +204,7 @@ func (r *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*ty
                         if parent == nil {
                                 err = consensus.ErrUnknownAncestor
                         } else {
-                                err = r.verifyHeader(chain, header, parent, false, seals[i], unixNow)
+                                err = r.verifyHeader(chain, header, parent, false, true, unixNow)
                         }
 
                         select {
@@ -335,13 +335,15 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 }
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
-func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
+func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
         accumulateRewards(chain.Config(), state, header, body.Uncles)
-        header.Root = state.IntermediateRoot(true)
+        if statedb, ok := state.(interface{ IntermediateRoot(bool) common.Hash }); ok {
+                header.Root = statedb.IntermediateRoot(true)
+        }
 }
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
-func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
+func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
         r.Finalize(chain, header, state, body)
         header.Bloom = types.MergeBloom(receipts)
         return types.NewBlock(header, body, receipts, nil), nil
@@ -630,7 +632,7 @@ func (r *RandomX) SealHash(header *types.Header) (hash common.Hash) {
 }
 
 // accumulateRewards credits the coinbase of the given block with the mining reward.
-func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, header *types.Header, uncles []*types.Header) {
+func accumulateRewards(config *params.ChainConfig, stateDB vm.StateDB, header *types.Header, uncles []*types.Header) {
         blockReward := FrontierBlockReward
         if config.IsByzantium(header.Number) {
                 blockReward = ByzantiumBlockReward
