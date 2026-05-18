@@ -433,7 +433,7 @@ func TestUDPv5_findnodeCall_InvalidNodes(t *testing.T) {
 			if tt.ip != nil {
 				r.Set(tt.ip)
 			}
-			r.Set(enr.UDP(30303))
+			r.Set(enr.UDP(3000))
 			if tt.port != nil {
 				r.Set(tt.port)
 			}
@@ -925,14 +925,14 @@ func newUDPV5Test(t *testing.T) *udpV5Test {
 		pipe:       newpipe(),
 		localkey:   newkey(),
 		remotekey:  newkey(),
-		remoteaddr: netip.MustParseAddrPort("10.0.1.99:30303"),
+		remoteaddr: netip.MustParseAddrPort("10.0.1.99:3000"),
 		nodesByID:  make(map[enode.ID]*enode.LocalNode),
 		nodesByIP:  make(map[netip.Addr]*enode.LocalNode),
 	}
 	test.db, _ = enode.OpenDB("")
 	ln := enode.NewLocalNode(test.db, test.localkey)
 	ln.SetStaticIP(net.IP{10, 0, 0, 1})
-	ln.Set(enr.UDP(30303))
+	ln.Set(enr.UDP(3000))
 	test.udp, _ = ListenV5(test.pipe, ln, Config{
 		PrivateKey:   test.localkey,
 		Log:          testlog.Logger(t, log.LvlTrace),

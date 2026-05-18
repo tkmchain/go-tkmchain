@@ -48,7 +48,7 @@ func TestPythonInterop(t *testing.T) {
 		wantID  = HexID("a448f24c6d18e575453db13171562b71999873db5b286df957af199ec94617f7")
 		wantSeq = uint64(1)
 		wantIP  = enr.IPv4{127, 0, 0, 1}
-		wantUDP = enr.UDP(30303)
+		wantUDP = enr.UDP(3000)
 	)
 	if n.Seq() != wantSeq {
 		t.Errorf("wrong seq: got %d, want %d", n.Seq(), wantSeq)
@@ -275,13 +275,13 @@ func TestNodeEndpoints(t *testing.T) {
 			name: "dns-only",
 			node: func() *Node {
 				var r enr.Record
-				r.Set(enr.UDP(30303))
-				r.Set(enr.TCP(30303))
+				r.Set(enr.UDP(3000))
+				r.Set(enr.TCP(3000))
 				n := SignNull(&r, id).WithHostname("example.com")
 				return n
 			}(),
-			wantTCP: 30303,
-			wantUDP: 30303,
+			wantTCP: 3000,
+			wantUDP: 3000,
 			wantDNS: "example.com",
 		},
 	}

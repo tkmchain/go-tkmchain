@@ -493,9 +493,9 @@ func quickcfg() *quick.Config {
 
 func TestSetFallbackNodes_DNSHostname(t *testing.T) {
 	// Create a node with a DNS hostname but no IP, simulating an enode URL
-	// like enode://<key>@localhost:30303.
+	// like enode://<key>@localhost:3000.
 	key := newkey()
-	node := enode.NewV4(&key.PublicKey, nil, 30303, 30303).WithHostname("localhost")
+	node := enode.NewV4(&key.PublicKey, nil, 3000, 3000).WithHostname("localhost")
 
 	// Verify the node has a hostname but no valid IP.
 	if node.Hostname() != "localhost" {

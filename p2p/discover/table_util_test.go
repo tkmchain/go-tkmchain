@@ -60,7 +60,7 @@ func newInactiveTestTable(t transport, cfg Config) (*Table, *enode.DB) {
 func nodeAtDistance(base enode.ID, ld int, ip net.IP) *enode.Node {
 	var r enr.Record
 	r.Set(enr.IP(ip))
-	r.Set(enr.UDP(30303))
+	r.Set(enr.UDP(3000))
 	return enode.SignNull(&r, idAtDistance(base, ld))
 }
 

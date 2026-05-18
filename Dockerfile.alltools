@@ -29,7 +29,7 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /go-ethereum/build/bin/* /usr/local/bin/
 
-EXPOSE 8545 8546 30303 30303/udp
+EXPOSE 8545 8546 3000 3000/udp
 
 # Add some metadata labels to help programmatic image consumption
 ARG COMMIT=""

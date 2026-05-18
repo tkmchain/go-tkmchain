@@ -580,7 +580,7 @@ func TestServerInboundThrottle(t *testing.T) {
 }
 
 func TestServerDiscoveryV5FailureRollsBackV4(t *testing.T) {
-	badBootstrap := enode.NewV4(&newkey().PublicKey, net.ParseIP("127.0.0.1"), 30303, 0) // invalid V5 of a V4 node
+	badBootstrap := enode.NewV4(&newkey().PublicKey, net.ParseIP("127.0.0.1"), 3000, 0) // invalid V5 of a V4 node
 	srv := &Server{
 		Config: Config{
 			PrivateKey:       newkey(),
