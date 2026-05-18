@@ -17,7 +17,6 @@
 package randomx
 
 import (
-	"encoding/hex"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,29 +28,13 @@ type API struct {
 	randomx *RandomX
 }
 
-// Hash computes the RandomX hash of the given input using the current cache.
+// Hash computes the RandomX hash of the given input.
 func (api *API) Hash(input hexutil.Bytes) (common.Hash, error) {
 	if len(input) == 0 {
 		return common.Hash{}, fmt.Errorf("input cannot be empty")
 	}
-	
-	api.randomx.cacheMu.RLock()
-	defer api.randomx.cacheMu.RUnlock()
-	
-	if api.randomx.cache == nil {
-		return common.Hash{}, fmt.Errorf("RandomX cache not initialized")
-	}
-	
-	vm, err := api.randomx.getVM()
-	if err != nil {
-		return common.Hash{}, err
-	}
-	defer vm.Close()
-	
-	output := make([]byte, 32)
-	vm.CalculateHash(input, output)
-	
-	return common.BytesToHash(output), nil
+	digest := api.randomx.hashBytes(input)
+	return common.BytesToHash(digest), nil
 }
 
 // GetSeedHash returns the seed hash for the given block number.
@@ -64,19 +47,13 @@ func (api *API) GetCurrentEpoch(blockNumber uint64) uint64 {
 	return api.randomx.epoch(blockNumber)
 }
 
-// GetCacheInfo returns information about the current RandomX cache.
+// GetCacheInfo returns information about the current RandomX configuration.
 func (api *API) GetCacheInfo() (map[string]interface{}, error) {
-	api.randomx.cacheMu.RLock()
-	defer api.randomx.cacheMu.RUnlock()
-	
-	if api.randomx.cache == nil {
-		return nil, fmt.Errorf("cache not initialized")
-	}
-	
 	return map[string]interface{}{
-		"epoch":      api.randomx.cacheEpoch,
-		"cache_size": api.randomx.config.CacheSizeMB,
-		"dataset_size": api.randomx.config.DatasetSizeGB,
+		"epoch_length":    api.randomx.config.EpochLength,
+		"cache_size":      api.randomx.config.CacheSizeMB,
+		"dataset_size":    api.randomx.config.DatasetSizeGB,
+		"hash_iterations": api.randomx.config.HashIterations,
 	}, nil
 }
 
@@ -86,4 +63,3 @@ func (api *API) VerifyPow(headerHash common.Hash, nonce uint64, mixDigest common
 	// Implementation would recreate the header and verify
 	return false, fmt.Errorf("not implemented yet")
 }
-

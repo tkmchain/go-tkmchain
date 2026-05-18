@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package ethconfig contains the configuration of the ETH and LES protocols.
+// Package ethconfig contains the configuration of the ETH protocol.
 package ethconfig
 
 import (
@@ -45,7 +45,7 @@ var FullNodeGPO = gasprice.Config{
 	IgnorePrice:      gasprice.DefaultIgnorePrice,
 }
 
-// Defaults contains default settings for use on the Ethereum main net.
+// Defaults contains default settings for RandomX-based networks.
 var Defaults = Config{
 	HistoryMode:             history.KeepAll,
 	SyncMode:                SnapSync,
@@ -79,10 +79,10 @@ var Defaults = Config{
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
 
-// Config contains configuration options for ETH and LES protocols.
+// Config contains configuration options for ETH protocol.
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
-	// If nil, the Ethereum main net block is used.
+	// If nil, the configured RandomX genesis block is used.
 	Genesis *core.Genesis `toml:",omitempty"`
 
 	// Network ID separates blockchains on the peer-to-peer networking level. When left
@@ -197,14 +197,8 @@ type Config struct {
 	// OverrideOsaka (TODO: remove after the fork)
 	OverrideOsaka *uint64 `toml:",omitempty"`
 
-	// OverrideBPO1 (TODO: remove after the fork)
-	OverrideBPO1 *uint64 `toml:",omitempty"`
-
-	// OverrideBPO2 (TODO: remove after the fork)
-	OverrideBPO2 *uint64 `toml:",omitempty"`
-
-	// OverrideUBT (TODO: remove after the fork)
-	OverrideUBT *uint64 `toml:",omitempty"`
+	// RandomX mining threads configuration
+	RandomXMinerThreads int `toml:",omitempty"`
 
 	// EIP-7966: eth_sendRawTransactionSync timeouts
 	TxSyncDefaultTimeout time.Duration `toml:",omitempty"`
@@ -214,7 +208,27 @@ type Config struct {
 	RangeLimit uint64 `toml:",omitempty"`
 }
 
-// CreateConsensusEngine creates a consensus engine for the given chain config.
-func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
-	return randomx.New(config.RandomX, 0), nil
+// CreateConsensusEngine creates a RandomX consensus engine for the given chain config.
+func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, threads int) (consensus.Engine, error) {
+	// Use RandomX as the sole consensus engine
+	if config.RandomX == nil {
+		// Use default RandomX config if none provided
+		config.RandomX = params.DefaultRandomXConfig()
+	}
+	
+	engine, err := randomx.New(config.RandomX, threads)
+	if err != nil {
+		return nil, err
+	}
+	
+	return engine, nil
+}
+
+// RandomXMinerThreads returns the number of threads to use for RandomX mining.
+func (c *Config) RandomXMinerThreads() int {
+	if c.RandomXMinerThreads > 0 {
+		return c.RandomXMinerThreads
+	}
+	// Default to number of CPU cores
+	return 0 // Let randomx.New determine based on runtime.NumCPU()
 }
