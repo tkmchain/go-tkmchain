@@ -2414,7 +2414,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	if err != nil {
 		Fatalf("%v", err)
 	}
-	engine, err := ethconfig.CreateConsensusEngine(config, chainDb)
+	engine, err := ethconfig.CreateConsensusEngine(config, chainDb, ethconfig.Defaults.RandomXMinerThreads)
 	if err != nil {
 		Fatalf("%v", err)
 	}

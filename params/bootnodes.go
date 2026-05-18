@@ -34,6 +34,18 @@ var TestnetBootnodes = []string{
 	"enode://a3435a0155a3e837c02f5e7f5662a2f1fbc25b48e4dc232016e1c51b544cb5b4510ef633ea3278c0e970fa8ad8141e2d4d0f9f95456c537ff05fdf9b31c15072@178.128.136.233:30303",
 }
 
+var (
+	// HoleskyBootnodes are the enode URLs of the P2P bootstrap nodes running on
+	// the Holesky test network.
+	HoleskyBootnodes = TestnetBootnodes
+	// SepoliaBootnodes are the enode URLs of the P2P bootstrap nodes running on
+	// the Sepolia test network.
+	SepoliaBootnodes = TestnetBootnodes
+	// HoodiBootnodes are the enode URLs of the P2P bootstrap nodes running on
+	// the Hoodi test network.
+	HoodiBootnodes = TestnetBootnodes
+)
+
 var V5Bootnodes = []string{
 	"enr:-KG4QMOEswP62yzDjSwWS4YEjtTZ5PO6r65CPqYBkgTTkrpaedQ8uEUo1uMALtJIvb2w_WWEVmg5yt1UAuK1ftxUU7QDhGV0aDKQu6TalgMAAAD__________4JpZIJ2NIJpcIQEnfA2iXNlY3AyNTZrMaEDfol8oLr6XJ7FsdAYE7lpJhKMls4G_v6qQOGKJUWGb_uDdGNwgiMog3VkcIIjKA",
 	"enr:-KG4QF4B5WrlFcRhUU6dZETwY5ZzAXnA0vGC__L1Kdw602nDZwXSTs5RFXFIFUnbQJmhNGVU6OIX7KVrCSTODsz1tK4DhGV0aDKQu6TalgMAAAD__________4JpZIJ2NIJpcIQExNYEiXNlY3AyNTZrMaECQmM9vp7KhaXhI-nqL_R0ovULLCFSFTa9CPPSdb1zPX6DdGNwgiMog3VkcIIjKA",
