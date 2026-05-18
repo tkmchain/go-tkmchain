@@ -92,6 +92,8 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
+        git.gammaspectra.live/P2Pool/go-randomx/v3 v3.1.1
+        github.com/holiman/uint256 v1.2.4
 )
 
 require (
