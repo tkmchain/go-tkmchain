@@ -2,7 +2,6 @@
 package randomx
 
 import (
-	"encoding/hex"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -33,10 +32,11 @@ func (api *API) Hash(input hexutil.Bytes) (common.Hash, error) {
 	}
 	defer vm.Close()
 
-	output := make([]byte, 32)
+	// CalculateHash expects *[32]byte for output
+	output := &[32]byte{}
 	vm.CalculateHash(input, output)
 
-	return common.BytesToHash(output), nil
+	return common.BytesToHash(output[:]), nil
 }
 
 // GetSeedHash returns seed hash for block number
@@ -59,8 +59,8 @@ func (api *API) GetCacheInfo() (map[string]interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"epoch":       api.randomx.cacheEpoch,
-		"cache_size":  api.randomx.config.CacheSizeMB,
+		"epoch":        api.randomx.cacheEpoch,
+		"cache_size":   api.randomx.config.CacheSizeMB,
 		"dataset_size": api.randomx.config.DatasetSizeGB,
 	}, nil
 }

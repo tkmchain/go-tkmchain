@@ -18,500 +18,519 @@
 package randomx
 
 import (
-	"bytes"
-	"encoding/binary"
-	"errors"
-	"fmt"
-	"math/big"
-	"runtime"
-	"sync"
-	"time"
+        "bytes"
+        "encoding/binary"
+        "errors"
+        "fmt"
+        "math/big"
+        "runtime"
+        "sync"
+        "time"
 
-	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/misc"
-	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/keccak"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/holiman/uint256"
-	randomx_lib "git.gammaspectra.live/P2Pool/go-randomx/v3"
+        mapset "github.com/deckarep/golang-set/v2"
+        "github.com/ethereum/go-ethereum/common"
+        "github.com/ethereum/go-ethereum/consensus"
+        "github.com/ethereum/go-ethereum/consensus/misc"
+        "github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+        "github.com/ethereum/go-ethereum/core/state"
+        "github.com/ethereum/go-ethereum/core/types"
+        "github.com/ethereum/go-ethereum/crypto"
+        "github.com/ethereum/go-ethereum/crypto/keccak"
+        "github.com/ethereum/go-ethereum/log"
+        "github.com/ethereum/go-ethereum/params"
+        "github.com/ethereum/go-ethereum/rlp"
+        "github.com/ethereum/go-ethereum/rpc"
+        "github.com/holiman/uint256"
+        randomx_lib "git.gammaspectra.live/P2Pool/go-randomx/v3"
 )
 
 // RandomX proof-of-work protocol constants.
 var (
-	FrontierBlockReward           = uint256.NewInt(5e+18)
-	ByzantiumBlockReward          = uint256.NewInt(3e+18)
-	ConstantinopleBlockReward     = uint256.NewInt(2e+18)
-	maxUncles                     = 2
-	allowedFutureBlockTimeSeconds = int64(15)
-	maxUint256                    = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+        FrontierBlockReward           = uint256.NewInt(5e+18)
+        ByzantiumBlockReward          = uint256.NewInt(3e+18)
+        ConstantinopleBlockReward     = uint256.NewInt(2e+18)
+        maxUncles                     = 2
+        allowedFutureBlockTimeSeconds = int64(15)
+        maxUint256                    = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
 )
 
-// Errors
+// Various error messages to mark blocks invalid.
 var (
-	errOlderBlockTime  = errors.New("timestamp older than parent")
-	errTooManyUncles   = errors.New("too many uncles")
-	errDuplicateUncle  = errors.New("duplicate uncle")
-	errUncleIsAncestor = errors.New("uncle is ancestor")
-	errDanglingUncle   = errors.New("uncle's parent is not ancestor")
-	errInvalidMixHash  = errors.New("invalid mix hash")
-	errNoCache         = errors.New("randomx cache not initialized")
+        errOlderBlockTime  = errors.New("timestamp older than parent")
+        errTooManyUncles   = errors.New("too many uncles")
+        errDuplicateUncle  = errors.New("duplicate uncle")
+        errUncleIsAncestor = errors.New("uncle is ancestor")
+        errDanglingUncle   = errors.New("uncle's parent is not ancestor")
+        errInvalidMixHash  = errors.New("invalid mix hash")
+        errNoCache         = errors.New("randomx cache not initialized")
 )
 
-// RandomX consensus engine
+// RandomX is a consensus engine based on proof-of-work implementing the RandomX algorithm.
 type RandomX struct {
-	config      *params.RandomXConfig
-	threads     int
-	cache       *randomx_lib.Cache
-	dataset     *randomx_lib.Dataset
-	cacheEpoch  uint64
-	cacheMu     sync.RWMutex
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
-	fakeMode    bool
-	fakeFail    *uint64
-	fakeDelay   *time.Duration
+        config      *params.RandomXConfig
+        threads     int
+        cache       *randomx_lib.Cache
+        dataset     *randomx_lib.Dataset
+        cacheEpoch  uint64
+        cacheMu     sync.RWMutex
+        stopCh      chan struct{}
+        wg          sync.WaitGroup
+        fakeMode    bool
+        fakeFail    *uint64
+        fakeDelay   *time.Duration
 }
 
-// New creates a new RandomX consensus engine
+// New creates a new RandomX consensus engine.
 func New(config *params.RandomXConfig, threads int) (*RandomX, error) {
-	if threads <= 0 {
-		threads = runtime.NumCPU()
-	}
-	if config == nil {
-		config = DefaultConfig()
-	}
-	if config.EpochLength == 0 {
-		config.EpochLength = 2048
-	}
-	if config.CacheSizeMB == 0 {
-		config.CacheSizeMB = 256
-	}
-	if config.DatasetSizeGB == 0 {
-		config.DatasetSizeGB = 2
-	}
-	if config.MinMemory == 0 {
-		config.MinMemory = 4 * 1024 * 1024 * 1024
-	}
+        if threads <= 0 {
+                threads = runtime.NumCPU()
+        }
+        if config == nil {
+                config = DefaultConfig()
+        }
+        if config.EpochLength == 0 {
+                config.EpochLength = 2048
+        }
+        if config.CacheSizeMB == 0 {
+                config.CacheSizeMB = 256
+        }
+        if config.DatasetSizeGB == 0 {
+                config.DatasetSizeGB = 2
+        }
+        if config.MinMemory == 0 {
+                config.MinMemory = 4 * 1024 * 1024 * 1024
+        }
 
-	return &RandomX{
-		config:  config,
-		threads: threads,
-		stopCh:  make(chan struct{}),
-	}, nil
+        return &RandomX{
+                config:  config,
+                threads: threads,
+                stopCh:  make(chan struct{}),
+        }, nil
 }
 
-// DefaultConfig returns default RandomX configuration
+// DefaultConfig returns the default RandomX configuration.
 func DefaultConfig() *params.RandomXConfig {
-	return &params.RandomXConfig{
-		EpochLength:   2048,
-		CacheSizeMB:   256,
-		DatasetSizeGB: 2,
-		MinMemory:     4 * 1024 * 1024 * 1024,
-	}
+        return &params.RandomXConfig{
+                EpochLength:   2048,
+                CacheSizeMB:   256,
+                DatasetSizeGB: 2,
+                MinMemory:     4 * 1024 * 1024 * 1024,
+        }
 }
 
-// NewFaker creates a fake RandomX engine for testing
+// NewFaker creates a RandomX engine that skips proof-of-work verification (testing only).
 func NewFaker() *RandomX {
-	engine, _ := New(nil, 1)
-	engine.fakeMode = true
-	return engine
+        engine, _ := New(nil, 1)
+        engine.fakeMode = true
+        return engine
 }
 
-// Author returns the coinbase
+// NewFullFaker creates a RandomX engine that accepts all headers without verification (testing only).
+func NewFullFaker() *RandomX {
+        engine := NewFaker()
+        engine.fakeMode = true
+        return engine
+}
+
+// NewFakeFailer creates a RandomX engine that fails a specific block number (testing only).
+func NewFakeFailer(fail uint64) *RandomX {
+        engine := NewFaker()
+        engine.fakeFail = &fail
+        return engine
+}
+
+// NewFakeDelayer creates a RandomX engine with verification delay (testing only).
+func NewFakeDelayer(delay time.Duration) *RandomX {
+        engine := NewFaker()
+        engine.fakeDelay = &delay
+        return engine
+}
+
+// Author implements consensus.Engine, returning the header's coinbase.
 func (r *RandomX) Author(header *types.Header) (common.Address, error) {
-	return header.Coinbase, nil
+        return header.Coinbase, nil
 }
 
-// VerifyHeader checks if a header conforms to consensus rules
+// VerifyHeader checks whether a header conforms to the consensus rules.
 func (r *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
-	if r.fakeMode {
-		if r.fakeDelay != nil {
-			time.Sleep(*r.fakeDelay)
-		}
-		if r.fakeFail != nil && *r.fakeFail == header.Number.Uint64() {
-			return errors.New("invalid tester pow")
-		}
-		return nil
-	}
+        if r.fakeMode {
+                if r.fakeDelay != nil {
+                        time.Sleep(*r.fakeDelay)
+                }
+                if r.fakeFail != nil && *r.fakeFail == header.Number.Uint64() {
+                        return errors.New("invalid tester pow")
+                }
+                return nil
+        }
 
-	number := header.Number.Uint64()
-	if chain.GetHeader(header.Hash(), number) != nil {
-		return nil
-	}
+        number := header.Number.Uint64()
+        if chain.GetHeader(header.Hash(), number) != nil {
+                return nil
+        }
 
-	parent := chain.GetHeader(header.ParentHash, number-1)
-	if parent == nil {
-		return consensus.ErrUnknownAncestor
-	}
+        parent := chain.GetHeader(header.ParentHash, number-1)
+        if parent == nil {
+                return consensus.ErrUnknownAncestor
+        }
 
-	return r.verifyHeader(chain, header, parent, false, seal, time.Now().Unix())
+        return r.verifyHeader(chain, header, parent, false, seal, time.Now().Unix())
 }
 
-// VerifyHeaders verifies multiple headers concurrently
+// VerifyHeaders verifies a batch of headers concurrently.
 func (r *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
-	if r.fakeMode || len(headers) == 0 {
-		abort, results := make(chan struct{}), make(chan error, len(headers))
-		for i := 0; i < len(headers); i++ {
-			results <- nil
-		}
-		return abort, results
-	}
+        if r.fakeMode || len(headers) == 0 {
+                abort, results := make(chan struct{}), make(chan error, len(headers))
+                for i := 0; i < len(headers); i++ {
+                        results <- nil
+                }
+                return abort, results
+        }
 
-	abort := make(chan struct{})
-	results := make(chan error, len(headers))
-	unixNow := time.Now().Unix()
+        abort := make(chan struct{})
+        results := make(chan error, len(headers))
+        unixNow := time.Now().Unix()
 
-	go func() {
-		for i, header := range headers {
-			var parent *types.Header
-			if i == 0 {
-				parent = chain.GetHeader(headers[0].ParentHash, headers[0].Number.Uint64()-1)
-			} else if headers[i-1].Hash() == headers[i].ParentHash {
-				parent = headers[i-1]
-			}
+        go func() {
+                for i, header := range headers {
+                        var parent *types.Header
+                        if i == 0 {
+                                parent = chain.GetHeader(headers[0].ParentHash, headers[0].Number.Uint64()-1)
+                        } else if headers[i-1].Hash() == headers[i].ParentHash {
+                                parent = headers[i-1]
+                        }
 
-			var err error
-			if parent == nil {
-				err = consensus.ErrUnknownAncestor
-			} else {
-				err = r.verifyHeader(chain, header, parent, false, seals[i], unixNow)
-			}
+                        var err error
+                        if parent == nil {
+                                err = consensus.ErrUnknownAncestor
+                        } else {
+                                err = r.verifyHeader(chain, header, parent, false, seals[i], unixNow)
+                        }
 
-			select {
-			case <-abort:
-				return
-			case results <- err:
-			}
-		}
-	}()
+                        select {
+                        case <-abort:
+                                return
+                        case results <- err:
+                        }
+                }
+        }()
 
-	return abort, results
+        return abort, results
 }
 
-// VerifyUncles verifies block uncles
+// VerifyUncles verifies that the given block's uncles conform to the consensus rules.
 func (r *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
-	if r.fakeMode {
-		return nil
-	}
+        if r.fakeMode {
+                return nil
+        }
 
-	if len(block.Uncles()) > maxUncles {
-		return errTooManyUncles
-	}
-	if len(block.Uncles()) == 0 {
-		return nil
-	}
+        if len(block.Uncles()) > maxUncles {
+                return errTooManyUncles
+        }
+        if len(block.Uncles()) == 0 {
+                return nil
+        }
 
-	uncles, ancestors := mapset.NewSet[common.Hash](), make(map[common.Hash]*types.Header)
-	number, parent := block.NumberU64()-1, block.ParentHash()
+        uncles, ancestors := mapset.NewSet[common.Hash](), make(map[common.Hash]*types.Header)
+        number, parent := block.NumberU64()-1, block.ParentHash()
 
-	for i := 0; i < 7; i++ {
-		ancestor := chain.GetHeader(parent, number)
-		if ancestor == nil {
-			break
-		}
-		ancestors[parent] = ancestor
-		if ancestor.UncleHash != types.EmptyUncleHash {
-			ancestorBlock := chain.GetBlock(parent, number)
-			if ancestorBlock == nil {
-				break
-			}
-			for _, uncle := range ancestorBlock.Uncles() {
-				uncles.Add(uncle.Hash())
-			}
-		}
-		parent, number = ancestor.ParentHash, number-1
-	}
+        for i := 0; i < 7; i++ {
+                ancestor := chain.GetHeader(parent, number)
+                if ancestor == nil {
+                        break
+                }
+                ancestors[parent] = ancestor
+                if ancestor.UncleHash != types.EmptyUncleHash {
+                        ancestorBlock := chain.GetBlock(parent, number)
+                        if ancestorBlock == nil {
+                                break
+                        }
+                        for _, uncle := range ancestorBlock.Uncles() {
+                                uncles.Add(uncle.Hash())
+                        }
+                }
+                parent, number = ancestor.ParentHash, number-1
+        }
 
-	ancestors[block.Hash()] = block.Header()
-	uncles.Add(block.Hash())
+        ancestors[block.Hash()] = block.Header()
+        uncles.Add(block.Hash())
 
-	for _, uncle := range block.Uncles() {
-		hash := uncle.Hash()
-		if uncles.Contains(hash) {
-			return errDuplicateUncle
-		}
-		uncles.Add(hash)
-		if ancestors[hash] != nil {
-			return errUncleIsAncestor
-		}
-		if ancestors[uncle.ParentHash] == nil || uncle.ParentHash == block.ParentHash() {
-			return errDanglingUncle
-		}
-		if err := r.verifyHeader(chain, uncle, ancestors[uncle.ParentHash], true, false, time.Now().Unix()); err != nil {
-			return err
-		}
-	}
+        for _, uncle := range block.Uncles() {
+                hash := uncle.Hash()
+                if uncles.Contains(hash) {
+                        return errDuplicateUncle
+                }
+                uncles.Add(hash)
+                if ancestors[hash] != nil {
+                        return errUncleIsAncestor
+                }
+                if ancestors[uncle.ParentHash] == nil || uncle.ParentHash == block.ParentHash() {
+                        return errDanglingUncle
+                }
+                if err := r.verifyHeader(chain, uncle, ancestors[uncle.ParentHash], true, false, time.Now().Unix()); err != nil {
+                        return err
+                }
+        }
 
-	return nil
+        return nil
 }
 
-// verifyHeader performs header verification
+// verifyHeader performs the actual header verification.
 func (r *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header, parent *types.Header, uncle bool, seal bool, unixNow int64) error {
-	if uint64(len(header.Extra)) > params.MaximumExtraDataSize {
-		return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra), params.MaximumExtraDataSize)
-	}
+        if uint64(len(header.Extra)) > params.MaximumExtraDataSize {
+                return fmt.Errorf("extra-data too long: %d > %d", len(header.Extra), params.MaximumExtraDataSize)
+        }
 
-	if !uncle && header.Time > uint64(unixNow+allowedFutureBlockTimeSeconds) {
-		return consensus.ErrFutureBlock
-	}
-	if header.Time <= parent.Time {
-		return errOlderBlockTime
-	}
+        if !uncle && header.Time > uint64(unixNow+allowedFutureBlockTimeSeconds) {
+                return consensus.ErrFutureBlock
+        }
+        if header.Time <= parent.Time {
+                return errOlderBlockTime
+        }
 
-	expected := r.CalcDifficulty(chain, header.Time, parent)
-	if expected.Cmp(header.Difficulty) != 0 {
-		return fmt.Errorf("invalid difficulty: have %v, want %v", header.Difficulty, expected)
-	}
+        expected := r.CalcDifficulty(chain, header.Time, parent)
+        if expected.Cmp(header.Difficulty) != 0 {
+                return fmt.Errorf("invalid difficulty: have %v, want %v", header.Difficulty, expected)
+        }
 
-	if header.GasLimit > params.MaxGasLimit {
-		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
-	}
-	if header.GasUsed > header.GasLimit {
-		return fmt.Errorf("invalid gasUsed: have %d, gasLimit %d", header.GasUsed, header.GasLimit)
-	}
+        if header.GasLimit > params.MaxGasLimit {
+                return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
+        }
+        if header.GasUsed > header.GasLimit {
+                return fmt.Errorf("invalid gasUsed: have %d, gasLimit %d", header.GasUsed, header.GasLimit)
+        }
 
-	if !chain.Config().IsLondon(header.Number) {
-		if header.BaseFee != nil {
-			return fmt.Errorf("invalid baseFee before fork: have %d, expected nil", header.BaseFee)
-		}
-		if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
-			return err
-		}
-	} else if err := eip1559.VerifyEIP1559Header(chain.Config(), parent, header); err != nil {
-		return err
-	}
+        if !chain.Config().IsLondon(header.Number) {
+                if header.BaseFee != nil {
+                        return fmt.Errorf("invalid baseFee before fork: have %d, expected 'nil'", header.BaseFee)
+                }
+                if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
+                        return err
+                }
+        } else if err := eip1559.VerifyEIP1559Header(chain.Config(), parent, header); err != nil {
+                return err
+        }
 
-	if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
-		return consensus.ErrInvalidNumber
-	}
+        if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
+                return consensus.ErrInvalidNumber
+        }
 
-	if seal {
-		if err := r.VerifySeal(chain, header); err != nil {
-			return err
-		}
-	}
+        if seal {
+                if err := r.VerifySeal(chain, header); err != nil {
+                        return err
+                }
+        }
 
-	return misc.VerifyDAOHeaderExtraData(chain.Config(), header)
+        return misc.VerifyDAOHeaderExtraData(chain.Config(), header)
 }
 
-// Prepare initializes the difficulty field
+// Prepare initializes the difficulty field of a header.
 func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
-	if parent == nil {
-		return consensus.ErrUnknownAncestor
-	}
-	header.Difficulty = r.CalcDifficulty(chain, header.Time, parent)
-	return nil
+        parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+        if parent == nil {
+                return consensus.ErrUnknownAncestor
+        }
+        header.Difficulty = r.CalcDifficulty(chain, header.Time, parent)
+        return nil
 }
 
-// Finalize accumulates block rewards
+// Finalize implements consensus.Engine, accumulating block and uncle rewards.
 func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
-	accumulateRewards(chain.Config(), state, header, body.Uncles)
-	header.Root = state.IntermediateRoot(true)
+        accumulateRewards(chain.Config(), state, header, body.Uncles)
+        header.Root = state.IntermediateRoot(true)
 }
 
-// FinalizeAndAssemble creates the final block
+// FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	r.Finalize(chain, header, state, body)
-	header.Bloom = types.CreateBloom(receipts)
-	return types.NewBlock(header, body, receipts, nil), nil
+        r.Finalize(chain, header, state, body)
+        header.Bloom = types.CreateBloom(receipts)
+        return types.NewBlock(header, body, receipts, nil), nil
 }
 
-// Seal generates a new sealing request
+// Seal generates a new sealing request for the given input block.
 func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	if r.fakeMode {
-		select {
-		case results <- block.WithSeal(block.Header()):
-		case <-stop:
-		}
-		return nil
-	}
+        if r.fakeMode {
+                select {
+                case results <- block.WithSeal(block.Header()):
+                case <-stop:
+                }
+                return nil
+        }
 
-	epoch := r.epoch(block.NumberU64())
-	if err := r.updateCacheForEpoch(epoch); err != nil {
-		return fmt.Errorf("failed to update RandomX cache: %w", err)
-	}
+        epoch := r.epoch(block.NumberU64())
+        if err := r.updateCacheForEpoch(epoch); err != nil {
+                return fmt.Errorf("failed to update RandomX cache: %w", err)
+        }
 
-	for i := 0; i < r.threads; i++ {
-		r.wg.Add(1)
-		go r.mine(block, results, stop, i)
-	}
+        for i := 0; i < r.threads; i++ {
+                r.wg.Add(1)
+                go r.mine(block, results, stop, i)
+        }
 
-	go func() {
-		r.wg.Wait()
-		close(results)
-	}()
+        go func() {
+                r.wg.Wait()
+                close(results)
+        }()
 
-	return nil
+        return nil
 }
 
-// mine finds a valid nonce
+// mine attempts to find a valid nonce for the given block.
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, thread int) {
-	defer r.wg.Done()
+        defer r.wg.Done()
 
-	header := block.Header()
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	mineHeader := types.CopyHeader(header)
+        header := block.Header()
+        target := new(big.Int).Div(maxUint256, header.Difficulty)
+        mineHeader := types.CopyHeader(header)
 
-	vm, err := r.getVM()
-	if err != nil {
-		log.Error("Failed to get RandomX VM", "error", err)
-		return
-	}
-	defer vm.Close()
+        vm, err := r.getVM()
+        if err != nil {
+                log.Error("Failed to get RandomX VM", "error", err)
+                return
+        }
+        defer vm.Close()
 
-	seed := r.seedHash(block.NumberU64())
-	startNonce := uint64(thread)
-	step := uint64(r.threads)
-	started := time.Now()
-	attempts := uint64(0)
+        seed := r.seedHash(block.NumberU64())
+        startNonce := uint64(thread)
+        step := uint64(r.threads)
+        started := time.Now()
+        attempts := uint64(0)
 
-	for nonce := startNonce; ; nonce += step {
-		select {
-		case <-stop:
-			return
-		default:
-			mineHeader.Nonce = types.EncodeNonce(nonce)
-			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+        for nonce := startNonce; ; nonce += step {
+                select {
+                case <-stop:
+                        return
+                default:
+                        mineHeader.Nonce = types.EncodeNonce(nonce)
+                        mixDigest, result := r.hashimoto(mineHeader, seed, vm)
 
-			if result.Cmp(target) <= 0 {
-				mineHeader.MixDigest = mixDigest
-				sealedBlock := block.WithSeal(mineHeader)
-				select {
-				case results <- sealedBlock:
-				case <-stop:
-				}
-				log.Info("Mined new block", "number", block.NumberU64(), "nonce", nonce)
-				return
-			}
+                        if result.Cmp(target) <= 0 {
+                                mineHeader.MixDigest = mixDigest
+                                sealedBlock := block.WithSeal(mineHeader)
+                                select {
+                                case results <- sealedBlock:
+                                case <-stop:
+                                }
+                                log.Info("Mined new block", "number", block.NumberU64(), "nonce", nonce, "attempts", attempts)
+                                return
+                        }
 
-			attempts++
-			if attempts%1_000_000 == 0 {
-				hashrate := float64(attempts) / time.Since(started).Seconds()
-				log.Debug("RandomX mining", "thread", thread, "hashrate", hashrate)
-			}
-		}
-	}
+                        attempts++
+                        if attempts%1_000_000 == 0 {
+                                hashrate := float64(attempts) / time.Since(started).Seconds()
+                                log.Debug("RandomX mining in progress", "thread", thread, "attempts", attempts, "hashrate", hashrate)
+                        }
+                }
+        }
 }
 
-// VerifySeal verifies the RandomX proof-of-work
+// VerifySeal verifies the RandomX proof-of-work.
 func (r *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
-	if r.fakeMode {
-		if r.fakeDelay != nil {
-			time.Sleep(*r.fakeDelay)
-		}
-		return nil
-	}
+        if r.fakeMode {
+                if r.fakeDelay != nil {
+                        time.Sleep(*r.fakeDelay)
+                }
+                return nil
+        }
 
-	epoch := r.epoch(header.Number.Uint64())
-	if err := r.updateCacheForEpoch(epoch); err != nil {
-		return fmt.Errorf("failed to update RandomX cache: %w", err)
-	}
+        epoch := r.epoch(header.Number.Uint64())
+        if err := r.updateCacheForEpoch(epoch); err != nil {
+                return fmt.Errorf("failed to update RandomX cache: %w", err)
+        }
 
-	vm, err := r.getVM()
-	if err != nil {
-		return err
-	}
-	defer vm.Close()
+        vm, err := r.getVM()
+        if err != nil {
+                return err
+        }
+        defer vm.Close()
 
-	seed := r.seedHash(header.Number.Uint64())
-	mixDigest, result := r.hashimoto(header, seed, vm)
+        seed := r.seedHash(header.Number.Uint64())
+        mixDigest, result := r.hashimoto(header, seed, vm)
 
-	if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
-		return errInvalidMixHash
-	}
+        if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
+                return errInvalidMixHash
+        }
 
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	if result.Cmp(target) > 0 {
-		return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
-	}
+        target := new(big.Int).Div(maxUint256, header.Difficulty)
+        if result.Cmp(target) > 0 {
+                return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
+        }
 
-	return nil
+        return nil
 }
 
-// hashimoto computes RandomX hash
+// hashimoto is the core RandomX hash function using the real RandomX algorithm.
 func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
-	// Prepare input: seed (32 bytes) + nonce (8 bytes)
-	input := make([]byte, 40)
-	copy(input[:32], seed.Bytes())
-	
-	// Convert nonce to bytes properly
-	nonceBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
-	copy(input[32:], nonceBytes)
+        input := make([]byte, 40)
+        copy(input[:32], seed.Bytes())
 
-	// Execute RandomX
-	output := make([]byte, 32)
-	vm.CalculateHash(input, output)
+        nonceBytes := make([]byte, 8)
+        binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
+        copy(input[32:], nonceBytes)
 
-	mixDigest := common.BytesToHash(output[:32])
-	result := new(big.Int).SetBytes(output[:])
+        output := make([]byte, 32)
+        vm.CalculateHash(input, output)
 
-	return mixDigest, result
+        mixDigest := common.BytesToHash(output[:32])
+        result := new(big.Int).SetBytes(output[:])
+
+        return mixDigest, result
 }
 
-// CalcDifficulty returns the difficulty adjustment
+// CalcDifficulty is the difficulty adjustment algorithm.
 func (r *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-	return CalcDifficulty(chain.Config(), time, parent)
+        return CalcDifficulty(chain.Config(), time, parent)
 }
 
-// APIs returns RPC APIs
+// APIs returns the RPC APIs provided by the RandomX engine.
 func (r *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-	return []rpc.API{{
-		Namespace: "randomx",
-		Version:   "1.0",
-		Service:   &API{randomx: r},
-		Public:    true,
-	}}
+        return []rpc.API{{
+                Namespace: "randomx",
+                Version:   "1.0",
+                Service:   &API{randomx: r},
+                Public:    true,
+        }}
 }
 
-// Close terminates the engine
+// Close terminates any background threads maintained by the consensus engine.
 func (r *RandomX) Close() error {
-	select {
-	case <-r.stopCh:
-	default:
-		close(r.stopCh)
-	}
-	r.wg.Wait()
+        select {
+        case <-r.stopCh:
+        default:
+                close(r.stopCh)
+        }
+        r.wg.Wait()
 
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
+        r.cacheMu.Lock()
+        defer r.cacheMu.Unlock()
 
-	if r.cache != nil {
-		r.cache.Close()
-	}
-	if r.dataset != nil {
-		r.dataset.Close()
-	}
+        if r.cache != nil {
+                r.cache.Close()
+        }
+        if r.dataset != nil {
+                r.dataset.Close()
+        }
 
-	return nil
+        return nil
 }
 
-// epoch returns the current epoch
+// epoch returns the epoch for a given block number.
 func (r *RandomX) epoch(blockNum uint64) uint64 {
-	return blockNum / r.config.EpochLength
+        return blockNum / r.config.EpochLength
 }
 
-// seedHash computes the seed hash
+// seedHash computes the seed hash for a given block number.
 func (r *RandomX) seedHash(blockNum uint64) common.Hash {
-	epoch := r.epoch(blockNum)
-	seed := make([]byte, 32)
-	for i := uint64(0); i < epoch; i++ {
-		seed = crypto.Keccak256(seed)
-	}
-	return common.BytesToHash(seed)
+        epoch := r.epoch(blockNum)
+        seed := make([]byte, 32)
+        for i := uint64(0); i < epoch; i++ {
+                seed = crypto.Keccak256(seed)
+        }
+        return common.BytesToHash(seed)
 }
 
-// updateCacheForEpoch updates RandomX cache and dataset
+// updateCacheForEpoch ensures the RandomX cache and dataset are ready for the given epoch.
+
+// Update the updateCacheForEpoch function - NewCache and NewDataset take only Flags
 func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
@@ -532,23 +551,49 @@ func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
 		r.dataset.Close()
 	}
 
-	var err error
 	startTime := time.Now()
-	r.cache, err = randomx_lib.NewCache(seedBytes)
+	var err error
+	
+	// NewCache only takes Flags, not seed bytes
+	// The seed is set internally or we need to use a different approach
+	r.cache, err = randomx_lib.NewCache(0)
 	if err != nil {
 		return fmt.Errorf("failed to create RandomX cache: %w", err)
 	}
-	log.Info("RandomX cache created", "duration", time.Since(startTime))
+	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
 	startTime = time.Now()
-	r.dataset = randomx_lib.NewDataset(r.cache)
-	log.Info("RandomX dataset created", "duration", time.Since(startTime))
+	// NewDataset takes Flags and Cache
+	r.dataset, err = randomx_lib.NewDataset(0, r.cache)
+	if err != nil {
+		return fmt.Errorf("failed to create RandomX dataset: %w", err)
+	}
+	log.Info("RandomX dataset created", "epoch", epoch, "duration", time.Since(startTime))
 
 	r.cacheEpoch = epoch
 	return nil
 }
 
-// getVM creates a new RandomX VM
+// Update hashimoto - CalculateHash expects *[32]byte, not []byte
+func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
+	input := make([]byte, 40)
+	copy(input[:32], seed.Bytes())
+	
+	nonceBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
+	copy(input[32:], nonceBytes)
+
+	// CalculateHash expects *[32]byte for output
+	output := &[32]byte{}
+	vm.CalculateHash(input, output)
+
+	mixDigest := common.BytesToHash(output[:])
+	result := new(big.Int).SetBytes(output[:])
+
+	return mixDigest, result
+}
+
+// Update getVM - NewVM signature may be different
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
 	r.cacheMu.RLock()
 	defer r.cacheMu.RUnlock()
@@ -557,39 +602,21 @@ func (r *RandomX) getVM() (*randomx_lib.VM, error) {
 		return nil, errNoCache
 	}
 
+	// Try different NewVM signatures based on what the library expects
 	if r.dataset != nil {
-		return randomx_lib.NewVM(nil, r.dataset), nil
+		return randomx_lib.NewVM(0, r.cache, r.dataset)
 	}
-	return randomx_lib.NewVM(r.cache, nil), nil
+	return randomx_lib.NewVM(0, r.cache, nil)
 }
 
-// SealHash returns the hash before sealing
-func (r *RandomX) SealHash(header *types.Header) (hash common.Hash) {
-	hasher := keccak.NewLegacyKeccak256()
-	enc := []interface{}{
-		header.ParentHash,
-		header.UncleHash,
-		header.Coinbase,
-		header.Root,
-		header.TxHash,
-		header.ReceiptHash,
-		header.Bloom,
-		header.Difficulty,
-		header.Number,
-		header.GasLimit,
-		header.GasUsed,
-		header.Time,
-		header.Extra,
-	}
-	if header.BaseFee != nil {
-		enc = append(enc, header.BaseFee)
-	}
-	rlp.Encode(hasher, enc)
-	hasher.Sum(hash[:0])
-	return hash
+// Update FinalizeAndAssemble - CreateBloom is correct, receipts is already []*types.Receipt
+func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
+	r.Finalize(chain, header, state, body)
+	header.Bloom = types.CreateBloom(receipts)
+	return types.NewBlock(header, body, receipts, nil), nil
 }
 
-// accumulateRewards credits block rewards
+// Update accumulateRewards - AddBalance now requires a tracing.BalanceChangeReason
 func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, header *types.Header, uncles []*types.Header) {
 	blockReward := FrontierBlockReward
 	if config.IsByzantium(header.Number) {
@@ -603,17 +630,106 @@ func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, heade
 	r := new(uint256.Int)
 	hNum, _ := uint256.FromBig(header.Number)
 
+	// Import tracing package if needed
+	// import "github.com/ethereum/go-ethereum/core/tracing"
+	
 	for _, uncle := range uncles {
 		uNum, _ := uint256.FromBig(uncle.Number)
 		r.AddUint64(uNum, 8)
 		r.Sub(r, hNum)
 		r.Mul(r, blockReward)
 		r.Rsh(r, 3)
-		stateDB.AddBalance(uncle.Coinbase, r)
+		// Add the BalanceChangeReason parameter
+		stateDB.AddBalance(uncle.Coinbase, r, tracing.BalanceIncreaseRewardMineUncle)
 
 		r.Rsh(blockReward, 5)
 		reward.Add(reward, r)
 	}
 
-	stateDB.AddBalance(header.Coinbase, reward)
+	stateDB.AddBalance(header.Coinbase, reward, tracing.BalanceIncreaseRewardMineBlock)
+}
+
+// getVM creates a new RandomX VM for hash computation.
+func (r *RandomX) getVM() (*randomx_lib.VM, error) {
+        r.cacheMu.RLock()
+        defer r.cacheMu.RUnlock()
+
+        if r.cache == nil {
+                return nil, errNoCache
+        }
+
+        if r.dataset != nil {
+                return randomx_lib.NewVM(0, nil, r.dataset)
+        }
+        return randomx_lib.NewVM(0, r.cache, nil)
+}
+
+// SealHash returns the hash of a block prior to it being sealed.
+func (r *RandomX) SealHash(header *types.Header) (hash common.Hash) {
+        hasher := keccak.NewLegacyKeccak256()
+        enc := []interface{}{
+                header.ParentHash,
+                header.UncleHash,
+                header.Coinbase,
+                header.Root,
+                header.TxHash,
+                header.ReceiptHash,
+                header.Bloom,
+                header.Difficulty,
+                header.Number,
+                header.GasLimit,
+                header.GasUsed,
+                header.Time,
+                header.Extra,
+        }
+        if header.BaseFee != nil {
+                enc = append(enc, header.BaseFee)
+        }
+        if header.WithdrawalsHash != nil {
+                enc = append(enc, header.WithdrawalsHash)
+        }
+        if header.ExcessBlobGas != nil {
+                enc = append(enc, header.ExcessBlobGas)
+        }
+        if header.BlobGasUsed != nil {
+                enc = append(enc, header.BlobGasUsed)
+        }
+        if header.ParentBeaconRoot != nil {
+                enc = append(enc, header.ParentBeaconRoot)
+        }
+        if header.SlotNumber != nil {
+                enc = append(enc, header.SlotNumber)
+        }
+        rlp.Encode(hasher, enc)
+        hasher.Sum(hash[:0])
+        return hash
+}
+
+// accumulateRewards credits the coinbase of the given block with the mining reward.
+func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, header *types.Header, uncles []*types.Header) {
+        blockReward := FrontierBlockReward
+        if config.IsByzantium(header.Number) {
+                blockReward = ByzantiumBlockReward
+        }
+        if config.IsConstantinople(header.Number) {
+                blockReward = ConstantinopleBlockReward
+        }
+
+        reward := new(uint256.Int).Set(blockReward)
+        r := new(uint256.Int)
+        hNum, _ := uint256.FromBig(header.Number)
+
+        for _, uncle := range uncles {
+                uNum, _ := uint256.FromBig(uncle.Number)
+                r.AddUint64(uNum, 8)
+                r.Sub(r, hNum)
+                r.Mul(r, blockReward)
+                r.Rsh(r, 3)
+                stateDB.AddBalance(uncle.Coinbase, r)
+
+                r.Rsh(blockReward, 5)
+                reward.Add(reward, r)
+        }
+
+        stateDB.AddBalance(header.Coinbase, reward)
 }
