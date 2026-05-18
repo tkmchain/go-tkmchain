@@ -24,8 +24,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types/bal"
@@ -58,7 +57,7 @@ func getChainWithBALs(nBlocks int, balSize int) (*core.BlockChain, []common.Hash
 		Config: params.MergedTestChainConfig,
 	}
 	db := rawdb.NewMemoryDatabase()
-	engine := beacon.New(ethash.NewFaker())
+	engine := randomx.NewFaker()
 	_, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, nBlocks, func(i int, gen *core.BlockGen) {})
 	options := &core.BlockChainConfig{
 		StateScheme:   rawdb.PathScheme,

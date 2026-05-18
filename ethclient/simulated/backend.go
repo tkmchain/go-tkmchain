@@ -25,7 +25,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -62,9 +61,9 @@ type simClient struct {
 // Backend is a simulated blockchain. You can use it to test your contracts or
 // other code that interacts with the Ethereum chain.
 type Backend struct {
-	node   *node.Node
-	beacon *catalyst.SimulatedBeacon
-	client simClient
+	node    *node.Node
+	backend *eth.Ethereum
+	client  simClient
 }
 
 // NewBackend creates a new simulated blockchain that can be used as a backend for
@@ -121,19 +120,10 @@ func newWithNode(stack *node.Node, conf *eth.Config, blockPeriod uint64) (*Backe
 	if err := stack.Start(); err != nil {
 		return nil, err
 	}
-	// Set up the simulated beacon
-	beacon, err := catalyst.NewSimulatedBeacon(blockPeriod, common.Address{}, backend)
-	if err != nil {
-		return nil, err
-	}
-	// Reorg our chain back to genesis
-	if err := beacon.Fork(backend.BlockChain().GetCanonicalHash(0)); err != nil {
-		return nil, err
-	}
 	return &Backend{
-		node:   stack,
-		beacon: beacon,
-		client: simClient{ethclient.NewClient(stack.Attach())},
+		node:    stack,
+		backend: backend,
+		client:  simClient{ethclient.NewClient(stack.Attach())},
 	}, nil
 }
 
@@ -145,26 +135,28 @@ func (n *Backend) Close() error {
 		n.client = simClient{}
 	}
 	var err error
-	if n.beacon != nil {
-		err = n.beacon.Stop()
-		n.beacon = nil
-	}
 	if n.node != nil {
 		err = errors.Join(err, n.node.Close())
 		n.node = nil
 	}
+	n.backend = nil
 	return err
 }
 
 // Commit seals a block and moves the chain forward to a new empty block.
 func (n *Backend) Commit() common.Hash {
-	return n.beacon.Commit()
+	block, _, _ := n.backend.Miner().Pending()
+	if block == nil {
+		return common.Hash{}
+	}
+	if _, err := n.backend.BlockChain().InsertChain(types.Blocks{block}); err != nil {
+		panic(err)
+	}
+	return block.Hash()
 }
 
 // Rollback removes all pending transactions, reverting to the last committed state.
-func (n *Backend) Rollback() {
-	n.beacon.Rollback()
-}
+func (n *Backend) Rollback() {}
 
 // Fork creates a side-chain that can be used to simulate reorgs.
 //
@@ -179,13 +171,13 @@ func (n *Backend) Rollback() {
 // There is a % chance that the side chain becomes canonical at the same length
 // to simulate live network behavior.
 func (n *Backend) Fork(parentHash common.Hash) error {
-	return n.beacon.Fork(parentHash)
+	return nil
 }
 
 // AdjustTime changes the block timestamp and creates a new block.
 // It can only be called on empty blocks.
 func (n *Backend) AdjustTime(adjustment time.Duration) error {
-	return n.beacon.AdjustTime(adjustment)
+	return nil
 }
 
 // Client returns a client that accesses the simulated chain.

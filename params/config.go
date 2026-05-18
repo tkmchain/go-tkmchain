@@ -182,9 +182,9 @@ var (
 			BPO2:   DefaultBPO2BlobConfig,
 		},
 	}
-	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
+	// AllRandomXProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
-	AllEthashProtocolChanges = &ChainConfig{
+	AllRandomXProtocolChanges = &ChainConfig{
 		ChainID:                 big.NewInt(1337),
 		HomesteadBlock:          big.NewInt(0),
 		DAOForkBlock:            nil,

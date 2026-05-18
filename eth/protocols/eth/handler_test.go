@@ -29,8 +29,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -79,7 +78,7 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generat
 		// Create a database pre-initialize with a genesis block
 		db     = rawdb.NewMemoryDatabase()
 		config = params.TestChainConfig
-		engine = beacon.New(ethash.NewFaker())
+		engine = randomx.NewFaker()
 	)
 	if shanghai {
 		config = &params.ChainConfig{

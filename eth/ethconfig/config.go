@@ -22,9 +22,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/clique"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/history"
@@ -32,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -220,18 +216,5 @@ type Config struct {
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
-	var engine consensus.Engine
-	switch {
-	case config.RandomX != nil:
-		engine = randomx.NewFaker()
-	case config.Clique != nil:
-		engine = clique.New(config.Clique, db)
-	default:
-		engine = ethash.NewFaker()
-	}
-	if config.TerminalTotalDifficulty != nil {
-		return beacon.New(engine), nil
-	}
-	log.Warn("Running legacy proof-of-work network without terminal total difficulty")
-	return engine, nil
+	return randomx.New(config.RandomX, 0), nil
 }

@@ -24,9 +24,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/clique"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -43,7 +41,7 @@ func testHeaderVerification(t *testing.T, scheme string) {
 	// Create a simple chain to verify
 	var (
 		gspec        = &Genesis{Config: params.TestChainConfig}
-		_, blocks, _ = GenerateChainWithGenesis(gspec, ethash.NewFaker(), 8, nil)
+		_, blocks, _ = GenerateChainWithGenesis(gspec, randomx.NewFaker(), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
@@ -51,7 +49,7 @@ func testHeaderVerification(t *testing.T, scheme string) {
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
 	options := DefaultConfig().WithStateScheme(scheme)
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, ethash.NewFaker(), options)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, randomx.NewFaker(), options)
 	defer chain.Stop()
 	if err != nil {
 		t.Fatal(err)
@@ -62,10 +60,10 @@ func testHeaderVerification(t *testing.T, scheme string) {
 			var results <-chan error
 
 			if valid {
-				engine := ethash.NewFaker()
+				engine := randomx.NewFaker()
 				_, results = engine.VerifyHeaders(chain, []*types.Header{headers[i]})
 			} else {
-				engine := ethash.NewFakeFailer(headers[i].Number.Uint64())
+				engine := randomx.NewFakeFailer(headers[i].Number.Uint64())
 				_, results = engine.VerifyHeaders(chain, []*types.Header{headers[i]})
 			}
 			// Wait for the verification result
@@ -105,7 +103,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 			addr   = crypto.PubkeyToAddress(key.PublicKey)
 			config = *params.AllCliqueProtocolChanges
 		)
-		engine = beacon.New(clique.New(params.AllCliqueProtocolChanges.Clique, rawdb.NewMemoryDatabase()))
+		engine = randomx.NewFaker()
 		gspec = &Genesis{
 			Config:    &config,
 			ExtraData: make([]byte, 32+common.AddressLength+crypto.SignatureLength),
@@ -144,7 +142,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 	} else {
 		config := *params.TestChainConfig
 		gspec = &Genesis{Config: &config}
-		engine = beacon.New(ethash.NewFaker())
+		engine = randomx.NewFaker()
 		td := int(params.GenesisDifficulty.Uint64())
 		genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, 8, nil)
 		for _, block := range blocks {

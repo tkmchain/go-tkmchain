@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -121,7 +121,7 @@ func getChain() *core.BlockChain {
 		Config: params.TestChainConfig,
 		Alloc:  ga,
 	}
-	_, blocks, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), 2, func(i int, gen *core.BlockGen) {})
+	_, blocks, _ := core.GenerateChainWithGenesis(gspec, randomx.NewFaker(), 2, func(i int, gen *core.BlockGen) {})
 	options := &core.BlockChainConfig{
 		TrieCleanLimit: 0,
 		TrieDirtyLimit: 0,
@@ -131,7 +131,7 @@ func getChain() *core.BlockChain {
 		SnapshotWait:   true,
 	}
 	trieRoot = blocks[len(blocks)-1].Root()
-	bc, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, ethash.NewFaker(), options)
+	bc, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, randomx.NewFaker(), options)
 	if _, err := bc.InsertChain(blocks); err != nil {
 		panic(err)
 	}

@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
@@ -1981,9 +1981,9 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	var (
 		gspec = &Genesis{
 			BaseFee: big.NewInt(params.InitialBaseFee),
-			Config:  params.AllEthashProtocolChanges,
+			Config:  params.AllRandomXProtocolChanges,
 		}
-		engine  = ethash.NewFullFaker()
+		engine  = randomx.NewFullFaker()
 		options = &BlockChainConfig{
 			TrieCleanLimit: 256,
 			TrieDirtyLimit: 256,

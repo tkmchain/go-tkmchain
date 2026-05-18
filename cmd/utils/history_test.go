@@ -27,7 +27,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -67,7 +67,7 @@ func TestHistoryImportAndExport(t *testing.T) {
 			)
 
 			// Generate chain.
-			db, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), int(count), func(i int, g *core.BlockGen) {
+			db, blocks, _ := core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), int(count), func(i int, g *core.BlockGen) {
 				if i == 0 {
 					return
 				}
@@ -89,7 +89,7 @@ func TestHistoryImportAndExport(t *testing.T) {
 			})
 
 			// Initialize BlockChain.
-			chain, err := core.NewBlockChain(db, genesis, ethash.NewFaker(), nil)
+			chain, err := core.NewBlockChain(db, genesis, randomx.NewFaker(), nil)
 			if err != nil {
 				t.Fatalf("unable to initialize chain: %v", err)
 			}
@@ -178,7 +178,7 @@ func TestHistoryImportAndExport(t *testing.T) {
 			})
 
 			genesis.MustCommit(db2, triedb.NewDatabase(db2, triedb.HashDefaults))
-			imported, err := core.NewBlockChain(db2, genesis, ethash.NewFaker(), nil)
+			imported, err := core.NewBlockChain(db2, genesis, randomx.NewFaker(), nil)
 			if err != nil {
 				t.Fatalf("unable to initialize chain: %v", err)
 			}

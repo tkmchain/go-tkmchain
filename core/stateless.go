@@ -21,8 +21,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -62,7 +61,7 @@ func ExecuteStateless(ctx context.Context, config *params.ChainConfig, vmconfig 
 		config:      config,
 		chainDb:     memdb,
 		headerCache: lru.NewCache[common.Hash, *types.Header](256),
-		engine:      beacon.New(ethash.NewFaker()),
+		engine:      randomx.NewFaker(),
 	}
 	processor := NewStateProcessor(chain)
 	validator := NewBlockValidator(config, nil) // No chain, we only validate the state, not the block

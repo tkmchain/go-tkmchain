@@ -26,7 +26,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -87,7 +87,7 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 
 func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 	genesis := &core.Genesis{
-		Config: params.AllEthashProtocolChanges,
+		Config: params.AllRandomXProtocolChanges,
 		Alloc: types.GenesisAlloc{
 			testAddr:     {Balance: testBalance, Storage: map[common.Hash]common.Hash{testSlot: testValue}},
 			testContract: {Nonce: 1, Code: []byte{0x13, 0x37}},
@@ -114,7 +114,7 @@ func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 		g.AddTx(tx)
 		txHashes = append(txHashes, tx.Hash())
 	}
-	_, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 1, generate)
+	_, blocks, _ := core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), 1, generate)
 	blocks = append([]*types.Block{genesis.ToBlock()}, blocks...)
 	return genesis, blocks, txHashes
 }

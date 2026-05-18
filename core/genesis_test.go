@@ -25,7 +25,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -130,10 +130,10 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				tdb := triedb.NewDatabase(db, newDbConfig(scheme))
 				oldcustomg.Commit(db, tdb, nil)
 
-				bc, _ := NewBlockChain(db, &oldcustomg, ethash.NewFullFaker(), DefaultConfig().WithStateScheme(scheme))
+				bc, _ := NewBlockChain(db, &oldcustomg, randomx.NewFullFaker(), DefaultConfig().WithStateScheme(scheme))
 				defer bc.Stop()
 
-				_, blocks, _ := GenerateChainWithGenesis(&oldcustomg, ethash.NewFaker(), 4, nil)
+				_, blocks, _ := GenerateChainWithGenesis(&oldcustomg, randomx.NewFaker(), 4, nil)
 				bc.InsertChain(blocks)
 
 				// This should return a compatibility error.

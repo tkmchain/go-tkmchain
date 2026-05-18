@@ -32,11 +32,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/accounts/usbwallet"
-	"github.com/ethereum/go-ethereum/beacon/blsync"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/syncer"
 	"github.com/ethereum/go-ethereum/internal/flags"
@@ -45,7 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/naoina/toml"
 	"github.com/urfave/cli/v2"
 )
@@ -292,30 +289,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 	utils.RegisterSyncOverrideService(stack, eth, syncConfig)
 
 	if ctx.Bool(utils.DeveloperFlag.Name) {
-		// Start dev mode.
-		simBeacon, err := catalyst.NewSimulatedBeacon(ctx.Uint64(utils.DeveloperPeriodFlag.Name), cfg.Eth.Miner.PendingFeeRecipient, eth)
-		if err != nil {
-			utils.Fatalf("failed to register dev mode catalyst service: %v", err)
-		}
-		catalyst.RegisterSimulatedBeaconAPIs(stack, simBeacon)
-		stack.RegisterLifecycle(simBeacon)
-
 		banner := constructDevModeBanner(ctx, cfg)
 		for _, line := range strings.Split(banner, "\n") {
 			log.Warn(line)
-		}
-	} else if ctx.IsSet(utils.BeaconApiFlag.Name) {
-		// Start blsync mode.
-		srv := rpc.NewServer()
-		srv.RegisterName("engine", catalyst.NewConsensusAPI(eth))
-		blsyncer := blsync.NewClient(utils.MakeBeaconLightConfig(ctx))
-		blsyncer.SetEngineRPC(rpc.DialInProc(srv))
-		stack.RegisterLifecycle(blsyncer)
-	} else {
-		// Launch the engine API for interacting with external consensus client.
-		err := catalyst.Register(stack, eth)
-		if err != nil {
-			utils.Fatalf("failed to register catalyst service: %v", err)
 		}
 	}
 	return stack

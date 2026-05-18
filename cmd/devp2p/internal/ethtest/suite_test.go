@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/utesting"
 	"github.com/ethereum/go-ethereum/node"
@@ -144,9 +143,6 @@ func setupGeth(stack *node.Node, dir string) error {
 	})
 	if err != nil {
 		return err
-	}
-	if err := catalyst.Register(stack, backend); err != nil {
-		return fmt.Errorf("failed to register catalyst service: %v", err)
 	}
 	_, err = backend.BlockChain().InsertChain(chain.blocks[1:])
 	return err

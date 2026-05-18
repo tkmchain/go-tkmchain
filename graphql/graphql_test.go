@@ -28,8 +28,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -65,7 +64,7 @@ func TestGraphQLBlockSerialization(t *testing.T) {
 	stack := createNode(t)
 	defer stack.Close()
 	genesis := &core.Genesis{
-		Config:     params.AllEthashProtocolChanges,
+		Config:     params.AllRandomXProtocolChanges,
 		GasLimit:   11500000,
 		Difficulty: big.NewInt(1048576),
 	}
@@ -186,7 +185,7 @@ func TestGraphQLBlockSerializationEIP2718(t *testing.T) {
 	stack := createNode(t)
 	defer stack.Close()
 	genesis := &core.Genesis{
-		Config:     params.AllEthashProtocolChanges,
+		Config:     params.AllRandomXProtocolChanges,
 		GasLimit:   11500000,
 		Difficulty: big.NewInt(1048576),
 		Alloc: types.GenesisAlloc{
@@ -283,7 +282,7 @@ func TestGraphQLConcurrentResolvers(t *testing.T) {
 		dadStr  = "0x0000000000000000000000000000000000000dad"
 		dad     = common.HexToAddress(dadStr)
 		genesis = &core.Genesis{
-			Config:     params.AllEthashProtocolChanges,
+			Config:     params.AllRandomXProtocolChanges,
 			GasLimit:   11500000,
 			Difficulty: big.NewInt(1048576),
 			Alloc: types.GenesisAlloc{
@@ -376,7 +375,7 @@ func TestWithdrawals(t *testing.T) {
 		addr   = crypto.PubkeyToAddress(key.PublicKey)
 
 		genesis = &core.Genesis{
-			Config:     params.AllEthashProtocolChanges,
+			Config:     params.AllRandomXProtocolChanges,
 			GasLimit:   11500000,
 			Difficulty: common.Big1,
 			Alloc: types.GenesisAlloc{
@@ -489,7 +488,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 		RPCGasCap:      1000000,
 		StateScheme:    rawdb.HashScheme,
 	}
-	var engine = beacon.New(ethash.NewFaker())
+	var engine = randomx.NewFaker()
 	if shanghai {
 		gspec.Config.TerminalTotalDifficulty = common.Big0
 		gspec.Config.MergeNetsplitBlock = common.Big0
@@ -504,7 +503,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 		t.Fatalf("could not create eth backend: %v", err)
 	}
 	// Create some blocks and import them
-	chain, _ := core.GenerateChain(params.AllEthashProtocolChanges, ethBackend.BlockChain().Genesis(),
+	chain, _ := core.GenerateChain(params.AllRandomXProtocolChanges, ethBackend.BlockChain().Genesis(),
 		engine, ethBackend.ChainDb(), genBlocks, genfunc)
 	_, err = ethBackend.BlockChain().InsertChain(chain)
 	if err != nil {

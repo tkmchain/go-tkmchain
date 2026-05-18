@@ -23,8 +23,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
@@ -75,7 +74,7 @@ func testEthTransferLogs(t *testing.T, value uint64) {
 		testEvent2 = crypto.Keccak256Hash([]byte("TestEvent2()"))
 		config     = *params.MergedTestChainConfig
 		signer     = types.LatestSigner(&config)
-		engine     = beacon.New(ethash.NewFaker())
+		engine     = randomx.NewFaker()
 	)
 
 	//TODO remove this hacky config initialization when final Amsterdam config is available

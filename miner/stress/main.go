@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-// This file contains a miner stress test based on the Engine API flow.
+// This file contains a miner stress test based on the RandomX proof-of-work flow.
 package main
 
 import (
@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/log"
@@ -51,22 +50,19 @@ func main() {
 	for i := 0; i < len(faucets); i++ {
 		faucets[i], _ = crypto.GenerateKey()
 	}
-	// Create a post-merge network where blocks are built/inserted through
-	// engine API calls driven by a simulated beacon client.
+	// Create a RandomX proof-of-work network where blocks are built locally.
 	genesis := makeGenesis(faucets)
 
 	// Handle interrupts.
 	interruptCh := make(chan os.Signal, 5)
 	signal.Notify(interruptCh, os.Interrupt)
 
-	// Start one node that accepts transactions and builds/inserts blocks via
-	// Engine API (through the simulated beacon driver).
-	stack, backend, beacon, err := makeNode(genesis)
+	// Start one node that accepts transactions and builds/inserts blocks.
+	stack, backend, driver, err := makeNode(genesis)
 	if err != nil {
 		panic(err)
 	}
 	defer stack.Close()
-	defer beacon.Stop()
 
 	// Start injecting transactions from the faucet like crazy
 	var (
@@ -118,20 +114,20 @@ func main() {
 		}
 		sent++
 
-		// Create and import blocks through the engine API path.
+		// Create and import blocks through the local RandomX path.
 		if sent%256 == 0 {
-			beacon.Commit()
+			driver.Commit()
 		}
 
 		// Wait if we're too saturated
 		if pend, _ := backend.TxPool().Stats(); pend > 4096 {
-			beacon.Commit()
+			driver.Commit()
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
-// makeGenesis creates a post-merge genesis block.
+// makeGenesis creates a RandomX genesis block.
 func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	config := *params.AllDevChainProtocolChanges
 	config.ChainID = big.NewInt(18)
@@ -167,7 +163,22 @@ func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	return genesis
 }
 
-func makeNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.SimulatedBeacon, error) {
+type powDriver struct {
+	backend *eth.Ethereum
+}
+
+func (d *powDriver) Commit() common.Hash {
+	block, _, _ := d.backend.Miner().Pending()
+	if block == nil {
+		return common.Hash{}
+	}
+	if _, err := d.backend.BlockChain().InsertChain(types.Blocks{block}); err != nil {
+		panic(err)
+	}
+	return block.Hash()
+}
+
+func makeNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *powDriver, error) {
 	// Define the basic configurations for the Ethereum node
 	datadir, _ := os.MkdirTemp("", "")
 
@@ -199,12 +210,5 @@ func makeNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.Simul
 	if err := stack.Start(); err != nil {
 		return nil, nil, nil, err
 	}
-	driver, err := catalyst.NewSimulatedBeacon(0, common.Address{}, ethBackend)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if err := driver.Start(); err != nil {
-		return nil, nil, nil, err
-	}
-	return stack, ethBackend, driver, nil
+	return stack, ethBackend, &powDriver{backend: ethBackend}, nil
 }

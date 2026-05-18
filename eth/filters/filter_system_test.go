@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -218,7 +218,7 @@ func TestBlockSubscription(t *testing.T) {
 			Config:  params.TestChainConfig,
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		_, chain, _ = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
+		_, chain, _ = core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
 		chainEvents []core.ChainEvent
 	)
 
@@ -456,7 +456,7 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 			Config:  params.TestChainConfig,
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		db, blocks, _    = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
+		db, blocks, _    = core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
 		_, sys           = newTestFilterSystem(db, Config{LogQueryLimit: 10})
 		api              = NewFilterAPI(sys)
 		blockHash        = blocks[0].Hash()
@@ -464,7 +464,7 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 	)
 
 	// Insert the blocks into the chain so filter can look them up
-	blockchain, err := core.NewBlockChain(db, genesis, ethash.NewFaker(), nil)
+	blockchain, err := core.NewBlockChain(db, genesis, randomx.NewFaker(), nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -550,11 +550,11 @@ func TestExceedLogQueryLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {})
+	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), randomx.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {})
 
 	options := core.DefaultConfig().WithStateScheme(rawdb.HashScheme)
 	options.TxLookupLimit = 0 // index all txs
-	bc, err := core.NewBlockChain(db, gspec, ethash.NewFaker(), options)
+	bc, err := core.NewBlockChain(db, gspec, randomx.NewFaker(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +802,7 @@ func TestTransactionReceiptsSubscription(t *testing.T) {
 			Config:  params.TestChainConfig,
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		_, chain, _ = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 1, func(i int, gen *core.BlockGen) {
+		_, chain, _ = core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), 1, func(i int, gen *core.BlockGen) {
 			// Add transactions to the block
 			for j := 0; j < txNum; j++ {
 				toAddr := common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268")
@@ -820,7 +820,7 @@ func TestTransactionReceiptsSubscription(t *testing.T) {
 	)
 
 	// Insert the blocks into the chain
-	blockchain, err := core.NewBlockChain(db, genesis, ethash.NewFaker(), nil)
+	blockchain, err := core.NewBlockChain(db, genesis, randomx.NewFaker(), nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}

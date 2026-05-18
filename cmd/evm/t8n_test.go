@@ -499,11 +499,11 @@ func (args *b11rInput) get(base string) []string {
 		out = append(out, "--seal.ethash")
 	}
 	if opt := args.ethashMode; opt != "" {
-		out = append(out, "--seal.ethash.mode")
+		out = append(out, "--seal.randomx.mode")
 		out = append(out, fmt.Sprintf("%v/%v", base, opt))
 	}
 	if opt := args.ethashDir; opt != "" {
-		out = append(out, "--seal.ethash.dir")
+		out = append(out, "--seal.randomx.dir")
 		out = append(out, fmt.Sprintf("%v/%v", base, opt))
 	}
 	out = append(out, "--output.block")

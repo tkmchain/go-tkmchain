@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -59,7 +59,7 @@ type testEnv struct {
 }
 
 func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
-	genDb, blocks, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), n, func(i int, gen *core.BlockGen) {
+	genDb, blocks, _ := core.GenerateChainWithGenesis(gspec, randomx.NewFaker(), n, func(i int, gen *core.BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, gen.BaseFee(), nil), signer, key)
 		if err != nil {
 			panic(err)
@@ -68,7 +68,7 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 	})
 
 	db := rawdb.NewMemoryDatabase()
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, _ := core.NewBlockChain(db, gspec, randomx.NewFaker(), nil)
 
 	legacyPool := legacypool.New(legacypool.DefaultConfig, chain)
 	pool, err := txpool.New(gasTip, chain, []txpool.SubPool{legacyPool})
@@ -129,7 +129,7 @@ func (env *testEnv) makeTxs(n int) []*types.Transaction {
 func (env *testEnv) commit() {
 	head := env.chain.CurrentBlock()
 	block := env.chain.GetBlock(head.Hash(), head.Number.Uint64())
-	blocks, _ := core.GenerateChain(env.chain.Config(), block, ethash.NewFaker(), env.genDb, 1, func(i int, gen *core.BlockGen) {
+	blocks, _ := core.GenerateChain(env.chain.Config(), block, randomx.NewFaker(), env.genDb, 1, func(i int, gen *core.BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, gen.BaseFee(), nil), signer, key)
 		if err != nil {
 			panic(err)

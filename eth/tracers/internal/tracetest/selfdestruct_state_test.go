@@ -22,8 +22,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -142,9 +141,9 @@ func verifyAccountState(t *testing.T, addr common.Address, actual, expected *acc
 func setupTestBlockchain(t *testing.T, genesis *core.Genesis, tx *types.Transaction, useBeacon bool) (*core.BlockChain, *types.Block, *state.StateDB) {
 	var engine consensus.Engine
 	if useBeacon {
-		engine = beacon.New(ethash.NewFaker())
+		engine = randomx.NewFaker()
 	} else {
-		engine = ethash.NewFaker()
+		engine = randomx.NewFaker()
 	}
 
 	_, blocks, _ := core.GenerateChainWithGenesis(genesis, engine, 1, func(i int, b *core.BlockGen) {
@@ -284,7 +283,7 @@ func TestSelfdestructStateTracer(t *testing.T) {
 			description:    "Pre-EIP-6780: Existing contract selfdestructs to recipient. Contract should be destroyed and balance transferred.",
 			targetContract: contract,
 			genesis: &core.Genesis{
-				Config: params.AllEthashProtocolChanges,
+				Config: params.AllRandomXProtocolChanges,
 				Alloc: types.GenesisAlloc{
 					caller: {Balance: big.NewInt(params.Ether)},
 					contract: {
@@ -344,7 +343,7 @@ func TestSelfdestructStateTracer(t *testing.T) {
 			description:    "Pre-EIP-6780: Factory creates contract with 100 wei, contract selfdestructs back to factory. Contract destroyed, factory gets refund.",
 			targetContract: factory,
 			genesis: &core.Genesis{
-				Config: params.AllEthashProtocolChanges,
+				Config: params.AllRandomXProtocolChanges,
 				Alloc: types.GenesisAlloc{
 					caller: {Balance: big.NewInt(params.Ether)},
 					factory: {
@@ -404,7 +403,7 @@ func TestSelfdestructStateTracer(t *testing.T) {
 			description:    "Pre-EIP-6780: Contract A selfdestructs sending funds to B, then B sends funds back to A's address. Funds sent to destroyed address are burnt.",
 			targetContract: coordinator,
 			genesis: &core.Genesis{
-				Config: params.AllEthashProtocolChanges,
+				Config: params.AllRandomXProtocolChanges,
 				Alloc: types.GenesisAlloc{
 					caller: {Balance: big.NewInt(params.Ether)},
 					contractA: {

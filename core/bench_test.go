@@ -23,7 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -195,11 +195,11 @@ func benchInsertChain(b *testing.B, disk bool, gen func(int, *BlockGen)) {
 		Config: params.TestChainConfig,
 		Alloc:  types.GenesisAlloc{benchRootAddr: {Balance: benchRootFunds}},
 	}
-	_, chain, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), b.N, gen)
+	_, chain, _ := GenerateChainWithGenesis(gspec, randomx.NewFaker(), b.N, gen)
 
 	// Time the insertion of the new chain.
 	// State and blocks are stored in the same DB.
-	chainman, _ := NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chainman, _ := NewBlockChain(db, gspec, randomx.NewFaker(), nil)
 	defer chainman.Stop()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -300,7 +300,7 @@ func makeChainForBench(db ethdb.Database, genesis *Genesis, full bool, count uin
 }
 
 func benchWriteChain(b *testing.B, full bool, count uint64) {
-	genesis := &Genesis{Config: params.AllEthashProtocolChanges}
+	genesis := &Genesis{Config: params.AllRandomXProtocolChanges}
 	for b.Loop() {
 		pdb, err := pebble.New(b.TempDir(), 1024, 128, "", false)
 		if err != nil {
@@ -321,7 +321,7 @@ func benchReadChain(b *testing.B, full bool, count uint64) {
 	}
 	db := rawdb.NewDatabase(pdb)
 
-	genesis := &Genesis{Config: params.AllEthashProtocolChanges}
+	genesis := &Genesis{Config: params.AllRandomXProtocolChanges}
 	makeChainForBench(db, genesis, full, count)
 	db.Close()
 	options := DefaultConfig().WithArchive(true)
@@ -333,7 +333,7 @@ func benchReadChain(b *testing.B, full bool, count uint64) {
 		}
 		db = rawdb.NewDatabase(pdb)
 
-		chain, err := NewBlockChain(db, genesis, ethash.NewFaker(), options)
+		chain, err := NewBlockChain(db, genesis, randomx.NewFaker(), options)
 		if err != nil {
 			b.Fatalf("error creating chain: %v", err)
 		}

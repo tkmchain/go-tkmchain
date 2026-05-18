@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -81,7 +81,7 @@ func TestTxIndexer(t *testing.T) {
 			Alloc:   types.GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		engine    = ethash.NewFaker()
+		engine    = randomx.NewFaker()
 		nonce     = uint64(0)
 		chainHead = uint64(128)
 	)
@@ -144,7 +144,7 @@ func TestTxIndexerRepair(t *testing.T) {
 			Alloc:   types.GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		engine    = ethash.NewFaker()
+		engine    = randomx.NewFaker()
 		nonce     = uint64(0)
 		chainHead = uint64(128)
 	)
@@ -269,7 +269,7 @@ func TestTxIndexerReport(t *testing.T) {
 			Alloc:   types.GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		engine    = ethash.NewFaker()
+		engine    = randomx.NewFaker()
 		nonce     = uint64(0)
 		chainHead = uint64(128)
 	)

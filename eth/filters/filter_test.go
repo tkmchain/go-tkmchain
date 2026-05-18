@@ -27,7 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -76,7 +76,7 @@ func benchmarkFilters(b *testing.B, history uint64, noHistory bool) {
 		}
 	)
 	defer db.Close()
-	_, chain, receipts := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), 100010, func(i int, gen *core.BlockGen) {
+	_, chain, receipts := core.GenerateChainWithGenesis(gspec, randomx.NewFaker(), 100010, func(i int, gen *core.BlockGen) {
 		switch i {
 		case 2403:
 			receipt := makeReceipt(addr1)
@@ -210,7 +210,7 @@ func testFilters(t *testing.T, history uint64, noHistory bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {
+	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), randomx.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {
 		switch i {
 		case 1:
 			data, err := contractABI.Pack("log1", hash1.Big())
@@ -276,7 +276,7 @@ func testFilters(t *testing.T, history uint64, noHistory bool) {
 	})
 	options := core.DefaultConfig().WithStateScheme(rawdb.HashScheme)
 	options.TxLookupLimit = 0 // index all txs
-	bc, err := core.NewBlockChain(db, gspec, ethash.NewFaker(), options)
+	bc, err := core.NewBlockChain(db, gspec, randomx.NewFaker(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func testFilters(t *testing.T, history uint64, noHistory bool) {
 	bc.SetFinalized(chain[998].Header())
 
 	// Generate pending block
-	pchain, preceipts := core.GenerateChain(gspec.Config, chain[len(chain)-1], ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {
+	pchain, preceipts := core.GenerateChain(gspec.Config, chain[len(chain)-1], randomx.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {
 		data, err := contractABI.Pack("log1", hash5.Big())
 		if err != nil {
 			t.Fatal(err)
@@ -432,11 +432,11 @@ func TestRangeLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {})
+	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), randomx.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {})
 
 	options := core.DefaultConfig().WithStateScheme(rawdb.HashScheme)
 	options.TxLookupLimit = 0 // index all txs
-	bc, err := core.NewBlockChain(db, gspec, ethash.NewFaker(), options)
+	bc, err := core.NewBlockChain(db, gspec, randomx.NewFaker(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,10 +618,10 @@ func TestRangeLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
+	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), randomx.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
 	options := core.DefaultConfig().WithStateScheme(rawdb.HashScheme)
 	options.TxLookupLimit = 0
-	bc, err := core.NewBlockChain(db, gspec, ethash.NewFaker(), options)
+	bc, err := core.NewBlockChain(db, gspec, randomx.NewFaker(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
