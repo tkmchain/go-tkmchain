@@ -33,6 +33,7 @@ import (
         "github.com/ethereum/go-ethereum/consensus/misc"
         "github.com/ethereum/go-ethereum/consensus/misc/eip1559"
         "github.com/ethereum/go-ethereum/core/state"
+        "github.com/ethereum/go-ethereum/core/tracing"
         "github.com/ethereum/go-ethereum/core/types"
         "github.com/ethereum/go-ethereum/crypto"
         "github.com/ethereum/go-ethereum/crypto/keccak"
@@ -342,7 +343,7 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
         r.Finalize(chain, header, state, body)
-        header.Bloom = types.CreateBloom(receipts)
+        header.Bloom = types.MergeBloom(receipts)
         return types.NewBlock(header, body, receipts, nil), nil
 }
 
@@ -467,10 +468,10 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
         binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
         copy(input[32:], nonceBytes)
 
-        output := make([]byte, 32)
+        output := &[32]byte{}
         vm.CalculateHash(input, output)
 
-        mixDigest := common.BytesToHash(output[:32])
+        mixDigest := common.BytesToHash(output[:])
         result := new(big.Int).SetBytes(output[:])
 
         return mixDigest, result
@@ -540,7 +541,6 @@ func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
 	}
 
 	seed := r.seedHash(epoch * r.config.EpochLength)
-	seedBytes := seed.Bytes()
 
 	log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
 
@@ -554,99 +554,23 @@ func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
 	startTime := time.Now()
 	var err error
 	
-	// NewCache only takes Flags, not seed bytes
-	// The seed is set internally or we need to use a different approach
 	r.cache, err = randomx_lib.NewCache(0)
 	if err != nil {
 		return fmt.Errorf("failed to create RandomX cache: %w", err)
 	}
+	r.cache.Init(seed.Bytes())
 	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
 	startTime = time.Now()
-	// NewDataset takes Flags and Cache
-	r.dataset, err = randomx_lib.NewDataset(0, r.cache)
+	r.dataset, err = randomx_lib.NewDataset(0)
 	if err != nil {
 		return fmt.Errorf("failed to create RandomX dataset: %w", err)
 	}
+	r.dataset.InitDatasetParallel(r.cache, r.threads)
 	log.Info("RandomX dataset created", "epoch", epoch, "duration", time.Since(startTime))
 
 	r.cacheEpoch = epoch
 	return nil
-}
-
-// Update hashimoto - CalculateHash expects *[32]byte, not []byte
-func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
-	input := make([]byte, 40)
-	copy(input[:32], seed.Bytes())
-	
-	nonceBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
-	copy(input[32:], nonceBytes)
-
-	// CalculateHash expects *[32]byte for output
-	output := &[32]byte{}
-	vm.CalculateHash(input, output)
-
-	mixDigest := common.BytesToHash(output[:])
-	result := new(big.Int).SetBytes(output[:])
-
-	return mixDigest, result
-}
-
-// Update getVM - NewVM signature may be different
-func (r *RandomX) getVM() (*randomx_lib.VM, error) {
-	r.cacheMu.RLock()
-	defer r.cacheMu.RUnlock()
-
-	if r.cache == nil {
-		return nil, errNoCache
-	}
-
-	// Try different NewVM signatures based on what the library expects
-	if r.dataset != nil {
-		return randomx_lib.NewVM(0, r.cache, r.dataset)
-	}
-	return randomx_lib.NewVM(0, r.cache, nil)
-}
-
-// Update FinalizeAndAssemble - CreateBloom is correct, receipts is already []*types.Receipt
-func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	r.Finalize(chain, header, state, body)
-	header.Bloom = types.CreateBloom(receipts)
-	return types.NewBlock(header, body, receipts, nil), nil
-}
-
-// Update accumulateRewards - AddBalance now requires a tracing.BalanceChangeReason
-func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, header *types.Header, uncles []*types.Header) {
-	blockReward := FrontierBlockReward
-	if config.IsByzantium(header.Number) {
-		blockReward = ByzantiumBlockReward
-	}
-	if config.IsConstantinople(header.Number) {
-		blockReward = ConstantinopleBlockReward
-	}
-
-	reward := new(uint256.Int).Set(blockReward)
-	r := new(uint256.Int)
-	hNum, _ := uint256.FromBig(header.Number)
-
-	// Import tracing package if needed
-	// import "github.com/ethereum/go-ethereum/core/tracing"
-	
-	for _, uncle := range uncles {
-		uNum, _ := uint256.FromBig(uncle.Number)
-		r.AddUint64(uNum, 8)
-		r.Sub(r, hNum)
-		r.Mul(r, blockReward)
-		r.Rsh(r, 3)
-		// Add the BalanceChangeReason parameter
-		stateDB.AddBalance(uncle.Coinbase, r, tracing.BalanceIncreaseRewardMineUncle)
-
-		r.Rsh(blockReward, 5)
-		reward.Add(reward, r)
-	}
-
-	stateDB.AddBalance(header.Coinbase, reward, tracing.BalanceIncreaseRewardMineBlock)
 }
 
 // getVM creates a new RandomX VM for hash computation.
@@ -659,9 +583,9 @@ func (r *RandomX) getVM() (*randomx_lib.VM, error) {
         }
 
         if r.dataset != nil {
-                return randomx_lib.NewVM(0, nil, r.dataset)
+                return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
         }
-        return randomx_lib.NewVM(0, r.cache, nil)
+        return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_DEFAULT, r.cache, nil)
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
@@ -725,11 +649,11 @@ func accumulateRewards(config *params.ChainConfig, stateDB *state.StateDB, heade
                 r.Sub(r, hNum)
                 r.Mul(r, blockReward)
                 r.Rsh(r, 3)
-                stateDB.AddBalance(uncle.Coinbase, r)
+                stateDB.AddBalance(uncle.Coinbase, r, tracing.BalanceIncreaseRewardMineUncle)
 
                 r.Rsh(blockReward, 5)
                 reward.Add(reward, r)
         }
 
-        stateDB.AddBalance(header.Coinbase, reward)
+        stateDB.AddBalance(header.Coinbase, reward, tracing.BalanceIncreaseRewardMineBlock)
 }
