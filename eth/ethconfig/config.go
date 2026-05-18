@@ -18,7 +18,6 @@
 package ethconfig
 
 import (
-	"errors"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
@@ -219,16 +219,19 @@ type Config struct {
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.
-// Clique is allowed for now to live standalone, but ethash is forbidden and can
-// only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
-	if config.TerminalTotalDifficulty == nil {
-		log.Error("Geth only supports PoS networks. Please transition legacy networks using Geth v1.13.x.")
-		return nil, errors.New("'terminalTotalDifficulty' is not set in genesis block")
+	var engine consensus.Engine
+	switch {
+	case config.RandomX != nil:
+		engine = randomx.NewFaker()
+	case config.Clique != nil:
+		engine = clique.New(config.Clique, db)
+	default:
+		engine = ethash.NewFaker()
 	}
-	// Wrap previously supported consensus engines into their post-merge counterpart
-	if config.Clique != nil {
-		return beacon.New(clique.New(config.Clique, db)), nil
+	if config.TerminalTotalDifficulty != nil {
+		return beacon.New(engine), nil
 	}
-	return beacon.New(ethash.NewFaker()), nil
+	log.Warn("Running legacy proof-of-work network without terminal total difficulty")
+	return engine, nil
 }
