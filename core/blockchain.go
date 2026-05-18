@@ -1947,16 +1947,12 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 		// its header and body was already in the database). But if the corresponding
 		// snapshot layer is missing, forcibly rerun the execution to build it.
 		if bc.skipBlock(err, it) {
-			logger := log.Debug
-			if bc.chainConfig.Clique == nil {
-				logger = log.Warn
-			}
-			logger("Inserted known block", "number", block.Number(), "hash", block.Hash(),
+			log.Warn("Inserted known block", "number", block.Number(), "hash", block.Hash(),
 				"uncles", len(block.Uncles()), "txs", len(block.Transactions()), "gas", block.GasUsed(),
 				"root", block.Root())
 
 			// Special case. Commit the empty receipt slice if we meet the known
-			// block in the middle. It can only happen in the clique chain. Whenever
+			// block in the middle. Whenever
 			// we insert blocks via `insertSideChain`, we only commit `td`, `header`
 			// and `body` if it's non-existent. Since we don't have receipts without
 			// reexecution, so nothing to commit. But if the sidechain will be adopted

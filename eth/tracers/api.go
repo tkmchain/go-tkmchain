@@ -1073,10 +1073,6 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.GrayGlacierBlock = block
 		canon = false
 	}
-	if block := override.MergeNetsplitBlock; block != nil {
-		copy.MergeNetsplitBlock = block
-		canon = false
-	}
 	if timestamp := override.ShanghaiTime; timestamp != nil {
 		copy.ShanghaiTime = timestamp
 		canon = false

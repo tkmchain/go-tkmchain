@@ -160,7 +160,7 @@ func Transition(ctx *cli.Context) error {
 	if err := applyShanghaiChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
-	if err := applyMergeChecks(&prestate.Env, chainConfig); err != nil {
+	if err := applyDifficultyChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
 	if err := applyCancunChecks(&prestate.Env, chainConfig); err != nil {
@@ -307,50 +307,26 @@ func applyShanghaiChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 	return nil
 }
 
-func applyMergeChecks(env *stEnv, chainConfig *params.ChainConfig) error {
-	isMerged := chainConfig.TerminalTotalDifficulty != nil && chainConfig.TerminalTotalDifficulty.BitLen() == 0
-	if !isMerged {
-		// pre-merge: If difficulty was not provided by caller, we need to calculate it.
-		if env.Difficulty != nil {
-			// already set
-			return nil
-		}
-		switch {
-		case env.ParentDifficulty == nil:
-			return NewError(ErrorConfig, errors.New("currentDifficulty was not provided, and cannot be calculated due to missing parentDifficulty"))
-		case env.Number == 0:
-			return NewError(ErrorConfig, errors.New("currentDifficulty needs to be provided for block number 0"))
-		case env.Timestamp <= env.ParentTimestamp:
-			return NewError(ErrorConfig, fmt.Errorf("currentDifficulty cannot be calculated -- currentTime (%d) needs to be after parent time (%d)",
-				env.Timestamp, env.ParentTimestamp))
-		}
-		env.Difficulty = calcDifficulty(chainConfig, env.Number, env.Timestamp,
-			env.ParentTimestamp, env.ParentDifficulty, env.ParentUncleHash)
+func applyDifficultyChecks(env *stEnv, chainConfig *params.ChainConfig) error {
+	if env.Difficulty != nil {
 		return nil
 	}
-	// post-merge:
-	// - random must be supplied
-	// - difficulty must be zero
 	switch {
-	case env.Random == nil:
-		return NewError(ErrorConfig, errors.New("post-merge requires currentRandom to be defined in env"))
-	case env.Difficulty != nil && env.Difficulty.BitLen() != 0:
-		return NewError(ErrorConfig, errors.New("post-merge difficulty must be zero (or omitted) in env"))
+	case env.ParentDifficulty == nil:
+		return NewError(ErrorConfig, errors.New("currentDifficulty was not provided, and cannot be calculated due to missing parentDifficulty"))
+	case env.Number == 0:
+		return NewError(ErrorConfig, errors.New("currentDifficulty needs to be provided for block number 0"))
+	case env.Timestamp <= env.ParentTimestamp:
+		return NewError(ErrorConfig, fmt.Errorf("currentDifficulty cannot be calculated -- currentTime (%d) needs to be after parent time (%d)",
+			env.Timestamp, env.ParentTimestamp))
 	}
-	env.Difficulty = nil
+	env.Difficulty = calcDifficulty(chainConfig, env.Number, env.Timestamp,
+		env.ParentTimestamp, env.ParentDifficulty, env.ParentUncleHash)
 	return nil
 }
 
 func applyCancunChecks(env *stEnv, chainConfig *params.ChainConfig) error {
-	if !chainConfig.IsCancun(big.NewInt(int64(env.Number)), env.Timestamp) {
-		env.ParentBeaconBlockRoot = nil // un-set it if it has been set too early
-		return nil
-	}
-	// Post-cancun
-	// We require EIP-4788 beacon root to be set in the env
-	if env.ParentBeaconBlockRoot == nil {
-		return NewError(ErrorConfig, errors.New("post-cancun env requires parentBeaconBlockRoot to be set"))
-	}
+	env.ParentBeaconBlockRoot = nil
 	return nil
 }
 

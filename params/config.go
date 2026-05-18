@@ -21,6 +21,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/params/forks"
 )
 
 // Genesis hashes to enforce below configs on.
@@ -77,20 +78,22 @@ type ChainConfig struct {
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`
 
-	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty"`
-	CancunTime   *uint64 `json:"cancunTime,omitempty"`
-	PragueTime   *uint64 `json:"pragueTime,omitempty"`
-	OsakaTime    *uint64 `json:"osakaTime,omitempty"`
-	BPO1Time     *uint64 `json:"bpo1Time,omitempty"`
-	BPO2Time     *uint64 `json:"bpo2Time,omitempty"`
-	BPO3Time     *uint64 `json:"bpo3Time,omitempty"`
-	BPO4Time     *uint64 `json:"bpo4Time,omitempty"`
-	BPO5Time     *uint64 `json:"bpo5Time,omitempty"`
+	ShanghaiTime  *uint64 `json:"shanghaiTime,omitempty"`
+	CancunTime    *uint64 `json:"cancunTime,omitempty"`
+	PragueTime    *uint64 `json:"pragueTime,omitempty"`
+	OsakaTime     *uint64 `json:"osakaTime,omitempty"`
+	BPO1Time      *uint64 `json:"bpo1Time,omitempty"`
+	BPO2Time      *uint64 `json:"bpo2Time,omitempty"`
+	BPO3Time      *uint64 `json:"bpo3Time,omitempty"`
+	BPO4Time      *uint64 `json:"bpo4Time,omitempty"`
+	BPO5Time      *uint64 `json:"bpo5Time,omitempty"`
 	AmsterdamTime *uint64 `json:"amsterdamTime,omitempty"`
-	UBTTime      *uint64 `json:"ubtTime,omitempty"`
+	UBTTime       *uint64 `json:"ubtTime,omitempty"`
+
+	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
 	// RandomX consensus engine
-	RandomX            *RandomXConfig       `json:"randomx,omitempty"`
+	RandomX            *RandomXConfig      `json:"randomx,omitempty"`
 	BlobScheduleConfig *BlobScheduleConfig `json:"blobSchedule,omitempty"`
 }
 
@@ -172,33 +175,33 @@ var (
 
 // MainnetChainConfig is the chain parameters for RandomX mainnet.
 var MainnetChainConfig = &ChainConfig{
-	ChainID:                 big.NewInt(1),
-	HomesteadBlock:          big.NewInt(0),
-	DAOForkBlock:            nil,
-	DAOForkSupport:          true,
-	EIP150Block:             big.NewInt(0),
-	EIP155Block:             big.NewInt(0),
-	EIP158Block:             big.NewInt(0),
-	ByzantiumBlock:          big.NewInt(0),
-	ConstantinopleBlock:     big.NewInt(0),
-	PetersburgBlock:         big.NewInt(0),
-	IstanbulBlock:           big.NewInt(0),
-	BerlinBlock:             big.NewInt(0),
-	LondonBlock:             big.NewInt(0),
-	ArrowGlacierBlock:       nil,
-	GrayGlacierBlock:        nil,
-	ShanghaiTime:            newUint64(0),
-	CancunTime:              newUint64(0),
-	PragueTime:              nil,
-	OsakaTime:               nil,
-	BPO1Time:                nil,
-	BPO2Time:                nil,
-	BPO3Time:                nil,
-	BPO4Time:                nil,
-	BPO5Time:                nil,
-	AmsterdamTime:           nil,
-	UBTTime:                 nil,
-	RandomX:                 DefaultRandomXConfig(),
+	ChainID:             big.NewInt(1),
+	HomesteadBlock:      big.NewInt(0),
+	DAOForkBlock:        nil,
+	DAOForkSupport:      true,
+	EIP150Block:         big.NewInt(0),
+	EIP155Block:         big.NewInt(0),
+	EIP158Block:         big.NewInt(0),
+	ByzantiumBlock:      big.NewInt(0),
+	ConstantinopleBlock: big.NewInt(0),
+	PetersburgBlock:     big.NewInt(0),
+	IstanbulBlock:       big.NewInt(0),
+	BerlinBlock:         big.NewInt(0),
+	LondonBlock:         big.NewInt(0),
+	ArrowGlacierBlock:   nil,
+	GrayGlacierBlock:    nil,
+	ShanghaiTime:        newUint64(0),
+	CancunTime:          newUint64(0),
+	PragueTime:          nil,
+	OsakaTime:           nil,
+	BPO1Time:            nil,
+	BPO2Time:            nil,
+	BPO3Time:            nil,
+	BPO4Time:            nil,
+	BPO5Time:            nil,
+	AmsterdamTime:       nil,
+	UBTTime:             nil,
+	RandomX:             DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
 	},
@@ -206,37 +209,70 @@ var MainnetChainConfig = &ChainConfig{
 
 // TestChainConfig is the configuration for testing RandomX networks.
 var TestChainConfig = &ChainConfig{
-	ChainID:                 big.NewInt(1337),
-	HomesteadBlock:          big.NewInt(0),
-	DAOForkBlock:            nil,
-	DAOForkSupport:          false,
-	EIP150Block:             big.NewInt(0),
-	EIP155Block:             big.NewInt(0),
-	EIP158Block:             big.NewInt(0),
-	ByzantiumBlock:          big.NewInt(0),
-	ConstantinopleBlock:     big.NewInt(0),
-	PetersburgBlock:         big.NewInt(0),
-	IstanbulBlock:           big.NewInt(0),
-	BerlinBlock:             big.NewInt(0),
-	LondonBlock:             big.NewInt(0),
-	ArrowGlacierBlock:       nil,
-	GrayGlacierBlock:        nil,
-	ShanghaiTime:            nil,
-	CancunTime:              nil,
-	PragueTime:              nil,
-	OsakaTime:               nil,
-	BPO1Time:                nil,
-	BPO2Time:                nil,
-	BPO3Time:                nil,
-	BPO4Time:                nil,
-	BPO5Time:                nil,
-	AmsterdamTime:           nil,
-	UBTTime:                 nil,
-	RandomX:                 DefaultRandomXConfig(),
+	ChainID:             big.NewInt(1337),
+	HomesteadBlock:      big.NewInt(0),
+	DAOForkBlock:        nil,
+	DAOForkSupport:      false,
+	EIP150Block:         big.NewInt(0),
+	EIP155Block:         big.NewInt(0),
+	EIP158Block:         big.NewInt(0),
+	ByzantiumBlock:      big.NewInt(0),
+	ConstantinopleBlock: big.NewInt(0),
+	PetersburgBlock:     big.NewInt(0),
+	IstanbulBlock:       big.NewInt(0),
+	BerlinBlock:         big.NewInt(0),
+	LondonBlock:         big.NewInt(0),
+	ArrowGlacierBlock:   nil,
+	GrayGlacierBlock:    nil,
+	ShanghaiTime:        nil,
+	CancunTime:          nil,
+	PragueTime:          nil,
+	OsakaTime:           nil,
+	BPO1Time:            nil,
+	BPO2Time:            nil,
+	BPO3Time:            nil,
+	BPO4Time:            nil,
+	BPO5Time:            nil,
+	AmsterdamTime:       nil,
+	UBTTime:             nil,
+	RandomX:             DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
 	},
 }
+
+var (
+	AllRandomXProtocolChanges  = TestChainConfig
+	AllDevChainProtocolChanges = TestChainConfig
+	MergedTestChainConfig      = &ChainConfig{
+		ChainID:             big.NewInt(1337),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      false,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiTime:        newUint64(0),
+		CancunTime:          newUint64(0),
+		PragueTime:          newUint64(0),
+		OsakaTime:           newUint64(0),
+		RandomX:             DefaultRandomXConfig(),
+		BlobScheduleConfig: &BlobScheduleConfig{
+			Cancun: DefaultCancunBlobConfig,
+			Prague: DefaultPragueBlobConfig,
+			Osaka:  DefaultOsakaBlobConfig,
+		},
+	}
+	SepoliaChainConfig = TestChainConfig
+	HoleskyChainConfig = TestChainConfig
+	HoodiChainConfig   = TestChainConfig
+)
 
 // IsHomestead returns whether num is at or beyond Homestead.
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
@@ -381,7 +417,7 @@ type Rules struct {
 }
 
 // Rules returns the rules for the given block number and timestamp.
-func (c *ChainConfig) Rules(num *big.Int, timestamp uint64) Rules {
+func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules {
 	// EIP2929 is active from Berlin fork, but disabled during UBT/VERKLE
 	isEIP2929 := c.IsBerlin(num) && !c.IsUBT(num, timestamp)
 	isEIP4762 := c.IsUBT(num, timestamp)
@@ -412,8 +448,341 @@ func (c *ChainConfig) Rules(num *big.Int, timestamp uint64) Rules {
 		IsUBT:            c.IsUBT(num, timestamp),
 		IsEIP2929:        isEIP2929,
 		IsEIP4762:        isEIP4762,
-		IsMerge:          false, // RandomX chain never merged to PoS
+		IsMerge:          false, // RandomX chains always use proof-of-work consensus.
 	}
+}
+
+// IsUBTGenesis reports whether the UBT fork is enabled from genesis.
+func (c *ChainConfig) IsUBTGenesis() bool {
+	return c != nil && c.EnableUBTAtGenesis
+}
+
+// CheckConfigForkOrder validates that configured forks are ordered by activation.
+func (c *ChainConfig) CheckConfigForkOrder() error {
+	if c == nil {
+		return nil
+	}
+	blockForks := []struct {
+		name     string
+		block    *big.Int
+		optional bool
+	}{
+		{"homesteadBlock", c.HomesteadBlock, false},
+		{"daoForkBlock", c.DAOForkBlock, true},
+		{"eip150Block", c.EIP150Block, false},
+		{"eip155Block", c.EIP155Block, false},
+		{"eip158Block", c.EIP158Block, false},
+		{"byzantiumBlock", c.ByzantiumBlock, false},
+		{"constantinopleBlock", c.ConstantinopleBlock, false},
+		{"petersburgBlock", c.PetersburgBlock, true},
+		{"istanbulBlock", c.IstanbulBlock, false},
+		{"berlinBlock", c.BerlinBlock, false},
+		{"londonBlock", c.LondonBlock, false},
+		{"arrowGlacierBlock", c.ArrowGlacierBlock, true},
+		{"grayGlacierBlock", c.GrayGlacierBlock, true},
+	}
+	var lastName string
+	var lastBlock *big.Int
+	for _, fork := range blockForks {
+		if fork.block == nil {
+			if !fork.optional {
+				lastName, lastBlock = fork.name, nil
+			}
+			continue
+		}
+		if lastBlock != nil && fork.block.Cmp(lastBlock) < 0 {
+			return fmt.Errorf("unsupported fork ordering: %s enabled at block %v, but %s enabled at block %v", lastName, lastBlock, fork.name, fork.block)
+		}
+		lastName, lastBlock = fork.name, fork.block
+	}
+	timeForks := []struct {
+		name string
+		time *uint64
+	}{
+		{"shanghaiTime", c.ShanghaiTime},
+		{"cancunTime", c.CancunTime},
+		{"pragueTime", c.PragueTime},
+		{"osakaTime", c.OsakaTime},
+		{"bpo1Time", c.BPO1Time},
+		{"bpo2Time", c.BPO2Time},
+		{"bpo3Time", c.BPO3Time},
+		{"bpo4Time", c.BPO4Time},
+		{"bpo5Time", c.BPO5Time},
+		{"amsterdamTime", c.AmsterdamTime},
+		{"ubtTime", c.UBTTime},
+	}
+	lastName = ""
+	var lastTime *uint64
+	for _, fork := range timeForks {
+		if fork.time == nil {
+			continue
+		}
+		if lastTime != nil && *fork.time < *lastTime {
+			return fmt.Errorf("unsupported fork ordering: %s enabled at timestamp %v, but %s enabled at timestamp %v", lastName, *lastTime, fork.name, *fork.time)
+		}
+		lastName, lastTime = fork.name, fork.time
+	}
+	return nil
+}
+
+// ConfigCompatError is raised if a stored chain config is incompatible with a new one.
+type ConfigCompatError struct {
+	What          string
+	StoredBlock   *big.Int
+	NewBlock      *big.Int
+	StoredTime    *uint64
+	NewTime       *uint64
+	RewindToBlock uint64
+	RewindToTime  uint64
+}
+
+func (err *ConfigCompatError) Error() string {
+	if err == nil || err.What == "" {
+		return ""
+	}
+	if err.StoredTime != nil || err.NewTime != nil {
+		return fmt.Sprintf("mismatching %s in database (have timestamp %v, want timestamp %v, rewindto timestamp %v)", err.What, configTimestamp(err.StoredTime), configTimestamp(err.NewTime), err.RewindToTime)
+	}
+	return fmt.Sprintf("mismatching %s in database (have block %v, want block %v, rewindto block %v)", err.What, err.StoredBlock, err.NewBlock, err.RewindToBlock)
+}
+
+func configTimestamp(timestamp *uint64) any {
+	if timestamp == nil {
+		return "nil"
+	}
+	return *timestamp
+}
+
+func newBlockCompatError(what string, storedBlock, newBlock *big.Int) *ConfigCompatError {
+	rewind := uint64(0)
+	var rew *big.Int
+	if storedBlock == nil {
+		rew = newBlock
+	} else if newBlock == nil || storedBlock.Cmp(newBlock) < 0 {
+		rew = storedBlock
+	} else {
+		rew = newBlock
+	}
+	if rew != nil && rew.Sign() > 0 {
+		rewind = new(big.Int).Sub(rew, common.Big1).Uint64()
+	}
+	return &ConfigCompatError{What: what, StoredBlock: storedBlock, NewBlock: newBlock, RewindToBlock: rewind}
+}
+
+func newTimestampCompatError(what string, storedTime, newTime *uint64) *ConfigCompatError {
+	rewind := uint64(0)
+	switch {
+	case storedTime == nil && newTime != nil:
+		if *newTime > 0 {
+			rewind = *newTime - 1
+		}
+	case storedTime != nil && newTime == nil:
+		if *storedTime > 0 {
+			rewind = *storedTime - 1
+		}
+	case storedTime != nil && newTime != nil:
+		if *storedTime < *newTime {
+			if *storedTime > 0 {
+				rewind = *storedTime - 1
+			}
+		} else if *newTime > 0 {
+			rewind = *newTime - 1
+		}
+	}
+	return &ConfigCompatError{What: what, StoredTime: storedTime, NewTime: newTime, RewindToTime: rewind}
+}
+
+// CheckCompatible checks whether scheduled forks differ after the given chain head.
+func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, headBlock uint64, headTimestamp uint64) *ConfigCompatError {
+	var lastErr *ConfigCompatError
+	for {
+		err := c.checkCompatible(newcfg, headBlock, headTimestamp)
+		if err == nil {
+			return lastErr
+		}
+		if lastErr != nil && err.RewindToBlock == lastErr.RewindToBlock && err.RewindToTime == lastErr.RewindToTime {
+			return err
+		}
+		lastErr = err
+		if err.RewindToBlock != 0 {
+			headBlock = err.RewindToBlock
+		}
+		if err.RewindToTime != 0 {
+			headTimestamp = err.RewindToTime
+		}
+	}
+}
+
+func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, headTimestamp uint64) *ConfigCompatError {
+	if c == nil || newcfg == nil {
+		return nil
+	}
+	if isForkBlockIncompatible(c.HomesteadBlock, newcfg.HomesteadBlock, headBlock) {
+		return newBlockCompatError("Homestead fork block", c.HomesteadBlock, newcfg.HomesteadBlock)
+	}
+	if isForkBlockIncompatible(c.DAOForkBlock, newcfg.DAOForkBlock, headBlock) {
+		return newBlockCompatError("DAO fork block", c.DAOForkBlock, newcfg.DAOForkBlock)
+	}
+	if isForkBlockIncompatible(c.EIP150Block, newcfg.EIP150Block, headBlock) {
+		return newBlockCompatError("EIP150 fork block", c.EIP150Block, newcfg.EIP150Block)
+	}
+	if isForkBlockIncompatible(c.EIP155Block, newcfg.EIP155Block, headBlock) {
+		return newBlockCompatError("EIP155 fork block", c.EIP155Block, newcfg.EIP155Block)
+	}
+	if isForkBlockIncompatible(c.EIP158Block, newcfg.EIP158Block, headBlock) {
+		return newBlockCompatError("EIP158 fork block", c.EIP158Block, newcfg.EIP158Block)
+	}
+	if isForkBlockIncompatible(c.ByzantiumBlock, newcfg.ByzantiumBlock, headBlock) {
+		return newBlockCompatError("Byzantium fork block", c.ByzantiumBlock, newcfg.ByzantiumBlock)
+	}
+	if isForkBlockIncompatible(c.ConstantinopleBlock, newcfg.ConstantinopleBlock, headBlock) {
+		return newBlockCompatError("Constantinople fork block", c.ConstantinopleBlock, newcfg.ConstantinopleBlock)
+	}
+	if isForkBlockIncompatible(c.PetersburgBlock, newcfg.PetersburgBlock, headBlock) && isForkBlockIncompatible(c.ConstantinopleBlock, newcfg.PetersburgBlock, headBlock) {
+		return newBlockCompatError("Petersburg fork block", c.PetersburgBlock, newcfg.PetersburgBlock)
+	}
+	if isForkBlockIncompatible(c.IstanbulBlock, newcfg.IstanbulBlock, headBlock) {
+		return newBlockCompatError("Istanbul fork block", c.IstanbulBlock, newcfg.IstanbulBlock)
+	}
+	if isForkBlockIncompatible(c.BerlinBlock, newcfg.BerlinBlock, headBlock) {
+		return newBlockCompatError("Berlin fork block", c.BerlinBlock, newcfg.BerlinBlock)
+	}
+	if isForkBlockIncompatible(c.LondonBlock, newcfg.LondonBlock, headBlock) {
+		return newBlockCompatError("London fork block", c.LondonBlock, newcfg.LondonBlock)
+	}
+	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
+		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
+	}
+	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
+		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)
+	}
+	if isForkTimestampIncompatible(c.PragueTime, newcfg.PragueTime, headTimestamp) {
+		return newTimestampCompatError("Prague fork timestamp", c.PragueTime, newcfg.PragueTime)
+	}
+	if isForkTimestampIncompatible(c.OsakaTime, newcfg.OsakaTime, headTimestamp) {
+		return newTimestampCompatError("Osaka fork timestamp", c.OsakaTime, newcfg.OsakaTime)
+	}
+	if isForkTimestampIncompatible(c.BPO1Time, newcfg.BPO1Time, headTimestamp) {
+		return newTimestampCompatError("BPO1 fork timestamp", c.BPO1Time, newcfg.BPO1Time)
+	}
+	if isForkTimestampIncompatible(c.BPO2Time, newcfg.BPO2Time, headTimestamp) {
+		return newTimestampCompatError("BPO2 fork timestamp", c.BPO2Time, newcfg.BPO2Time)
+	}
+	if isForkTimestampIncompatible(c.BPO3Time, newcfg.BPO3Time, headTimestamp) {
+		return newTimestampCompatError("BPO3 fork timestamp", c.BPO3Time, newcfg.BPO3Time)
+	}
+	if isForkTimestampIncompatible(c.BPO4Time, newcfg.BPO4Time, headTimestamp) {
+		return newTimestampCompatError("BPO4 fork timestamp", c.BPO4Time, newcfg.BPO4Time)
+	}
+	if isForkTimestampIncompatible(c.BPO5Time, newcfg.BPO5Time, headTimestamp) {
+		return newTimestampCompatError("BPO5 fork timestamp", c.BPO5Time, newcfg.BPO5Time)
+	}
+	if isForkTimestampIncompatible(c.AmsterdamTime, newcfg.AmsterdamTime, headTimestamp) {
+		return newTimestampCompatError("Amsterdam fork timestamp", c.AmsterdamTime, newcfg.AmsterdamTime)
+	}
+	if isForkTimestampIncompatible(c.UBTTime, newcfg.UBTTime, headTimestamp) {
+		return newTimestampCompatError("UBT fork timestamp", c.UBTTime, newcfg.UBTTime)
+	}
+	return nil
+}
+
+// Description returns a human-readable chain configuration summary.
+func (c *ChainConfig) Description() string {
+	return fmt.Sprintf("Chain ID: %v\nConsensus: RandomX\nRandomX: %v", c.ChainID, c.RandomX)
+}
+
+// LatestFork returns the latest timestamp-based fork active at the given timestamp.
+func (c *ChainConfig) LatestFork(timestamp uint64) forks.Fork {
+	latest := forks.London
+	for _, fork := range []forks.Fork{forks.Shanghai, forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5, forks.Amsterdam} {
+		if t := c.Timestamp(fork); t != nil && *t <= timestamp {
+			latest = fork
+		}
+	}
+	return latest
+}
+
+// Timestamp returns the activation timestamp of a timestamp-based fork.
+func (c *ChainConfig) Timestamp(fork forks.Fork) *uint64 {
+	switch fork {
+	case forks.Shanghai:
+		return c.ShanghaiTime
+	case forks.Cancun:
+		return c.CancunTime
+	case forks.Prague:
+		return c.PragueTime
+	case forks.Osaka:
+		return c.OsakaTime
+	case forks.BPO1:
+		return c.BPO1Time
+	case forks.BPO2:
+		return c.BPO2Time
+	case forks.BPO3:
+		return c.BPO3Time
+	case forks.BPO4:
+		return c.BPO4Time
+	case forks.BPO5:
+		return c.BPO5Time
+	case forks.Amsterdam:
+		return c.AmsterdamTime
+	}
+	return nil
+}
+
+// BlobConfig returns the blob schedule configured for fork.
+func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
+	if c == nil || c.BlobScheduleConfig == nil {
+		return nil
+	}
+	switch fork {
+	case forks.Cancun:
+		return c.BlobScheduleConfig.Cancun
+	case forks.Prague:
+		return c.BlobScheduleConfig.Prague
+	case forks.Osaka:
+		return c.BlobScheduleConfig.Osaka
+	case forks.BPO1:
+		return c.BlobScheduleConfig.BPO1
+	case forks.BPO2:
+		return c.BlobScheduleConfig.BPO2
+	case forks.BPO3:
+		return c.BlobScheduleConfig.BPO3
+	case forks.BPO4:
+		return c.BlobScheduleConfig.BPO4
+	case forks.BPO5:
+		return c.BlobScheduleConfig.BPO5
+	case forks.Amsterdam:
+		return c.BlobScheduleConfig.Amsterdam
+	}
+	return nil
+}
+
+func isForkBlockIncompatible(storedBlock, newBlock *big.Int, head uint64) bool {
+	return isBlockForked(storedBlock, new(big.Int).SetUint64(head)) != isBlockForked(newBlock, new(big.Int).SetUint64(head)) || (isBlockForked(storedBlock, new(big.Int).SetUint64(head)) && !configBlockEqual(storedBlock, newBlock))
+}
+
+func isForkTimestampIncompatible(storedTime, newTime *uint64, head uint64) bool {
+	return isTimestampForked(storedTime, head) != isTimestampForked(newTime, head) || (isTimestampForked(storedTime, head) && !configTimestampEqual(storedTime, newTime))
+}
+
+func configBlockEqual(x, y *big.Int) bool {
+	if x == nil {
+		return y == nil
+	}
+	if y == nil {
+		return false
+	}
+	return x.Cmp(y) == 0
+}
+
+func configTimestampEqual(x, y *uint64) bool {
+	if x == nil {
+		return y == nil
+	}
+	if y == nil {
+		return false
+	}
+	return *x == *y
 }
 
 // Helper functions
@@ -435,5 +804,4 @@ func isTimestampForked(s *uint64, head uint64) bool {
 const (
 	DefaultBaseFeeChangeDenominator = 8
 	DefaultElasticityMultiplier     = 2
-
 )

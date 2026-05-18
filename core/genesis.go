@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -504,12 +503,8 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 	if g.GasLimit == 0 {
 		head.GasLimit = params.GenesisGasLimit
 	}
-	if g.Difficulty == nil {
-		if g.Config != nil && g.Config.Ethash == nil && g.Config.RandomX == nil {
-			head.Difficulty = big.NewInt(0)
-		} else if g.Mixhash == (common.Hash{}) {
-			head.Difficulty = params.GenesisDifficulty
-		}
+	if g.Difficulty == nil && g.Mixhash == (common.Hash{}) {
+		head.Difficulty = params.GenesisDifficulty
 	}
 	if g.Config != nil && g.Config.IsLondon(common.Big0) {
 		if g.BaseFee != nil {
@@ -528,10 +523,6 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 			withdrawals = make([]*types.Withdrawal, 0)
 		}
 		if conf.IsCancun(num, g.Timestamp) {
-			// EIP-4788: The parentBeaconBlockRoot of the genesis block is always
-			// the zero hash. This is because the genesis block does not have a parent
-			// by definition.
-			head.ParentBeaconRoot = new(common.Hash)
 			// EIP-4844 fields
 			head.ExcessBlobGas = g.ExcessBlobGas
 			head.BlobGasUsed = g.BlobGasUsed
@@ -572,9 +563,6 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database, tracer *tra
 	}
 	if err := config.CheckConfigForkOrder(); err != nil {
 		return nil, err
-	}
-	if config.Clique != nil && len(g.ExtraData) < 32+crypto.SignatureLength {
-		return nil, errors.New("can't start clique chain without signers")
 	}
 	// flush the data to disk and compute the state root
 	root, err := flushAlloc(&g.Alloc, triedb, tracer)
@@ -713,7 +701,6 @@ func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
 			common.BytesToAddress([]byte{0x11}):    {Balance: big.NewInt(1)}, // BLSG2MapG2
 			common.BytesToAddress([]byte{0x1, 00}): {Balance: big.NewInt(1)}, // P256Verify
 			// Pre-deploy system contracts
-			params.BeaconRootsAddress:        {Nonce: 1, Code: params.BeaconRootsCode, Balance: common.Big0},
 			params.HistoryStorageAddress:     {Nonce: 1, Code: params.HistoryStorageCode, Balance: common.Big0},
 			params.WithdrawalQueueAddress:    {Nonce: 1, Code: params.WithdrawalQueueCode, Balance: common.Big0},
 			params.ConsolidationQueueAddress: {Nonce: 1, Code: params.ConsolidationQueueCode, Balance: common.Big0},
