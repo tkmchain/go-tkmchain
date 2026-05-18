@@ -760,6 +760,19 @@ func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
 	return nil
 }
 
+// ActiveSystemContracts returns the currently active system contracts at the given timestamp.
+func (c *ChainConfig) ActiveSystemContracts(time uint64) map[string]common.Address {
+	fork := c.LatestFork(time)
+	active := make(map[string]common.Address)
+	if fork >= forks.Prague {
+		active["CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS"] = ConsolidationQueueAddress
+		active["DEPOSIT_CONTRACT_ADDRESS"] = c.DepositContractAddress
+		active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
+		active["WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS"] = WithdrawalQueueAddress
+	}
+	return active
+}
+
 func isForkBlockIncompatible(storedBlock, newBlock *big.Int, head uint64) bool {
 	return isBlockForked(storedBlock, new(big.Int).SetUint64(head)) != isBlockForked(newBlock, new(big.Int).SetUint64(head)) || (isBlockForked(storedBlock, new(big.Int).SetUint64(head)) && !configBlockEqual(storedBlock, newBlock))
 }
