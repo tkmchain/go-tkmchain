@@ -197,6 +197,15 @@ type Config struct {
 	// OverrideOsaka (TODO: remove after the fork)
 	OverrideOsaka *uint64 `toml:",omitempty"`
 
+	// OverrideBPO1 (TODO: remove after the fork)
+	OverrideBPO1 *uint64 `toml:",omitempty"`
+
+	// OverrideBPO2 (TODO: remove after the fork)
+	OverrideBPO2 *uint64 `toml:",omitempty"`
+
+	// OverrideUBT (TODO: remove after the fork)
+	OverrideUBT *uint64 `toml:",omitempty"`
+
 	// RandomX mining threads configuration
 	RandomXMinerThreads int `toml:",omitempty"`
 
@@ -215,20 +224,11 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, thread
 		// Use default RandomX config if none provided
 		config.RandomX = params.DefaultRandomXConfig()
 	}
-	
+
 	engine, err := randomx.New(config.RandomX, threads)
 	if err != nil {
 		return nil, err
 	}
-	
-	return engine, nil
-}
 
-// RandomXMinerThreads returns the number of threads to use for RandomX mining.
-func (c *Config) RandomXMinerThreads() int {
-	if c.RandomXMinerThreads > 0 {
-		return c.RandomXMinerThreads
-	}
-	// Default to number of CPU cores
-	return 0 // Let randomx.New determine based on runtime.NumCPU()
+	return engine, nil
 }
