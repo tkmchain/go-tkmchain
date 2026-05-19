@@ -681,12 +681,12 @@ func (s *Ethereum) SetMinerEtherbase(address common.Address) error {
 
 // GetHashRate returns the current hashrate
 func (api *MinerAPI) GetHashRate() hexutil.Uint64 {
-	return hexutil.Uint64(api.eth.miner.HashRate())
+	return hexutil.Uint64(api.e.miner.HashRate())
 }
 
 // GetMiningInfo returns detailed mining information
 func (api *MinerAPI) GetMiningInfo() map[string]interface{} {
-	return api.eth.GetMiningInfo()
+	return api.e.GetMiningInfo()
 }
 
 // Protocols returns all configured network protocols
