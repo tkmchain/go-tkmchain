@@ -44,7 +44,7 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	if header == nil {
 		return RKStatus{}, fmt.Errorf("no head block available")
 	}
-	statedb, err := api.e.blockchain.StateAt(header.Root)
+	statedb, err := api.e.blockchain.StateAt(header)
 	if err != nil {
 		return RKStatus{}, err
 	}
