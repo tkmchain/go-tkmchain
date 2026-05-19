@@ -238,7 +238,7 @@ func (evm *EVM) Cancelled() bool {
 }
 
 func isSystemCall(caller common.Address) bool {
-	return caller == params.SystemAddress
+	return false
 }
 
 // Call executes the contract associated with the addr with the given input as

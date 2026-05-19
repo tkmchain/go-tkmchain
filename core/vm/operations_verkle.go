@@ -59,7 +59,7 @@ func makeCallVariantGasEIP4762(oldCalculator gasFunc, withTransferCosts bool) ga
 			target           = common.Address(stack.back(1).Bytes20())
 			witnessGas       uint64
 			_, isPrecompile  = evm.precompile(target)
-			isSystemContract = target == params.HistoryStorageAddress
+			isSystemContract = false
 		)
 
 		// If value is transferred, it is charged before 1/64th
@@ -124,7 +124,7 @@ func gasSelfdestructEIP4762(evm *EVM, contract *Contract, stack *Stack, mem *Mem
 	statelessGas := wanted
 	balanceIsZero := evm.StateDB.GetBalance(contractAddr).Sign() == 0
 	_, isPrecompile := evm.precompile(beneficiaryAddr)
-	isSystemContract := beneficiaryAddr == params.HistoryStorageAddress
+	isSystemContract := false
 
 	if (isPrecompile || isSystemContract) && balanceIsZero {
 		return GasCosts{RegularGas: statelessGas}, nil
@@ -192,7 +192,7 @@ func gasExtCodeCopyEIP4762(evm *EVM, contract *Contract, stack *Stack, mem *Memo
 	gas := gasCost.RegularGas
 	addr := common.Address(stack.peek().Bytes20())
 	_, isPrecompile := evm.precompile(addr)
-	if isPrecompile || addr == params.HistoryStorageAddress {
+	if isPrecompile {
 		var overflow bool
 		if gas, overflow = math.SafeAdd(gas, params.WarmStorageReadCostEIP2929); overflow {
 			return GasCosts{}, ErrGasUintOverflow
