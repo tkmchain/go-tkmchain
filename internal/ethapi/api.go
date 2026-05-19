@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/gasestimator"
+	ethprotocol "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/internal/ethapi/override"
 	"github.com/ethereum/go-ethereum/log"
@@ -72,6 +73,30 @@ type EthereumAPI struct {
 // NewEthereumAPI creates a new Ethereum protocol API.
 func NewEthereumAPI(b Backend) *EthereumAPI {
 	return &EthereumAPI{b}
+}
+
+// Coinbase returns the coinbase address for the current head.
+func (api *EthereumAPI) Coinbase() (common.Address, error) {
+	head := api.b.CurrentHeader()
+	if head == nil {
+		return common.Address{}, errors.New("latest header unavailable")
+	}
+	return head.Coinbase, nil
+}
+
+// Hashrate returns the mining hashrate.
+func (api *EthereumAPI) Hashrate() hexutil.Uint64 {
+	return 0
+}
+
+// Mining returns whether this node is currently mining blocks.
+func (api *EthereumAPI) Mining() bool {
+	return false
+}
+
+// ProtocolVersion returns the current Ethereum protocol version.
+func (api *EthereumAPI) ProtocolVersion() hexutil.Uint {
+	return hexutil.Uint(ethprotocol.ProtocolVersions[0])
 }
 
 // GasPrice returns a suggestion for a gas price for legacy transactions.
