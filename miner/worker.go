@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -590,11 +591,11 @@ func signalToErr(signal int32) error {
 
 // Worker represents a single RandomX mining thread
 type Worker struct {
-	miner     *Miner
-	index     int
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	hashRate  uint64
+	miner      *Miner
+	index      int
+	stopCh     chan struct{}
+	doneCh     chan struct{}
+	hashRate   uint64
 	hashRateMu sync.RWMutex
 }
 
@@ -641,7 +642,7 @@ func (w *Worker) mine() {
 
 	var hashes uint64 = 0
 	startTime := time.Now()
-	
+
 	// Mining loop
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -658,11 +659,11 @@ func (w *Worker) mine() {
 				w.hashRateMu.Lock()
 				w.hashRate = rate
 				w.hashRateMu.Unlock()
-				
+
 				if rate > 0 {
-					log.Debug("Worker hashrate updated", 
-						"worker", w.index, 
-						"hashrate", rate, 
+					log.Debug("Worker hashrate updated",
+						"worker", w.index,
+						"hashrate", rate,
 						"hashes", hashes)
 				}
 			}
@@ -673,14 +674,14 @@ func (w *Worker) mine() {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
-			
+
 			// Mine the block
 			result, err := randomxEngine.MineBlock(work, w.index)
 			if err != nil {
 				log.Debug("Mining attempt failed", "worker", w.index, "error", err)
 				continue
 			}
-			
+
 			if result != nil {
 				// Successfully mined a block
 				hashes++
