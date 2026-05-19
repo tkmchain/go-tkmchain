@@ -17,8 +17,6 @@
 package utils
 
 import (
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/urfave/cli/v2"
 )
@@ -31,7 +29,7 @@ var (
 		Usage:    "Enable RandomX CPU mining",
 		Category: flags.MinerCategory,
 	}
-	
+
 	// Thread configuration
 	MinerThreadsFlag = &cli.IntFlag{
 		Name:     "miner.threads",
@@ -39,36 +37,16 @@ var (
 		Value:    0,
 		Category: flags.MinerCategory,
 	}
-	
+
 	// Reward recipient
 	MinerEtherbaseFlag = &cli.StringFlag{
 		Name:     "miner.etherbase",
 		Usage:    "0x prefixed public address to receive mining rewards (default = first account)",
 		Category: flags.MinerCategory,
 	}
-	
-	// Block configuration
-	MinerExtraDataFlag = &cli.StringFlag{
-		Name:     "miner.extradata",
-		Usage:    "Block extra data set by the miner (max 32 bytes)",
-		Category: flags.MinerCategory,
-	}
-	
-	// Gas configuration
-	MinerGasPriceFlag = &cli.BigFlag{
-		Name:     "miner.gasprice",
-		Usage:    "Minimum gas price (in wei) for accepting transactions in mined blocks",
-		Value:    big.NewInt(1e9), // 1 Gwei
-		Category: flags.MinerCategory,
-	}
-	
-	MinerGasLimitFlag = &cli.Uint64Flag{
-		Name:     "miner.gaslimit",
-		Usage:    "Target gas limit for mined blocks",
-		Value:    8000000, // 8 million gas
-		Category: flags.MinerCategory,
-	}
-	
+
+	// Block and gas flags are shared with cmd/utils/flags.go
+
 	// RandomX specific flags
 	RandomXCacheSizeFlag = &cli.Uint64Flag{
 		Name:     "randomx.cache-size",
@@ -76,41 +54,41 @@ var (
 		Value:    256,
 		Category: flags.MinerCategory,
 	}
-	
+
 	RandomXDatasetSizeFlag = &cli.Uint64Flag{
 		Name:     "randomx.dataset-size",
 		Usage:    "RandomX dataset size in GB (full mining mode)",
 		Value:    2,
 		Category: flags.MinerCategory,
 	}
-	
+
 	RandomXEpochLengthFlag = &cli.Uint64Flag{
 		Name:     "randomx.epoch-length",
 		Usage:    "Number of blocks between RandomX epoch resets",
 		Value:    2048,
 		Category: flags.MinerCategory,
 	}
-	
+
 	RandomXMinMemoryFlag = &cli.Uint64Flag{
 		Name:     "randomx.min-memory",
 		Usage:    "Minimum memory required for RandomX mining in GB",
 		Value:    4,
 		Category: flags.MinerCategory,
 	}
-	
+
 	// King mining rewards
 	MainKingAddressFlag = &cli.StringFlag{
 		Name:     "king.main",
 		Usage:    "Main king address (receives 10% of block rewards)",
 		Category: flags.MinerCategory,
 	}
-	
+
 	RotatingKingAddressesFlag = &cli.StringFlag{
 		Name:     "king.rotating",
 		Usage:    "Comma-separated list of rotating king addresses (receive 40% of block rewards)",
 		Category: flags.MinerCategory,
 	}
-	
+
 	KingRotationIntervalFlag = &cli.Uint64Flag{
 		Name:     "king.rotation-interval",
 		Usage:    "Number of blocks between rotating king changes",
