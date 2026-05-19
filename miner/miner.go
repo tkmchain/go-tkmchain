@@ -241,7 +241,7 @@ func (miner *Miner) Start() error {
 	}
 
 	// Initialize RandomX cache and dataset for current epoch
-	blockNum := miner.chain.CurrentBlock().NumberU64()
+	blockNum := miner.chain.CurrentHeader().Number.Uint64()
 	if err := randomxEngine.InitializeForBlock(blockNum); err != nil {
 		return fmt.Errorf("failed to initialize RandomX: %w", err)
 	}
@@ -479,14 +479,8 @@ func (miner *Miner) getPending() *newPayloadResult {
 
 // SubmitWork submits successfully mined block to the blockchain.
 func (miner *Miner) SubmitWork(block *types.Block) error {
-	// Validate the block
-	if err := miner.chain.ValidateBlock(block); err != nil {
-		log.Error("Miner submitted invalid block", "error", err)
-		return err
-	}
-
 	// Insert the block into the blockchain
-	if err := miner.chain.InsertBlockWithoutSeal(block); err != nil {
+	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
 		log.Error("Failed to insert mined block", "error", err)
 		return err
 	}

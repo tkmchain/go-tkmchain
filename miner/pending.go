@@ -65,3 +65,13 @@ func (p *pending) update(parent common.Hash, result *newPayloadResult) {
 	p.result = result
 	p.created = time.Now()
 }
+
+// clear invalidates the cached pending block.
+func (p *pending) clear(parentHash common.Hash) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if p.parentHash == parentHash {
+		p.result = nil
+	}
+}

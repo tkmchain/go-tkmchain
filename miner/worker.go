@@ -676,18 +676,24 @@ func (w *Worker) mine() {
 			}
 
 			// Mine the block
-			result, err := randomxEngine.MineBlock(work, w.index)
-			if err != nil {
+			results := make(chan *types.Block, 1)
+			sealStop := make(chan struct{})
+			if err := randomxEngine.Seal(w.miner.chain, work, results, sealStop); err != nil {
+				close(sealStop)
 				log.Debug("Mining attempt failed", "worker", w.index, "error", err)
 				continue
 			}
-
-			if result != nil {
-				// Successfully mined a block
-				hashes++
-				if err := w.miner.SubmitWork(result); err != nil {
-					log.Error("Failed to submit mined block", "worker", w.index, "error", err)
+			select {
+			case result := <-results:
+				if result != nil {
+					hashes++
+					if err := w.miner.SubmitWork(result); err != nil {
+						log.Error("Failed to submit mined block", "worker", w.index, "error", err)
+					}
 				}
+			case <-w.stopCh:
+				close(sealStop)
+				return
 			}
 		}
 	}

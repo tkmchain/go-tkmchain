@@ -571,6 +571,18 @@ func (r *RandomX) Close() error {
 	return nil
 }
 
+// InitializeForBlock preloads cache and dataset for the epoch of blockNum.
+func (r *RandomX) InitializeForBlock(blockNum uint64) error {
+	return r.updateCacheForEpoch(r.epoch(blockNum))
+}
+
+// CurrentEpoch returns the epoch currently cached by the engine.
+func (r *RandomX) CurrentEpoch() uint64 {
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
+	return r.cacheEpoch
+}
+
 // epoch returns the epoch for a given block number.
 func (r *RandomX) epoch(blockNum uint64) uint64 {
 	return blockNum / r.config.EpochLength
