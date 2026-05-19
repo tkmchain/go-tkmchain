@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
-// geth is a command-line client for Ethereum.
+// geth is a command-line client for Ethereum with RandomX PoW consensus.
 package main
 
 import (
@@ -55,7 +55,6 @@ var (
 		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,
-		utils.NoUSBFlag, // deprecated
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.OverrideOsaka,
@@ -63,7 +62,6 @@ var (
 		utils.OverrideBPO2,
 		utils.OverrideUBT,
 		utils.OverrideGenesisFlag,
-		utils.EnablePersonal, // deprecated
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -83,7 +81,6 @@ var (
 		utils.ExitWhenSyncedFlag,
 		utils.GCModeFlag,
 		utils.SnapshotFlag,
-		utils.TxLookupLimitFlag, // deprecated
 		utils.TransactionHistoryFlag,
 		utils.ChainHistoryFlag,
 		utils.LogHistoryFlag,
@@ -95,12 +92,9 @@ var (
 		utils.BinTrieGroupDepthFlag,
 		utils.LightKDFFlag,
 		utils.EthRequiredBlocksFlag,
-		utils.LegacyWhitelistFlag, // deprecated
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
 		utils.CacheTrieFlag,
-		utils.CacheTrieJournalFlag,   // deprecated
-		utils.CacheTrieRejournalFlag, // deprecated
 		utils.CacheGCFlag,
 		utils.CacheSnapshotFlag,
 		utils.CacheNoPrefetchFlag,
@@ -112,20 +106,30 @@ var (
 		utils.DiscoveryPortFlag,
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
-		utils.MiningEnabledFlag, // deprecated
+		// RandomX mining flags (restored, not deprecated)
+		utils.MiningEnabledFlag,
+		utils.MinerThreadsFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
-		utils.MinerEtherbaseFlag, // deprecated
+		utils.MinerEtherbaseFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerMaxBlobsFlag,
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerPendingFeeRecipientFlag,
-		utils.MinerNewPayloadTimeoutFlag, // deprecated
+		// RandomX specific flags
+		utils.RandomXCacheSizeFlag,
+		utils.RandomXDatasetSizeFlag,
+		utils.RandomXEpochLengthFlag,
+		utils.RandomXMinMemoryFlag,
+		// King flags
+		utils.MainKingAddressFlag,
+		utils.RotatingKingAddressesFlag,
+		utils.KingRotationIntervalFlag,
+		// Network flags
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV4Flag,
 		utils.DiscoveryV5Flag,
-		utils.LegacyDiscoveryV5Flag, // deprecated
 		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
@@ -147,15 +151,6 @@ var (
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
-		utils.BeaconApiFlag,
-		utils.BeaconApiHeaderFlag,
-		utils.BeaconThresholdFlag,
-		utils.BeaconNoFilterFlag,
-		utils.BeaconConfigFlag,
-		utils.BeaconGenesisRootFlag,
-		utils.BeaconGenesisTimeFlag,
-		utils.BeaconCheckpointFlag,
-		utils.BeaconCheckpointFileFlag,
 		utils.LogSlowBlockFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
@@ -193,13 +188,6 @@ var (
 		utils.RPCTxSyncDefaultTimeoutFlag,
 		utils.RPCTxSyncMaxTimeoutFlag,
 		utils.RPCGlobalRangeLimitFlag,
-		utils.RPCTelemetryFlag,
-		utils.RPCTelemetryEndpointFlag,
-		utils.RPCTelemetryUserFlag,
-		utils.RPCTelemetryPasswordFlag,
-		utils.RPCTelemetryInstanceIDFlag,
-		utils.RPCTelemetryTagsFlag,
-		utils.RPCTelemetrySampleRatioFlag,
 	}
 
 	metricsFlags = []cli.Flag{
@@ -222,7 +210,7 @@ var (
 	}
 )
 
-var app = flags.NewApp("the go-ethereum command line interface")
+var app = flags.NewApp("the go-ethereum command line interface with RandomX PoW")
 
 func init() {
 	// Initialize the CLI app and start Geth
@@ -254,8 +242,6 @@ func init() {
 		dumpConfigCommand,
 		// see dbcmd.go
 		dbCommand,
-		// See cmd/utils/flags_legacy.go
-		utils.ShowDeprecated,
 		// See snapshot.go
 		snapshotCommand,
 		// See bintrie_convert.go
@@ -282,6 +268,15 @@ func init() {
 			return err
 		}
 		flags.CheckEnvVars(ctx, app.Flags, "GETH")
+		
+		// Log RandomX mining configuration if enabled
+		if ctx.Bool(utils.MiningEnabledFlag.Name) {
+			log.Info("RandomX mining enabled",
+				"threads", ctx.Int(utils.MinerThreadsFlag.Name),
+				"etherbase", ctx.String(utils.MinerEtherbaseFlag.Name),
+			)
+		}
+		
 		return nil
 	}
 	app.After = func(ctx *cli.Context) error {
@@ -313,7 +308,7 @@ func prepare(ctx *cli.Context) {
 		log.Info("Starting Geth on Hoodi testnet...")
 
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Geth on Ethereum mainnet...")
+		log.Info("Starting Geth on RandomX mainnet...")
 	}
 }
 
