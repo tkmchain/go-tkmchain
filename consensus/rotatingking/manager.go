@@ -236,3 +236,17 @@ func (m *RotatingKingManager) GetRotationInfo(height uint64) map[string]interfac
 
 	return info
 }
+
+// GetMonitoringResponsibilities returns the chain monitoring responsibilities for rotating kings.
+func (m *RotatingKingManager) GetMonitoringResponsibilities() []MonitoringCategory {
+	return []MonitoringCategory{
+		{Name: "Block Production & Chain Health", Metrics: []string{"New Block Height", "Block Inclusion Distance", "Orphaned/Forked Blocks"}},
+		{Name: "Node & Peer Connectivity", Metrics: []string{"Peer Count", "Peer Quality Scores", "Connection Stability"}},
+		{Name: "Reward & Performance Metrics", Metrics: []string{"Reward Trend", "Reward Percentage Change", "Balance Changes"}},
+		{Name: "Slashing & Violation Detection", Metrics: []string{"Attestation Violations", "Unavailable Node Detection", "Balance Below Eligibility Threshold"}},
+		{Name: "Chain Statistics", Metrics: []string{"Total Active Kings", "Total Staked/Delegated Amount", "RKs Entering/Exiting Rotation", "Pending Activation/Exit Queue"}},
+		{Name: "Rotation-Specific Monitoring", Metrics: []string{"Missed Rotation Window", "Rotation Consensus", "Upcoming Rotation Block", "Pending Proposal Status"}},
+		{Name: "Transaction Performance", Metrics: []string{"Transaction Inclusion Time", "Pending Transaction Count", "Gas Price Trends"}},
+		{Name: "Infrastructure Health (Critical)", Metrics: []string{"Node Resource Health", "RPC Availability", "Disk/Database Health"}},
+	}
+}

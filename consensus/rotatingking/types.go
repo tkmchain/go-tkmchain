@@ -22,37 +22,43 @@ type KingRotation struct {
 
 // RotatingKingState holds the current state of the rotating king system
 type RotatingKingState struct {
-	CurrentKingIndex        int                       `json:"currentKingIndex"`
-	RotationHeight          uint64                    `json:"rotationHeight"`
-	NextRotationAt          uint64                    `json:"nextRotationAt"`
-	LastUpdated             time.Time                 `json:"lastUpdated"`
-	RotationCount           uint64                    `json:"rotationCount"`
-	KingsHistory            []KingRotation            `json:"kingsHistory"`
-	TotalRewardsDistributed *big.Int                  `json:"totalRewardsDistributed"`
+	CurrentKingIndex        int                         `json:"currentKingIndex"`
+	RotationHeight          uint64                      `json:"rotationHeight"`
+	NextRotationAt          uint64                      `json:"nextRotationAt"`
+	LastUpdated             time.Time                   `json:"lastUpdated"`
+	RotationCount           uint64                      `json:"rotationCount"`
+	KingsHistory            []KingRotation              `json:"kingsHistory"`
+	TotalRewardsDistributed *big.Int                    `json:"totalRewardsDistributed"`
 	KingRewards             map[common.Address]*big.Int `json:"kingRewards"`
+}
+
+// MonitoringCategory groups chain monitoring responsibilities for rotating kings.
+type MonitoringCategory struct {
+	Name    string   `json:"name"`
+	Metrics []string `json:"metrics"`
 }
 
 // RotatingKingConfig holds configuration for the rotating king system
 type RotatingKingConfig struct {
-	RotationInterval  uint64           `json:"rotationInterval"`
-	RotationOffset    uint64           `json:"rotationOffset"`
-	KingAddresses     []common.Address `json:"kingAddresses"`
-	ActivationDelay   uint64           `json:"activationDelay"`
-	MinStakeRequired  *big.Int         `json:"minStakeRequired"`
+	RotationInterval uint64           `json:"rotationInterval"`
+	RotationOffset   uint64           `json:"rotationOffset"`
+	KingAddresses    []common.Address `json:"kingAddresses"`
+	ActivationDelay  uint64           `json:"activationDelay"`
+	MinStakeRequired *big.Int         `json:"minStakeRequired"`
 }
 
 // RewardDistribution defines how rewards are split
 type RewardDistribution struct {
-	MainKingPercent  int // 10%
+	MainKingPercent     int // 10%
 	RotatingKingPercent int // 40%
-	MinerPercent     int // 50%
+	MinerPercent        int // 50%
 }
 
 // DefaultRewardDistribution returns the default reward split
 func DefaultRewardDistribution() *RewardDistribution {
 	return &RewardDistribution{
-		MainKingPercent:    10,
+		MainKingPercent:     10,
 		RotatingKingPercent: 40,
-		MinerPercent:       50,
+		MinerPercent:        50,
 	}
 }

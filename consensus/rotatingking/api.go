@@ -43,3 +43,8 @@ func (api *API) GetKingAddresses() []common.Address {
 func (api *API) IsKing(address common.Address) bool {
 	return api.manager.IsKing(address)
 }
+
+// GetMonitoringResponsibilities returns rotating king monitoring responsibilities.
+func (api *API) GetMonitoringResponsibilities() []MonitoringCategory {
+	return api.manager.GetMonitoringResponsibilities()
+}
