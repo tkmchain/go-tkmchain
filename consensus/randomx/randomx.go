@@ -367,7 +367,7 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 	// Handle uncle rewards
 	for _, uncle := range body.Uncles {
 		uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
-		statedb.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
+		statedb.AddBalance(uncle.Coinbase, uint256.MustFromBig(uncleReward), tracing.BalanceIncreaseRewardMineUncle)
 	}
 
 	// Finalize state root
