@@ -623,13 +623,18 @@ func EnableUBTAtGenesis(db ethdb.Database, genesis *Genesis) (bool, error) {
 
 // DefaultGenesisBlock returns the Ethereum main net genesis block.
 func DefaultGenesisBlock() *Genesis {
+	alloc := decodePrealloc(mainnetAllocData)
+	alloc[common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
+	}
+
 	return &Genesis{
 		Config:     params.MainnetChainConfig,
 		Nonce:      66,
 		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
 		GasLimit:   5000,
 		Difficulty: big.NewInt(17179869184),
-		Alloc:      decodePrealloc(mainnetAllocData),
+		Alloc:      alloc,
 	}
 }
 

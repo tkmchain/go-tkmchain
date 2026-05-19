@@ -176,23 +176,24 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
-	// Set default king addresses if not configured
-	mainKingAddress := config.MainKingAddress
+	// Prefer chain-configured king addresses so they are consensus-bound.
+	mainKingAddress := chainConfig.MainKingAddress
 	if mainKingAddress == (common.Address{}) {
-		// Default main king address
-		mainKingAddress = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
-		log.Warn("Using default main king address", "address", mainKingAddress.Hex())
+		mainKingAddress = config.MainKingAddress
 	}
-
-	kingAddresses := config.KingAddresses
+	if mainKingAddress == (common.Address{}) {
+		mainKingAddress = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+        }
+	kingAddresses := chainConfig.RotatingKingAddresses
 	if len(kingAddresses) == 0 {
-		// Default rotating king addresses
+		kingAddresses = config.KingAddresses
+	}
+	if len(kingAddresses) == 0 {
 		kingAddresses = []common.Address{
 			common.HexToAddress("0x0000000000000000000000000000000000000002"),
 			common.HexToAddress("0x0000000000000000000000000000000000000003"),
 			common.HexToAddress("0x0000000000000000000000000000000000000004"),
 		}
-		log.Warn("Using default rotating king addresses", "count", len(kingAddresses))
 	}
 
 	// Create RandomX consensus engine with Rotating King support

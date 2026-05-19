@@ -92,7 +92,10 @@ type ChainConfig struct {
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
-	DepositContractAddress common.Address `json:"depositContractAddress,omitempty"`
+	DepositContractAddress       common.Address   `json:"depositContractAddress,omitempty"`
+	MainKingAddress              common.Address   `json:"mainKingAddress,omitempty"`
+	RotatingKingAddresses        []common.Address `json:"rotatingKingAddresses,omitempty"`
+	RotatingKingRotationInterval uint64           `json:"rotatingKingRotationInterval,omitempty"`
 
 	// RandomX consensus engine
 	RandomX            *RandomXConfig      `json:"randomx,omitempty"`
@@ -177,34 +180,41 @@ var (
 
 // MainnetChainConfig is the chain parameters for RandomX mainnet.
 var MainnetChainConfig = &ChainConfig{
-	ChainID:             big.NewInt(1),
-	HomesteadBlock:      big.NewInt(0),
-	DAOForkBlock:        nil,
-	DAOForkSupport:      true,
-	EIP150Block:         big.NewInt(0),
-	EIP155Block:         big.NewInt(0),
-	EIP158Block:         big.NewInt(0),
-	ByzantiumBlock:      big.NewInt(0),
-	ConstantinopleBlock: big.NewInt(0),
-	PetersburgBlock:     big.NewInt(0),
-	IstanbulBlock:       big.NewInt(0),
-	BerlinBlock:         big.NewInt(0),
-	LondonBlock:         big.NewInt(0),
-	ArrowGlacierBlock:   nil,
-	GrayGlacierBlock:    nil,
-	ShanghaiTime:        newUint64(0),
-	CancunTime:          newUint64(0),
-	PragueTime:          nil,
-	OsakaTime:           nil,
-	BPO1Time:            nil,
-	BPO2Time:            nil,
-	BPO3Time:            nil,
-	BPO4Time:            nil,
-	BPO5Time:            nil,
-	AmsterdamTime:       nil,
-	UBTTime:             nil,
+	ChainID:                big.NewInt(1),
+	HomesteadBlock:         big.NewInt(0),
+	DAOForkBlock:           nil,
+	DAOForkSupport:         true,
+	EIP150Block:            big.NewInt(0),
+	EIP155Block:            big.NewInt(0),
+	EIP158Block:            big.NewInt(0),
+	ByzantiumBlock:         big.NewInt(0),
+	ConstantinopleBlock:    big.NewInt(0),
+	PetersburgBlock:        big.NewInt(0),
+	IstanbulBlock:          big.NewInt(0),
+	BerlinBlock:            big.NewInt(0),
+	LondonBlock:            big.NewInt(0),
+	ArrowGlacierBlock:      nil,
+	GrayGlacierBlock:       nil,
+	ShanghaiTime:           newUint64(0),
+	CancunTime:             newUint64(0),
+	PragueTime:             nil,
+	OsakaTime:              nil,
+	BPO1Time:               nil,
+	BPO2Time:               nil,
+	BPO3Time:               nil,
+	BPO4Time:               nil,
+	BPO5Time:               nil,
+	AmsterdamTime:          nil,
+	UBTTime:                nil,
 	DepositContractAddress: common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
-	RandomX:             DefaultRandomXConfig(),
+	MainKingAddress:        common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+	RotatingKingAddresses: []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+	},
+	RotatingKingRotationInterval: 100,
+	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
 	},
@@ -685,6 +695,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.UBTTime, newcfg.UBTTime, headTimestamp) {
 		return newTimestampCompatError("UBT fork timestamp", c.UBTTime, newcfg.UBTTime)
+	}
+	if c.MainKingAddress != newcfg.MainKingAddress {
+		return &ConfigCompatError{What: "main king address", RewindToBlock: 0}
 	}
 	return nil
 }
