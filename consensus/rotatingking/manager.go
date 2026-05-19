@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -27,21 +25,21 @@ type BlockchainStateProvider interface {
 
 // RotatingKingManager manages the rotating king logic
 type RotatingKingManager struct {
-	mu         sync.RWMutex
-	config     *RotatingKingConfig
-	state      *RotatingKingState
-	mainKing   common.Address
-	logger     log.Logger
+	mu       sync.RWMutex
+	config   *RotatingKingConfig
+	state    *RotatingKingState
+	mainKing common.Address
+	logger   log.Logger
 }
 
 // NewRotatingKingManager creates a new rotating king manager
 func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Address, rotationInterval uint64) *RotatingKingManager {
 	config := &RotatingKingConfig{
-		RotationInterval:  rotationInterval,
-		RotationOffset:    0,
-		KingAddresses:     kingAddresses,
-		ActivationDelay:   2,
-		MinStakeRequired:  new(big.Int).Set(EligibilityThreshold),
+		RotationInterval: rotationInterval,
+		RotationOffset:   0,
+		KingAddresses:    kingAddresses,
+		ActivationDelay:  2,
+		MinStakeRequired: new(big.Int).Set(EligibilityThreshold),
 	}
 
 	state := &RotatingKingState{
@@ -67,7 +65,7 @@ func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Addr
 func (m *RotatingKingManager) GetCurrentKing() common.Address {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if len(m.config.KingAddresses) == 0 {
 		return common.Address{}
 	}
@@ -83,7 +81,7 @@ func (m *RotatingKingManager) GetMainKing() common.Address {
 func (m *RotatingKingManager) GetNextKing() common.Address {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if len(m.config.KingAddresses) == 0 {
 		return common.Address{}
 	}
@@ -112,11 +110,11 @@ func (m *RotatingKingManager) RotateToNextKing(blockHeight uint64, blockHash com
 	}
 
 	previousKing := m.config.KingAddresses[m.state.CurrentKingIndex]
-	
+
 	// Find next eligible king
 	newIndex := (m.state.CurrentKingIndex + 1) % len(m.config.KingAddresses)
 	newKing := m.config.KingAddresses[newIndex]
-	
+
 	// Check eligibility and find eligible king if needed
 	if stateProvider != nil {
 		balance := stateProvider.GetBalance(newKing)
@@ -171,7 +169,7 @@ func (m *RotatingKingManager) RotateToNextKing(blockHeight uint64, blockHash com
 func (m *RotatingKingManager) IsCurrentKing(address common.Address) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	if len(m.config.KingAddresses) == 0 {
 		return false
 	}
@@ -195,7 +193,7 @@ func (m *RotatingKingManager) IsKing(address common.Address) bool {
 func (m *RotatingKingManager) GetKingAddresses() []common.Address {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	addresses := make([]common.Address, len(m.config.KingAddresses))
 	copy(addresses, m.config.KingAddresses)
 	return addresses

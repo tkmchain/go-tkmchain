@@ -2,7 +2,6 @@ package rotatingking
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // API is the RPC API for the rotating king system

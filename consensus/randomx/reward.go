@@ -12,6 +12,7 @@
 package randomx
 
 import (
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -19,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/holiman/uint256"
 )
 
 // ==================== Constants ====================
@@ -26,25 +28,25 @@ import (
 var (
 	// EligibilityThreshold is the minimum balance required for king eligibility (100k ANTD)
 	EligibilityThreshold = new(big.Int).Mul(big.NewInt(100_000), big.NewInt(1e18))
-	
+
 	// InitialBlockReward is the starting block reward (200 ANTD)
 	InitialBlockReward = new(big.Int).Mul(big.NewInt(200), big.NewInt(1e18))
-	
+
 	// GenesisPremine is the initial supply at genesis (60,000,000 ANTD)
 	GenesisPremine = new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18))
 
 	// Block timing constants
-	TargetBlockTimeSeconds = uint64(12) // Default block time for RandomX chain
+	TargetBlockTimeSeconds = uint64(12)                          // Default block time for RandomX chain
 	BlocksPerHalving       = uint64(4 * 365 * 24 * 60 * 60 / 12) // ~4 years
-	GenesisTimestamp       = int64(1763731821) // Dec 1, 2025
+	GenesisTimestamp       = int64(1763731821)                   // Dec 1, 2025
 	MaxHalvings            = uint64(64)
 )
 
 // RewardDistribution defines how rewards are split among participants
 type RewardDistribution struct {
-	MainKingPercent   int // 10%
+	MainKingPercent     int // 10%
 	RotatingKingPercent int // 40%
-	MinerPercent      int // 50%
+	MinerPercent        int // 50%
 }
 
 // DefaultRewardDistribution returns the default reward split
@@ -87,7 +89,7 @@ func CalculateTotalReward(blockReward *big.Int, transactionFees *big.Int) *big.I
 // GetTotalTransactionFees calculates the sum of all transaction fees in receipts
 func GetTotalTransactionFees(header *types.Header, receipts []*types.Receipt) *big.Int {
 	totalFees := big.NewInt(0)
-	
+
 	for _, receipt := range receipts {
 		if receipt != nil && receipt.GasUsed > 0 {
 			// Fee = GasUsed * EffectiveGasPrice
@@ -101,7 +103,7 @@ func GetTotalTransactionFees(header *types.Header, receipts []*types.Receipt) *b
 			}
 		}
 	}
-	
+
 	return totalFees
 }
 
@@ -123,44 +125,44 @@ func DistributeRewards(
 	}
 
 	distribution := DefaultRewardDistribution()
-	
+
 	// Calculate percentages as big.Int
 	totalBig := new(big.Float).SetInt(totalReward)
-	
+
 	mainKingPercent := new(big.Float).SetFloat64(float64(distribution.MainKingPercent) / 100.0)
 	rotatingKingPercent := new(big.Float).SetFloat64(float64(distribution.RotatingKingPercent) / 100.0)
 	minerPercent := new(big.Float).SetFloat64(float64(distribution.MinerPercent) / 100.0)
-	
+
 	mainKingReward := new(big.Int)
 	rotatingKingReward := new(big.Int)
 	minerReward := new(big.Int)
-	
+
 	new(big.Float).Mul(totalBig, mainKingPercent).Int(mainKingReward)
 	new(big.Float).Mul(totalBig, rotatingKingPercent).Int(rotatingKingReward)
 	new(big.Float).Mul(totalBig, minerPercent).Int(minerReward)
-	
+
 	// Distribute rewards
 	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
-		stateDB.AddBalance(mainKing, mainKingReward, tracing.BalanceIncreaseRewardMineBlock)
-		log.Debug("Main king reward distributed", 
+		stateDB.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Debug("Main king reward distributed",
 			"block", blockNumber,
-			"address", mainKing.Hex(), 
+			"address", mainKing.Hex(),
 			"amount", FormatANTD(mainKingReward))
 	}
-	
+
 	if rotatingKingReward.Sign() > 0 && rotatingKing != (common.Address{}) {
-		stateDB.AddBalance(rotatingKing, rotatingKingReward, tracing.BalanceIncreaseRewardMineBlock)
-		log.Debug("Rotating king reward distributed", 
+		stateDB.AddBalance(rotatingKing, uint256.MustFromBig(rotatingKingReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Debug("Rotating king reward distributed",
 			"block", blockNumber,
-			"address", rotatingKing.Hex(), 
+			"address", rotatingKing.Hex(),
 			"amount", FormatANTD(rotatingKingReward))
 	}
-	
+
 	if minerReward.Sign() > 0 && miner != (common.Address{}) {
-		stateDB.AddBalance(miner, minerReward, tracing.BalanceIncreaseRewardMineBlock)
-		log.Debug("Miner reward distributed", 
+		stateDB.AddBalance(miner, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Debug("Miner reward distributed",
 			"block", blockNumber,
-			"address", miner.Hex(), 
+			"address", miner.Hex(),
 			"amount", FormatANTD(minerReward))
 	}
 
@@ -178,17 +180,17 @@ func DistributeRewards(
 func DistributeUncleReward(stateDB *state.StateDB, uncleCoinbase common.Address, uncleNumber, blockNumber uint64, blockReward *big.Int) {
 	// Uncle reward: (uncle_number + 8 - block_number) * block_reward / 8
 	uncleReward := new(big.Int).Set(blockReward)
-	
+
 	// Calculate adjustment factor
 	adjustment := new(big.Int).SetUint64(uncleNumber)
 	adjustment.Add(adjustment, big.NewInt(8))
 	adjustment.Sub(adjustment, new(big.Int).SetUint64(blockNumber))
-	
+
 	if adjustment.Sign() > 0 {
 		uncleReward.Mul(uncleReward, adjustment)
 		uncleReward.Div(uncleReward, big.NewInt(8))
-		stateDB.AddBalance(uncleCoinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
-		
+		stateDB.AddBalance(uncleCoinbase, uint256.MustFromBig(uncleReward), tracing.BalanceIncreaseRewardMineUncle)
+
 		log.Debug("Uncle reward distributed",
 			"uncleNumber", uncleNumber,
 			"blockNumber", blockNumber,
@@ -207,12 +209,12 @@ func GetNextHalvingInfo(blockNumber uint64) map[string]interface{} {
 	nextReward := CalculateBlockReward(nextHalvingBlock)
 
 	return map[string]interface{}{
-		"currentBlock":     blockNumber,
-		"nextHalvingBlock": nextHalvingBlock,
-		"blocksUntil":      nextHalvingBlock - blockNumber,
-		"currentReward":    currentReward.String(),
-		"nextReward":       nextReward.String(),
-		"halvingPeriod":    currentPeriod,
+		"currentBlock":           blockNumber,
+		"nextHalvingBlock":       nextHalvingBlock,
+		"blocksUntil":            nextHalvingBlock - blockNumber,
+		"currentReward":          currentReward.String(),
+		"nextReward":             nextReward.String(),
+		"halvingPeriod":          currentPeriod,
 		"currentRewardFormatted": FormatANTD(currentReward),
 		"nextRewardFormatted":    FormatANTD(nextReward),
 	}
@@ -240,25 +242,25 @@ func CalculateCirculatingSupply(blockNumber uint64) *big.Int {
 	// Sum of all block rewards up to current block
 	total := new(big.Int).Set(GenesisPremine)
 	currentReward := new(big.Int).Set(InitialBlockReward)
-	
+
 	remainingBlocks := blockNumber
 	for halving := uint64(0); halving <= MaxHalvings && remainingBlocks > 0; halving++ {
 		blocksInPeriod := BlocksPerHalving
 		if remainingBlocks < blocksInPeriod {
 			blocksInPeriod = remainingBlocks
 		}
-		
+
 		periodReward := new(big.Int).Mul(currentReward, new(big.Int).SetUint64(blocksInPeriod))
 		total.Add(total, periodReward)
-		
+
 		remainingBlocks -= blocksInPeriod
 		currentReward.Div(currentReward, big.NewInt(2))
-		
+
 		if currentReward.Cmp(big.NewInt(1e18)) < 0 {
 			break
 		}
 	}
-	
+
 	return total
 }
 
@@ -284,7 +286,7 @@ func FormatANTD(amount *big.Int) string {
 	for len(remainderStr) > 6 && remainderStr[len(remainderStr)-1] == '0' {
 		remainderStr = remainderStr[:len(remainderStr)-1]
 	}
-	
+
 	return whole.String() + "." + remainderStr[:min(6, len(remainderStr))]
 }
 
@@ -292,7 +294,7 @@ func FormatANTD(amount *big.Int) string {
 func ParseANTD(amountStr string) (*big.Int, error) {
 	oneANTD := big.NewInt(1e18)
 	result := big.NewInt(0)
-	
+
 	// Find decimal point
 	decimalIdx := -1
 	for i, c := range amountStr {
@@ -301,7 +303,7 @@ func ParseANTD(amountStr string) (*big.Int, error) {
 			break
 		}
 	}
-	
+
 	if decimalIdx == -1 {
 		// No decimal point, parse as whole ANTD
 		whole, ok := new(big.Int).SetString(amountStr, 10)
@@ -310,18 +312,18 @@ func ParseANTD(amountStr string) (*big.Int, error) {
 		}
 		return new(big.Int).Mul(whole, oneANTD), nil
 	}
-	
+
 	// Split whole and fractional parts
 	wholeStr := amountStr[:decimalIdx]
 	fracStr := amountStr[decimalIdx+1:]
-	
+
 	// Parse whole part
 	whole, ok := new(big.Int).SetString(wholeStr, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid whole number: %s", wholeStr)
 	}
 	result.Mul(whole, oneANTD)
-	
+
 	// Parse fractional part (pad to 18 digits)
 	for len(fracStr) < 18 {
 		fracStr += "0"
@@ -334,7 +336,7 @@ func ParseANTD(amountStr string) (*big.Int, error) {
 		return nil, fmt.Errorf("invalid fractional part: %s", fracStr)
 	}
 	result.Add(result, frac)
-	
+
 	return result, nil
 }
 
@@ -352,20 +354,20 @@ func min(a, b int) int {
 func GetRewardInfo(blockNumber uint64, blockReward *big.Int, transactionFees *big.Int) map[string]interface{} {
 	distribution := DefaultRewardDistribution()
 	totalReward := CalculateTotalReward(blockReward, transactionFees)
-	
+
 	totalBig := new(big.Float).SetInt(totalReward)
 	mainKingPercent := new(big.Float).SetFloat64(float64(distribution.MainKingPercent) / 100.0)
 	rotatingKingPercent := new(big.Float).SetFloat64(float64(distribution.RotatingKingPercent) / 100.0)
 	minerPercent := new(big.Float).SetFloat64(float64(distribution.MinerPercent) / 100.0)
-	
+
 	mainKingReward := new(big.Int)
 	rotatingKingReward := new(big.Int)
 	minerReward := new(big.Int)
-	
+
 	new(big.Float).Mul(totalBig, mainKingPercent).Int(mainKingReward)
 	new(big.Float).Mul(totalBig, rotatingKingPercent).Int(rotatingKingReward)
 	new(big.Float).Mul(totalBig, minerPercent).Int(minerReward)
-	
+
 	return map[string]interface{}{
 		"blockNumber":              blockNumber,
 		"blockReward":              blockReward.String(),
@@ -375,19 +377,19 @@ func GetRewardInfo(blockNumber uint64, blockReward *big.Int, transactionFees *bi
 		"totalReward":              totalReward.String(),
 		"totalRewardFormatted":     FormatANTD(totalReward),
 		"distribution": map[string]interface{}{
-			"mainKingPercent":   distribution.MainKingPercent,
+			"mainKingPercent":     distribution.MainKingPercent,
 			"rotatingKingPercent": distribution.RotatingKingPercent,
-			"minerPercent":      distribution.MinerPercent,
+			"minerPercent":        distribution.MinerPercent,
 		},
 		"rewards": map[string]interface{}{
-			"mainKing":   mainKingReward.String(),
+			"mainKing":     mainKingReward.String(),
 			"rotatingKing": rotatingKingReward.String(),
-			"miner":      minerReward.String(),
+			"miner":        minerReward.String(),
 		},
 		"rewardsFormatted": map[string]string{
-			"mainKing":   FormatANTD(mainKingReward),
+			"mainKing":     FormatANTD(mainKingReward),
 			"rotatingKing": FormatANTD(rotatingKingReward),
-			"miner":      FormatANTD(minerReward),
+			"miner":        FormatANTD(minerReward),
 		},
 	}
 }
