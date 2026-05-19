@@ -96,13 +96,13 @@ const (
 	TxAuthTupleGas            uint64 = 12500 // Per auth tuple code specified in EIP-7702
 
 	// Call gas costs
-	CallGasFrontier              uint64 = 40   // Once per CALL operation & message call transaction.
-	CallGasEIP150                uint64 = 700  // Static portion of gas for CALL-derivates after EIP 150
-	BalanceGasFrontier           uint64 = 20   // The cost of a BALANCE operation
-	BalanceGasEIP150             uint64 = 400  // The cost of a BALANCE operation after Tangerine
-	BalanceGasEIP1884            uint64 = 700  // The cost of a BALANCE operation after EIP 1884
-	ExtcodeSizeGasFrontier       uint64 = 20   // Cost of EXTCODESIZE before EIP 150
-	ExtcodeSizeGasEIP150         uint64 = 700  // Cost of EXTCODESIZE after EIP 150
+	CallGasFrontier              uint64 = 40  // Once per CALL operation & message call transaction.
+	CallGasEIP150                uint64 = 700 // Static portion of gas for CALL-derivates after EIP 150
+	BalanceGasFrontier           uint64 = 20  // The cost of a BALANCE operation
+	BalanceGasEIP150             uint64 = 400 // The cost of a BALANCE operation after Tangerine
+	BalanceGasEIP1884            uint64 = 700 // The cost of a BALANCE operation after EIP 1884
+	ExtcodeSizeGasFrontier       uint64 = 20  // Cost of EXTCODESIZE before EIP 150
+	ExtcodeSizeGasEIP150         uint64 = 700 // Cost of EXTCODESIZE after EIP 150
 	SloadGasFrontier             uint64 = 50
 	SloadGasEIP150               uint64 = 200
 	SloadGasEIP1884              uint64 = 800  // Cost of SLOAD after EIP 1884
@@ -119,7 +119,7 @@ const (
 
 	CreateBySelfdestructGas uint64 = 25000
 
-	InitialBaseFee                  = 7
+	InitialBaseFee = 7
 
 	MaxCodeSize              = 24576                    // Maximum bytecode to permit for a contract
 	MaxInitCodeSize          = 2 * MaxCodeSize          // Maximum initcode to permit in a creation transaction
@@ -179,27 +179,25 @@ var Bls12381G2MultiExpDiscountTable = [128]uint64{1000, 1000, 923, 884, 855, 832
 
 // Difficulty parameters based on your genesis
 var (
-	DifficultyBoundDivisor = big.NewInt(2048)   // The bound divisor of the difficulty
+	DifficultyBoundDivisor = big.NewInt(2048)    // The bound divisor of the difficulty
 	GenesisDifficulty      = big.NewInt(4194304) // YOUR genesis difficulty (0x400000)
-	MinimumDifficulty      = big.NewInt(131072) // The minimum that the difficulty may ever be
-	DurationLimit          = big.NewInt(13)     // The decision boundary on the blocktime duration
+	MinimumDifficulty      = big.NewInt(131072)  // The minimum that the difficulty may ever be
+	DurationLimit          = big.NewInt(13)      // The decision boundary on the blocktime duration
 )
 
-// PoS/Beacon chain constants - NOT USED in RandomX chain (commented out)
-// var (
-//     SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
-//     BeaconRootsAddress = common.HexToAddress("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02")
-//     BeaconRootsCode    = common.FromHex("...")
-//     HistoryStorageAddress = common.HexToAddress("0x0000F90827F1C53a10cb7A02335B175320002935")
-//     HistoryStorageCode    = common.FromHex("...")
-//     WithdrawalQueueAddress = common.HexToAddress("0x00000961Ef480Eb55e80D19ad83579A64c007002")
-//     WithdrawalQueueCode    = common.FromHex("...")
-//     ConsolidationQueueAddress = common.HexToAddress("0x0000BBdDc7CE488642fb579F8B00f3a590007251")
-//     ConsolidationQueueCode    = common.FromHex("...")
-// )
+var (
+	SystemAddress             = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+	BeaconRootsAddress        = common.HexToAddress("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02")
+	BeaconRootsCode           = common.FromHex("")
+	HistoryStorageAddress     = common.HexToAddress("0x0000F90827F1C53a10cb7A02335B175320002935")
+	HistoryStorageCode        = common.FromHex("")
+	WithdrawalQueueAddress    = common.HexToAddress("0x00000961Ef480Eb55e80D19ad83579A64c007002")
+	WithdrawalQueueCode       = common.FromHex("")
+	ConsolidationQueueAddress = common.HexToAddress("0x0000BBdDc7CE488642fb579F8B00f3a590007251")
+	ConsolidationQueueCode    = common.FromHex("")
+)
 
-// System log events - NOT USED in RandomX chain (commented out)
-// var (
-//     EthTransferLogEvent = common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
-//     EthBurnLogEvent     = common.HexToHash("0xcc16f5dbb4873280815c1ee09dbd06736cffcc184412cf7a71a0fdb75d397ca5")
-// )
+var (
+	EthTransferLogEvent = common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+	EthBurnLogEvent     = common.HexToHash("0xcc16f5dbb4873280815c1ee09dbd06736cffcc184412cf7a71a0fdb75d397ca5")
+)
