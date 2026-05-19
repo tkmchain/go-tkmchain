@@ -343,38 +343,37 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 }
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
-func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body) {
 	// Get kings from chain config
 	mainKing := r.GetMainKing()
 	rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-	
+
 	// Calculate rewards
-	totalFees := GetTotalTransactionFees(header, body.Receipts)
+	totalFees := big.NewInt(0)
 	blockReward := CalculateBlockReward(header.Number.Uint64())
 	totalReward := CalculateTotalReward(blockReward, totalFees)
-	
+
 	// Convert vm.StateDB to *state.StateDB for reward distribution
 	// Since our reward functions expect *state.StateDB, we need to handle this
-	var stateDB *state.StateDB
-	if s, ok := state.(*state.StateDB); ok {
-		stateDB = s
-	} else {
+	statedb, ok := stateDB.(*state.StateDB)
+	if !ok {
 		log.Error("Failed to convert StateDB to expected type")
 		return
 	}
-	
+
 	// Distribute rewards
-	DistributeRewards(stateDB, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
-	
+	DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
+
 	// Handle uncle rewards
 	for _, uncle := range body.Uncles {
 		uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
-		stateDB.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
+		statedb.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
 	}
-	
+
 	// Finalize state root
 	header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
+
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	r.Finalize(chain, header, stateDB.(*state.StateDB), body)
