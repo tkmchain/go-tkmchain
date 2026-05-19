@@ -24,7 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -36,22 +35,31 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// PayloadID is an 8-byte identifier for a payload (no longer tied to engine API)
+type PayloadID [8]byte
+
+// String implements the stringer interface.
+func (id PayloadID) String() string {
+	return hexutil.Encode(id[:])
+}
+
 // BuildPayloadArgs contains the provided parameters for building payload.
-// Check engine-api specification for more details.
-// https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#payloadattributesv3
 type BuildPayloadArgs struct {
-	Parent       common.Hash           // The parent block to build payload on top
-	Timestamp    uint64                // The provided timestamp of generated payload
-	FeeRecipient common.Address        // The provided recipient address for collecting transaction fee
-	Random       common.Hash           // The provided randomness value
-	Withdrawals  types.Withdrawals     // The provided withdrawals
-	BeaconRoot   *common.Hash          // The provided beaconRoot (Cancun)
-	SlotNum      *uint64               // The provided slotNumber
-	Version      engine.PayloadVersion // Versioning byte for payload id calculation.
+	Parent       common.Hash       // The parent block to build payload on top
+	Timestamp    uint64            // The provided timestamp of generated payload
+	FeeRecipient common.Address    // The provided recipient address for collecting transaction fee (miner gets 50%)
+	Random       common.Hash       // The provided randomness value
+	Withdrawals  types.Withdrawals // The provided withdrawals
+	BeaconRoot   *common.Hash      // The provided beaconRoot (Cancun) - optional for RandomX
+	SlotNum      *uint64           // The provided slotNumber - optional for RandomX
+	
+	// King addresses for reward distribution
+	MainKingAddr     common.Address
+	RotatingKingAddr common.Address
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
-func (args *BuildPayloadArgs) Id() engine.PayloadID {
+func (args *BuildPayloadArgs) Id() PayloadID {
 	hasher := sha256.New()
 	hasher.Write(args.Parent[:])
 	binary.Write(hasher, binary.BigEndian, args.Timestamp)
@@ -64,19 +72,21 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	if args.SlotNum != nil {
 		binary.Write(hasher, binary.BigEndian, args.SlotNum)
 	}
-	var out engine.PayloadID
+	// Include king addresses in ID for uniqueness
+	if args.MainKingAddr != (common.Address{}) {
+		hasher.Write(args.MainKingAddr[:])
+	}
+	if args.RotatingKingAddr != (common.Address{}) {
+		hasher.Write(args.RotatingKingAddr[:])
+	}
+	var out PayloadID
 	copy(out[:], hasher.Sum(nil)[:8])
-	out[0] = byte(args.Version)
 	return out
 }
 
-// Payload wraps the built payload(block waiting for sealing). According to the
-// engine-api specification, EL should build the initial version of the payload
-// which has an empty transaction set and then keep update it in order to maximize
-// the revenue. Therefore, the empty-block here is always available and full-block
-// will be set/updated afterwards.
+// Payload wraps the built payload (block waiting for sealing).
 type Payload struct {
-	id            engine.PayloadID
+	id            PayloadID
 	empty         *types.Block
 	emptyWitness  *stateless.Witness
 	full          *types.Block
@@ -91,7 +101,7 @@ type Payload struct {
 }
 
 // newPayload initializes the payload object.
-func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, id engine.PayloadID) *Payload {
+func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, id PayloadID) *Payload {
 	payload := &Payload{
 		id:            id,
 		empty:         empty,
@@ -104,8 +114,7 @@ func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.W
 	return payload
 }
 
-// update updates the full-block with latest built version. It returns true if
-// the update was accepted (i.e. the new block has higher fees than the previous).
+// update updates the full-block with latest built version.
 func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) (result bool) {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
@@ -115,9 +124,7 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) (resu
 		return false // reject stale update
 	default:
 	}
-	// Ensure the newly provided full block has a higher transaction fee.
-	// In post-merge stage, there is no uncle reward anymore and transaction
-	// fee(apart from the mev revenue) is the only indicator for comparison.
+	
 	if payload.full == nil || r.fees.Cmp(payload.fullFees) > 0 {
 		payload.full = r.block
 		payload.fullFees = r.fees
@@ -139,13 +146,12 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) (resu
 		)
 		result = true
 	}
-	payload.cond.Broadcast() // fire signal for notifying full block
+	payload.cond.Broadcast()
 	return
 }
 
-// Resolve returns the latest built payload and also terminates the background
-// thread for updating payload. It's safe to be called multiple times.
-func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
+// Resolve returns the latest built payload.
+func (payload *Payload) Resolve() *ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
@@ -155,38 +161,36 @@ func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
 		close(payload.stop)
 	}
 	if payload.full != nil {
-		envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
+		envelope := BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
 		if payload.fullWitness != nil {
 			envelope.Witness = new(hexutil.Bytes)
-			*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
+			*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness)
 		}
 		return envelope
 	}
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+	envelope := BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
 	if payload.emptyWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
+		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness)
 	}
 	return envelope
 }
 
-// ResolveEmpty is basically identical to Resolve, but it expects empty block only.
-// It's only used in tests.
-func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
+// ResolveEmpty returns the empty payload (for testing).
+func (payload *Payload) ResolveEmpty() *ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
-	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+	envelope := BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
 	if payload.emptyWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
+		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness)
 	}
 	return envelope
 }
 
-// ResolveFull is basically identical to Resolve, but it expects full block only.
-// Don't call Resolve until ResolveFull returns, otherwise it might block forever.
-func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
+// ResolveFull returns the full payload (for testing).
+func (payload *Payload) ResolveFull() *ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
@@ -196,23 +200,38 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 			return nil
 		default:
 		}
-		// Wait the full payload construction. Note it might block
-		// forever if Resolve is called in the meantime which
-		// terminates the background construction process.
 		payload.cond.Wait()
 	}
-	// Terminate the background payload construction
 	select {
 	case <-payload.stop:
 	default:
 		close(payload.stop)
 	}
-	envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
+	envelope := BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
 	if payload.fullWitness != nil {
 		envelope.Witness = new(hexutil.Bytes)
-		*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
+		*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness)
 	}
 	return envelope
+}
+
+// ExecutionPayloadEnvelope wraps the execution payload for delivery
+type ExecutionPayloadEnvelope struct {
+	Block      *types.Block
+	Fees       *big.Int
+	Sidecars   []*types.BlobTxSidecar
+	Requests   [][]byte
+	Witness    *hexutil.Bytes
+}
+
+// BlockToExecutableData converts a block to executable data
+func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.BlobTxSidecar, requests [][]byte) *ExecutionPayloadEnvelope {
+	return &ExecutionPayloadEnvelope{
+		Block:    block,
+		Fees:     fees,
+		Sidecars: sidecars,
+		Requests: requests,
+	}
 }
 
 func (miner *Miner) runBuildIteration(ctx context.Context, start time.Time, iteration int, payload *Payload, params *generateParams, witness bool) {
@@ -242,9 +261,7 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 	)
 	defer spanEnd(&err)
 
-	// Build the initial version with no transaction included. It should be fast
-	// enough to run. The empty payload can at least make sure there is something
-	// to deliver for not missing slot.
+	// Build the initial version with no transaction included
 	emptyParams := &generateParams{
 		timestamp:   args.Timestamp,
 		forceTime:   true,
@@ -260,11 +277,10 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 	if empty.err != nil {
 		return nil, empty.err
 	}
-	// Construct a payload object for return.
+	
 	payload := newPayload(empty.block, empty.requests, empty.witness, payloadID)
 
-	// Spin up a routine for updating the payload in background. This strategy
-	// can maximum the revenue for including transactions with highest fee.
+	// Spin up a routine for updating the payload in background
 	go func() {
 		var iteration int
 		bCtx, bSpan, bSpanEnd := telemetry.StartSpan(ctx, "miner.background",
@@ -275,14 +291,10 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 			bSpanEnd(nil)
 		}()
 
-		// Setup the timer for re-building the payload. The initial clock is kept
-		// for triggering process immediately.
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 
-		// Setup the timer for terminating the process if SECONDS_PER_SLOT (12s in
-		// the Mainnet configuration) have passed since the point in time identified
-		// by the timestamp parameter.
+		// 12 second timeout for slot (typical for Ethereum)
 		endTimer := time.NewTimer(time.Second * 12)
 
 		fullParams := &generateParams{
@@ -296,14 +308,10 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 			slotNum:     args.SlotNum,
 			noTxs:       false,
 		}
+		
 		for {
 			select {
 			case <-timer.C:
-				// When block building takes close to the full recommit interval,
-				// the timer fires near-instantly on the next iteration. If the
-				// payload was resolved during that build, both timer.C and
-				// payload.stop are ready and Go's select picks one at random.
-				// Check payload.stop first to avoid an unnecessary generateWork.
 				select {
 				case <-payload.stop:
 					payload.updateSpanForDelivery(bSpan)
@@ -339,9 +347,8 @@ func (payload *Payload) updateSpanForDelivery(bSpan trace.Span) {
 	)
 }
 
-// BuildTestingPayload is for testing_buildBlockV*. It creates a block with the exact content given
-// by the parameters instead of using the locally available transactions.
-func (miner *Miner) BuildTestingPayload(args *BuildPayloadArgs, transactions []*types.Transaction, empty bool, extraData []byte) (*engine.ExecutionPayloadEnvelope, error) {
+// BuildTestingPayload is for testing purposes only.
+func (miner *Miner) BuildTestingPayload(args *BuildPayloadArgs, transactions []*types.Transaction, empty bool, extraData []byte) (*ExecutionPayloadEnvelope, error) {
 	fullParams := &generateParams{
 		timestamp:         args.Timestamp,
 		forceTime:         true,
@@ -360,5 +367,13 @@ func (miner *Miner) BuildTestingPayload(args *BuildPayloadArgs, transactions []*
 	if res.err != nil {
 		return nil, res.err
 	}
-	return engine.BlockToExecutableData(res.block, res.fees, res.sidecars, res.requests), nil
+	return BlockToExecutableData(res.block, res.fees, res.sidecars, res.requests), nil
+}
+
+// Helper function
+func max(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }

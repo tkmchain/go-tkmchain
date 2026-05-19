@@ -381,7 +381,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
 	// Initialize miner
-	eth.miner = miner.New(eth, config.Miner, eth.engine)
+	eth.miner = miner.New(eth, config.Miner, eth.engine, mainKingAddress, kingAddresses)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
@@ -516,6 +516,257 @@ func (s *Ethereum) GetMainKingAddress() common.Address {
 // GetKingAddresses returns all rotating king addresses
 func (s *Ethereum) GetKingAddresses() []common.Address {
 	return s.kingAddresses
+}
+
+// StartMining starts the RandomX miner with the configured settings
+func (s *Ethereum) StartMining() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	// Check if mining is enabled in config
+	if !s.config.Miner.Enabled {
+		log.Info("Mining is not enabled in config, use --mine flag to enable")
+		return nil
+	}
+
+	// Set etherbase if provided and not already set
+	if s.config.Miner.Etherbase != (common.Address{}) {
+		s.miner.SetEtherbase(s.config.Miner.Etherbase)
+		log.Info("Setting miner etherbase", "address", s.config.Miner.Etherbase.Hex())
+	}
+
+	// Set extra data if provided
+	if len(s.config.Miner.ExtraData) > 0 {
+		s.miner.SetExtra(s.config.Miner.ExtraData)
+	}
+
+	// Set gas price and limit
+	if s.config.Miner.GasPrice != nil && s.config.Miner.GasPrice.Sign() > 0 {
+		s.miner.SetGasPrice(s.config.Miner.GasPrice)
+	}
+	if s.config.Miner.GasLimit > 0 {
+		s.miner.SetGasLimit(s.config.Miner.GasLimit)
+	}
+
+	// Start the miner
+	if err := s.miner.Start(); err != nil {
+		return fmt.Errorf("failed to start RandomX miner: %w", err)
+	}
+
+	log.Info("RandomX miner started successfully",
+		"threads", s.config.Miner.Threads,
+		"etherbase", s.config.Miner.Etherbase.Hex(),
+		"gasprice", s.config.Miner.GasPrice,
+		"gaslimit", s.config.Miner.GasLimit,
+	)
+
+	return nil
+}
+
+// StopMining stops the RandomX miner
+func (s *Ethereum) StopMining() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if !s.miner.Mining() {
+		return nil
+	}
+
+	s.miner.Stop()
+	log.Info("RandomX miner stopped")
+	return nil
+}
+
+// IsMining returns whether the RandomX miner is currently running
+func (s *Ethereum) IsMining() bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.miner.Mining()
+}
+
+// GetMiningInfo returns detailed mining information
+func (s *Ethereum) GetMiningInfo() map[string]interface{} {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	info := map[string]interface{}{
+		"enabled":      s.config.Miner.Enabled,
+		"mining":       s.miner.Mining(),
+		"threads":      s.config.Miner.Threads,
+		"etherbase":    s.config.Miner.Etherbase.Hex(),
+		"hashrate":     s.miner.HashRate(),
+		"gasprice":     s.config.Miner.GasPrice.String(),
+		"gaslimit":     s.config.Miner.GasLimit,
+		"pending_txs":  s.txPool.PendingCount(),
+		"block_number": s.blockchain.CurrentBlock().NumberU64(),
+	}
+
+	// Add RandomX specific info from engine
+	if r, ok := s.engine.(*randomx.RandomX); ok {
+		info["randomx"] = map[string]interface{}{
+			"epoch":           r.CurrentEpoch(),
+			"cache_size_mb":   r.CacheSize(),
+			"dataset_size_gb": r.DatasetSize(),
+			"mining_mode":     "full",
+		}
+	}
+
+	// Add king info
+	info["main_king"] = s.mainKingAddress.Hex()
+	info["rotating_king"] = s.getCurrentRotatingKing()
+
+	return info
+}
+
+// getCurrentRotatingKing returns the current rotating king based on block height
+func (s *Ethereum) getCurrentRotatingKing() common.Address {
+	if len(s.kingAddresses) == 0 {
+		return common.Address{}
+	}
+	
+	// Get rotation interval from chain config or use default
+	interval := uint64(100)
+	if s.blockchain.Config().RotatingKingRotationInterval > 0 {
+		interval = s.blockchain.Config().RotatingKingRotationInterval
+	}
+	
+	blockNum := s.blockchain.CurrentBlock().NumberU64()
+	index := (blockNum / interval) % uint64(len(s.kingAddresses))
+	return s.kingAddresses[index]
+}
+
+// SetMinerThreads dynamically sets the number of mining threads
+func (s *Ethereum) SetMinerThreads(threads int) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if threads <= 0 {
+		threads = runtime.NumCPU()
+	}
+
+	wasMining := s.miner.Mining()
+	if wasMining {
+		if err := s.miner.Stop(); err != nil {
+			return err
+		}
+	}
+
+	s.config.Miner.Threads = threads
+
+	if wasMining {
+		if err := s.miner.Start(); err != nil {
+			return err
+		}
+	}
+
+	log.Info("Updated miner threads", "threads", threads)
+	return nil
+}
+
+// SetMinerEtherbase dynamically sets the reward recipient address
+func (s *Ethereum) SetMinerEtherbase(address common.Address) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if address == (common.Address{}) {
+		return fmt.Errorf("invalid etherbase address")
+	}
+
+	s.config.Miner.Etherbase = address
+	s.miner.SetEtherbase(address)
+	log.Info("Updated miner etherbase", "address", address.Hex())
+	return nil
+}
+
+// NewKingAPI creates a new KingAPI for RPC access
+func NewKingAPI(eth *Ethereum) *KingAPI {
+	return &KingAPI{eth: eth}
+}
+
+// KingAPI provides RPC access to king information
+type KingAPI struct {
+	eth *Ethereum
+}
+
+// GetMainKing returns the main king address
+func (api *KingAPI) GetMainKing() common.Address {
+	return api.eth.GetMainKingAddress()
+}
+
+// GetRotatingKings returns all rotating king addresses
+func (api *KingAPI) GetRotatingKings() []common.Address {
+	return api.eth.GetKingAddresses()
+}
+
+// GetCurrentRotatingKing returns the current active rotating king
+func (api *KingAPI) GetCurrentRotatingKing() common.Address {
+	return api.eth.getCurrentRotatingKing()
+}
+
+// GetRotationInfo returns rotation information
+func (api *KingAPI) GetRotationInfo() map[string]interface{} {
+	blockNum := api.eth.blockchain.CurrentBlock().NumberU64()
+	interval := uint64(100)
+	if api.eth.blockchain.Config().RotatingKingRotationInterval > 0 {
+		interval = api.eth.blockchain.Config().RotatingKingRotationInterval
+	}
+	
+	currentIndex := (blockNum / interval) % uint64(len(api.eth.kingAddresses))
+	nextBlock := (currentIndex + 1) * interval
+	
+	return map[string]interface{}{
+		"block_height":         blockNum,
+		"rotation_interval":    interval,
+		"current_king_index":   currentIndex,
+		"current_king":         api.eth.getCurrentRotatingKing().Hex(),
+		"next_rotation_block":  nextBlock,
+		"blocks_until_rotation": nextBlock - blockNum,
+		"total_kings":          len(api.eth.kingAddresses),
+	}
+}
+
+// NewMinerAPI creates a new MinerAPI for RPC access
+func NewMinerAPI(eth *Ethereum) *MinerAPI {
+	return &MinerAPI{eth: eth}
+}
+
+// MinerAPI provides RPC access to mining controls
+type MinerAPI struct {
+	eth *Ethereum
+}
+
+// Start starts the miner
+func (api *MinerAPI) Start(threads *int) error {
+	if threads != nil && *threads > 0 {
+		if err := api.eth.SetMinerThreads(*threads); err != nil {
+			return err
+		}
+	}
+	return api.eth.StartMining()
+}
+
+// Stop stops the miner
+func (api *MinerAPI) Stop() error {
+	return api.eth.StopMining()
+}
+
+// SetEtherbase sets the reward recipient
+func (api *MinerAPI) SetEtherbase(address common.Address) bool {
+	if err := api.eth.SetMinerEtherbase(address); err != nil {
+		log.Error("Failed to set etherbase", "error", err)
+		return false
+	}
+	return true
+}
+
+// GetHashRate returns the current hashrate
+func (api *MinerAPI) GetHashRate() hexutil.Uint64 {
+	return hexutil.Uint64(api.eth.miner.HashRate())
+}
+
+// GetMiningInfo returns detailed mining information
+func (api *MinerAPI) GetMiningInfo() map[string]interface{} {
+	return api.eth.GetMiningInfo()
 }
 
 // Protocols returns all configured network protocols

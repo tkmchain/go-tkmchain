@@ -342,11 +342,27 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 }
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
-func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	accumulateRewards(chain.Config(), state, header, body.Uncles)
-	if statedb, ok := state.(interface{ IntermediateRoot(bool) common.Hash }); ok {
-		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	}
+func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
+    // Get kings from chain config
+    mainKing := r.GetMainKing()
+    rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+    
+    // Calculate rewards
+    totalFees := GetTotalTransactionFees(header, body.Receipts)
+    blockReward := CalculateBlockReward(header.Number.Uint64())
+    totalReward := CalculateTotalReward(blockReward, totalFees)
+    
+    // Distribute to Main King (10%), Rotating King (40%), Miner (50%)
+    DistributeKingRewards(state, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
+    
+    // Handle uncle rewards
+    for _, uncle := range body.Uncles {
+        uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
+        state.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
+    }
+    
+    // Finalize state root
+    header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
