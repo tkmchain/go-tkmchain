@@ -774,7 +774,7 @@ type removedAccountWithBalance struct {
 // This function should only be invoked at the transaction boundary, specifically
 // before the Finalise.
 func (s *StateDB) LogsForBurnAccounts() []*types.Log {
-	var list []removedAccountWithBalance
+/*	var list []removedAccountWithBalance
 	for addr := range s.journal.dirties {
 		if obj, exist := s.stateObjects[addr]; exist && obj.selfDestructed && !obj.Balance().IsZero() {
 			list = append(list, removedAccountWithBalance{
@@ -793,7 +793,8 @@ func (s *StateDB) LogsForBurnAccounts() []*types.Log {
 	for i, acct := range list {
 		logs[i] = types.EthBurnLog(acct.address, acct.balance)
 	}
-	return logs
+	return logs */
+        return nil
 }
 
 // Finalise finalises the state by removing the destructed objects and clears
