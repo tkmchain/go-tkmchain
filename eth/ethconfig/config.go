@@ -229,7 +229,7 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, thread
 		config.RandomX = params.DefaultRandomXConfig()
 	}
 
-	engine, err := randomx.New(config.RandomX, threads)
+	engine, err := randomx.New(config.RandomX, threads, common.Address{}, nil)
 	if err != nil {
 		return nil, err
 	}

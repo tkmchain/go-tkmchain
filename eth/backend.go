@@ -157,12 +157,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	scheme, err := rawdb.ParseStateScheme(config.StateScheme, chainDb)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Try to recover offline state pruning only in hash-based
 	if scheme == rawdb.HashScheme {
 		if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb); err != nil {
@@ -221,14 +221,14 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		mainKingAddress: mainKingAddress,
 		kingAddresses:   kingAddresses,
 	}
-	
+
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol with RandomX", 
-		"network", networkID, 
+	log.Info("Initialising Ethereum protocol with RandomX",
+		"network", networkID,
 		"dbversion", dbVer,
 		"mainKing", mainKingAddress.Hex(),
 		"rotatingKings", len(kingAddresses))

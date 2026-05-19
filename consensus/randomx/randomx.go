@@ -84,7 +84,7 @@ type RandomX struct {
 }
 
 // New creates a new RandomX consensus engine.
-func New(config *params.RandomXConfig, threads int) (*RandomX, error) {
+func New(config *params.RandomXConfig, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
 	if threads <= 0 {
 		threads = runtime.NumCPU()
 	}
@@ -106,7 +106,7 @@ func New(config *params.RandomXConfig, threads int) (*RandomX, error) {
 
 	// Initialize rotating king manager
 	rotationInterval := uint64(100) // Rotate every 100 blocks
-	kingManager := rotatingking.NewRotatingKingManager(common.Address{}, nil, rotationInterval)
+	kingManager := rotatingking.NewRotatingKingManager(mainKing, kingAddresses, rotationInterval)
 
 	return &RandomX{
 		config:       config,
@@ -128,7 +128,7 @@ func DefaultConfig() *params.RandomXConfig {
 
 // NewFaker creates a RandomX engine that skips proof-of-work verification (testing only).
 func NewFaker() *RandomX {
-	engine, _ := New(nil, 1)
+	engine, _ := New(nil, 1, common.Address{}, nil)
 	engine.fakeMode = true
 	return engine
 }
@@ -344,7 +344,9 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
 func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	accumulateRewards(chain.Config(), state, header, body.Uncles)
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	if statedb, ok := state.(interface{ IntermediateRoot(bool) common.Hash }); ok {
+		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	}
 }
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
