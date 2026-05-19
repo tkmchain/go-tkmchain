@@ -25,9 +25,33 @@ var Modules = map[string]string{
 	"miner":  MinerJs,
 	"net":    NetJs,
 	"rpc":    RpcJs,
+	"rk":     RkJs,
 	"txpool": TxpoolJs,
 	"dev":    DevJs,
 }
+
+const RkJs = `
+web3._extend({
+	property: 'rk',
+	methods: [
+		new web3._extend.Method({
+			name: 'add',
+			call: 'rk_add',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'list',
+			call: 'rk_list',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'status',
+			call: 'rk_status',
+			params: 1
+		})
+	]
+});
+`
 
 const CliqueJs = `
 web3._extend({

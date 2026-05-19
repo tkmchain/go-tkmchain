@@ -119,6 +119,7 @@ type Ethereum struct {
 	// Rotating King configuration
 	mainKingAddress common.Address
 	kingAddresses   []common.Address
+	rkLocks         map[common.Address]time.Time
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -183,7 +184,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	if mainKingAddress == (common.Address{}) {
 		mainKingAddress = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
-        }
+	}
 	kingAddresses := chainConfig.RotatingKingAddresses
 	if len(kingAddresses) == 0 {
 		kingAddresses = config.KingAddresses
@@ -221,6 +222,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
 		mainKingAddress: mainKingAddress,
 		kingAddresses:   kingAddresses,
+		rkLocks:         make(map[common.Address]time.Time),
 	}
 
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
@@ -456,6 +458,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		},
 		{
 			Namespace: "king",
+			Service:   NewKingAPI(s),
+		},
+		{
+			Namespace: "rk",
 			Service:   NewKingAPI(s),
 		},
 	}...)
