@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/rotatingking"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -343,33 +344,47 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
 func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
-    // Get kings from chain config
-    mainKing := r.GetMainKing()
-    rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-    
-    // Calculate rewards
-    totalFees := GetTotalTransactionFees(header, body.Receipts)
-    blockReward := CalculateBlockReward(header.Number.Uint64())
-    totalReward := CalculateTotalReward(blockReward, totalFees)
-    
-    // Distribute to Main King (10%), Rotating King (40%), Miner (50%)
-    DistributeKingRewards(state, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
-    
-    // Handle uncle rewards
-    for _, uncle := range body.Uncles {
-        uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
-        state.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
-    }
-    
-    // Finalize state root
-    header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	mainKing := r.GetMainKing()
+	rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	totalReward := CalculateTotalReward(blockReward, nil)
+
+	DistributeRewards(state, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
+	for _, uncle := range body.Uncles {
+		DistributeUncleReward(state, uncle.Coinbase, uncle.Number.Uint64(), header.Number.Uint64(), blockReward)
+	}
+	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	r.Finalize(chain, header, state, body)
+	r.Finalize(chain, header, state.(*state.StateDB), body)
+	totalFees := GetTotalTransactionFees(header, receipts)
+	if totalFees.Sign() > 0 {
+		mainKing := r.GetMainKing()
+		rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+		DistributeRewards(state.(*state.StateDB), mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
+		header.Root = state.(*state.StateDB).IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	}
 	header.Bloom = types.MergeBloom(receipts)
 	return types.NewBlock(header, body, receipts, nil), nil
+}
+
+// GetMainKing returns the configured main king address.
+func (r *RandomX) GetMainKing() common.Address {
+	if r.rotatingKing == nil {
+		return common.Address{}
+	}
+	return r.rotatingKing.GetMainKing()
+}
+
+// GetRotatingKing returns the active rotating king address.
+func (r *RandomX) GetRotatingKing(_ uint64) common.Address {
+	if r.rotatingKing == nil {
+		return common.Address{}
+	}
+	return r.rotatingKing.GetCurrentKing()
 }
 
 // Seal generates a new sealing request for the given input block.
