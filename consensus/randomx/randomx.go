@@ -43,6 +43,7 @@ import (
         "github.com/ethereum/go-ethereum/rpc"
         "github.com/holiman/uint256"
         randomx_lib "git.gammaspectra.live/P2Pool/go-randomx/v3"
+	"github.com/ethereum/go-ethereum/consensus/rotatingking"
 )
 
 // RandomX proof-of-work protocol constants.
@@ -79,6 +80,7 @@ type RandomX struct {
         fakeMode    bool
         fakeFail    *uint64
         fakeDelay   *time.Duration
+	rotatingKing *rotatingking.RotatingKingManager
 }
 
 // New creates a new RandomX consensus engine.
@@ -102,10 +104,15 @@ func New(config *params.RandomXConfig, threads int) (*RandomX, error) {
                 config.MinMemory = 4 * 1024 * 1024 * 1024
         }
 
+	// Initialize rotating king manager
+	rotationInterval := uint64(100) // Rotate every 100 blocks
+	kingManager := rotatingking.NewRotatingKingManager(mainKing, kingAddresses, rotationInterval)
+
         return &RandomX{
                 config:  config,
                 threads: threads,
                 stopCh:  make(chan struct{}),
+		rotatingKing: kingManager,
         }, nil
 }
 
@@ -335,13 +342,51 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 }
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
-func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-        accumulateRewards(chain.Config(), state, header, body.Uncles)
-        if statedb, ok := state.(interface{ IntermediateRoot(bool) common.Hash }); ok {
-                header.Root = statedb.IntermediateRoot(true)
-        }
+func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
+	// Calculate total transaction fees
+	totalFees := GetTotalTransactionFees(header, body.Receipts)
+	
+	// Calculate block reward
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	totalReward := rotatingking.CalculateTotalReward(blockReward, totalFees)
+	
+	// Get kings
+	mainKing := r.rotatingKing.GetMainKing()
+	rotatingKing := r.rotatingKing.GetCurrentKing()
+	
+	// Distribute rewards
+	rotatingking.DistributeRewards(state, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
+	
+	// Handle king rotation
+	if r.rotatingKing.ShouldRotate(header.Number.Uint64()) {
+		// Create a state provider for balance checks
+		stateProvider := &stateProvider{state: state}
+		if err := r.rotatingKing.RotateToNextKing(header.Number.Uint64(), header.Hash(), stateProvider); err != nil {
+			log.Error("Failed to rotate king", "error", err)
+		}
+	}
+	
+	// Distribute uncle rewards (if any)
+	for _, uncle := range body.Uncles {
+		uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
+		state.AddBalance(uncle.Coinbase, uncleReward, tracing.BalanceIncreaseRewardMineUncle)
+	}
+	
+	// Finalize state root
+	header.Root = state.IntermediateRoot(true)
 }
 
+type stateProvider struct {
+	state *state.StateDB
+}
+
+func (sp *stateProvider) GetBalance(addr common.Address) *big.Int {
+	return sp.state.GetBalance(addr)
+}
+
+func (sp *stateProvider) GetBlockNumber() uint64 {
+	return 0 // Not needed for balance checks
+}
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
         r.Finalize(chain, header, state, body)

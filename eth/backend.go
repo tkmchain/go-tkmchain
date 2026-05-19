@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/history"
@@ -65,22 +66,13 @@ import (
 )
 
 const (
-	// This is the fairness knob for the discovery mixer. When looking for peers, we'll
-	// wait this long for a single source of candidates before moving on and trying other
-	// sources. If this timeout expires, the source will be skipped in this round, but it
-	// will continue to fetch in the background and will have a chance with a new timeout
-	// in the next rounds, giving it overall more time but a proportionally smaller share.
-	// We expect a normal source to produce ~10 candidates per second.
+	// discmixTimeout is the fairness knob for the discovery mixer
 	discmixTimeout = 100 * time.Millisecond
 
-	// discoveryPrefetchBuffer is the number of peers to pre-fetch from a discovery
-	// source. It is useful to avoid the negative effects of potential longer timeouts
-	// in the discovery, keeping dial progress while waiting for the next batch of
-	// candidates.
+	// discoveryPrefetchBuffer is the number of peers to pre-fetch from discovery
 	discoveryPrefetchBuffer = 32
 
-	// maxParallelENRRequests is the maximum number of parallel ENR requests that can be
-	// performed by a disc/v4 source.
+	// maxParallelENRRequests is the maximum number of parallel ENR requests
 	maxParallelENRRequests = 16
 )
 
@@ -88,9 +80,9 @@ const (
 // Deprecated: use ethconfig.Config instead.
 type Config = ethconfig.Config
 
-// Ethereum implements the Ethereum full node service.
+// Ethereum implements the Ethereum full node service with RandomX PoW and Rotating King consensus.
 type Ethereum struct {
-	// core protocol objects
+	// Core protocol objects
 	config         *ethconfig.Config
 	txPool         *txpool.TxPool
 	blobTxPool     *blobpool.BlobPool
@@ -123,10 +115,13 @@ type Ethereum struct {
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 
 	shutdownTracker *shutdowncheck.ShutdownTracker // Tracks if and when the node has shutdown ungracefully
+
+	// Rotating King configuration
+	mainKingAddress common.Address
+	kingAddresses   []common.Address
 }
 
-// New creates a new Ethereum object (including the initialisation of the common Ethereum object),
-// whose lifecycle will be managed by the provided node.
+// New creates a new Ethereum object with RandomX consensus and Rotating King support
 func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Ensure configuration values are compatible and sane
 	if !config.SyncMode.IsValid() {
@@ -150,6 +145,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	log.Info("Allocated trie memory caches", "clean", common.StorageSize(config.TrieCleanCache)*1024*1024, "dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024)
 
+	// Open database
 	dbOptions := node.DatabaseOptions{
 		Cache:             config.DatabaseCache,
 		Handles:           config.DatabaseHandles,
@@ -161,34 +157,57 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	
 	scheme, err := rawdb.ParseStateScheme(config.StateScheme, chainDb)
 	if err != nil {
 		return nil, err
 	}
-	// Try to recover offline state pruning only in hash-based.
+	
+	// Try to recover offline state pruning only in hash-based
 	if scheme == rawdb.HashScheme {
 		if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb); err != nil {
 			log.Error("Failed to recover state", "error", err)
 		}
 	}
 
-	// Here we determine genesis hash and active ChainConfig.
-	// We need these to figure out the consensus parameters and to set up history pruning.
+	// Load chain configuration
 	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
 	}
-	engine, err := ethconfig.CreateConsensusEngine(chainConfig, chainDb, config.RandomXMinerThreads)
-	if err != nil {
-		return nil, err
+
+	// Set default king addresses if not configured
+	mainKingAddress := config.MainKingAddress
+	if mainKingAddress == (common.Address{}) {
+		// Default main king address
+		mainKingAddress = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+		log.Warn("Using default main king address", "address", mainKingAddress.Hex())
 	}
-	// Set networkID to chainID by default.
+
+	kingAddresses := config.KingAddresses
+	if len(kingAddresses) == 0 {
+		// Default rotating king addresses
+		kingAddresses = []common.Address{
+			common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			common.HexToAddress("0x0000000000000000000000000000000000000003"),
+			common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		}
+		log.Warn("Using default rotating king addresses", "count", len(kingAddresses))
+	}
+
+	// Create RandomX consensus engine with Rotating King support
+	engine, err := randomx.New(chainConfig.RandomX, config.RandomXMinerThreads, mainKingAddress, kingAddresses)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RandomX engine: %w", err)
+	}
+
+	// Set networkID to chainID by default
 	networkID := config.NetworkId
 	if networkID == 0 {
 		networkID = chainConfig.ChainID.Uint64()
 	}
 
-	// Assemble the Ethereum object.
+	// Assemble the Ethereum object
 	eth := &Ethereum{
 		config:          config,
 		chainDb:         chainDb,
@@ -199,60 +218,66 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		p2pServer:       stack.Server(),
 		discmix:         enode.NewFairMix(discmixTimeout),
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
+		mainKingAddress: mainKingAddress,
+		kingAddresses:   kingAddresses,
 	}
+	
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "network", networkID, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol with RandomX", 
+		"network", networkID, 
+		"dbversion", dbVer,
+		"mainKing", mainKingAddress.Hex(),
+		"rotatingKings", len(kingAddresses))
 
-	// Create BlockChain object.
+	// Check database version
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
 			return nil, fmt.Errorf("database version is v%d, Geth %s only supports v%d", *bcVersion, version.WithMeta, core.BlockChainVersion)
 		} else if bcVersion == nil || *bcVersion < core.BlockChainVersion {
-			if bcVersion != nil { // only print warning on upgrade, not on init
+			if bcVersion != nil {
 				log.Warn("Upgrade blockchain database version", "from", dbVer, "to", core.BlockChainVersion)
 			}
 			rawdb.WriteDatabaseVersion(chainDb, core.BlockChainVersion)
 		}
 	}
+
+	// Create history policy
 	histPolicy, err := history.NewPolicy(config.HistoryMode, genesisHash)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		options = &core.BlockChainConfig{
-			TrieCleanLimit:          config.TrieCleanCache,
-			NoPrefetch:              config.NoPrefetch,
-			TrieDirtyLimit:          config.TrieDirtyCache,
-			ArchiveMode:             config.NoPruning,
-			TrieTimeLimit:           config.TrieTimeout,
-			SnapshotLimit:           config.SnapshotCache,
-			Preimages:               config.Preimages,
-			StateHistory:            config.StateHistory,
-			TrienodeHistory:         config.TrienodeHistory,
-			NodeFullValueCheckpoint: config.NodeFullValueCheckpoint,
-			BinTrieGroupDepth:       config.BinTrieGroupDepth,
-			StateScheme:             scheme,
-			HistoryPolicy:           histPolicy,
-			TxLookupLimit:           int64(min(config.TransactionHistory, math.MaxInt64)),
-			VmConfig: vm.Config{
-				EnablePreimageRecording: config.EnablePreimageRecording,
-			},
-			// Enables file journaling for the trie database. The journal files will be stored
-			// within the data directory. The corresponding paths will be either:
-			// - DATADIR/triedb/merkle.journal
-			// - DATADIR/triedb/verkle.journal
-			TrieJournalDirectory: stack.ResolvePath("triedb"),
-			StateSizeTracking:    config.EnableStateSizeTracking,
-			SlowBlockThreshold:   config.SlowBlockThreshold,
 
-			StatelessSelfValidation: config.StatelessSelfValidation,
-			EnableWitnessStats:      config.EnableWitnessStats,
-		}
-	)
+	// Configure blockchain options
+	options := &core.BlockChainConfig{
+		TrieCleanLimit:          config.TrieCleanCache,
+		NoPrefetch:              config.NoPrefetch,
+		TrieDirtyLimit:          config.TrieDirtyCache,
+		ArchiveMode:             config.NoPruning,
+		TrieTimeLimit:           config.TrieTimeout,
+		SnapshotLimit:           config.SnapshotCache,
+		Preimages:               config.Preimages,
+		StateHistory:            config.StateHistory,
+		TrienodeHistory:         config.TrienodeHistory,
+		NodeFullValueCheckpoint: config.NodeFullValueCheckpoint,
+		BinTrieGroupDepth:       config.BinTrieGroupDepth,
+		StateScheme:             scheme,
+		HistoryPolicy:           histPolicy,
+		TxLookupLimit:           int64(min(config.TransactionHistory, math.MaxInt64)),
+		VmConfig: vm.Config{
+			EnablePreimageRecording: config.EnablePreimageRecording,
+		},
+		TrieJournalDirectory:    stack.ResolvePath("triedb"),
+		StateSizeTracking:       config.EnableStateSizeTracking,
+		SlowBlockThreshold:      config.SlowBlockThreshold,
+		StatelessSelfValidation: config.StatelessSelfValidation,
+		EnableWitnessStats:      config.EnableWitnessStats,
+	}
+
+	// Configure VM tracing
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
@@ -264,7 +289,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 		options.VmConfig.Tracer = t
 	}
-	// Override the chain config with provided settings.
+
+	// Override chain config with provided settings
 	var overrides core.ChainOverrides
 	if config.OverrideOsaka != nil {
 		overrides.OverrideOsaka = config.OverrideOsaka
@@ -280,12 +306,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	options.Overrides = &overrides
 
+	// Create blockchain
 	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, eth.engine, options)
 	if err != nil {
 		return nil, err
 	}
 
-	// Initialize filtermaps log index.
+	// Initialize filter maps for log indexing
 	fmConfig := filtermaps.Config{
 		History:        config.LogHistory,
 		Disabled:       config.LogNoHistory,
@@ -305,7 +332,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.filterMaps = filterMaps
 	eth.closeFilterMaps = make(chan chan struct{})
 
-	// TxPool
+	// Initialize transaction pools
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
@@ -321,6 +348,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
+	// Initialize local transaction tracker
 	if !config.TxPool.NoLocals {
 		rejournal := config.TxPool.Rejournal
 		if rejournal < time.Second {
@@ -331,7 +359,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		stack.RegisterLifecycle(eth.localTxTracker)
 	}
 
-	// Permit the downloader to use the trie cache allowance during fast sync
+	// Create network handler
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
 		NodeID:         eth.p2pServer.Self().ID(),
@@ -346,35 +374,45 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
+	// Initialize connection dropper
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
+	// Initialize miner
 	eth.miner = miner.New(eth, config.Miner, eth.engine)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
+	// Setup API backend
+	eth.APIBackend = &EthAPIBackend{
+		extRPCEnabled:       stack.Config().ExtRPCEnabled(),
+		allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
+		eth:                 eth,
+		gpo:                 nil,
+	}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
 
-	// Start the RPC service
+	// Start RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, networkID)
 
-	// Register the backend on the node
+	// Register backend on the node
 	stack.RegisterAPIs(eth.APIs())
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 
-	// Successful startup; push a marker and check previous unclean shutdowns.
+	// Mark successful startup
 	eth.shutdownTracker.MarkStartup()
 
+	log.Info("Ethereum backend initialized successfully with RandomX and Rotating King")
 	return eth, nil
 }
 
+// makeExtraData creates the extra data for the miner
 func makeExtraData(extra []byte) []byte {
 	if len(extra) == 0 {
-		// create default extradata
+		// Create default extradata
 		extra, _ = rlp.EncodeToBytes([]interface{}{
 			uint(gethversion.Major<<16 | gethversion.Minor<<8 | gethversion.Patch),
 			"geth",
@@ -389,52 +427,91 @@ func makeExtraData(extra []byte) []byte {
 	return extra
 }
 
-// APIs return the collection of RPC services the ethereum package offers.
-// NOTE, some of these services probably need to be moved to somewhere else.
+// APIs returns the collection of RPC services
 func (s *Ethereum) APIs() []rpc.API {
 	apis := ethapi.GetAPIs(s.APIBackend)
 
-	// Append all the local APIs and return
+	// Append local APIs
 	return append(apis, []rpc.API{
 		{
 			Namespace: "miner",
 			Service:   NewMinerAPI(s),
-		}, {
+		},
+		{
 			Namespace: "eth",
 			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
-		}, {
+		},
+		{
 			Namespace: "admin",
 			Service:   NewAdminAPI(s),
-		}, {
+		},
+		{
 			Namespace: "debug",
 			Service:   NewDebugAPI(s),
-		}, {
+		},
+		{
 			Namespace: "net",
 			Service:   s.netRPCService,
+		},
+		{
+			Namespace: "king",
+			Service:   NewKingAPI(s),
 		},
 	}...)
 }
 
+// ResetWithGenesisBlock resets the blockchain with the given genesis block
 func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 	s.blockchain.ResetWithGenesisBlock(gb)
 }
 
+// Miner returns the miner instance
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }
 
-func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
-func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
-func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
-func (s *Ethereum) BlobTxPool() *blobpool.BlobPool     { return s.blobTxPool }
-func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
-func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
-func (s *Ethereum) IsListening() bool                  { return true } // Always listening
-func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
-func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
-func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
-func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
+// AccountManager returns the account manager
+func (s *Ethereum) AccountManager() *accounts.Manager { return s.accountManager }
 
-// Protocols returns all the currently configured
-// network protocols to start.
+// BlockChain returns the blockchain instance
+func (s *Ethereum) BlockChain() *core.BlockChain { return s.blockchain }
+
+// TxPool returns the transaction pool
+func (s *Ethereum) TxPool() *txpool.TxPool { return s.txPool }
+
+// BlobTxPool returns the blob transaction pool
+func (s *Ethereum) BlobTxPool() *blobpool.BlobPool { return s.blobTxPool }
+
+// Engine returns the consensus engine
+func (s *Ethereum) Engine() consensus.Engine { return s.engine }
+
+// ChainDb returns the chain database
+func (s *Ethereum) ChainDb() ethdb.Database { return s.chainDb }
+
+// IsListening returns whether the node is listening
+func (s *Ethereum) IsListening() bool { return true }
+
+// Downloader returns the downloader
+func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
+
+// Synced returns whether the node is synced
+func (s *Ethereum) Synced() bool { return s.handler.synced.Load() }
+
+// SetSynced sets the synced status
+func (s *Ethereum) SetSynced() { s.handler.enableSyncedFeatures() }
+
+// ArchiveMode returns whether archive mode is enabled
+func (s *Ethereum) ArchiveMode() bool { return s.config.NoPruning }
+
+// GetMainKingAddress returns the main king address
+func (s *Ethereum) GetMainKingAddress() common.Address {
+	return s.mainKingAddress
+}
+
+// GetKingAddresses returns all rotating king addresses
+func (s *Ethereum) GetKingAddresses() []common.Address {
+	return s.kingAddresses
+}
+
+// Protocols returns all configured network protocols
 func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)
 	if s.config.SnapshotCache > 0 {
@@ -443,28 +520,23 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	return protos
 }
 
-// Start implements node.Lifecycle, starting all internal goroutines needed by the
-// Ethereum protocol implementation.
+// Start implements node.Lifecycle, starting all internal goroutines
 func (s *Ethereum) Start() error {
 	if err := s.setupDiscovery(); err != nil {
 		return err
 	}
 
-	// Regularly update shutdown marker
 	s.shutdownTracker.Start()
-
-	// Start the networking layer
 	s.handler.Start(s.p2pServer.MaxPeers)
-
-	// Start the connection manager
 	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() })
-
-	// start log indexer
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
+
+	log.Info("Ethereum backend started with RandomX consensus")
 	return nil
 }
 
+// newChainView creates a new chain view for filter maps
 func (s *Ethereum) newChainView(head *types.Header) *filtermaps.ChainView {
 	if head == nil {
 		return nil
@@ -472,6 +544,7 @@ func (s *Ethereum) newChainView(head *types.Header) *filtermaps.ChainView {
 	return filtermaps.NewChainView(s.blockchain, head.Number.Uint64(), head.Hash())
 }
 
+// updateFilterMapsHeads updates filter maps heads
 func (s *Ethereum) updateFilterMapsHeads() {
 	headEventCh := make(chan core.ChainEvent, 10)
 	blockProcCh := make(chan bool, 10)
@@ -526,11 +599,13 @@ func (s *Ethereum) updateFilterMapsHeads() {
 	}
 }
 
+// setupDiscovery sets up peer discovery
 func (s *Ethereum) setupDiscovery() error {
 	eth.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
 
-	// Add eth nodes from DNS.
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
+
+	// Add eth nodes from DNS
 	if len(s.config.EthDiscoveryURLs) > 0 {
 		iter, err := dnsclient.NewIterator(s.config.EthDiscoveryURLs...)
 		if err != nil {
@@ -539,7 +614,7 @@ func (s *Ethereum) setupDiscovery() error {
 		s.discmix.AddSource(iter)
 	}
 
-	// Add snap nodes from DNS.
+	// Add snap nodes from DNS
 	if len(s.config.SnapDiscoveryURLs) > 0 {
 		iter, err := dnsclient.NewIterator(s.config.SnapDiscoveryURLs...)
 		if err != nil {
@@ -548,13 +623,10 @@ func (s *Ethereum) setupDiscovery() error {
 		s.discmix.AddSource(iter)
 	}
 
-	// Add DHT nodes from discv4.
+	// Add DHT nodes from discv4
 	if s.p2pServer.DiscoveryV4() != nil {
 		iter := s.p2pServer.DiscoveryV4().RandomNodes()
 		resolverFunc := func(ctx context.Context, enr *enode.Node) *enode.Node {
-			// RequestENR does not yet support context. It will simply time out.
-			// If the ENR can't be resolved, RequestENR will return nil. We don't
-			// care about the specific error here, so we ignore it.
 			nn, _ := s.p2pServer.DiscoveryV4().RequestENR(enr)
 			return nn
 		}
@@ -564,7 +636,7 @@ func (s *Ethereum) setupDiscovery() error {
 		s.discmix.AddSource(iter)
 	}
 
-	// Add DHT nodes from discv5.
+	// Add DHT nodes from discv5
 	if s.p2pServer.DiscoveryV5() != nil {
 		filter := eth.NewNodeFilter(s.blockchain)
 		iter := enode.Filter(s.p2pServer.DiscoveryV5().RandomNodes(), filter)
@@ -575,15 +647,12 @@ func (s *Ethereum) setupDiscovery() error {
 	return nil
 }
 
-// Stop implements node.Lifecycle, terminating all internal goroutines used by the
-// Ethereum protocol.
+// Stop implements node.Lifecycle, terminating all internal goroutines
 func (s *Ethereum) Stop() error {
-	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.dropper.Stop()
 	s.handler.Stop()
 
-	// Then stop everything else.
 	ch := make(chan struct{})
 	s.closeFilterMaps <- ch
 	<-ch
@@ -592,10 +661,17 @@ func (s *Ethereum) Stop() error {
 	s.blockchain.Stop()
 	s.engine.Close()
 
-	// Clean shutdown marker as the last thing before closing db
 	s.shutdownTracker.Stop()
-
 	s.chainDb.Close()
 
+	log.Info("Ethereum backend stopped")
 	return nil
+}
+
+// Function for min
+func min(a, b uint64) uint64 {
+	if a < b {
+		return a
+	}
+	return b
 }

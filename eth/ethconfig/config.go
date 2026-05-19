@@ -206,6 +206,10 @@ type Config struct {
 	// OverrideUBT (TODO: remove after the fork)
 	OverrideUBT *uint64 `toml:",omitempty"`
 
+	// Rotating King configuration
+	MainKingAddress common.Address   `toml:",omitempty"`
+	KingAddresses   []common.Address `toml:",omitempty"`
+
 	// RandomX mining threads configuration
 	RandomXMinerThreads int `toml:",omitempty"`
 
