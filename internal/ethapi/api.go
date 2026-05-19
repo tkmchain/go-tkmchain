@@ -86,12 +86,12 @@ func (api *EthereumAPI) Coinbase() (common.Address, error) {
 
 // Hashrate returns the mining hashrate.
 func (api *EthereumAPI) Hashrate() hexutil.Uint64 {
-	return 0
+	return hexutil.Uint64(api.b.HashRate())
 }
 
 // Mining returns whether this node is currently mining blocks.
 func (api *EthereumAPI) Mining() bool {
-	return false
+	return api.b.Mining()
 }
 
 // ProtocolVersion returns the current Ethereum protocol version.

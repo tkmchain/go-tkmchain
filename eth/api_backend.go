@@ -61,6 +61,14 @@ func (b *EthAPIBackend) CurrentBlock() *types.Header {
 	return b.eth.blockchain.CurrentBlock()
 }
 
+func (b *EthAPIBackend) Mining() bool {
+	return b.eth.IsMining()
+}
+
+func (b *EthAPIBackend) HashRate() uint64 {
+	return b.eth.miner.HashRate()
+}
+
 func (b *EthAPIBackend) SetHead(number uint64) {
 	b.eth.handler.downloader.Cancel()
 	b.eth.blockchain.SetHead(number)
