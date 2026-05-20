@@ -61,6 +61,10 @@ func (b *EthAPIBackend) CurrentBlock() *types.Header {
 	return b.eth.blockchain.CurrentBlock()
 }
 
+func (b *EthAPIBackend) Etherbase() common.Address {
+	return b.eth.config.Miner.Etherbase
+}
+
 func (b *EthAPIBackend) Mining() bool {
 	return b.eth.IsMining()
 }

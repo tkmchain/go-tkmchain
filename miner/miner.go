@@ -354,11 +354,16 @@ func (miner *Miner) SetExtra(extra []byte) error {
 }
 
 // SetEtherbase sets the address that will receive mining rewards.
-func (miner *Miner) SetEtherbase(address common.Address) {
+func (miner *Miner) SetEtherbase(address common.Address) error {
+	if address == (common.Address{}) {
+		return fmt.Errorf("invalid etherbase address")
+	}
 	miner.confMu.Lock()
 	miner.config.PendingFeeRecipient = address
+	miner.config.Etherbase = address
 	miner.confMu.Unlock()
 	log.Info("Miner etherbase updated", "address", address.Hex())
+	return nil
 }
 
 // SetGasCeil sets the gaslimit to strive for when mining blocks.

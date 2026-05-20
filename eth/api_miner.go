@@ -19,6 +19,7 @@ package eth
 import (
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
@@ -54,4 +55,12 @@ func (api *MinerAPI) SetGasPrice(gasPrice hexutil.Big) bool {
 func (api *MinerAPI) SetGasLimit(gasLimit hexutil.Uint64) bool {
 	api.e.Miner().SetGasCeil(uint64(gasLimit))
 	return true
+}
+
+// SetEtherbase sets the etherbase to receive mining rewards.
+func (api *MinerAPI) SetEtherbase(etherbase common.Address) (bool, error) {
+	if err := api.e.SetMinerEtherbase(etherbase); err != nil {
+		return false, err
+	}
+	return true, nil
 }

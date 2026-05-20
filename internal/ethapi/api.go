@@ -77,6 +77,9 @@ func NewEthereumAPI(b Backend) *EthereumAPI {
 
 // Coinbase returns the coinbase address for the current head.
 func (api *EthereumAPI) Coinbase() (common.Address, error) {
+	if etherbase := api.b.Etherbase(); etherbase != (common.Address{}) {
+		return etherbase, nil
+	}
 	head := api.b.CurrentHeader()
 	if head == nil {
 		return common.Address{}, errors.New("latest header unavailable")

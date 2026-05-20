@@ -63,6 +63,7 @@ type Backend interface {
 	HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error)
 	CurrentHeader() *types.Header
 	CurrentBlock() *types.Header
+	Etherbase() common.Address
 	Mining() bool
 	HashRate() uint64
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)

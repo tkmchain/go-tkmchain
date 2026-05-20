@@ -531,7 +531,9 @@ func (s *Ethereum) StartMining() error {
 
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {
-		s.miner.SetEtherbase(s.config.Miner.Etherbase)
+		if err := s.miner.SetEtherbase(s.config.Miner.Etherbase); err != nil {
+			return err
+		}
 		log.Info("Setting miner etherbase", "address", s.config.Miner.Etherbase.Hex())
 	}
 
@@ -674,7 +676,9 @@ func (s *Ethereum) SetMinerEtherbase(address common.Address) error {
 	}
 
 	s.config.Miner.Etherbase = address
-	s.miner.SetEtherbase(address)
+	if err := s.miner.SetEtherbase(address); err != nil {
+		return err
+	}
 	log.Info("Updated miner etherbase", "address", address.Hex())
 	return nil
 }
