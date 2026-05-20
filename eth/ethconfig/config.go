@@ -219,20 +219,24 @@ type Config struct {
 
 	// RangeLimit restricts the maximum range (end - start) for range queries.
 	RangeLimit uint64 `toml:",omitempty"`
+
+        // RandomX RAM cache configuration
+        RandomXRAMCache    bool `toml:",omitempty"`
+        RandomXNoPersist   bool `toml:",omitempty"`
 }
 
-// CreateConsensusEngine creates a RandomX consensus engine for the given chain config.
-func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, threads int) (consensus.Engine, error) {
-	// Use RandomX as the sole consensus engine
-	if config.RandomX == nil {
-		// Use default RandomX config if none provided
-		config.RandomX = params.DefaultRandomXConfig()
-	}
-
-	engine, err := randomx.New(config.RandomX, threads, common.Address{}, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return engine, nil
+func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, threads int, useRAMCache bool) (consensus.Engine, error) {
+    if config.RandomX == nil {
+        config.RandomX = params.DefaultRandomXConfig()
+    }
+    
+    // Override with CLI flags
+    config.RandomX.UseRAMCache = useRAMCache
+    
+    engine, err := randomx.New(config, threads, config.MainKingAddress, config.RotatingKingAddresses)
+    if err != nil {
+        return nil, err
+    }
+    
+    return engine, nil
 }

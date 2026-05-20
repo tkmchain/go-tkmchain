@@ -64,3 +64,17 @@ func (api *API) GetCacheInfo() (map[string]interface{}, error) {
 		"dataset_size": api.randomx.config.DatasetSizeGB,
 	}, nil
 }
+
+// GetDatasetInfo returns information about dataset storage
+func (api *API) GetDatasetInfo() map[string]interface{} {
+    api.randomx.cacheMu.RLock()
+    defer api.randomx.cacheMu.RUnlock()
+    
+    return map[string]interface{}{
+        "location":     api.randomx.GetDatasetLocation(),
+        "epoch":        api.randomx.cacheEpoch,
+        "size_gb":      api.randomx.config.DatasetSizeGB,
+        "in_ram":       api.randomx.useRAMCache,
+        "cache_size_mb": api.randomx.config.CacheSizeMB,
+    }
+}

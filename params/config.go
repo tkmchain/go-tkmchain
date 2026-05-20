@@ -36,10 +36,12 @@ func newUint64(val uint64) *uint64 { return &val }
 
 // RandomXConfig is the consensus engine configs for RandomX proof-of-work based sealing.
 type RandomXConfig struct {
-	EpochLength   uint64 `json:"epochLength"`   // Blocks per epoch (default: 2048)
-	CacheSizeMB   uint64 `json:"cacheSizeMB"`   // Cache size in MB (default: 256)
-	DatasetSizeGB uint64 `json:"datasetSizeGB"` // Dataset size in GB (default: 2)
-	MinMemory     uint64 `json:"minMemory"`     // Minimum memory required in bytes (default: 4GB)
+	EpochLength    uint64 `json:"epochLength"`       // Blocks per epoch (default: 2048)
+	CacheSizeMB    uint64 `json:"cacheSizeMB"`       // Cache size in MB (default: 256)
+	DatasetSizeGB  uint64 `json:"datasetSizeGB"`     // Dataset size in GB (default: 2)
+	MinMemory      uint64 `json:"minMemory"`         // Minimum memory required in bytes (default: 4GB)
+        UseRAMCache    bool   `json:"useRAMCache"`       // Use RAM instead of disk
+        PersistDataset bool   `json:"persistDataset"`    // Persist dataset to disk
 }
 
 // String implements the stringer interface, returning the consensus engine details.
@@ -51,10 +53,12 @@ func (c RandomXConfig) String() string {
 // DefaultRandomXConfig returns the default RandomX configuration.
 func DefaultRandomXConfig() *RandomXConfig {
 	return &RandomXConfig{
-		EpochLength:   2048,
-		CacheSizeMB:   256,
-		DatasetSizeGB: 2,
-		MinMemory:     4 * 1024 * 1024 * 1024, // 4GB
+		EpochLength:    2048,
+		CacheSizeMB:    256,
+		DatasetSizeGB:  2,
+		MinMemory:      4 * 1024 * 1024 * 1024, // 4GB
+                UseRAMCache:    false,
+                PersistDataset: true,
 	}
 }
 

@@ -76,6 +76,18 @@ var (
 		Category: flags.MinerCategory,
 	}
 
+       // RandomX RAM cache flag
+       RandomXRAMCacheFlag = &cli.BoolFlag{
+                Name:     "randomx.ram-cache",
+                Usage:    "Store RandomX dataset in RAM instead of disk (faster but uses more memory)",
+                Category: flags.MinerCategory,
+       }
+
+       RandomXNoPersistFlag = &cli.BoolFlag{
+                Name:     "randomx.no-persist",
+                Usage:    "Don't persist RandomX dataset to disk (generate fresh on each start)",
+                Category: flags.MinerCategory,
+        }
 	// King mining rewards
 	MainKingAddressFlag = &cli.StringFlag{
 		Name:     "king.main",
@@ -109,6 +121,8 @@ var RandomXMiningFlags = []cli.Flag{
 	RandomXDatasetSizeFlag,
 	RandomXEpochLengthFlag,
 	RandomXMinMemoryFlag,
+        RandomXRAMCacheFlag,
+        RandomXNoPersistFlag,
 	MainKingAddressFlag,
 	RotatingKingAddressesFlag,
 	KingRotationIntervalFlag,
