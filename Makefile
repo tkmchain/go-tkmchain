@@ -2,26 +2,37 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm all test lint fmt clean devtools help
+.PHONY: geth evm all test lint fmt clean devtools help randomx randomx-clean
 
 GOBIN = ./build/bin
 GO ?= latest
 GORUN = go run
 
+RANDOMX_REPO ?= https://github.com/tevador/RandomX.git
+RANDOMX_COMMIT ?= 6c4340ba4561aec9a3611c1aedf9931239777fb3
+RANDOMX_DIR ?= build/_workspace/randomx
+RANDOMX_BUILD_DIR ?= $(RANDOMX_DIR)/build
+
+ifeq ($(OS),Windows_NT)
+RANDOMX_LIB ?= randomx.lib
+else
+RANDOMX_LIB ?= librandomx.a
+endif
+
 #? geth: Build geth.
-geth:
+geth: randomx
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
 
 #? evm: Build evm.
-evm:
+evm: randomx
 	$(GORUN) build/ci.go install ./cmd/evm
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/evm\" to launch evm."
 
 #? all: Build all packages and executables.
-all:
+all: randomx
 	$(GORUN) build/ci.go install
 
 #? test: Run the tests.
@@ -61,3 +72,23 @@ help: Makefile
 	@echo ''
 	@echo 'Targets:'
 	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
+#? randomx: Clone and build tevador/RandomX library.
+randomx:
+	@set -e; \
+	if [ ! -d "$(RANDOMX_DIR)/.git" ]; then \
+		echo "Cloning RandomX into $(RANDOMX_DIR)"; \
+		mkdir -p "$(dir $(RANDOMX_DIR))"; \
+		git clone "$(RANDOMX_REPO)" "$(RANDOMX_DIR)"; \
+	fi; \
+	cd "$(RANDOMX_DIR)"; \
+	git fetch --tags --force origin; \
+	git checkout "$(RANDOMX_COMMIT)"; \
+	cmake -S . -B "$(RANDOMX_BUILD_DIR)" -DARCH=native -DCMAKE_BUILD_TYPE=Release; \
+	cmake --build "$(RANDOMX_BUILD_DIR)" --config Release; \
+	if [ ! -f "$(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB)" ]; then \
+		echo "warning: expected RandomX library $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB) was not found"; \
+	fi
+
+#? randomx-clean: Remove built RandomX source and artifacts.
+randomx-clean:
+	rm -rf "$(RANDOMX_DIR)"
