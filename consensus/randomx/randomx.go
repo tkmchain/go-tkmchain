@@ -670,7 +670,7 @@ func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
 		// Normal disk-based dataset
 		r.dataset, err = randomx_lib.NewDataset(0)
 		if err == nil {
-			r.dataset.InitDataset(r.cache, 0, r.dataset.Count())
+			r.dataset.InitDataset(r.cache, 0, randomx_lib.DatasetItemCount)
 		}
 	}
 
@@ -689,7 +689,7 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dataset in RAM: %w", err)
 	}
-	dataset.InitDataset(cache, 0, dataset.Count())
+	dataset.InitDataset(cache, 0, randomx_lib.DatasetItemCount)
 	log.Info("RandomX dataset allocated in RAM", "size_gb", r.config.DatasetSizeGB, "epoch", epoch)
 	return dataset, nil
 }
