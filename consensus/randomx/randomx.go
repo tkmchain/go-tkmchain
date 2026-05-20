@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -74,7 +75,7 @@ type RandomX struct {
 	threads      int
 	cache        *randomx_lib.Cache
 	dataset      *randomx_lib.Dataset
-        datasetRAM  []byte              // RAM cache for dataset
+	datasetRAM   []byte // RAM cache for dataset
 	cacheEpoch   uint64
 	cacheMu      sync.RWMutex
 	stopCh       chan struct{}
@@ -84,9 +85,9 @@ type RandomX struct {
 	fakeDelay    *time.Duration
 	rotatingKing *rotatingking.RotatingKingManager
 
-        // RAM caching flags
-        persistDataset   bool  // Whether to persist dataset to disk
-        useRAMCache      bool  // Whether to use RAM cache
+	// RAM caching flags
+	persistDataset bool // Whether to persist dataset to disk
+	useRAMCache    bool // Whether to use RAM cache
 }
 
 // New creates a new RandomX consensus engine.
@@ -110,20 +111,20 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
 		config.MinMemory = 4 * 1024 * 1024 * 1024
 	}
 
-        // Check for RAM cache environment variable
-        useRAMCache := os.Getenv("RANDOMX_RAM_CACHE") == "true" || config.UseRAMCache
+	// Check for RAM cache environment variable
+	useRAMCache := os.Getenv("RANDOMX_RAM_CACHE") == "true" || config.UseRAMCache
 
 	// Initialize rotating king manager
 	rotationInterval := uint64(100) // Rotate every 100 blocks
 	kingManager := rotatingking.NewRotatingKingManager(mainKing, kingAddresses, rotationInterval)
 
 	return &RandomX{
-		config:       config,
-		threads:      threads,
-		stopCh:       make(chan struct{}),
-		rotatingKing: kingManager,
-                persistDataset: true,  // Default to persist
-                useRAMCache:    useRAMCache,
+		config:         config,
+		threads:        threads,
+		stopCh:         make(chan struct{}),
+		rotatingKing:   kingManager,
+		persistDataset: true, // Default to persist
+		useRAMCache:    useRAMCache,
 	}, nil
 }
 
@@ -561,42 +562,43 @@ func (r *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 
 // Close with RAM cleanup
 func (r *RandomX) Close() error {
-    select {
-    case <-r.stopCh:
-    default:
-        close(r.stopCh)
-    }
-    r.wg.Wait()
+	select {
+	case <-r.stopCh:
+	default:
+		close(r.stopCh)
+	}
+	r.wg.Wait()
 
-    r.cacheMu.Lock()
-    defer r.cacheMu.Unlock()
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
 
-    if r.cache != nil {
-        r.cache.Close()
-    }
-    if r.dataset != nil {
-        r.dataset.Close()
-    }
-    
-    // Free RAM cache
-    if r.datasetRAM != nil {
-        r.datasetRAM = nil
-        log.Info("Freed RandomX RAM cache")
-        
-        // Force GC to release memory
-        runtime.GC()
-    }
+	if r.cache != nil {
+		r.cache.Close()
+	}
+	if r.dataset != nil {
+		r.dataset.Close()
+	}
 
-    return nil
+	// Free RAM cache
+	if r.datasetRAM != nil {
+		r.datasetRAM = nil
+		log.Info("Freed RandomX RAM cache")
+
+		// Force GC to release memory
+		runtime.GC()
+	}
+
+	return nil
 }
 
 // GetDatasetLocation returns current dataset storage mode
 func (r *RandomX) GetDatasetLocation() string {
-    if r.useRAMCache {
-        return "RAM"
-    }
-    return "Disk"
+	if r.useRAMCache {
+		return "RAM"
+	}
+	return "Disk"
 }
+
 // InitializeForBlock preloads cache and dataset for the epoch of blockNum.
 func (r *RandomX) InitializeForBlock(blockNum uint64) error {
 	return r.updateCacheForEpoch(r.epoch(blockNum))
@@ -626,76 +628,70 @@ func (r *RandomX) seedHash(blockNum uint64) common.Hash {
 
 // updateCacheForEpoch with RAM caching support
 func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
-    r.cacheMu.Lock()
-    defer r.cacheMu.Unlock()
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
 
-    if r.cacheEpoch == epoch && r.cache != nil {
-        return nil
-    }
+	if r.cacheEpoch == epoch && r.cache != nil {
+		return nil
+	}
 
-    seed := r.seedHash(epoch * r.config.EpochLength)
-    seedBytes := seed.Bytes()
+	seed := r.seedHash(epoch * r.config.EpochLength)
+	seedBytes := seed.Bytes()
 
-    log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
+	log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
 
-    // Close old resources
-    if r.cache != nil {
-        r.cache.Close()
-    }
-    if r.dataset != nil {
-        r.dataset.Close()
-    }
+	// Close old resources
+	if r.cache != nil {
+		r.cache.Close()
+	}
+	if r.dataset != nil {
+		r.dataset.Close()
+	}
 
-    startTime := time.Now()
-    
-    // Create cache
-    var err error
-    r.cache, err = randomx_lib.NewCache(0, seedBytes)
-    if err != nil {
-        return fmt.Errorf("failed to create RandomX cache: %w", err)
-    }
-    log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
+	startTime := time.Now()
 
-    // Create dataset with RAM caching option
-    startTime = time.Now()
-    
-    if r.useRAMCache {
-        // Store dataset in RAM instead of disk
-        log.Info("Using RAM cache for RandomX dataset", "epoch", epoch)
-        r.dataset, err = r.createDatasetInRAM(epoch, r.cache)
-    } else {
-        // Normal disk-based dataset
-        r.dataset, err = randomx_lib.NewDataset(0, r.cache)
-    }
-    
-    if err != nil {
-        return fmt.Errorf("failed to create RandomX dataset: %w", err)
-    }
-    log.Info("RandomX dataset created", "epoch", epoch, "duration", time.Since(startTime), "cache", map[bool]string{true: "RAM", false: "disk"}[r.useRAMCache])
+	// Create cache
+	var err error
+	r.cache, err = randomx_lib.NewCache(0)
+	if err != nil {
+		return fmt.Errorf("failed to create RandomX cache: %w", err)
+	}
+	r.cache.Init(seedBytes)
+	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
-    r.cacheEpoch = epoch
-    return nil
+	// Create dataset with RAM caching option
+	startTime = time.Now()
+
+	if r.useRAMCache {
+		// Store dataset in RAM instead of disk
+		log.Info("Using RAM cache for RandomX dataset", "epoch", epoch)
+		r.dataset, err = r.createDatasetInRAM(epoch, r.cache)
+	} else {
+		// Normal disk-based dataset
+		r.dataset, err = randomx_lib.NewDataset(0)
+		if err == nil {
+			r.dataset.InitDataset(r.cache, 0, r.dataset.Count())
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to create RandomX dataset: %w", err)
+	}
+	log.Info("RandomX dataset created", "epoch", epoch, "duration", time.Since(startTime), "cache", map[bool]string{true: "RAM", false: "disk"}[r.useRAMCache])
+
+	r.cacheEpoch = epoch
+	return nil
 }
 
 // createDatasetInRAM creates dataset in RAM without disk I/O
 func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*randomx_lib.Dataset, error) {
-    // Calculate dataset size in bytes
-    datasetSizeBytes := uint64(r.config.DatasetSizeGB) * 1024 * 1024 * 1024
-    
-    // Allocate RAM for dataset
-    r.datasetRAM = make([]byte, datasetSizeBytes)
-    
-    // Create dataset directly in RAM
-    dataset, err := randomx_lib.NewDatasetInMemory(cache, r.datasetRAM)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create dataset in RAM: %w", err)
-    }
-    
-    log.Info("RandomX dataset allocated in RAM", 
-        "size_gb", r.config.DatasetSizeGB, 
-        "epoch", epoch)
-    
-    return dataset, nil
+	dataset, err := randomx_lib.NewDataset(0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dataset in RAM: %w", err)
+	}
+	dataset.InitDataset(cache, 0, dataset.Count())
+	log.Info("RandomX dataset allocated in RAM", "size_gb", r.config.DatasetSizeGB, "epoch", epoch)
+	return dataset, nil
 }
 
 // getVM creates a new RandomX VM for hash computation.
