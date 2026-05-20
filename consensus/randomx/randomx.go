@@ -536,11 +536,11 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
 	copy(input[32:], nonceBytes)
 
-	output := &[32]byte{}
+	output := make([]byte, 32)
 	vm.CalculateHash(input, output)
 
-	mixDigest := common.BytesToHash(output[:])
-	result := new(big.Int).SetBytes(output[:])
+	mixDigest := common.BytesToHash(output)
+	result := new(big.Int).SetBytes(output)
 
 	return mixDigest, result
 }

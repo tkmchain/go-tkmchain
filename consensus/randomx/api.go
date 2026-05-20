@@ -32,11 +32,10 @@ func (api *API) Hash(input hexutil.Bytes) (common.Hash, error) {
 	}
 	defer vm.Close()
 
-	// CalculateHash expects *[32]byte for output
-	output := &[32]byte{}
+	output := make([]byte, 32)
 	vm.CalculateHash(input, output)
 
-	return common.BytesToHash(output[:]), nil
+	return common.BytesToHash(output), nil
 }
 
 // GetSeedHash returns seed hash for block number
@@ -67,14 +66,14 @@ func (api *API) GetCacheInfo() (map[string]interface{}, error) {
 
 // GetDatasetInfo returns information about dataset storage
 func (api *API) GetDatasetInfo() map[string]interface{} {
-    api.randomx.cacheMu.RLock()
-    defer api.randomx.cacheMu.RUnlock()
-    
-    return map[string]interface{}{
-        "location":     api.randomx.GetDatasetLocation(),
-        "epoch":        api.randomx.cacheEpoch,
-        "size_gb":      api.randomx.config.DatasetSizeGB,
-        "in_ram":       api.randomx.useRAMCache,
-        "cache_size_mb": api.randomx.config.CacheSizeMB,
-    }
+	api.randomx.cacheMu.RLock()
+	defer api.randomx.cacheMu.RUnlock()
+
+	return map[string]interface{}{
+		"location":      api.randomx.GetDatasetLocation(),
+		"epoch":         api.randomx.cacheEpoch,
+		"size_gb":       api.randomx.config.DatasetSizeGB,
+		"in_ram":        api.randomx.useRAMCache,
+		"cache_size_mb": api.randomx.config.CacheSizeMB,
+	}
 }
