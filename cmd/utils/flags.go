@@ -1433,7 +1433,13 @@ func MakeDatabaseHandles(max int) int {
 // setEtherbase retrieves the etherbase from the directly specified command line flags.
 func setEtherbase(ctx *cli.Context, cfg *ethconfig.Config) {
 	if ctx.IsSet(MinerEtherbaseFlag.Name) {
-		log.Warn("Option --miner.etherbase is deprecated as the etherbase is set by the consensus client post-merge")
+		addr := ctx.String(MinerEtherbaseFlag.Name)
+		if !common.IsHexAddress(addr) {
+			Fatalf("-%s: invalid etherbase address %q", MinerEtherbaseFlag.Name, addr)
+		}
+		parsed := common.HexToAddress(addr)
+		cfg.Miner.Etherbase = parsed
+		cfg.Miner.PendingFeeRecipient = parsed
 	}
 	if !ctx.IsSet(MinerPendingFeeRecipientFlag.Name) {
 		return
@@ -1685,8 +1691,11 @@ func setBlobPool(ctx *cli.Context, cfg *blobpool.Config) {
 }
 
 func setMiner(ctx *cli.Context, cfg *miner.Config) {
-	if ctx.Bool(MiningEnabledFlag.Name) {
-		log.Warn("The flag --mine is deprecated and will be removed")
+	if ctx.IsSet(MiningEnabledFlag.Name) {
+		cfg.Enabled = ctx.Bool(MiningEnabledFlag.Name)
+	}
+	if ctx.IsSet(MinerThreadsFlag.Name) {
+		cfg.Threads = ctx.Int(MinerThreadsFlag.Name)
 	}
 	if ctx.IsSet(MinerExtraDataFlag.Name) {
 		cfg.ExtraData = []byte(ctx.String(MinerExtraDataFlag.Name))
