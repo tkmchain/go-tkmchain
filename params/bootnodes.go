@@ -53,5 +53,5 @@ const dnsPrefix = "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUD
 
 // KnownDNSNetwork returns the address of a public DNS-based node list.
 func KnownDNSNetwork(genesis common.Hash, protocol string) string {
-	return dnsPrefix + protocol + ".randomx.ethdisco.net"
+	return dnsPrefix + protocol + ".randomx.comd"
 }

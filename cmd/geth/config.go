@@ -20,11 +20,13 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-        "math/big"
+	"math"
+	"math/big"
 	"os"
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -185,10 +187,10 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 
 	// Apply flags.
 	utils.SetNodeConfig(ctx, &cfg.Node)
-	
+
 	// Apply RandomX mining flags
 	applyRandomXMinerConfig(ctx, &cfg)
-	
+
 	return cfg
 }
 
@@ -198,7 +200,7 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 	if ctx.IsSet(utils.MiningEnabledFlag.Name) {
 		cfg.RandomX.Enabled = ctx.Bool(utils.MiningEnabledFlag.Name)
 	}
-	
+
 	// Threads
 	if ctx.IsSet(utils.MinerThreadsFlag.Name) {
 		threads := ctx.Int(utils.MinerThreadsFlag.Name)
@@ -206,33 +208,37 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 			cfg.RandomX.Threads = threads
 		}
 	}
-	
+
 	// Etherbase (miner reward address)
 	if ctx.IsSet(utils.MinerEtherbaseFlag.Name) {
 		cfg.RandomX.Etherbase = ctx.String(utils.MinerEtherbaseFlag.Name)
 	}
-	
+
 	// Extra data
 	if ctx.IsSet(utils.MinerExtraDataFlag.Name) {
 		cfg.RandomX.ExtraData = ctx.String(utils.MinerExtraDataFlag.Name)
 	}
-	
+
 	// Gas price
 	if ctx.IsSet(utils.MinerGasPriceFlag.Name) {
 		cfg.RandomX.GasPrice = ctx.Int64(utils.MinerGasPriceFlag.Name)
 	}
-	
+
 	// Gas limit
 	if ctx.IsSet(utils.MinerGasLimitFlag.Name) {
 		cfg.RandomX.GasLimit = ctx.Uint64(utils.MinerGasLimitFlag.Name)
 	}
-	
+
 	// RandomX specific
 	if ctx.IsSet(utils.RandomXCacheSizeFlag.Name) {
 		cfg.RandomX.CacheSizeMB = ctx.Uint64(utils.RandomXCacheSizeFlag.Name)
 	}
 	if ctx.IsSet(utils.RandomXDatasetSizeFlag.Name) {
-		cfg.RandomX.DatasetSizeGB = ctx.Uint64(utils.RandomXDatasetSizeFlag.Name)
+		datasetSize, err := strconv.ParseFloat(ctx.String(utils.RandomXDatasetSizeFlag.Name), 64)
+		if err != nil || datasetSize <= 0 {
+			utils.Fatalf("invalid value %q for flag --%s (must be a positive number)", ctx.String(utils.RandomXDatasetSizeFlag.Name), utils.RandomXDatasetSizeFlag.Name)
+		}
+		cfg.RandomX.DatasetSizeGB = uint64(math.Ceil(datasetSize))
 	}
 	if ctx.IsSet(utils.RandomXEpochLengthFlag.Name) {
 		cfg.RandomX.EpochLength = ctx.Uint64(utils.RandomXEpochLengthFlag.Name)
@@ -240,7 +246,7 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 	if ctx.IsSet(utils.RandomXMinMemoryFlag.Name) {
 		cfg.RandomX.MinMemoryGB = ctx.Uint64(utils.RandomXMinMemoryFlag.Name)
 	}
-	
+
 	// King addresses
 	if ctx.IsSet(utils.MainKingAddressFlag.Name) {
 		cfg.RandomX.MainKing = ctx.String(utils.MainKingAddressFlag.Name)
@@ -257,7 +263,7 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 	if ctx.IsSet(utils.KingRotationIntervalFlag.Name) {
 		cfg.RandomX.RotationInterval = ctx.Uint64(utils.KingRotationIntervalFlag.Name)
 	}
-	
+
 	// Apply miner config to eth config
 	if cfg.RandomX.Enabled {
 		cfg.Eth.Miner.Enabled = true
@@ -296,7 +302,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 		cfg.Ethstats.URL = ctx.String(utils.EthStatsURLFlag.Name)
 	}
 	applyMetricConfig(ctx, &cfg)
-	
+
 	// Log mining configuration if enabled
 	if cfg.RandomX.Enabled {
 		log.Info("RandomX mining enabled",
@@ -306,7 +312,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 			"gaslimit", cfg.RandomX.GasLimit,
 		)
 	}
-	
+
 	// Log king configuration if set
 	if cfg.RandomX.MainKing != "" {
 		log.Info("King configuration loaded",
@@ -434,14 +440,14 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 			log.Warn(line)
 		}
 	}
-	
+
 	// Start mining if enabled in config
 	if cfg.RandomX.Enabled && eth != nil {
 		if err := eth.StartMining(); err != nil {
 			log.Error("Failed to start RandomX mining", "error", err)
 		}
 	}
-	
+
 	return stack
 }
 

@@ -55,10 +55,10 @@ var (
 		Category: flags.MinerCategory,
 	}
 
-	RandomXDatasetSizeFlag = &cli.Uint64Flag{
+	RandomXDatasetSizeFlag = &cli.StringFlag{
 		Name:     "randomx.dataset-size",
-		Usage:    "RandomX dataset size in GB (full mining mode)",
-		Value:    2,
+		Usage:    "RandomX dataset size in GB (full mining mode, decimals allowed and rounded up)",
+		Value:    "2",
 		Category: flags.MinerCategory,
 	}
 
