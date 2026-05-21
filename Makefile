@@ -16,9 +16,11 @@ RANDOMX_BUILD_DIR ?= $(RANDOMX_DIR)/build
 ifeq ($(OS),Windows_NT)
 RANDOMX_LIB ?= randomx.lib
 RANDOMX_LIB_PATH ?= $(RANDOMX_BUILD_DIR)/Release/$(RANDOMX_LIB)
+RANDOMX_LIB_ALT_PATH ?= $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB)
 else
 RANDOMX_LIB ?= librandomx.a
 RANDOMX_LIB_PATH ?= $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB)
+RANDOMX_LIB_ALT_PATH ?= $(RANDOMX_BUILD_DIR)/Release/$(RANDOMX_LIB)
 endif
 
 # CGO flags for RandomX
@@ -28,8 +30,8 @@ CGO_LDFLAGS = -L$(RANDOMX_BUILD_DIR) -lrandomx -lstdc++ -lm
 #? geth: Build geth.
 geth: randomx
 	@echo "Building geth with RandomX..."
-	@if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
-		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
+	@if [ ! -f "$(RANDOMX_LIB_PATH)" ] && [ ! -f "$(RANDOMX_LIB_ALT_PATH)" ]; then \
+		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH) or $(RANDOMX_LIB_ALT_PATH)"; \
 		echo "Please run 'make randomx' first"; \
 		exit 1; \
 	fi
@@ -105,14 +107,17 @@ randomx:
 	cd "$(RANDOMX_BUILD_DIR)"; \
 	cmake "$$randomx_src_dir" -DARCH=native -DCMAKE_BUILD_TYPE=Release; \
 	cmake --build . --config Release -j$(nproc); \
-	if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
-		echo "ERROR: RandomX library was not built at $(RANDOMX_LIB_PATH)"; \
-		exit 1; \
+	if [ -f "$(RANDOMX_LIB_PATH)" ]; then \
+		randomx_lib_path="$(RANDOMX_LIB_PATH)"; \
+	elif [ -f "$(RANDOMX_LIB_ALT_PATH)" ]; then \
+		randomx_lib_path="$(RANDOMX_LIB_ALT_PATH)"; \
 	else \
-		echo "✓ RandomX library built successfully at $(RANDOMX_LIB_PATH)"; \
-		echo "✓ CGO_CFLAGS=$(CGO_CFLAGS)"; \
-		echo "✓ CGO_LDFLAGS=$(CGO_LDFLAGS)"; \
-	fi
+		echo "ERROR: RandomX library was not built at $(RANDOMX_LIB_PATH) or $(RANDOMX_LIB_ALT_PATH)"; \
+		exit 1; \
+	fi; \
+	echo "✓ RandomX library built successfully at $$randomx_lib_path"; \
+	echo "✓ CGO_CFLAGS=$(CGO_CFLAGS)"; \
+	echo "✓ CGO_LDFLAGS=$(CGO_LDFLAGS)"
 
 #? randomx-clean: Remove built RandomX source and artifacts.
 randomx-clean:
