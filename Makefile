@@ -21,7 +21,7 @@ endif
 
 #? geth: Build geth.
 geth: randomx
-	CGO_ENABLED=1 $(GORUN) build/ci.go install ./cmd/geth
+	CGO_ENABLED=1 go build -tags "randomx" ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
 
