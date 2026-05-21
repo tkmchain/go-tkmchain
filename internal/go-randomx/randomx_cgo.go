@@ -100,3 +100,5 @@ func (vm *VM) Close() {
 		vm.ptr = nil
 	}
 }
+
+func Available() bool { return true }

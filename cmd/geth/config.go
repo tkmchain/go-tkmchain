@@ -41,6 +41,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/syncer"
 	"github.com/ethereum/go-ethereum/internal/flags"
+	randomxlib "github.com/ethereum/go-ethereum/internal/go-randomx"
 	"github.com/ethereum/go-ethereum/internal/telemetry/tracesetup"
 	"github.com/ethereum/go-ethereum/internal/version"
 	"github.com/ethereum/go-ethereum/log"
@@ -442,7 +443,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 	}
 
 	// Start mining if enabled in config
-	if cfg.RandomX.Enabled && eth != nil {
+	if cfg.RandomX.Enabled && !randomxlib.Available() {
+		log.Error("RandomX mining disabled", "error", "randomx requires cgo (build with CGO_ENABLED=1 and -tags randomx)")
+	} else if cfg.RandomX.Enabled && eth != nil {
 		if err := eth.StartMining(); err != nil {
 			log.Error("Failed to start RandomX mining", "error", err)
 		}

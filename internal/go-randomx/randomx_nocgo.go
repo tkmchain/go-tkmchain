@@ -26,3 +26,5 @@ func NewVM(_ int, cache *Cache, dataset *Dataset) (*VM, error) {
 }
 func (vm *VM) CalculateHash(input []byte, output []byte) {}
 func (vm *VM) Close()                                    {}
+
+func Available() bool { return false }

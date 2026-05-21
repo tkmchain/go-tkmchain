@@ -21,19 +21,19 @@ endif
 
 #? geth: Build geth.
 geth: randomx
-	$(GORUN) build/ci.go install ./cmd/geth
+	CGO_ENABLED=1 $(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
 
 #? evm: Build evm.
 evm: randomx
-	$(GORUN) build/ci.go install ./cmd/evm
+	CGO_ENABLED=1 $(GORUN) build/ci.go install ./cmd/evm
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/evm\" to launch evm."
 
 #? all: Build all packages and executables.
 all: randomx
-	$(GORUN) build/ci.go install
+	CGO_ENABLED=1 $(GORUN) build/ci.go install
 
 #? test: Run the tests.
 test: all
