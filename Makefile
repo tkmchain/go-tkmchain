@@ -91,6 +91,7 @@ help: Makefile
 #? randomx: Clone and build tevador/RandomX library.
 randomx:
 	@set -e; \
+	randomx_src_dir="$$(pwd)/$(RANDOMX_DIR)"; \
 	if [ ! -d "$(RANDOMX_DIR)/.git" ]; then \
 		echo "Cloning RandomX into $(RANDOMX_DIR)"; \
 		mkdir -p "$(dir $(RANDOMX_DIR))"; \
@@ -103,7 +104,7 @@ randomx:
 	echo "Building RandomX..."; \
 	mkdir -p "$(RANDOMX_BUILD_DIR)"; \
 	cd "$(RANDOMX_BUILD_DIR)"; \
-	cmake "$(RANDOMX_DIR)" -DARCH=native -DCMAKE_BUILD_TYPE=Release; \
+	cmake "$$randomx_src_dir" -DARCH=native -DCMAKE_BUILD_TYPE=Release; \
 	cmake --build . --config Release -j$(nproc); \
 	if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
 		echo "ERROR: RandomX library was not built at $(RANDOMX_LIB_PATH)"; \
