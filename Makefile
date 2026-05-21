@@ -98,8 +98,7 @@ randomx:
 		git clone --depth 1 --branch v2.0.1 "$(RANDOMX_REPO)" "$(RANDOMX_DIR)"; \
 	else \
 		echo "RandomX already cloned, updating..."; \
-		cd "$(RANDOMX_DIR)"; \
-		git fetch --tags --force origin; \
+		git -C "$(RANDOMX_DIR)" fetch --tags --force origin; \
 	fi; \
 	echo "Building RandomX..."; \
 	mkdir -p "$(RANDOMX_BUILD_DIR)"; \
