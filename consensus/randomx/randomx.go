@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/rotatingking"
 	"github.com/ethereum/go-ethereum/core/state"
-        "github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -46,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 )
 
@@ -383,62 +383,62 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-    statedb, ok := stateDB.(*state.StateDB)
-    if !ok {
-        return nil, fmt.Errorf("failed to convert StateDB to expected type")
-    }
+	statedb, ok := stateDB.(*state.StateDB)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert StateDB to expected type")
+	}
 
-    // Get chain with trie database access
-    chainWithTrie, ok := chain.(interface{ TrieDB() *triedb.Database })
-    if !ok {
-        log.Warn("Chain does not support trie database commit")
-    }
+	// Get chain with trie database access
+	chainWithTrie, ok := chain.(interface{ TrieDB() *triedb.Database })
+	if !ok {
+		log.Warn("Chain does not support trie database commit")
+	}
 
-    // First finalize the block (includes block reward)
-    r.Finalize(chain, header, stateDB, body)
+	// First finalize the block (includes block reward)
+	r.Finalize(chain, header, stateDB, body)
 
-    // Calculate and distribute transaction fees (only available here with receipts)
-    totalFees := GetTotalTransactionFees(header, receipts)
-    if totalFees.Sign() > 0 {
-        mainKing := r.GetMainKing()
-        rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-        DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
-        // Recompute state root after fee distribution
-        header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-    }
+	// Calculate and distribute transaction fees (only available here with receipts)
+	totalFees := GetTotalTransactionFees(header, receipts)
+	if totalFees.Sign() > 0 {
+		mainKing := r.GetMainKing()
+		rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+		DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
+		// Recompute state root after fee distribution
+		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	}
 
-    // Set bloom filter from receipts
-    if len(receipts) > 0 {
-        header.Bloom = types.CreateBloom(receipts)
-    }
+	// Set bloom filter from receipts
+	if len(receipts) > 0 {
+		header.Bloom = types.MergeBloom(receipts)
+	}
 
-    root, err := statedb.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number))
-    if err != nil {
-        return nil, fmt.Errorf("failed to commit state: %w", err)
-    }
-    
-    // Verify the committed root matches our header root
-    if root != header.Root {
-        log.Warn("State root mismatch after commit", "computed", root, "header", header.Root)
-        header.Root = root
-    }
+	root, err := statedb.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), chain.Config().IsCancun(header.Number, header.Time))
+	if err != nil {
+		return nil, fmt.Errorf("failed to commit state: %w", err)
+	}
 
-    // Also persist the trie nodes to database
-    if chainWithTrie != nil {
-        if err := chainWithTrie.TrieDB().Commit(header.Root, true); err != nil {
-            log.Warn("Failed to persist trie nodes", "root", header.Root, "err", err)
-        }
-    }
+	// Verify the committed root matches our header root
+	if root != header.Root {
+		log.Warn("State root mismatch after commit", "computed", root, "header", header.Root)
+		header.Root = root
+	}
 
-    // Create and return the final block
-    block := types.NewBlock(header, body, receipts, nil)
+	// Also persist the trie nodes to database
+	if chainWithTrie != nil {
+		if err := chainWithTrie.TrieDB().Commit(header.Root, true); err != nil {
+			log.Warn("Failed to persist trie nodes", "root", header.Root, "err", err)
+		}
+	}
 
-    log.Info("Finalized and assembled block", 
-        "number", header.Number, 
-        "stateRoot", header.Root.Hex(), 
-        "txs", len(body.Transactions))
+	// Create and return the final block
+	block := types.NewBlock(header, body, receipts, nil)
 
-    return block, nil
+	log.Info("Finalized and assembled block",
+		"number", header.Number,
+		"stateRoot", header.Root.Hex(),
+		"txs", len(body.Transactions))
+
+	return block, nil
 }
 
 // GetMainKing returns the configured main king address.
@@ -460,158 +460,158 @@ func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 
 // Seal generates a new sealing request for the given input block.
 func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-    if r.fakeMode {
-        select {
-        case results <- block.WithSeal(block.Header()):
-        case <-stop:
-        }
-        return nil
-    }
+	if r.fakeMode {
+		select {
+		case results <- block.WithSeal(block.Header()):
+		case <-stop:
+		}
+		return nil
+	}
 
-    epoch := r.epoch(block.NumberU64())
-    if err := r.updateCacheForEpoch(epoch); err != nil {
-        return fmt.Errorf("failed to update RandomX cache: %w", err)
-    }
+	epoch := r.epoch(block.NumberU64())
+	if err := r.updateCacheForEpoch(epoch); err != nil {
+		return fmt.Errorf("failed to update RandomX cache: %w", err)
+	}
 
-    log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
-    found := make(chan struct{})
-    var foundOnce sync.Once
+	log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
+	found := make(chan struct{})
+	var foundOnce sync.Once
 
-    // Reset WaitGroup for this seal attempt
-    var sealWg sync.WaitGroup
+	// Reset WaitGroup for this seal attempt
+	var sealWg sync.WaitGroup
 
-    for i := 0; i < r.threads; i++ {
-        sealWg.Add(1)
-        go r.mineWithWg(block, results, stop, found, &foundOnce, i, &sealWg)
-    }
+	for i := 0; i < r.threads; i++ {
+		sealWg.Add(1)
+		go r.mineWithWg(block, results, stop, found, &foundOnce, i, &sealWg)
+	}
 
-    // Close results channel when all threads are done
-    go func() {
-        sealWg.Wait()
-        close(results)
-        log.Debug("Seal completed for block", "number", block.NumberU64())
-    }()
+	// Close results channel when all threads are done
+	go func() {
+		sealWg.Wait()
+		close(results)
+		log.Debug("Seal completed for block", "number", block.NumberU64())
+	}()
 
-    return nil
+	return nil
 }
 
 // mineWithWg is like mine but uses a passed WaitGroup
 func (r *RandomX) mineWithWg(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int, wg *sync.WaitGroup) {
-    defer wg.Done()
-    r.mine(block, results, stop, found, foundOnce, thread)
+	defer wg.Done()
+	r.mine(block, results, stop, found, foundOnce, thread)
 }
 
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int) {
 
-    header := block.Header()
-    target := new(big.Int).Div(maxUint256, header.Difficulty)
-    mineHeader := types.CopyHeader(header)
+	header := block.Header()
+	target := new(big.Int).Div(maxUint256, header.Difficulty)
+	mineHeader := types.CopyHeader(header)
 
-    log.Info("�� Mining thread started",
-        "thread", thread,
-        "difficulty", header.Difficulty,
-        "block_number", block.NumberU64())
+	log.Info("�� Mining thread started",
+		"thread", thread,
+		"difficulty", header.Difficulty,
+		"block_number", block.NumberU64())
 
-    // Get RandomX VM
-    vm, err := r.getVM()
-    if err != nil {
-        log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
-        return
-    }
-    defer vm.Close()
+	// Get RandomX VM
+	vm, err := r.getVM()
+	if err != nil {
+		log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
+		return
+	}
+	defer vm.Close()
 
-    log.Info("✅ RandomX VM acquired", "thread", thread)
+	log.Info("✅ RandomX VM acquired", "thread", thread)
 
-    // Calculate seed hash for this epoch
-    seed := r.seedHash(block.NumberU64())
+	// Calculate seed hash for this epoch
+	seed := r.seedHash(block.NumberU64())
 
-    // Distribute nonces across threads
-    startNonce := uint64(thread)
-    step := uint64(r.threads)
+	// Distribute nonces across threads
+	startNonce := uint64(thread)
+	step := uint64(r.threads)
 
-    started := time.Now()
-    attempts := uint64(0)
-    lastLogTime := time.Now()
+	started := time.Now()
+	attempts := uint64(0)
+	lastLogTime := time.Now()
 
-    log.Info("�� Starting mining loop",
-        "thread", thread,
-        "startNonce", startNonce,
-        "step", step,
-        "total_threads", r.threads)
+	log.Info("�� Starting mining loop",
+		"thread", thread,
+		"startNonce", startNonce,
+		"step", step,
+		"total_threads", r.threads)
 
-    for nonce := startNonce; ; nonce += step {
-        select {
-        case <-stop:
-            log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
-            return
-        case <-found:
-            log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
-            return
-        default:
-            mineHeader.Nonce = types.EncodeNonce(nonce)
+	for nonce := startNonce; ; nonce += step {
+		select {
+		case <-stop:
+			log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
+			return
+		case <-found:
+			log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
+			return
+		default:
+			mineHeader.Nonce = types.EncodeNonce(nonce)
 
-            // Compute RandomX hash
-            mixDigest, result := r.hashimoto(mineHeader, seed, vm)
-            attempts++
+			// Compute RandomX hash
+			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+			attempts++
 
-            // Check if nonce is valid
-            if result.Cmp(target) <= 0 {
-                log.Info("�� NONCE FOUND!",
-                    "thread", thread,
-                    "nonce", nonce,
-                    "attempts", attempts,
-                    "duration", time.Since(started).String())
+			// Check if nonce is valid
+			if result.Cmp(target) <= 0 {
+				log.Info("�� NONCE FOUND!",
+					"thread", thread,
+					"nonce", nonce,
+					"attempts", attempts,
+					"duration", time.Since(started).String())
 
-                mineHeader.MixDigest = mixDigest
-                sealedBlock := block.WithSeal(mineHeader)
+				mineHeader.MixDigest = mixDigest
+				sealedBlock := block.WithSeal(mineHeader)
 
-                // Signal other threads to stop FIRST
-                foundOnce.Do(func() { close(found) })
+				// Signal other threads to stop FIRST
+				foundOnce.Do(func() { close(found) })
 
-                // Submit the result - use a separate select to avoid blocking
-                select {
-                case results <- sealedBlock:
-                    log.Info("✅ Block submitted to results channel",
-                        "thread", thread,
-                        "number", block.NumberU64(),
-                        "nonce", nonce)
-                case <-stop:
-                    log.Info("Stop signal received after finding nonce", "thread", thread)
-                    return
-                case <-found:
-                    log.Info("Another thread also found nonce", "thread", thread)
-                    return
-                }
-                
-                // Brief pause to ensure other threads receive the found signal
-                time.Sleep(10 * time.Millisecond)
-                return
-            }
+				// Submit the result - use a separate select to avoid blocking
+				select {
+				case results <- sealedBlock:
+					log.Info("✅ Block submitted to results channel",
+						"thread", thread,
+						"number", block.NumberU64(),
+						"nonce", nonce)
+				case <-stop:
+					log.Info("Stop signal received after finding nonce", "thread", thread)
+					return
+				case <-found:
+					log.Info("Another thread also found nonce", "thread", thread)
+					return
+				}
 
-            // Periodic logging (every 100,000 attempts)
-            if attempts%100000 == 0 {
-                elapsed := time.Since(started).Seconds()
-                hashrate := float64(attempts) / elapsed
-                log.Info("�� Mining progress",
-                    "thread", thread,
-                    "attempts", attempts,
-                    "nonce", nonce,
-                    "hashrate", fmt.Sprintf("%.2f H/s", hashrate))
-            }
+				// Brief pause to ensure other threads receive the found signal
+				time.Sleep(10 * time.Millisecond)
+				return
+			}
 
-            // Every 10 seconds, log a heartbeat
-            if time.Since(lastLogTime) > 10*time.Second {
-                elapsed := time.Since(started).Seconds()
-                hashrate := float64(attempts) / elapsed
-                log.Info("�� Mining heartbeat",
-                    "thread", thread,
-                    "attempts", attempts,
-                    "hashrate", fmt.Sprintf("%.2f H/s", hashrate),
-                    "running_for", fmt.Sprintf("%.1fs", elapsed))
-                lastLogTime = time.Now()
-            }
-        }
-    }
+			// Periodic logging (every 100,000 attempts)
+			if attempts%100000 == 0 {
+				elapsed := time.Since(started).Seconds()
+				hashrate := float64(attempts) / elapsed
+				log.Info("�� Mining progress",
+					"thread", thread,
+					"attempts", attempts,
+					"nonce", nonce,
+					"hashrate", fmt.Sprintf("%.2f H/s", hashrate))
+			}
+
+			// Every 10 seconds, log a heartbeat
+			if time.Since(lastLogTime) > 10*time.Second {
+				elapsed := time.Since(started).Seconds()
+				hashrate := float64(attempts) / elapsed
+				log.Info("�� Mining heartbeat",
+					"thread", thread,
+					"attempts", attempts,
+					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
+					"running_for", fmt.Sprintf("%.1fs", elapsed))
+				lastLogTime = time.Now()
+			}
+		}
+	}
 }
 
 // VerifySeal verifies the RandomX proof-of-work.
@@ -659,7 +659,7 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	copy(input[32:], nonceBytes)
 
 	output := make([]byte, 32)
-	
+
 	// Calculate hash
 	vm.CalculateHash(input, output)
 
@@ -670,12 +670,12 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 }
 
 func (r *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-    // Create a header fetcher function
-    getHeader := func(height uint64) *types.Header {
-        return chain.GetHeaderByNumber(height)
-    }
-    
-    return CalculateNextDifficulty(parent, getHeader)
+	// Create a header fetcher function
+	getHeader := func(height uint64) *types.Header {
+		return chain.GetHeaderByNumber(height)
+	}
+
+	return CalculateNextDifficulty(parent, getHeader)
 }
 
 // APIs returns the RPC APIs provided by the RandomX engine.
@@ -759,52 +759,52 @@ func (r *RandomX) seedHash(blockNum uint64) common.Hash {
 
 // updateCacheForEpoch - Enable full dataset mode
 func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
-    r.cacheMu.Lock()
-    defer r.cacheMu.Unlock()
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
 
-    if r.cacheEpoch == epoch && r.cache != nil {
-        return nil
-    }
+	if r.cacheEpoch == epoch && r.cache != nil {
+		return nil
+	}
 
-    seed := r.seedHash(epoch * r.config.EpochLength)
-    seedBytes := seed.Bytes()
+	seed := r.seedHash(epoch * r.config.EpochLength)
+	seedBytes := seed.Bytes()
 
-    log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
+	log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
 
-    if r.cache != nil {
-        r.cache.Close()
-    }
-    if r.dataset != nil {
-        r.dataset.Close()
-    }
+	if r.cache != nil {
+		r.cache.Close()
+	}
+	if r.dataset != nil {
+		r.dataset.Close()
+	}
 
-    startTime := time.Now()
+	startTime := time.Now()
 
-    // Create cache
-    var err error
-    r.cache, err = randomx_lib.NewCache(0)
-    if err != nil {
-        return fmt.Errorf("failed to create RandomX cache: %w", err)
-    }
-    r.cache.Init(seedBytes)
-    log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
+	// Create cache
+	var err error
+	r.cache, err = randomx_lib.NewCache(0)
+	if err != nil {
+		return fmt.Errorf("failed to create RandomX cache: %w", err)
+	}
+	r.cache.Init(seedBytes)
+	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
-    // CREATE DATASET for full mode (mining performance)
-    startTime = time.Now()
-    r.dataset, err = randomx_lib.NewDataset(0)
-    if err != nil {
-        log.Warn("Failed to create dataset, falling back to light mode", "error", err)
-        r.dataset = nil
-    } else {
-        r.dataset.InitDataset(r.cache, 0, randomx_lib.DatasetItemCount)
-        log.Info("RandomX dataset created (FULL MODE - faster mining)", 
-            "epoch", epoch, 
-            "duration", time.Since(startTime),
-            "size_gb", r.config.DatasetSizeGB)
-    }
+	// CREATE DATASET for full mode (mining performance)
+	startTime = time.Now()
+	r.dataset, err = randomx_lib.NewDataset(0)
+	if err != nil {
+		log.Warn("Failed to create dataset, falling back to light mode", "error", err)
+		r.dataset = nil
+	} else {
+		r.dataset.InitDataset(r.cache, 0, randomx_lib.DatasetItemCount)
+		log.Info("RandomX dataset created (FULL MODE - faster mining)",
+			"epoch", epoch,
+			"duration", time.Since(startTime),
+			"size_gb", r.config.DatasetSizeGB)
+	}
 
-    r.cacheEpoch = epoch
-    return nil
+	r.cacheEpoch = epoch
+	return nil
 }
 
 // createDatasetInRAM creates dataset in RAM without disk I/O
@@ -819,22 +819,22 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 }
 
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
-    r.cacheMu.RLock()
-    defer r.cacheMu.RUnlock()
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
 
-    if r.cache == nil {
-        return nil, fmt.Errorf("RandomX cache not initialized")
-    }
+	if r.cache == nil {
+		return nil, fmt.Errorf("RandomX cache not initialized")
+	}
 
-    // Use FULL mode if dataset is available (better performance)
-    if r.dataset != nil {
-        log.Debug("Creating RandomX VM in FULL mode (with dataset)")
-        return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
-    }
-    
-    // Fall back to light mode
-    log.Debug("Creating RandomX VM in LIGHT mode (cache only)")
-    return randomx_lib.NewVM(0, r.cache, nil)
+	// Use FULL mode if dataset is available (better performance)
+	if r.dataset != nil {
+		log.Debug("Creating RandomX VM in FULL mode (with dataset)")
+		return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
+	}
+
+	// Fall back to light mode
+	log.Debug("Creating RandomX VM in LIGHT mode (cache only)")
+	return randomx_lib.NewVM(0, r.cache, nil)
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
