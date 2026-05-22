@@ -94,21 +94,17 @@ type Miner struct {
 
 	// Mining state
 	running    atomic.Bool
-	workers    []*Worker
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
-	hashRate   uint64
-	hashRateMu sync.RWMutex
 
 	// Metrics
 	blocksMined   uint64
 	lastMinedTime time.Time
 
 	// King addresses for reward distribution
-	mainKingAddr     common.Address
-	rotatingKingAddr common.Address
-	rotatingKings    []common.Address
-	kingMu           sync.RWMutex
+	mainKingAddr  common.Address
+	rotatingKings []common.Address
+	kingMu        sync.RWMutex
 }
 
 // New creates a new RandomX miner with provided config.
@@ -143,16 +139,15 @@ func New(eth Backend, config Config, engine consensus.Engine, mainKing common.Ad
 	}
 
 	miner := &Miner{
-		config:           &config,
-		chainConfig:      eth.BlockChain().Config(),
-		engine:           engine,
-		txpool:           eth.TxPool(),
-		chain:            eth.BlockChain(),
-		pending:          &pending{},
-		stopCh:           make(chan struct{}),
-		mainKingAddr:     mainKing,
-		rotatingKingAddr: getCurrentRotatingKing(rotatingKings, 0), // Initial rotating king
-		rotatingKings:    rotatingKings,
+		config:        &config,
+		chainConfig:   eth.BlockChain().Config(),
+		engine:        engine,
+		txpool:        eth.TxPool(),
+		chain:         eth.BlockChain(),
+		pending:       &pending{},
+		stopCh:        make(chan struct{}),
+		mainKingAddr:  mainKing,
+		rotatingKings: rotatingKings,
 	}
 
 	log.Info("RandomX miner initialized",
@@ -216,7 +211,7 @@ func (miner *Miner) GetMainKing() common.Address {
 	return miner.mainKingAddr
 }
 
-// Start begins the RandomX mining process with the configured number of threads.
+// Start begins the RandomX mining process.
 func (miner *Miner) Start() error {
 	miner.confMu.Lock()
 	defer miner.confMu.Unlock()
@@ -246,24 +241,19 @@ func (miner *Miner) Start() error {
 		return fmt.Errorf("failed to initialize RandomX: %w", err)
 	}
 
-	// Start mining workers
+	// Start mining
 	miner.running.Store(true)
 	miner.stopCh = make(chan struct{})
 
-	miner.workers = make([]*Worker, 0, miner.config.Threads)
-	for i := 0; i < miner.config.Threads; i++ {
-		worker := NewWorker(miner, i)
-		miner.workers = append(miner.workers, worker)
-		worker.Start()
-	}
-
-	// Start hashrate monitor
+	// Start the mining loop (engine handles threading internally)
 	miner.wg.Add(1)
-	go miner.hashRateMonitor()
+	go miner.miningLoop()
 
 	log.Info("RandomX miner started",
 		"threads", miner.config.Threads,
 		"etherbase", miner.config.PendingFeeRecipient.Hex(),
+		"gasprice", miner.config.GasPrice,
+		"gaslimit", miner.config.GasLimit,
 	)
 
 	return nil
@@ -278,15 +268,12 @@ func (miner *Miner) Stop() error {
 		return nil
 	}
 
-	// Signal stop to all workers
+	// Signal stop to the mining loop
 	close(miner.stopCh)
 
-	// Wait for all workers to stop
-	for _, worker := range miner.workers {
-		worker.Stop()
-	}
-
+	// Wait for mining loop to exit
 	miner.wg.Wait()
+
 	miner.running.Store(false)
 
 	log.Info("RandomX miner stopped", "blocks_mined", miner.blocksMined)
@@ -305,41 +292,15 @@ func (miner *Miner) Mining() bool {
 
 // HashRate returns the current total mining hashrate in hashes per second.
 func (miner *Miner) HashRate() uint64 {
-	miner.hashRateMu.RLock()
-	defer miner.hashRateMu.RUnlock()
-	return miner.hashRate
+	if randomxEngine, ok := miner.engine.(*randomx.RandomX); ok {
+		return randomxEngine.GetHashRate()
+	}
+	return 0
 }
 
 // GetHashRate returns the current hashrate (RPC friendly).
 func (miner *Miner) GetHashRate() uint64 {
 	return miner.HashRate()
-}
-
-// hashRateMonitor periodically updates the total hashrate.
-func (miner *Miner) hashRateMonitor() {
-	defer miner.wg.Done()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-miner.stopCh:
-			return
-		case <-ticker.C:
-			var totalRate uint64
-			for _, worker := range miner.workers {
-				totalRate += worker.HashRate()
-			}
-			miner.hashRateMu.Lock()
-			miner.hashRate = totalRate
-			miner.hashRateMu.Unlock()
-
-			if totalRate > 0 {
-				log.Debug("RandomX hashrate updated", "total", totalRate, "workers", len(miner.workers))
-			}
-		}
-	}
 }
 
 // SetExtra sets the content used to initialize the block extra field.
@@ -551,12 +512,7 @@ func (miner *Miner) GetStats() (uint64, uint64, time.Time) {
 	return miner.HashRate(), atomic.LoadUint64(&miner.blocksMined), miner.lastMinedTime
 }
 
-// Create new worker (to be called from worker.go)
-func (miner *Miner) createWorker(index int) *Worker {
-	return NewWorker(miner, index)
-}
-
-// Update pending block after new head (for worker to call)
+// Update pending block after new head
 func (miner *Miner) updatePending() {
 	miner.pendingMu.Lock()
 	defer miner.pendingMu.Unlock()

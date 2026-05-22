@@ -87,6 +87,9 @@ type RandomX struct {
 
 	persistDataset bool
 	useRAMCache    bool
+
+	hashRate   uint64
+	hashRateMu sync.RWMutex
 }
 
 // New creates a new RandomX consensus engine.
@@ -613,6 +616,12 @@ func (r *RandomX) GetDatasetLocation() string {
 		return "RAM"
 	}
 	return "Disk"
+}
+
+func (r *RandomX) GetHashRate() uint64 {
+	r.hashRateMu.RLock()
+	defer r.hashRateMu.RUnlock()
+	return r.hashRate
 }
 
 // InitializeForBlock preloads cache and dataset for the epoch of blockNum.

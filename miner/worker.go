@@ -21,14 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
-	"github.com/ethereum/go-ethereum/consensus/randomx"
+//	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -240,7 +239,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 	defer miner.confMu.RUnlock()
 
 	// Find the parent block for sealing task
-	parent := miner.chain.CurrentBlock()
+	parent := miner.chain.CurrentHeader()
 	if genParams.parentHash != (common.Hash{}) {
 		block := miner.chain.GetBlockByHash(genParams.parentHash)
 		if block == nil {
@@ -321,7 +320,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 
 // makeEnv creates a new environment for the sealing block.
 func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase common.Address, witness bool) (*environment, error) {
-	state, err := miner.chain.StateAtForkBoundary(parent, header)
+	state, err := miner.chain.StateAt(parent)
 	if err != nil {
 		return nil, err
 	}
@@ -587,121 +586,62 @@ func signalToErr(signal int32) error {
 	}
 }
 
-// ==================== RandomX Worker Implementation ====================
-
-// Worker represents a single RandomX mining thread
-type Worker struct {
-	miner      *Miner
-	index      int
-	stopCh     chan struct{}
-	doneCh     chan struct{}
-	hashRate   uint64
-	hashRateMu sync.RWMutex
+// startMiningLoop starts the main mining loop that uses engine.Seal directly
+func (miner *Miner) startMiningLoop() {
+	miner.wg.Add(1)
+	go miner.miningLoop()
 }
 
-// NewWorker creates a new mining worker
-func NewWorker(miner *Miner, index int) *Worker {
-	return &Worker{
-		miner:  miner,
-		index:  index,
-		stopCh: make(chan struct{}),
-		doneCh: make(chan struct{}),
-	}
-}
-
-// Start begins the worker's mining loop
-func (w *Worker) Start() {
-	go w.mine()
-	log.Debug("RandomX worker started", "index", w.index)
-}
-
-// Stop terminates the worker
-func (w *Worker) Stop() {
-	close(w.stopCh)
-	<-w.doneCh
-	log.Debug("RandomX worker stopped", "index", w.index)
-}
-
-// HashRate returns the worker's current hashrate
-func (w *Worker) HashRate() uint64 {
-	w.hashRateMu.RLock()
-	defer w.hashRateMu.RUnlock()
-	return w.hashRate
-}
-
-// mine is the main mining loop for this worker
-func (w *Worker) mine() {
-	defer close(w.doneCh)
-
-	// Get RandomX engine
-	randomxEngine, ok := w.miner.engine.(*randomx.RandomX)
-	if !ok {
-		log.Error("Worker: engine is not RandomX")
-		return
-	}
-
-	var hashes uint64 = 0
-	startTime := time.Now()
-
-	// Mining loop
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+func (miner *Miner) miningLoop() {
+	defer func() {
+		miner.running.Store(false)
+	}()
 
 	for {
 		select {
-		case <-w.stopCh:
+		case <-miner.stopCh:
+			log.Debug("Mining loop stopped")
 			return
-		case <-ticker.C:
-			// Update hashrate
-			elapsed := time.Since(startTime).Seconds()
-			if elapsed > 0 {
-				rate := uint64(float64(hashes) / elapsed)
-				w.hashRateMu.Lock()
-				w.hashRate = rate
-				w.hashRateMu.Unlock()
-
-				if rate > 0 {
-					log.Debug("Worker hashrate updated",
-						"worker", w.index,
-						"hashrate", rate,
-						"hashes", hashes)
-				}
-			}
 		default:
 			// Get work for mining
-			work := w.miner.getWorkForMining()
+			work := miner.getWorkForMining()
 			if work == nil {
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 
-			// Mine the block
-			results := make(chan *types.Block, 1)
-			sealStop := make(chan struct{})
-			if err := randomxEngine.Seal(w.miner.chain, work, results, sealStop); err != nil {
-				close(sealStop)
-				log.Debug("Mining attempt failed", "worker", w.index, "error", err)
+			// Create channels for this seal attempt
+			sealResultCh := make(chan *types.Block, 1)
+			sealStopCh := make(chan struct{})
+
+			// Start sealing - the engine manages its own threads
+			err := miner.engine.Seal(miner.chain, work, sealResultCh, sealStopCh)
+			if err != nil {
+				log.Error("Failed to start sealing", "error", err)
+				close(sealStopCh)
+				time.Sleep(1 * time.Second)
 				continue
 			}
+
+			// Wait for a result
 			select {
-			case result := <-results:
-				if result != nil {
-					hashes++
-					if err := w.miner.SubmitWork(result); err != nil {
-						log.Error("Failed to submit mined block", "worker", w.index, "error", err)
+			case sealedBlock := <-sealResultCh:
+				if sealedBlock != nil {
+					log.Info("Block sealed successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
+					if err := miner.SubmitWork(sealedBlock); err != nil {
+						log.Error("Failed to submit sealed block", "error", err)
 					}
 				}
-			case <-w.stopCh:
-				close(sealStop)
+			case <-miner.stopCh:
+				close(sealStopCh)
 				return
 			}
 		}
 	}
 }
 
-// getWorkForMining retrieves work for this worker
+// getWorkForMining retrieves work for mining
 func (miner *Miner) getWorkForMining() *types.Block {
-	// Get current pending block
 	pending, _, _ := miner.Pending()
 	if pending == nil {
 		return nil
