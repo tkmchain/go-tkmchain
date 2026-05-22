@@ -177,6 +177,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
+	if chainConfig.RandomX != nil {
+        if config.SyncMode == ethconfig.SnapSync {
+                log.Info("RandomX chain detected: disabling snap-sync, using full sync")
+                config.SyncMode = ethconfig.FullSync
+        }
+        // Also disable snapshot cache for RandomX (not needed)
+        if config.SnapshotCache > 0 {
+                log.Debug("RandomX chain: disabling snapshot cache")
+                config.SnapshotCache = 0
+        }
+	}
 	// Prefer chain-configured king addresses so they are consensus-bound.
 	mainKingAddress := chainConfig.MainKingAddress
 	if mainKingAddress == (common.Address{}) {

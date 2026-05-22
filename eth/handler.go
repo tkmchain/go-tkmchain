@@ -155,6 +155,12 @@ func newHandler(config *handlerConfig) (*handler, error) {
                 handlerDoneCh:  make(chan struct{}),
                 handlerStartCh: make(chan struct{}),
         }
+
+        syncMode := config.Sync
+        if config.Chain.Config().RandomX != nil && syncMode == ethconfig.SnapSync {
+                log.Warn("RandomX chain: snap-sync disabled in handler, using full sync")
+                syncMode = ethconfig.FullSync
+        }
         // Construct the downloader (long sync)
         h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures)
 
