@@ -628,9 +628,13 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	return mixDigest, result
 }
 
-// CalcDifficulty is the difficulty adjustment algorithm.
 func (r *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-	return CalcDifficulty(chain.Config(), time, parent)
+    // Create a header fetcher function
+    getHeader := func(height uint64) *types.Header {
+        return chain.GetHeaderByNumber(height)
+    }
+    
+    return CalculateNextDifficulty(parent, getHeader)
 }
 
 // APIs returns the RPC APIs provided by the RandomX engine.
