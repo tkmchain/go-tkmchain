@@ -666,7 +666,8 @@ func (st *blockRangeState) update(chain *core.BlockChain, latest *types.Header) 
 // want to send it immediately.
 func (st *blockRangeState) shouldSend() bool {
 	next := st.next.Load()
-	return next.LatestBlock < st.prev.LatestBlock ||
+	return (st.prev.LatestBlock < 32 && next.LatestBlock > st.prev.LatestBlock) ||
+		next.LatestBlock < st.prev.LatestBlock ||
 		next.LatestBlock-st.prev.LatestBlock >= 32
 }
 
