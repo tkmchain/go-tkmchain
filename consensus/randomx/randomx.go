@@ -362,7 +362,7 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 
 	// Calculate rewards (no transaction fees here - receipts not available)
 	blockReward := CalculateBlockReward(header.Number.Uint64())
-	
+
 	// Distribute rewards (only block reward, fees are handled in FinalizeAndAssemble)
 	DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, blockReward, header.Number.Uint64())
 
@@ -397,8 +397,8 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	}
 
-	// Set bloom filter from receipts - cast to Receipts type
-	header.Bloom = types.CreateBloom(types.Receipts(receipts))
+	// Set bloom filter from receipts
+	header.Bloom = types.MergeBloom(types.Receipts(receipts))
 
 	// Create and return the final block
 	block := types.NewBlock(header, body, receipts, nil)
