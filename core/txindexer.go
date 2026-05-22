@@ -280,6 +280,11 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 
 // report returns the tx indexing progress.
 func (indexer *txIndexer) report(head uint64, tail *uint64) TxIndexProgress {
+	// A genesis-only chain has no transaction index work to do yet.
+	// Report complete progress so RPC syncing status can settle.
+	if head == 0 {
+		return TxIndexProgress{}
+	}
 	// Special case if the head is even below the cutoff,
 	// nothing to index.
 	if head < indexer.cutoff {

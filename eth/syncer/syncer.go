@@ -17,235 +17,222 @@
 package syncer
 
 import (
-	"errors"
-	"fmt"
-	"sync"
-	"time"
+        "errors"
+        "fmt"
+        "sync"
+        "time"
 
-	"github.com/ethereum/go-ethereum/beacon/params"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/eth/ethconfig"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/rpc"
+        "github.com/ethereum/go-ethereum/common"
+        "github.com/ethereum/go-ethereum/core/types"
+        "github.com/ethereum/go-ethereum/eth"
+        "github.com/ethereum/go-ethereum/eth/downloader"
+        "github.com/ethereum/go-ethereum/eth/ethconfig"
+        "github.com/ethereum/go-ethereum/log"
+        "github.com/ethereum/go-ethereum/node"
+        "github.com/ethereum/go-ethereum/rpc"
 )
 
 type syncReq struct {
-	hash common.Hash
-	errc chan error
+        hash common.Hash
+        errc chan error
 }
 
 type Config struct {
-	TargetBlock    common.Hash // if set, sync is triggered at startup
-	ExitWhenSynced bool        // if true, the node shuts down after sync has finished
+        TargetBlock    common.Hash // if set, sync is triggered at startup
+        ExitWhenSynced bool        // if true, the node shuts down after sync has finished
 }
 
 // Syncer is an auxiliary service that allows Geth to perform full sync
-// alone without consensus-layer attached. Users must specify a valid block hash
-// as the sync target.
+// alone. Users must specify a valid block hash as the sync target.
 //
 // Additionally, the syncer can be used to monitor state synchronization.
 // It will exit once the specified target has been reached or when the
 // most recent chain head is caught up.
 //
-// This tool can be applied to different networks, no matter it's pre-merge or
-// post-merge, but only for full-sync.
+// This tool can be applied to different networks, but only for full-sync.
 type Syncer struct {
-	stack   *node.Node
-	backend *eth.Ethereum
-	request chan *syncReq
-	closed  chan struct{}
-	wg      sync.WaitGroup
+        stack   *node.Node
+        backend *eth.Ethereum
+        request chan *syncReq
+        closed  chan struct{}
+        wg      sync.WaitGroup
 
-	config Config
+        config Config
 }
 
 // Register registers the synchronization override service into the node
 // stack for launching and stopping the service controlled by node.
 func Register(stack *node.Node, backend *eth.Ethereum, cfg Config) (*Syncer, error) {
-	s := &Syncer{
-		stack:   stack,
-		backend: backend,
-		request: make(chan *syncReq),
-		closed:  make(chan struct{}),
-		config:  cfg,
-	}
-	stack.RegisterAPIs(s.APIs())
-	stack.RegisterLifecycle(s)
-	return s, nil
+        s := &Syncer{
+                stack:   stack,
+                backend: backend,
+                request: make(chan *syncReq),
+                closed:  make(chan struct{}),
+                config:  cfg,
+        }
+        stack.RegisterAPIs(s.APIs())
+        stack.RegisterLifecycle(s)
+        return s, nil
 }
 
 // APIs return the collection of RPC services the ethereum package offers.
-// NOTE, some of these services probably need to be moved to somewhere else.
 func (s *Syncer) APIs() []rpc.API {
-	return []rpc.API{
-		{
-			Namespace: "debug",
-			Service:   NewAPI(s),
-		},
-	}
+        return []rpc.API{
+                {
+                        Namespace: "debug",
+                        Service:   NewAPI(s),
+                },
+        }
 }
 
 // run is the main loop that monitors sync requests from users and initiates
-// sync operations when necessary. It also checks whether the specified target
-// has been reached and shuts down Geth if requested by the user.
+// sync operations when necessary.
 func (s *Syncer) run() {
-	defer s.wg.Done()
+        defer s.wg.Done()
 
-	var (
-		target *types.Header
-		syncCh = make(chan downloader.SyncEvent, 10)
-	)
-	sub := s.backend.Downloader().SubscribeSyncEvents(syncCh)
-	defer sub.Unsubscribe()
+        var (
+                target *types.Header
+                syncCh = make(chan downloader.SyncEvent, 10)
+        )
+        sub := s.backend.Downloader().SubscribeSyncEvents(syncCh)
+        defer sub.Unsubscribe()
 
-	for {
-		select {
-		case req := <-s.request:
-			var (
-				resync  bool
-				retries int
-				logged  bool
-			)
-			for {
-				if retries >= 10 {
-					req.errc <- fmt.Errorf("sync target is not available, %x", req.hash)
-					break
-				}
-				select {
-				case <-s.closed:
-					req.errc <- errors.New("syncer closed")
-					return
-				default:
-				}
+        for {
+                select {
+                case req := <-s.request:
+                        var (
+                                resync  bool
+                                retries int
+                                logged  bool
+                        )
+                        for {
+                                if retries >= 10 {
+                                        req.errc <- fmt.Errorf("sync target is not available, %x", req.hash)
+                                        break
+                                }
+                                select {
+                                case <-s.closed:
+                                        req.errc <- errors.New("syncer closed")
+                                        return
+                                default:
+                                }
 
-				header, err := s.backend.Downloader().GetHeader(req.hash)
-				if err != nil {
-					if !logged {
-						logged = true
-						log.Info("Waiting for peers to retrieve sync target", "hash", req.hash)
-					}
-					time.Sleep(time.Second * time.Duration(retries+1))
-					retries++
-					continue
-				}
-				if target != nil && header.Number.Cmp(target.Number) <= 0 {
-					req.errc <- fmt.Errorf("stale sync target, current: %d, received: %d", target.Number, header.Number)
-					break
-				}
-				target = header
-				resync = true
-				break
-			}
-			if resync {
-				if mode := s.backend.Downloader().ConfigSyncMode(); mode != ethconfig.FullSync {
-					req.errc <- fmt.Errorf("unsupported syncmode %v, please relaunch geth with --syncmode full", mode)
-				} else {
-					req.errc <- s.backend.Downloader().BeaconDevSync(target)
-				}
-			}
+                                // Use blockchain to get header instead of downloader
+                                header := s.backend.BlockChain().GetHeaderByHash(req.hash)
+                                if header == nil {
+                                        if !logged {
+                                                logged = true
+                                                log.Info("Waiting for peers to retrieve sync target", "hash", req.hash)
+                                        }
+                                        time.Sleep(time.Second * time.Duration(retries+1))
+                                        retries++
+                                        continue
+                                }
+                                if target != nil && header.Number.Cmp(target.Number) <= 0 {
+                                        req.errc <- fmt.Errorf("stale sync target, current: %d, received: %d", target.Number, header.Number)
+                                        break
+                                }
+                                target = header
+                                resync = true
+                                break
+                        }
+                        if resync {
+        if mode := s.backend.Downloader().ConfigSyncMode(); mode != ethconfig.FullSync {
+                req.errc <- fmt.Errorf("unsupported syncmode %v, please relaunch geth with --syncmode full", mode)
+        } else {
+                // For RandomX/PoW chains, use simple sync
+                log.Info("Starting full sync for PoW chain", "number", target.Number, "hash", target.Hash())
+                req.errc <- s.backend.Downloader().Sync()
+        }
+}
 
-		case ev := <-syncCh:
-			if ev.Type == downloader.SyncStarted {
-				log.Debug("Synchronization started")
-				continue
-			}
-			if ev.Type == downloader.SyncFailed {
-				log.Debug("Synchronization failed", "err", ev.Err)
-				continue
-			}
+                case ev := <-syncCh:
+                        if ev.Type == downloader.SyncStarted {
+                                log.Debug("Synchronization started")
+                                continue
+                        }
+                        if ev.Type == downloader.SyncFailed {
+                                log.Debug("Synchronization failed", "err", ev.Err)
+                                continue
+                        }
 
-			head := s.backend.BlockChain().CurrentHeader()
-			if head != nil {
-				// Set the finalized and safe markers relative to the current head.
-				// The finalized marker is set two epochs behind the target,
-				// and the safe marker is set one epoch behind the target.
-				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - params.EpochLength*2); header != nil {
-					if final := s.backend.BlockChain().CurrentFinalBlock(); final == nil || final.Number.Cmp(header.Number) < 0 {
-						s.backend.BlockChain().SetFinalized(header)
-					}
-				}
-				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - params.EpochLength); header != nil {
-					if safe := s.backend.BlockChain().CurrentSafeBlock(); safe == nil || safe.Number.Cmp(header.Number) < 0 {
-						s.backend.BlockChain().SetSafe(header)
-					}
-				}
-			}
+                        // For RandomX chains, we don't need to set final/safe markers (PoS concept)
+                        // Skip beacon-related finalization entirely
 
-			// Terminate the node if the target has been reached
-			if s.config.ExitWhenSynced {
-				var synced bool
-				var block *types.Header
-				if target != nil {
-					tb := s.backend.BlockChain().GetBlockByHash(target.Hash())
-					synced = tb != nil
-					block = tb.Header()
-				} else {
-					timestamp := time.Unix(int64(ev.Latest.Time), 0)
-					synced = time.Since(timestamp) < 10*time.Minute
-					block = ev.Latest
-				}
+                        // Terminate the node if the target has been reached
+                        if s.config.ExitWhenSynced {
+                                var synced bool
+                                var block *types.Header
+                                if target != nil {
+                                        tb := s.backend.BlockChain().GetBlockByHash(target.Hash())
+                                        synced = tb != nil
+                                        if tb != nil {
+                                                block = tb.Header()
+                                        }
+                                } else {
+                                        head := s.backend.BlockChain().CurrentHeader()
+                                        if head != nil {
+                                                // For RandomX, consider synced if head is recent (within 10 minutes)
+                                                timestamp := time.Unix(int64(head.Time), 0)
+                                                synced = time.Since(timestamp) < 10*time.Minute
+                                                block = head
+                                        }
+                                }
 
-				if synced {
-					log.Info("Sync target reached", "number", block.Number.Uint64(), "hash", block.Hash())
-					go s.stack.Close() // async since we need to close ourselves
-				}
-			}
+                                if synced && block != nil {
+                                        log.Info("Sync target reached", "number", block.Number.Uint64(), "hash", block.Hash())
+                                        go s.stack.Close()
+                                }
+                        }
 
-		case <-s.closed:
-			return
-		}
-	}
+                case <-s.closed:
+                        return
+                }
+        }
 }
 
 // Start launches the synchronization service.
 func (s *Syncer) Start() error {
-	s.wg.Add(1)
-	go s.run()
-	if s.config.TargetBlock == (common.Hash{}) {
-		return nil
-	}
-	return s.Sync(s.config.TargetBlock)
+        s.wg.Add(1)
+        go s.run()
+        if s.config.TargetBlock == (common.Hash{}) {
+                return nil
+        }
+        return s.Sync(s.config.TargetBlock)
 }
 
 // Stop terminates the synchronization service and stop all background activities.
-// This function can only be called for one time.
 func (s *Syncer) Stop() error {
-	close(s.closed)
-	s.wg.Wait()
-	return nil
+        close(s.closed)
+        s.wg.Wait()
+        return nil
 }
 
-// Sync sets the synchronization target. Notably, setting a target lower than the
-// previous one is not allowed, as backward synchronization is not supported.
+// Sync sets the synchronization target.
 func (s *Syncer) Sync(hash common.Hash) error {
-	req := &syncReq{
-		hash: hash,
-		errc: make(chan error, 1),
-	}
-	select {
-	case s.request <- req:
-		return <-req.errc
-	case <-s.closed:
-		return errors.New("syncer is closed")
-	}
+        req := &syncReq{
+                hash: hash,
+                errc: make(chan error, 1),
+        }
+        select {
+        case s.request <- req:
+                return <-req.errc
+        case <-s.closed:
+                return errors.New("syncer is closed")
+        }
 }
 
-// API is the collection of synchronization service APIs for debugging the
-// protocol.
+// API is the collection of synchronization service APIs for debugging.
 type API struct {
-	s *Syncer
+        s *Syncer
 }
 
 // NewAPI creates a new debug API instance.
 func NewAPI(s *Syncer) *API {
-	return &API{s: s}
+        return &API{s: s}
 }
 
 // Sync initiates a full sync to the target block hash.
 func (api *API) Sync(target common.Hash) error {
-	return api.s.Sync(target)
+        return api.s.Sync(target)
 }
