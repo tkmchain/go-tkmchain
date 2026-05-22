@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 )
 
@@ -662,6 +663,7 @@ func (miner *Miner) miningLoop() {
 			select {
 			case sealedBlock := <-sealResultCh:
 				if sealedBlock != nil {
+					miner.persistParentState(sealedBlock)
 					log.Info("Block sealed successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
 					if err := miner.SubmitWork(sealedBlock); err != nil {
 						log.Error("Failed to submit sealed block", "error", err)
@@ -672,6 +674,24 @@ func (miner *Miner) miningLoop() {
 				return
 			}
 		}
+	}
+}
+
+func (miner *Miner) persistParentState(block *types.Block) {
+	chainWithTrie, ok := interface{}(miner.chain).(interface{ TrieDB() *triedb.Database })
+	if !ok {
+		return
+	}
+	parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return
+	}
+	if _, err := miner.chain.StateAt(parent); err != nil {
+		log.Warn("Unable to load parent state for persistence", "number", parent.Number, "hash", parent.Hash(), "err", err)
+		return
+	}
+	if err := chainWithTrie.TrieDB().Commit(parent.Root, true); err != nil {
+		log.Warn("Failed to persist parent state trie", "number", parent.Number, "root", parent.Root, "err", err)
 	}
 }
 

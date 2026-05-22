@@ -382,33 +382,62 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	statedb, ok := stateDB.(*state.StateDB)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert StateDB to expected type")
-	}
+    statedb, ok := stateDB.(*state.StateDB)
+    if !ok {
+        return nil, fmt.Errorf("failed to convert StateDB to expected type")
+    }
 
-	// First finalize the block (includes block reward)
-	r.Finalize(chain, header, stateDB, body)
+    // Get chain with trie database access
+    chainWithTrie, ok := chain.(interface{ TrieDB() *triedb.Database })
+    if !ok {
+        log.Warn("Chain does not support trie database commit")
+    }
 
-	// Calculate and distribute transaction fees (only available here with receipts)
-	totalFees := GetTotalTransactionFees(header, receipts)
-	if totalFees.Sign() > 0 {
-		mainKing := r.GetMainKing()
-		rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-		DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
-		// Recompute state root after fee distribution
-		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	}
+    // First finalize the block (includes block reward)
+    r.Finalize(chain, header, stateDB, body)
 
-	// Set bloom filter from receipts
-	header.Bloom = types.MergeBloom(types.Receipts(receipts))
+    // Calculate and distribute transaction fees (only available here with receipts)
+    totalFees := GetTotalTransactionFees(header, receipts)
+    if totalFees.Sign() > 0 {
+        mainKing := r.GetMainKing()
+        rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+        DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
+        // Recompute state root after fee distribution
+        header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+    }
 
-	// Create and return the final block
-	block := types.NewBlock(header, body, receipts, nil)
+    // Set bloom filter from receipts
+    if len(receipts) > 0 {
+        header.Bloom = types.CreateBloom(receipts)
+    }
 
-	log.Debug("Finalized and assembled block", "number", header.Number, "stateRoot", header.Root.Hex(), "txs", len(body.Transactions))
+    root, err := statedb.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number))
+    if err != nil {
+        return nil, fmt.Errorf("failed to commit state: %w", err)
+    }
+    
+    // Verify the committed root matches our header root
+    if root != header.Root {
+        log.Warn("State root mismatch after commit", "computed", root, "header", header.Root)
+        header.Root = root
+    }
 
-	return block, nil
+    // Also persist the trie nodes to database
+    if chainWithTrie != nil {
+        if err := chainWithTrie.TrieDB().Commit(header.Root, true); err != nil {
+            log.Warn("Failed to persist trie nodes", "root", header.Root, "err", err)
+        }
+    }
+
+    // Create and return the final block
+    block := types.NewBlock(header, body, receipts, nil)
+
+    log.Info("Finalized and assembled block", 
+        "number", header.Number, 
+        "stateRoot", header.Root.Hex(), 
+        "txs", len(body.Transactions))
+
+    return block, nil
 }
 
 // GetMainKing returns the configured main king address.
