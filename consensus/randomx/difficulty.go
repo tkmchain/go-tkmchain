@@ -36,7 +36,7 @@ const (
 // Warmup settings for gradual difficulty increase
 var (
     // Starting difficulty for block 1
-    startingDifficulty = new(big.Int).SetUint64(65536) // 0x10000
+    startingDifficulty = new(big.Int).SetUint64(3) // 0x10000
 
     // Blocks before normal difficulty kicks in
     warmupBlocks = uint64(100)
