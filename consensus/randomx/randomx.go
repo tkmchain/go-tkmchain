@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/rotatingking"
 	"github.com/ethereum/go-ethereum/core/state"
+        "github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
