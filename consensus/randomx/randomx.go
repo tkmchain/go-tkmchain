@@ -445,51 +445,67 @@ func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, re
 
 // mine attempts to find a valid nonce for the given block.
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, thread int) {
-	defer r.wg.Done()
+    defer r.wg.Done()
 
-	header := block.Header()
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	mineHeader := types.CopyHeader(header)
+    header := block.Header()
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    mineHeader := types.CopyHeader(header)
+    
+    log.Info("�� Mining thread started", "thread", thread, "target", target, "difficulty", header.Difficulty)
 
-	vm, err := r.getVM()
-	if err != nil {
-		log.Error("Failed to get RandomX VM", "error", err)
-		return
-	}
-	defer vm.Close()
+    vm, err := r.getVM()
+    if err != nil {
+        log.Error("Failed to get RandomX VM", "error", err)
+        return
+    }
+    defer vm.Close()
+    
+    log.Info("✅ RandomX VM acquired", "thread", thread)
 
-	seed := r.seedHash(block.NumberU64())
-	startNonce := uint64(thread)
-	step := uint64(r.threads)
-	started := time.Now()
-	attempts := uint64(0)
+    seed := r.seedHash(block.NumberU64())
+    startNonce := uint64(thread)
+    step := uint64(r.threads)
+    started := time.Now()
+    attempts := uint64(0)
 
-	for nonce := startNonce; ; nonce += step {
-		select {
-		case <-stop:
-			return
-		default:
-			mineHeader.Nonce = types.EncodeNonce(nonce)
-			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+    log.Info("�� Starting mining loop", "thread", thread, "startNonce", startNonce, "step", step)
 
-			if result.Cmp(target) <= 0 {
-				mineHeader.MixDigest = mixDigest
-				sealedBlock := block.WithSeal(mineHeader)
-				select {
-				case results <- sealedBlock:
-				case <-stop:
-				}
-				log.Info("Mined new block", "number", block.NumberU64(), "nonce", nonce, "attempts", attempts)
-				return
-			}
+    for nonce := startNonce; ; nonce += step {
+        select {
+        case <-stop:
+            log.Info("Mining stopped", "thread", thread)
+            return
+        default:
+            mineHeader.Nonce = types.EncodeNonce(nonce)
+            
+            // Log every 100,000 attempts
+            if attempts%100000 == 0 {
+                log.Debug("Mining progress", "thread", thread, "attempts", attempts, "nonce", nonce)
+            }
+            
+            mixDigest, result := r.hashimoto(mineHeader, seed, vm)
 
-			attempts++
-			if attempts%1_000_000 == 0 {
-				hashrate := float64(attempts) / time.Since(started).Seconds()
-				log.Debug("RandomX mining in progress", "thread", thread, "attempts", attempts, "hashrate", hashrate)
-			}
-		}
-	}
+            if result.Cmp(target) <= 0 {
+                log.Info("�� NONCE FOUND!", "thread", thread, "nonce", nonce, "attempts", attempts, "result", result, "target", target)
+                mineHeader.MixDigest = mixDigest
+                sealedBlock := block.WithSeal(mineHeader)
+                select {
+                case results <- sealedBlock:
+                    log.Info("✅ Block submitted to results channel", "number", block.NumberU64())
+                case <-stop:
+                    log.Info("Stop signal received after finding nonce")
+                }
+                return
+            }
+
+            attempts++
+            
+            if attempts%1000000 == 0 {
+                hashrate := float64(attempts) / time.Since(started).Seconds()
+                log.Info("Mining stats", "thread", thread, "attempts", attempts, "hashrate", hashrate, "nonce", nonce)
+            }
+        }
+    }
 }
 
 // VerifySeal verifies the RandomX proof-of-work.
@@ -527,22 +543,27 @@ func (r *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.He
 	return nil
 }
 
-// hashimoto is the core RandomX hash function using the real RandomX algorithm.
+// hashimoto is the core RandomX hash function
 func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
-	input := make([]byte, 40)
-	copy(input[:32], seed.Bytes())
+    input := make([]byte, 40)
+    copy(input[:32], seed.Bytes())
 
-	nonceBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
-	copy(input[32:], nonceBytes)
+    nonceBytes := make([]byte, 8)
+    binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
+    copy(input[32:], nonceBytes)
 
-	output := make([]byte, 32)
-	vm.CalculateHash(input, output)
+    output := make([]byte, 32)
+    vm.CalculateHash(input, output)
+    
+    // Debug first hash only
+    if header.Nonce.Uint64() < 10 {
+        log.Debug("Hashimoto called", "nonce", header.Nonce.Uint64(), "output_prefix", output[:4])
+    }
 
-	mixDigest := common.BytesToHash(output)
-	result := new(big.Int).SetBytes(output)
+    mixDigest := common.BytesToHash(output)
+    result := new(big.Int).SetBytes(output)
 
-	return mixDigest, result
+    return mixDigest, result
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm.
