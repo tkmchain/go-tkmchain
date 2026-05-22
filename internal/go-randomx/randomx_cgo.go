@@ -10,8 +10,8 @@ package randomx
 #include <stdlib.h>
 #include <randomx.h>
 
-// Helper function to get flags
-int get_flags() {
+// Helper function to get flags - returns the flags directly
+randomx_flags get_flags() {
     return randomx_get_flags();
 }
 */
@@ -36,7 +36,14 @@ type VM struct{ ptr *C.randomx_vm }
 
 // NewCache creates a RandomX cache
 func NewCache(flags int) (*Cache, error) {
-    cflags := C.get_flags()
+    // Use the flags parameter directly as a C type
+    var cflags C.randomx_flags
+    if flags == RANDOMX_FLAG_FULL_MEM {
+        cflags = C.RANDOMX_FLAG_FULL_MEM
+    } else {
+        cflags = C.RANDOMX_FLAG_DEFAULT
+    }
+    
     ptr := C.randomx_alloc_cache(cflags)
     if ptr == nil {
         return nil, fmt.Errorf("failed to allocate RandomX cache")
@@ -62,7 +69,14 @@ func (c *Cache) Close() {
 
 // NewDataset creates a RandomX dataset
 func NewDataset(flags int) (*Dataset, error) {
-    cflags := C.get_flags()
+    // Use the flags parameter directly as a C type
+    var cflags C.randomx_flags
+    if flags == RANDOMX_FLAG_FULL_MEM {
+        cflags = C.RANDOMX_FLAG_FULL_MEM
+    } else {
+        cflags = C.RANDOMX_FLAG_DEFAULT
+    }
+    
     ptr := C.randomx_alloc_dataset(cflags)
     if ptr == nil {
         return nil, fmt.Errorf("failed to allocate RandomX dataset")
@@ -97,8 +111,14 @@ func NewVM(flags int, cache *Cache, dataset *Dataset) (*VM, error) {
         dptr = dataset.ptr
     }
     
-    // Use the flags passed in, or default
-    cflags := C.get_flags()
+    // Use the flags parameter directly as a C type
+    var cflags C.randomx_flags
+    if flags == RANDOMX_FLAG_FULL_MEM {
+        cflags = C.RANDOMX_FLAG_FULL_MEM
+    } else {
+        cflags = C.RANDOMX_FLAG_DEFAULT
+    }
+    
     ptr := C.randomx_create_vm(cflags, cptr, dptr)
     if ptr == nil {
         return nil, fmt.Errorf("failed to create RandomX VM")
