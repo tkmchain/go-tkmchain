@@ -987,6 +987,9 @@ func (d *Downloader) Sync() error {
 	return d.synchronise()
 }
 
+var ErrBusy = errBusy
+
+
 // reportSnapSyncProgress calculates various status reports and provides it to the user.
 func (d *Downloader) reportSnapSyncProgress(force bool) {
 	if d.syncStartTime.IsZero() {
