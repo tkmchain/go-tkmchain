@@ -75,7 +75,7 @@ type RandomX struct {
 	threads      int
 	cache        *randomx_lib.Cache
 	dataset      *randomx_lib.Dataset
-	datasetRAM   []byte // RAM cache for dataset
+	datasetRAM   []byte
 	cacheEpoch   uint64
 	cacheMu      sync.RWMutex
 	stopCh       chan struct{}
@@ -85,9 +85,8 @@ type RandomX struct {
 	fakeDelay    *time.Duration
 	rotatingKing *rotatingking.RotatingKingManager
 
-	// RAM caching flags
-	persistDataset bool // Whether to persist dataset to disk
-	useRAMCache    bool // Whether to use RAM cache
+	persistDataset bool
+	useRAMCache    bool
 }
 
 // New creates a new RandomX consensus engine.
@@ -111,11 +110,8 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
 		config.MinMemory = 4 * 1024 * 1024 * 1024
 	}
 
-	// Check for RAM cache environment variable
 	useRAMCache := os.Getenv("RANDOMX_RAM_CACHE") == "true" || config.UseRAMCache
-
-	// Initialize rotating king manager
-	rotationInterval := uint64(100) // Rotate every 100 blocks
+	rotationInterval := uint64(100)
 	kingManager := rotatingking.NewRotatingKingManager(mainKing, kingAddresses, rotationInterval)
 
 	return &RandomX{
@@ -123,7 +119,7 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
 		threads:        threads,
 		stopCh:         make(chan struct{}),
 		rotatingKing:   kingManager,
-		persistDataset: true, // Default to persist
+		persistDataset: true,
 		useRAMCache:    useRAMCache,
 	}, nil
 }
@@ -355,30 +351,27 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
 func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body) {
-	// Get kings from chain config
-	mainKing := r.GetMainKing()
-	rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-
-	// Calculate rewards
-	totalFees := big.NewInt(0)
-	blockReward := CalculateBlockReward(header.Number.Uint64())
-	totalReward := CalculateTotalReward(blockReward, totalFees)
-
-	// Convert vm.StateDB to *state.StateDB for reward distribution
-	// Since our reward functions expect *state.StateDB, we need to handle this
 	statedb, ok := stateDB.(*state.StateDB)
 	if !ok {
 		log.Error("Failed to convert StateDB to expected type")
 		return
 	}
 
-	// Distribute rewards
-	DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalReward, header.Number.Uint64())
+	mainKing := r.GetMainKing()
+	rotatingKing := r.GetRotatingKing(header.Number.Uint64())
+
+	// Calculate rewards (no transaction fees here - receipts not available)
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	
+	// Distribute rewards (only block reward, fees are handled in FinalizeAndAssemble)
+	DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, blockReward, header.Number.Uint64())
 
 	// Handle uncle rewards
-	for _, uncle := range body.Uncles {
+	if len(body.Uncles) > 0 {
 		uncleReward := new(big.Int).Div(blockReward, big.NewInt(32))
-		statedb.AddBalance(uncle.Coinbase, uint256.MustFromBig(uncleReward), tracing.BalanceIncreaseRewardMineUncle)
+		for _, uncle := range body.Uncles {
+			statedb.AddBalance(uncle.Coinbase, uint256.MustFromBig(uncleReward), tracing.BalanceIncreaseRewardMineUncle)
+		}
 	}
 
 	// Finalize state root
@@ -387,16 +380,33 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	r.Finalize(chain, header, stateDB.(*state.StateDB), body)
+	statedb, ok := stateDB.(*state.StateDB)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert StateDB to expected type")
+	}
+
+	// First finalize the block (includes block reward)
+	r.Finalize(chain, header, stateDB, body)
+
+	// Calculate and distribute transaction fees (only available here with receipts)
 	totalFees := GetTotalTransactionFees(header, receipts)
 	if totalFees.Sign() > 0 {
 		mainKing := r.GetMainKing()
 		rotatingKing := r.GetRotatingKing(header.Number.Uint64())
-		DistributeRewards(stateDB.(*state.StateDB), mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
-		header.Root = stateDB.(*state.StateDB).IntermediateRoot(chain.Config().IsEIP158(header.Number))
+		DistributeRewards(statedb, mainKing, rotatingKing, header.Coinbase, totalFees, header.Number.Uint64())
+		// Recompute state root after fee distribution
+		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	}
-	header.Bloom = types.MergeBloom(receipts)
-	return types.NewBlock(header, body, receipts, nil), nil
+
+	// Set bloom filter from receipts
+	header.Bloom = types.CreateBloom(receipts)
+
+	// Create and return the final block
+	block := types.NewBlock(header, body, receipts, nil)
+
+	log.Debug("Finalized and assembled block", "number", header.Number, "stateRoot", header.Root.Hex(), "txs", len(body.Transactions))
+
+	return block, nil
 }
 
 // GetMainKing returns the configured main king address.
@@ -408,10 +418,11 @@ func (r *RandomX) GetMainKing() common.Address {
 }
 
 // GetRotatingKing returns the active rotating king address.
-func (r *RandomX) GetRotatingKing(_ uint64) common.Address {
+func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 	if r.rotatingKing == nil {
 		return common.Address{}
 	}
+	// Pass block height to rotating king manager for proper rotation
 	return r.rotatingKing.GetCurrentKing()
 }
 
@@ -430,6 +441,8 @@ func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, re
 		return fmt.Errorf("failed to update RandomX cache: %w", err)
 	}
 
+	log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
+
 	for i := 0; i < r.threads; i++ {
 		r.wg.Add(1)
 		go r.mine(block, results, stop, i)
@@ -445,67 +458,57 @@ func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, re
 
 // mine attempts to find a valid nonce for the given block.
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, thread int) {
-    defer r.wg.Done()
+	defer r.wg.Done()
 
-    header := block.Header()
-    target := new(big.Int).Div(maxUint256, header.Difficulty)
-    mineHeader := types.CopyHeader(header)
-    
-    log.Info("�� Mining thread started", "thread", thread, "target", target, "difficulty", header.Difficulty)
+	header := block.Header()
+	target := new(big.Int).Div(maxUint256, header.Difficulty)
+	mineHeader := types.CopyHeader(header)
 
-    vm, err := r.getVM()
-    if err != nil {
-        log.Error("Failed to get RandomX VM", "error", err)
-        return
-    }
-    defer vm.Close()
-    
-    log.Info("✅ RandomX VM acquired", "thread", thread)
+	vm, err := r.getVM()
+	if err != nil {
+		log.Error("Failed to get RandomX VM", "error", err)
+		return
+	}
+	defer vm.Close()
 
-    seed := r.seedHash(block.NumberU64())
-    startNonce := uint64(thread)
-    step := uint64(r.threads)
-    started := time.Now()
-    attempts := uint64(0)
+	seed := r.seedHash(block.NumberU64())
+	startNonce := uint64(thread)
+	step := uint64(r.threads)
+	started := time.Now()
+	attempts := uint64(0)
 
-    log.Info("�� Starting mining loop", "thread", thread, "startNonce", startNonce, "step", step)
+	for nonce := startNonce; ; nonce += step {
+		select {
+		case <-stop:
+			return
+		default:
+			mineHeader.Nonce = types.EncodeNonce(nonce)
 
-    for nonce := startNonce; ; nonce += step {
-        select {
-        case <-stop:
-            log.Info("Mining stopped", "thread", thread)
-            return
-        default:
-            mineHeader.Nonce = types.EncodeNonce(nonce)
-            
-            // Log every 100,000 attempts
-            if attempts%100000 == 0 {
-                log.Debug("Mining progress", "thread", thread, "attempts", attempts, "nonce", nonce)
-            }
-            
-            mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+			if attempts%100000 == 0 {
+				log.Debug("Mining progress", "thread", thread, "attempts", attempts, "nonce", nonce)
+			}
 
-            if result.Cmp(target) <= 0 {
-                log.Info("�� NONCE FOUND!", "thread", thread, "nonce", nonce, "attempts", attempts, "result", result, "target", target)
-                mineHeader.MixDigest = mixDigest
-                sealedBlock := block.WithSeal(mineHeader)
-                select {
-                case results <- sealedBlock:
-                    log.Info("✅ Block submitted to results channel", "number", block.NumberU64())
-                case <-stop:
-                    log.Info("Stop signal received after finding nonce")
-                }
-                return
-            }
+			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
 
-            attempts++
-            
-            if attempts%1000000 == 0 {
-                hashrate := float64(attempts) / time.Since(started).Seconds()
-                log.Info("Mining stats", "thread", thread, "attempts", attempts, "hashrate", hashrate, "nonce", nonce)
-            }
-        }
-    }
+			if result.Cmp(target) <= 0 {
+				log.Info("Nonce found!", "thread", thread, "nonce", nonce, "attempts", attempts)
+				mineHeader.MixDigest = mixDigest
+				sealedBlock := block.WithSeal(mineHeader)
+				select {
+				case results <- sealedBlock:
+				case <-stop:
+				}
+				return
+			}
+
+			attempts++
+
+			if attempts%1000000 == 0 {
+				hashrate := float64(attempts) / time.Since(started).Seconds()
+				log.Info("Mining stats", "thread", thread, "attempts", attempts, "hashrate", hashrate)
+			}
+		}
+	}
 }
 
 // VerifySeal verifies the RandomX proof-of-work.
@@ -545,25 +548,20 @@ func (r *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.He
 
 // hashimoto is the core RandomX hash function
 func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
-    input := make([]byte, 40)
-    copy(input[:32], seed.Bytes())
+	input := make([]byte, 40)
+	copy(input[:32], seed.Bytes())
 
-    nonceBytes := make([]byte, 8)
-    binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
-    copy(input[32:], nonceBytes)
+	nonceBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
+	copy(input[32:], nonceBytes)
 
-    output := make([]byte, 32)
-    vm.CalculateHash(input, output)
-    
-    // Debug first hash only
-    if header.Nonce.Uint64() < 10 {
-        log.Debug("Hashimoto called", "nonce", header.Nonce.Uint64(), "output_prefix", output[:4])
-    }
+	output := make([]byte, 32)
+	vm.CalculateHash(input, output)
 
-    mixDigest := common.BytesToHash(output)
-    result := new(big.Int).SetBytes(output)
+	mixDigest := common.BytesToHash(output)
+	result := new(big.Int).SetBytes(output)
 
-    return mixDigest, result
+	return mixDigest, result
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm.
@@ -600,12 +598,9 @@ func (r *RandomX) Close() error {
 		r.dataset.Close()
 	}
 
-	// Free RAM cache
 	if r.datasetRAM != nil {
 		r.datasetRAM = nil
 		log.Info("Freed RandomX RAM cache")
-
-		// Force GC to release memory
 		runtime.GC()
 	}
 
@@ -647,46 +642,43 @@ func (r *RandomX) seedHash(blockNum uint64) common.Hash {
 	return common.BytesToHash(seed)
 }
 
-// updateCacheForEpoch with RAM caching support
 // updateCacheForEpoch - Use light mode only (no dataset)
 func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
-    r.cacheMu.Lock()
-    defer r.cacheMu.Unlock()
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
 
-    if r.cacheEpoch == epoch && r.cache != nil {
-        return nil
-    }
+	if r.cacheEpoch == epoch && r.cache != nil {
+		return nil
+	}
 
-    seed := r.seedHash(epoch * r.config.EpochLength)
-    seedBytes := seed.Bytes()
+	seed := r.seedHash(epoch * r.config.EpochLength)
+	seedBytes := seed.Bytes()
 
-    log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
+	log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
 
-    // Close old resources
-    if r.cache != nil {
-        r.cache.Close()
-    }
-    if r.dataset != nil {
-        r.dataset.Close()
-    }
+	if r.cache != nil {
+		r.cache.Close()
+	}
+	if r.dataset != nil {
+		r.dataset.Close()
+	}
 
-    startTime := time.Now()
+	startTime := time.Now()
 
-    // Create cache only - no dataset for now
-    var err error
-    r.cache, err = randomx_lib.NewCache(0)
-    if err != nil {
-        return fmt.Errorf("failed to create RandomX cache: %w", err)
-    }
-    r.cache.Init(seedBytes)
-    log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
+	var err error
+	r.cache, err = randomx_lib.NewCache(0)
+	if err != nil {
+		return fmt.Errorf("failed to create RandomX cache: %w", err)
+	}
+	r.cache.Init(seedBytes)
+	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
-    // IMPORTANT: Don't create dataset - use light mode only
-    r.dataset = nil
-    log.Info("RandomX running in LIGHT MODE (cache only)")
+	// Light mode only - no dataset
+	r.dataset = nil
+	log.Info("RandomX running in LIGHT MODE (cache only)")
 
-    r.cacheEpoch = epoch
-    return nil
+	r.cacheEpoch = epoch
+	return nil
 }
 
 // createDatasetInRAM creates dataset in RAM without disk I/O
@@ -702,21 +694,19 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 
 // getVM - Light mode only
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
-    r.cacheMu.RLock()
-    defer r.cacheMu.RUnlock()
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
 
-    if r.cache == nil {
-        return nil, fmt.Errorf("RandomX cache not initialized")
-    }
+	if r.cache == nil {
+		return nil, fmt.Errorf("RandomX cache not initialized")
+	}
 
-    // Use light mode (cache only) - no dataset
-    log.Debug("Creating RandomX VM in light mode")
-    vm, err := randomx_lib.NewVM(0, r.cache, nil)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create RandomX VM: %w", err)
-    }
-    
-    return vm, nil
+	vm, err := randomx_lib.NewVM(0, r.cache, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RandomX VM: %w", err)
+	}
+
+	return vm, nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
