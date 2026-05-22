@@ -374,7 +374,6 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 		}
 	}
 
-	// Finalize state root
 	header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
 
@@ -398,8 +397,8 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 		header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	}
 
-	// Set bloom filter from receipts
-	header.Bloom = types.CreateBloom(receipts)
+	// Set bloom filter from receipts - cast to Receipts type
+	header.Bloom = types.CreateBloom(types.Receipts(receipts))
 
 	// Create and return the final block
 	block := types.NewBlock(header, body, receipts, nil)
