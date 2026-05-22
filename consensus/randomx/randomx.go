@@ -627,60 +627,45 @@ func (r *RandomX) seedHash(blockNum uint64) common.Hash {
 }
 
 // updateCacheForEpoch with RAM caching support
+// updateCacheForEpoch - Use light mode only (no dataset)
 func (r *RandomX) updateCacheForEpoch(epoch uint64) error {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
+    r.cacheMu.Lock()
+    defer r.cacheMu.Unlock()
 
-	if r.cacheEpoch == epoch && r.cache != nil {
-		return nil
-	}
+    if r.cacheEpoch == epoch && r.cache != nil {
+        return nil
+    }
 
-	seed := r.seedHash(epoch * r.config.EpochLength)
-	seedBytes := seed.Bytes()
+    seed := r.seedHash(epoch * r.config.EpochLength)
+    seedBytes := seed.Bytes()
 
-	log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
+    log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
 
-	// Close old resources
-	if r.cache != nil {
-		r.cache.Close()
-	}
-	if r.dataset != nil {
-		r.dataset.Close()
-	}
+    // Close old resources
+    if r.cache != nil {
+        r.cache.Close()
+    }
+    if r.dataset != nil {
+        r.dataset.Close()
+    }
 
-	startTime := time.Now()
+    startTime := time.Now()
 
-	// Create cache
-	var err error
-	r.cache, err = randomx_lib.NewCache(0)
-	if err != nil {
-		return fmt.Errorf("failed to create RandomX cache: %w", err)
-	}
-	r.cache.Init(seedBytes)
-	log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
+    // Create cache only - no dataset for now
+    var err error
+    r.cache, err = randomx_lib.NewCache(0)
+    if err != nil {
+        return fmt.Errorf("failed to create RandomX cache: %w", err)
+    }
+    r.cache.Init(seedBytes)
+    log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
 
-	// Create dataset with RAM caching option
-	startTime = time.Now()
+    // IMPORTANT: Don't create dataset - use light mode only
+    r.dataset = nil
+    log.Info("RandomX running in LIGHT MODE (cache only)")
 
-	if r.useRAMCache {
-		// Store dataset in RAM instead of disk
-		log.Info("Using RAM cache for RandomX dataset", "epoch", epoch)
-		r.dataset, err = r.createDatasetInRAM(epoch, r.cache)
-	} else {
-		// Normal disk-based dataset
-		r.dataset, err = randomx_lib.NewDataset(0)
-		if err == nil {
-			r.dataset.InitDataset(r.cache, 0, randomx_lib.DatasetItemCount)
-		}
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to create RandomX dataset: %w", err)
-	}
-	log.Info("RandomX dataset created", "epoch", epoch, "duration", time.Since(startTime), "cache", map[bool]string{true: "RAM", false: "disk"}[r.useRAMCache])
-
-	r.cacheEpoch = epoch
-	return nil
+    r.cacheEpoch = epoch
+    return nil
 }
 
 // createDatasetInRAM creates dataset in RAM without disk I/O
@@ -694,30 +679,18 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 	return dataset, nil
 }
 
-// getVM creates a new RandomX VM for hash computation.
+// getVM - Light mode only
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
     r.cacheMu.RLock()
     defer r.cacheMu.RUnlock()
 
     if r.cache == nil {
-        return nil, errNoCache
+        return nil, fmt.Errorf("RandomX cache not initialized")
     }
 
-    // For light mode (verification only) - use cache only
-    // For full mode (mining) - use dataset
-    var vm *randomx_lib.VM
-    var err error
-    
-    if r.dataset != nil {
-        // Full mode with dataset (for mining)
-        vm, err = randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
-        log.Debug("Creating RandomX VM in FULL mode (with dataset)")
-    } else {
-        // Light mode with cache only (for verification)
-        vm, err = randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_DEFAULT, r.cache, nil)
-        log.Debug("Creating RandomX VM in LIGHT mode (cache only)")
-    }
-    
+    // Use light mode (cache only) - no dataset
+    log.Debug("Creating RandomX VM in light mode")
+    vm, err := randomx_lib.NewVM(0, r.cache, nil)
     if err != nil {
         return nil, fmt.Errorf("failed to create RandomX VM: %w", err)
     }
