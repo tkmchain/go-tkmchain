@@ -31,7 +31,7 @@ const (
     Lag = 15
     
     // MinimumDifficulty is the absolute lowest allowed difficulty
-    MinimumDifficulty = 100000
+    MinimumDifficulty = 3
     
     // AdjustmentLimit prevents dramatic changes per block (max 2x increase or 0.5x decrease)
     AdjustmentLimit = 2.0
