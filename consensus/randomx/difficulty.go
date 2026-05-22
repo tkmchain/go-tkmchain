@@ -31,29 +31,54 @@ const (
 	durationLimit          = 13
 )
 
+var (
+    // Starting difficulty for block 1
+    startingDifficulty = new(big.Int).SetUint64(65536) // 0x10000
+    
+    // Blocks before normal difficulty kicks in
+    warmupBlocks = uint64(100)
+    
+    // Target final difficulty
+    targetDifficulty = new(big.Int).SetUint64(4194304) // 0x400000
+)
+
 // CalcDifficulty computes the difficulty for a new block based on parent block.
 func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header) *big.Int {
-	next := new(big.Int).Add(parent.Number, big.NewInt(1))
-
-	// Use appropriate difficulty calculator based on fork
-	switch {
-	case config.IsGrayGlacier(next):
-		return calcDifficultyEip5133(time, parent)
-	case config.IsArrowGlacier(next):
-		return calcDifficultyEip4345(time, parent)
-	case config.IsLondon(next):
-		return calcDifficultyEip3554(time, parent)
-//	case config.IsMuirGlacier(next):
-//		return calcDifficultyEip2384(time, parent)
-	case config.IsConstantinople(next):
-		return calcDifficultyConstantinople(time, parent)
-	case config.IsByzantium(next):
-		return calcDifficultyByzantium(time, parent)
-	case config.IsHomestead(next):
-		return calcDifficultyHomestead(time, parent)
-	default:
-		return calcDifficultyFrontier(time, parent)
-	}
+    parentNum := parent.Number.Uint64()
+    
+    // Warmup phase: gradually increase difficulty
+    if parentNum < warmupBlocks {
+        // Linear interpolation from startingDifficulty to targetDifficulty
+        diff := new(big.Int).Sub(targetDifficulty, startingDifficulty)
+        diff.Mul(diff, new(big.Int).SetUint64(parentNum))
+        diff.Div(diff, new(big.Int).SetUint64(warmupBlocks))
+        diff.Add(startingDifficulty, diff)
+        
+        log.Debug("Warmup difficulty", 
+            "block", parentNum+1, 
+            "difficulty", diff,
+            "progress", fmt.Sprintf("%d/%d", parentNum, warmupBlocks))
+        return diff
+    }
+    
+    // Normal difficulty adjustment after warmup
+    next := new(big.Int).Add(parent.Number, big.NewInt(1))
+    switch {
+    case config.IsGrayGlacier(next):
+        return calcDifficultyEip5133(time, parent)
+    case config.IsArrowGlacier(next):
+        return calcDifficultyEip4345(time, parent)
+    case config.IsLondon(next):
+        return calcDifficultyEip3554(time, parent)
+    case config.IsConstantinople(next):
+        return calcDifficultyConstantinople(time, parent)
+    case config.IsByzantium(next):
+        return calcDifficultyByzantium(time, parent)
+    case config.IsHomestead(next):
+        return calcDifficultyHomestead(time, parent)
+    default:
+        return calcDifficultyFrontier(time, parent)
+    }
 }
 
 // makeDifficultyCalculator creates a difficulty calculator with bomb delay.
