@@ -463,52 +463,111 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 	target := new(big.Int).Div(maxUint256, header.Difficulty)
 	mineHeader := types.CopyHeader(header)
 
+	log.Info("�� Mining thread started", 
+		"thread", thread, 
+		"target", target.String(), 
+		"difficulty", header.Difficulty,
+		"block_number", block.NumberU64())
+
+	// Get RandomX VM
 	vm, err := r.getVM()
 	if err != nil {
-		log.Error("Failed to get RandomX VM", "error", err)
+		log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
 		return
 	}
 	defer vm.Close()
 
+	log.Info("✅ RandomX VM acquired", "thread", thread)
+
+	// Calculate seed hash for this epoch
 	seed := r.seedHash(block.NumberU64())
+	
+	// Distribute nonces across threads
 	startNonce := uint64(thread)
 	step := uint64(r.threads)
+	
 	started := time.Now()
 	attempts := uint64(0)
+	lastLogTime := time.Now()
+	hashrate := float64(0)
+
+	log.Info("�� Starting mining loop", 
+		"thread", thread, 
+		"startNonce", startNonce, 
+		"step", step,
+		"total_threads", r.threads)
 
 	for nonce := startNonce; ; nonce += step {
 		select {
 		case <-stop:
+			log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
 			return
 		case <-found:
+			log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
 			return
 		default:
 			mineHeader.Nonce = types.EncodeNonce(nonce)
 
-			if attempts%100000 == 0 {
-				log.Debug("Mining progress", "thread", thread, "attempts", attempts, "nonce", nonce)
-			}
-
+			// Compute RandomX hash
 			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+			attempts++
 
+			// Check if nonce is valid
 			if result.Cmp(target) <= 0 {
-				log.Info("Nonce found!", "thread", thread, "nonce", nonce, "attempts", attempts)
+				log.Info("�� NONCE FOUND!", 
+					"thread", thread, 
+					"nonce", nonce, 
+					"attempts", attempts,
+					"result", result.String(), 
+					"target", target.String(),
+					"duration", time.Since(started).String())
+				
 				mineHeader.MixDigest = mixDigest
 				sealedBlock := block.WithSeal(mineHeader)
+				
+				// Signal other threads to stop
 				foundOnce.Do(func() { close(found) })
+				
+				// Submit the result
 				select {
 				case results <- sealedBlock:
+					log.Info("✅ Block submitted to results channel", 
+						"thread", thread, 
+						"number", block.NumberU64(),
+						"nonce", nonce)
 				case <-stop:
+					log.Info("Stop signal received after finding nonce", "thread", thread)
 				case <-found:
+					log.Info("Another thread also found nonce", "thread", thread)
 				}
 				return
 			}
 
-			attempts++
+			// Periodic logging (every 100,000 attempts)
+			if attempts%100000 == 0 {
+				elapsed := time.Since(started).Seconds()
+				hashrate = float64(attempts) / elapsed
+				log.Info("�� Mining progress", 
+					"thread", thread, 
+					"attempts", attempts, 
+					"nonce", nonce,
+					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
+					"elapsed", fmt.Sprintf("%.1fs", elapsed),
+					"target_percent", fmt.Sprintf("%.2f%%", float64(result.Cmp(target))*100))
+			}
 
-			if attempts%1000000 == 0 {
-				hashrate := float64(attempts) / time.Since(started).Seconds()
-				log.Info("Mining stats", "thread", thread, "attempts", attempts, "hashrate", hashrate)
+			// Every 10 seconds, log a heartbeat
+			if time.Since(lastLogTime) > 10*time.Second {
+				elapsed := time.Since(started).Seconds()
+				if elapsed > 0 {
+					hashrate = float64(attempts) / elapsed
+				}
+				log.Info("�� Mining heartbeat", 
+					"thread", thread, 
+					"attempts", attempts, 
+					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
+					"running_for", fmt.Sprintf("%.1fs", elapsed))
+				lastLogTime = time.Now()
 			}
 		}
 	}
@@ -559,6 +618,8 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	copy(input[32:], nonceBytes)
 
 	output := make([]byte, 32)
+	
+	// Calculate hash
 	vm.CalculateHash(input, output)
 
 	mixDigest := common.BytesToHash(output)
@@ -701,7 +762,6 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 	return dataset, nil
 }
 
-// getVM - Light mode only
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
 	r.cacheMu.RLock()
 	defer r.cacheMu.RUnlock()
@@ -710,6 +770,7 @@ func (r *RandomX) getVM() (*randomx_lib.VM, error) {
 		return nil, fmt.Errorf("RandomX cache not initialized")
 	}
 
+	// Use light mode (cache only) - no dataset
 	vm, err := randomx_lib.NewVM(0, r.cache, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RandomX VM: %w", err)
