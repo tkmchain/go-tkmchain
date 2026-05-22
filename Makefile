@@ -2,39 +2,38 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm all test lint fmt clean devtools help randomx randomx-clean randomx-install
+.PHONY: geth evm all test lint fmt clean devtools help randomx randomx-clean randomx-install randomx-check
 
 GOBIN = ./build/bin
 GO ?= latest
 GORUN = go run
 
+# RandomX configuration
 RANDOMX_REPO ?= https://github.com/tevador/RandomX.git
-RANDOMX_COMMIT ?= 6c4340ba4561aec9a3611c1aedf9931239777fb3
+RANDOMX_VERSION ?= v2.0.1
 RANDOMX_DIR ?= build/_workspace/randomx
 RANDOMX_BUILD_DIR ?= $(RANDOMX_DIR)/build
+RANDOMX_SRC_DIR ?= $(RANDOMX_DIR)/src
 
-ifeq ($(OS),Windows_NT)
-RANDOMX_LIB ?= randomx.lib
-RANDOMX_LIB_PATH ?= $(RANDOMX_BUILD_DIR)/Release/$(RANDOMX_LIB)
-RANDOMX_LIB_ALT_PATH ?= $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB)
-else
-RANDOMX_LIB ?= librandomx.a
-RANDOMX_LIB_PATH ?= $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB)
-RANDOMX_LIB_ALT_PATH ?= $(RANDOMX_BUILD_DIR)/Release/$(RANDOMX_LIB)
-endif
+# Library paths
+RANDOMX_LIB_STATIC = librandomx.a
+RANDOMX_LIB_PATH = $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB_STATIC)
 
-# CGO flags for RandomX
-CGO_CFLAGS = -I$(RANDOMX_DIR)/src
+# CGO flags for RandomX (local build)
+CGO_CFLAGS = -I$(RANDOMX_SRC_DIR)
 CGO_LDFLAGS = -L$(RANDOMX_BUILD_DIR) -lrandomx -lstdc++ -lm
 
-#? geth: Build geth.
-geth: randomx
+#? geth: Build geth with RandomX support.
+geth:
 	@echo "Building geth with RandomX..."
-	@if [ ! -f "$(RANDOMX_LIB_PATH)" ] && [ ! -f "$(RANDOMX_LIB_ALT_PATH)" ]; then \
-		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH) or $(RANDOMX_LIB_ALT_PATH)"; \
-		echo "Please run 'make randomx' first"; \
+	@if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
+		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
+		echo "Please run 'make randomx' first to build the library"; \
 		exit 1; \
 	fi
+	@echo "✓ Found RandomX library at $(RANDOMX_LIB_PATH)"
+	@echo "✓ Using CGO_CFLAGS=$(CGO_CFLAGS)"
+	@echo "✓ Using CGO_LDFLAGS=$(CGO_LDFLAGS)"
 	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
 		go build -tags "randomx,cgo" -o $(GOBIN)/geth ./cmd/geth
 	@echo "Done building."
@@ -57,7 +56,7 @@ test: all
 	$(GORUN) build/ci.go test
 
 #? lint: Run certain pre-selected linters.
-lint: ## Run linters.
+lint:
 	$(GORUN) build/ci.go lint
 
 #? fmt: Ensure consistent code formatting.
@@ -68,9 +67,6 @@ fmt:
 clean:
 	go clean -cache
 	rm -fr build/_workspace/pkg/ $(GOBIN)/*
-
-# The devtools target installs tools required for 'go generate'.
-# You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
 
 #? devtools: Install recommended developer tools.
 devtools:
@@ -90,34 +86,44 @@ help: Makefile
 	@echo 'Targets:'
 	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
 
-#? randomx: Clone and build tevador/RandomX library.
+#? randomx: Clone and build tevador/RandomX static library.
 randomx:
 	@set -e; \
-	randomx_src_dir="$$(pwd)/$(RANDOMX_DIR)"; \
-	if [ ! -d "$(RANDOMX_DIR)/.git" ]; then \
-		echo "Cloning RandomX into $(RANDOMX_DIR)"; \
-		mkdir -p "$(dir $(RANDOMX_DIR))"; \
-		git clone --depth 1 --branch v2.0.1 "$(RANDOMX_REPO)" "$(RANDOMX_DIR)"; \
+	echo "=== Building RandomX $(RANDOMX_VERSION) ==="; \
+	\
+	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
+	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
+		echo "Cloning RandomX into $$SOURCE_DIR..."; \
+		rm -rf "$$SOURCE_DIR"; \
+		mkdir -p "$$(dirname $$SOURCE_DIR)"; \
+		git clone --depth 1 --branch $(RANDOMX_VERSION) $(RANDOMX_REPO) "$$SOURCE_DIR"; \
 	else \
-		echo "RandomX already cloned, updating..."; \
-		git -C "$(RANDOMX_DIR)" fetch --tags --force origin; \
+		echo "RandomX already cloned at $$SOURCE_DIR"; \
 	fi; \
-	echo "Building RandomX..."; \
+	\
+	echo "Creating build directory..."; \
 	mkdir -p "$(RANDOMX_BUILD_DIR)"; \
 	cd "$(RANDOMX_BUILD_DIR)"; \
-	cmake "$$randomx_src_dir" -DARCH=native -DCMAKE_BUILD_TYPE=Release; \
-	cmake --build . --config Release -j$(nproc); \
-	if [ -f "$(RANDOMX_LIB_PATH)" ]; then \
-		randomx_lib_path="$(RANDOMX_LIB_PATH)"; \
-	elif [ -f "$(RANDOMX_LIB_ALT_PATH)" ]; then \
-		randomx_lib_path="$(RANDOMX_LIB_ALT_PATH)"; \
+	\
+	echo "Running CMake..."; \
+	cmake "$$SOURCE_DIR" -DARCH=native -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
+	\
+	echo "Building RandomX..."; \
+	make -j$$(nproc); \
+	\
+	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
+		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB_STATIC)"; \
+		echo ""; \
+		echo "✓ CGO_CFLAGS=$(CGO_CFLAGS)"; \
+		echo "✓ CGO_LDFLAGS=$(CGO_LDFLAGS)"; \
+		echo ""; \
+		echo "Now run: make geth"; \
 	else \
-		echo "ERROR: RandomX library was not built at $(RANDOMX_LIB_PATH) or $(RANDOMX_LIB_ALT_PATH)"; \
+		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC)"; \
+		echo "Build directory contents:"; \
+		ls -la "$(RANDOMX_BUILD_DIR)"; \
 		exit 1; \
-	fi; \
-	echo "✓ RandomX library built successfully at $$randomx_lib_path"; \
-	echo "✓ CGO_CFLAGS=$(CGO_CFLAGS)"; \
-	echo "✓ CGO_LDFLAGS=$(CGO_LDFLAGS)"
+	fi
 
 #? randomx-clean: Remove built RandomX source and artifacts.
 randomx-clean:
@@ -125,11 +131,32 @@ randomx-clean:
 	rm -rf "$(RANDOMX_DIR)"
 	@echo "RandomX clean complete."
 
-#? randomx-install: Install RandomX library system-wide (optional)
+#? randomx-install: Install RandomX library system-wide (requires sudo).
 randomx-install: randomx
 	@echo "Installing RandomX to /usr/local..."
 	cd $(RANDOMX_BUILD_DIR) && sudo make install
 	@echo "RandomX installed to /usr/local"
-	@echo "You can now use system-wide CGO flags:"
-	@echo "  CGO_CFLAGS=-I/usr/local/include"
-	@echo "  CGO_LDFLAGS=-L/usr/local/lib -lrandomx -lstdc++ -lm"
+	@echo "You can now build geth with: CGO_ENABLED=1 go build -tags 'randomx,cgo' ./cmd/geth"
+
+#? randomx-check: Check RandomX build status.
+randomx-check:
+	@echo "=== RandomX Build Status ==="
+	@echo ""
+	@if [ -f "$(RANDOMX_LIB_PATH)" ]; then \
+		echo "✓ Library: $(RANDOMX_LIB_PATH)"; \
+		ls -la "$(RANDOMX_LIB_PATH)"; \
+	else \
+		echo "✗ Library not found at $(RANDOMX_LIB_PATH)"; \
+	fi
+	@if [ -d "$(RANDOMX_SRC_DIR)" ]; then \
+		echo "✓ Source: $(RANDOMX_SRC_DIR)"; \
+		ls -la "$(RANDOMX_SRC_DIR)/randomx.h" 2>/dev/null || echo "  (header not found)"; \
+	else \
+		echo "✗ Source not found at $(RANDOMX_SRC_DIR)"; \
+	fi
+	@echo ""
+	@if [ -f "$(RANDOMX_LIB_PATH)" ] && [ -f "$(RANDOMX_SRC_DIR)/randomx.h" ]; then \
+		echo "✅ RandomX is ready! Run 'make geth' to build."; \
+	else \
+		echo "❌ RandomX is not ready. Run 'make randomx' to build."; \
+	fi
