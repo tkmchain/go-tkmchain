@@ -696,17 +696,33 @@ func (r *RandomX) createDatasetInRAM(epoch uint64, cache *randomx_lib.Cache) (*r
 
 // getVM creates a new RandomX VM for hash computation.
 func (r *RandomX) getVM() (*randomx_lib.VM, error) {
-	r.cacheMu.RLock()
-	defer r.cacheMu.RUnlock()
+    r.cacheMu.RLock()
+    defer r.cacheMu.RUnlock()
 
-	if r.cache == nil {
-		return nil, errNoCache
-	}
+    if r.cache == nil {
+        return nil, errNoCache
+    }
 
-	if r.dataset != nil {
-		return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
-	}
-	return randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_DEFAULT, r.cache, nil)
+    // For light mode (verification only) - use cache only
+    // For full mode (mining) - use dataset
+    var vm *randomx_lib.VM
+    var err error
+    
+    if r.dataset != nil {
+        // Full mode with dataset (for mining)
+        vm, err = randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_FULL_MEM, nil, r.dataset)
+        log.Debug("Creating RandomX VM in FULL mode (with dataset)")
+    } else {
+        // Light mode with cache only (for verification)
+        vm, err = randomx_lib.NewVM(randomx_lib.RANDOMX_FLAG_DEFAULT, r.cache, nil)
+        log.Debug("Creating RandomX VM in LIGHT mode (cache only)")
+    }
+    
+    if err != nil {
+        return nil, fmt.Errorf("failed to create RandomX VM: %w", err)
+    }
+    
+    return vm, nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed.
