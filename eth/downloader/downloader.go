@@ -807,8 +807,12 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 // processSnapSyncContent takes fetch results from the queue and writes them to the database.
 func (d *Downloader) processSnapSyncContent() error {
 	d.pivotLock.RLock()
-	sync := d.syncState(d.pivotHeader.Root)
+	pivot := d.pivotHeader
 	d.pivotLock.RUnlock()
+	if pivot == nil {
+		return errNoPivotHeader
+	}
+	sync := d.syncState(pivot.Root)
 
 	defer func() {
 		sync.Cancel()
@@ -850,6 +854,9 @@ func (d *Downloader) processSnapSyncContent() error {
 		d.pivotLock.RLock()
 		pivot := d.pivotHeader
 		d.pivotLock.RUnlock()
+		if pivot == nil {
+			return errNoPivotHeader
+		}
 
 		if oldPivot == nil {
 			if !d.committed.Load() {
@@ -988,7 +995,6 @@ func (d *Downloader) Sync() error {
 }
 
 var ErrBusy = errBusy
-
 
 // reportSnapSyncProgress calculates various status reports and provides it to the user.
 func (d *Downloader) reportSnapSyncProgress(force bool) {
