@@ -430,147 +430,158 @@ func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 
 // Seal generates a new sealing request for the given input block.
 func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	if r.fakeMode {
-		select {
-		case results <- block.WithSeal(block.Header()):
-		case <-stop:
-		}
-		return nil
-	}
+    if r.fakeMode {
+        select {
+        case results <- block.WithSeal(block.Header()):
+        case <-stop:
+        }
+        return nil
+    }
 
-	epoch := r.epoch(block.NumberU64())
-	if err := r.updateCacheForEpoch(epoch); err != nil {
-		return fmt.Errorf("failed to update RandomX cache: %w", err)
-	}
+    epoch := r.epoch(block.NumberU64())
+    if err := r.updateCacheForEpoch(epoch); err != nil {
+        return fmt.Errorf("failed to update RandomX cache: %w", err)
+    }
 
-	log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
-	found := make(chan struct{})
-	var foundOnce sync.Once
+    log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
+    found := make(chan struct{})
+    var foundOnce sync.Once
 
-	for i := 0; i < r.threads; i++ {
-		r.wg.Add(1)
-		go r.mine(block, results, stop, found, &foundOnce, i)
-	}
+    // Reset WaitGroup for this seal attempt
+    var sealWg sync.WaitGroup
 
-	return nil
+    for i := 0; i < r.threads; i++ {
+        sealWg.Add(1)
+        go r.mineWithWg(block, results, stop, found, &foundOnce, i, &sealWg)
+    }
+
+    // Close results channel when all threads are done
+    go func() {
+        sealWg.Wait()
+        close(results)
+        log.Debug("Seal completed for block", "number", block.NumberU64())
+    }()
+
+    return nil
 }
 
-// mine attempts to find a valid nonce for the given block.
+// mineWithWg is like mine but uses a passed WaitGroup
+func (r *RandomX) mineWithWg(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    r.mine(block, results, stop, found, foundOnce, thread)
+}
+
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int) {
-	defer r.wg.Done()
 
-	header := block.Header()
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	mineHeader := types.CopyHeader(header)
+    header := block.Header()
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    mineHeader := types.CopyHeader(header)
 
-	log.Info("�� Mining thread started", 
-		"thread", thread, 
-		"target", target.String(), 
-		"difficulty", header.Difficulty,
-		"block_number", block.NumberU64())
+    log.Info("�� Mining thread started",
+        "thread", thread,
+        "difficulty", header.Difficulty,
+        "block_number", block.NumberU64())
 
-	// Get RandomX VM
-	vm, err := r.getVM()
-	if err != nil {
-		log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
-		return
-	}
-	defer vm.Close()
+    // Get RandomX VM
+    vm, err := r.getVM()
+    if err != nil {
+        log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
+        return
+    }
+    defer vm.Close()
 
-	log.Info("✅ RandomX VM acquired", "thread", thread)
+    log.Info("✅ RandomX VM acquired", "thread", thread)
 
-	// Calculate seed hash for this epoch
-	seed := r.seedHash(block.NumberU64())
-	
-	// Distribute nonces across threads
-	startNonce := uint64(thread)
-	step := uint64(r.threads)
-	
-	started := time.Now()
-	attempts := uint64(0)
-	lastLogTime := time.Now()
-	hashrate := float64(0)
+    // Calculate seed hash for this epoch
+    seed := r.seedHash(block.NumberU64())
 
-	log.Info("�� Starting mining loop", 
-		"thread", thread, 
-		"startNonce", startNonce, 
-		"step", step,
-		"total_threads", r.threads)
+    // Distribute nonces across threads
+    startNonce := uint64(thread)
+    step := uint64(r.threads)
 
-	for nonce := startNonce; ; nonce += step {
-		select {
-		case <-stop:
-			log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
-			return
-		case <-found:
-			log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
-			return
-		default:
-			mineHeader.Nonce = types.EncodeNonce(nonce)
+    started := time.Now()
+    attempts := uint64(0)
+    lastLogTime := time.Now()
 
-			// Compute RandomX hash
-			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
-			attempts++
+    log.Info("�� Starting mining loop",
+        "thread", thread,
+        "startNonce", startNonce,
+        "step", step,
+        "total_threads", r.threads)
 
-			// Check if nonce is valid
-			if result.Cmp(target) <= 0 {
-				log.Info("�� NONCE FOUND!", 
-					"thread", thread, 
-					"nonce", nonce, 
-					"attempts", attempts,
-					"result", result.String(), 
-					"target", target.String(),
-					"duration", time.Since(started).String())
-				
-				mineHeader.MixDigest = mixDigest
-				sealedBlock := block.WithSeal(mineHeader)
-				
-				// Signal other threads to stop
-				foundOnce.Do(func() { close(found) })
-				
-				// Submit the result
-				select {
-				case results <- sealedBlock:
-					log.Info("✅ Block submitted to results channel", 
-						"thread", thread, 
-						"number", block.NumberU64(),
-						"nonce", nonce)
-				case <-stop:
-					log.Info("Stop signal received after finding nonce", "thread", thread)
-				case <-found:
-					log.Info("Another thread also found nonce", "thread", thread)
-				}
-				return
-			}
+    for nonce := startNonce; ; nonce += step {
+        select {
+        case <-stop:
+            log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
+            return
+        case <-found:
+            log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
+            return
+        default:
+            mineHeader.Nonce = types.EncodeNonce(nonce)
 
-			// Periodic logging (every 100,000 attempts)
-			if attempts%100000 == 0 {
-				elapsed := time.Since(started).Seconds()
-				hashrate = float64(attempts) / elapsed
-				log.Info("�� Mining progress", 
-					"thread", thread, 
-					"attempts", attempts, 
-					"nonce", nonce,
-					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
-					"elapsed", fmt.Sprintf("%.1fs", elapsed),
-					"target_percent", fmt.Sprintf("%.2f%%", float64(result.Cmp(target))*100))
-			}
+            // Compute RandomX hash
+            mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+            attempts++
 
-			// Every 10 seconds, log a heartbeat
-			if time.Since(lastLogTime) > 10*time.Second {
-				elapsed := time.Since(started).Seconds()
-				if elapsed > 0 {
-					hashrate = float64(attempts) / elapsed
-				}
-				log.Info("�� Mining heartbeat", 
-					"thread", thread, 
-					"attempts", attempts, 
-					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
-					"running_for", fmt.Sprintf("%.1fs", elapsed))
-				lastLogTime = time.Now()
-			}
-		}
-	}
+            // Check if nonce is valid
+            if result.Cmp(target) <= 0 {
+                log.Info("�� NONCE FOUND!",
+                    "thread", thread,
+                    "nonce", nonce,
+                    "attempts", attempts,
+                    "duration", time.Since(started).String())
+
+                mineHeader.MixDigest = mixDigest
+                sealedBlock := block.WithSeal(mineHeader)
+
+                // Signal other threads to stop FIRST
+                foundOnce.Do(func() { close(found) })
+
+                // Submit the result - use a separate select to avoid blocking
+                select {
+                case results <- sealedBlock:
+                    log.Info("✅ Block submitted to results channel",
+                        "thread", thread,
+                        "number", block.NumberU64(),
+                        "nonce", nonce)
+                case <-stop:
+                    log.Info("Stop signal received after finding nonce", "thread", thread)
+                    return
+                case <-found:
+                    log.Info("Another thread also found nonce", "thread", thread)
+                    return
+                }
+                
+                // Brief pause to ensure other threads receive the found signal
+                time.Sleep(10 * time.Millisecond)
+                return
+            }
+
+            // Periodic logging (every 100,000 attempts)
+            if attempts%100000 == 0 {
+                elapsed := time.Since(started).Seconds()
+                hashrate := float64(attempts) / elapsed
+                log.Info("�� Mining progress",
+                    "thread", thread,
+                    "attempts", attempts,
+                    "nonce", nonce,
+                    "hashrate", fmt.Sprintf("%.2f H/s", hashrate))
+            }
+
+            // Every 10 seconds, log a heartbeat
+            if time.Since(lastLogTime) > 10*time.Second {
+                elapsed := time.Since(started).Seconds()
+                hashrate := float64(attempts) / elapsed
+                log.Info("�� Mining heartbeat",
+                    "thread", thread,
+                    "attempts", attempts,
+                    "hashrate", fmt.Sprintf("%.2f H/s", hashrate),
+                    "running_for", fmt.Sprintf("%.1fs", elapsed))
+                lastLogTime = time.Now()
+            }
+        }
+    }
 }
 
 // VerifySeal verifies the RandomX proof-of-work.
