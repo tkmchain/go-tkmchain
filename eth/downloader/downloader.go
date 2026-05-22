@@ -492,6 +492,10 @@ func (d *Downloader) syncToHead() (err error) {
 		pivot = d.blockchain.CurrentBlock()
 	}
 	height := latest.Number.Uint64()
+	if mode == ethconfig.SnapSync && height <= uint64(fsMinFullBlocks) {
+		log.Debug("Head below snap sync threshold, falling back to full sync", "head", height, "threshold", fsMinFullBlocks)
+		mode = ethconfig.FullSync
+	}
 
 	// In beacon mode, use the skeleton chain for the ancestor lookup
 	origin, err := d.findBeaconAncestor()
