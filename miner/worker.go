@@ -21,13 +21,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
-//	"github.com/ethereum/go-ethereum/consensus/randomx"
+	//	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -305,6 +306,20 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 	}
 
 	env, err := miner.makeEnv(parent, header, genParams.coinbase, witness)
+	if err != nil && genParams.parentHash == (common.Hash{}) && isMissingStateError(err) {
+		fallbackParent := miner.findLatestHeaderWithState(parent)
+		if fallbackParent != nil && fallbackParent.Hash() != parent.Hash() {
+			log.Warn("Falling back to ancestor with available state for sealing", "from", parent.Number, "to", fallbackParent.Number)
+			parent = fallbackParent
+			header.ParentHash = parent.Hash()
+			header.Number = new(big.Int).Add(parent.Number, common.Big1)
+			header.GasLimit = core.CalcGasLimit(parent.GasLimit, miner.config.GasCeil)
+			if miner.chainConfig.IsLondon(header.Number) {
+				header.BaseFee = eip1559.CalcBaseFee(miner.chainConfig, parent)
+			}
+			env, err = miner.makeEnv(parent, header, genParams.coinbase, witness)
+		}
+	}
 	if err != nil {
 		log.Error("Failed to create sealing context", "err", err)
 		return nil, err
@@ -316,6 +331,26 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 		core.ProcessParentBlockHash(header.ParentHash, env.evm)
 	}
 	return env, nil
+}
+
+func isMissingStateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "missing trie node") || strings.Contains(err.Error(), "state ") && strings.Contains(err.Error(), "is not available")
+}
+
+func (miner *Miner) findLatestHeaderWithState(head *types.Header) *types.Header {
+	for candidate := head; candidate != nil; {
+		if _, err := miner.chain.StateAt(candidate); err == nil {
+			return candidate
+		}
+		if candidate.Number.Sign() == 0 {
+			break
+		}
+		candidate = miner.chain.GetHeader(candidate.ParentHash, candidate.Number.Uint64()-1)
+	}
+	return nil
 }
 
 // makeEnv creates a new environment for the sealing block.
