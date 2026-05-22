@@ -457,10 +457,18 @@ func (miner *Miner) getPending() *newPayloadResult {
 	var (
 		timestamp  = uint64(time.Now().Unix())
 		withdrawal types.Withdrawals
+		slotNum    *uint64
 	)
 
 	if miner.chainConfig.IsShanghai(new(big.Int).Add(header.Number, big.NewInt(1)), timestamp) {
 		withdrawal = []*types.Withdrawal{}
+	}
+	if miner.chainConfig.IsAmsterdam(new(big.Int).Add(header.Number, big.NewInt(1)), timestamp) {
+		nextSlot := uint64(0)
+		if header.SlotNumber != nil {
+			nextSlot = *header.SlotNumber + 1
+		}
+		slotNum = &nextSlot
 	}
 
 	ret := miner.generateWork(context.Background(),
@@ -472,6 +480,7 @@ func (miner *Miner) getPending() *newPayloadResult {
 			random:      common.Hash{},
 			withdrawals: withdrawal,
 			beaconRoot:  nil,
+			slotNum:     slotNum,
 			noTxs:       false,
 		}, false)
 
