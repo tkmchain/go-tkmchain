@@ -17,52 +17,66 @@
 package randomx
 
 import (
-	"math/big"
+    "fmt"
+    "math/big"
 
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
+    "github.com/ethereum/go-ethereum/core/types"
+    "github.com/ethereum/go-ethereum/log"
+    "github.com/ethereum/go-ethereum/params"
 )
 
 // Difficulty calculation constants
 const (
-	difficultyBoundDivisor = 2048
-	minimumDifficulty      = 131072
-	expDiffPeriod          = 100000
-	durationLimit          = 13
+    difficultyBoundDivisor = 2048
+    minimumDifficulty      = 131072
+    expDiffPeriod          = 100000
+    durationLimit          = 13
 )
 
+// Warmup settings for gradual difficulty increase
 var (
     // Starting difficulty for block 1
     startingDifficulty = new(big.Int).SetUint64(65536) // 0x10000
-    
+
     // Blocks before normal difficulty kicks in
     warmupBlocks = uint64(100)
-    
-    // Target final difficulty
+
+    // Target final difficulty (your genesis difficulty)
     targetDifficulty = new(big.Int).SetUint64(4194304) // 0x400000
 )
 
 // CalcDifficulty computes the difficulty for a new block based on parent block.
 func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header) *big.Int {
     parentNum := parent.Number.Uint64()
-    
-    // Warmup phase: gradually increase difficulty
-    if parentNum < warmupBlocks {
+
+    // Warmup phase: gradually increase difficulty for first N blocks
+    if parentNum < warmupBlocks && parentNum > 0 {
         // Linear interpolation from startingDifficulty to targetDifficulty
         diff := new(big.Int).Sub(targetDifficulty, startingDifficulty)
         diff.Mul(diff, new(big.Int).SetUint64(parentNum))
         diff.Div(diff, new(big.Int).SetUint64(warmupBlocks))
         diff.Add(startingDifficulty, diff)
-        
-        log.Debug("Warmup difficulty", 
-            "block", parentNum+1, 
+
+        // Cap at target difficulty
+        if diff.Cmp(targetDifficulty) > 0 {
+            diff = targetDifficulty
+        }
+
+        log.Debug("Warmup difficulty",
+            "block", parentNum+1,
             "difficulty", diff,
             "progress", fmt.Sprintf("%d/%d", parentNum, warmupBlocks))
         return diff
     }
-    
-    // Normal difficulty adjustment after warmup
+
+    if parentNum == 0 {
+        log.Info("Using starting difficulty for block 1", "difficulty", startingDifficulty)
+        return new(big.Int).Set(startingDifficulty)
+    }
+
+    // Normal difficulty adjustment for all other blocks
     next := new(big.Int).Add(parent.Number, big.NewInt(1))
+
     switch {
     case config.IsGrayGlacier(next):
         return calcDifficultyEip5133(time, parent)
@@ -83,151 +97,125 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 
 // makeDifficultyCalculator creates a difficulty calculator with bomb delay.
 func makeDifficultyCalculator(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
-	bombDelayFromParent := new(big.Int).Sub(bombDelay, big.NewInt(1))
+    bombDelayFromParent := new(big.Int).Sub(bombDelay, big.NewInt(1))
 
-	return func(time uint64, parent *types.Header) *big.Int {
-		bigTime := new(big.Int).SetUint64(time)
-		bigParentTime := new(big.Int).SetUint64(parent.Time)
+    return func(time uint64, parent *types.Header) *big.Int {
+        bigTime := new(big.Int).SetUint64(time)
+        bigParentTime := new(big.Int).SetUint64(parent.Time)
 
-		// Calculate adjustment factor
-		x := new(big.Int).Sub(bigTime, bigParentTime)
-		x.Div(x, big.NewInt(9))
+        // Calculate adjustment factor
+        x := new(big.Int).Sub(bigTime, bigParentTime)
+        x.Div(x, big.NewInt(9))
 
-		if parent.UncleHash == types.EmptyUncleHash {
-			x.Sub(big.NewInt(1), x)
-		} else {
-			x.Sub(big.NewInt(2), x)
-		}
+        if parent.UncleHash == types.EmptyUncleHash {
+            x.Sub(big.NewInt(1), x)
+        } else {
+            x.Sub(big.NewInt(2), x)
+        }
 
-		// Bound adjustment factor
-		if x.Cmp(big.NewInt(-99)) < 0 {
-			x.Set(big.NewInt(-99))
-		}
+        // Bound adjustment factor
+        if x.Cmp(big.NewInt(-99)) < 0 {
+            x.Set(big.NewInt(-99))
+        }
 
-		// Calculate new difficulty
-		y := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
-		x.Mul(y, x)
-		x.Add(parent.Difficulty, x)
+        // Calculate new difficulty
+        y := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
+        x.Mul(y, x)
+        x.Add(parent.Difficulty, x)
 
-		// Ensure minimum difficulty
-		if x.Cmp(big.NewInt(minimumDifficulty)) < 0 {
-			x.Set(big.NewInt(minimumDifficulty))
-		}
+        // Ensure minimum difficulty
+        if x.Cmp(big.NewInt(minimumDifficulty)) < 0 {
+            x.Set(big.NewInt(minimumDifficulty))
+        }
 
-		// Apply exponential difficulty bomb
-		fakeBlockNumber := new(big.Int)
-		if parent.Number.Cmp(bombDelayFromParent) >= 0 {
-			fakeBlockNumber.Sub(parent.Number, bombDelayFromParent)
-		}
+        // Apply exponential difficulty bomb
+        fakeBlockNumber := new(big.Int)
+        if parent.Number.Cmp(bombDelayFromParent) >= 0 {
+            fakeBlockNumber.Sub(parent.Number, bombDelayFromParent)
+        }
 
-		periodCount := new(big.Int).Div(fakeBlockNumber, big.NewInt(expDiffPeriod))
-		if periodCount.Cmp(big.NewInt(1)) > 0 {
-			expFactor := new(big.Int).Sub(periodCount, big.NewInt(2))
-			expFactor.Exp(big.NewInt(2), expFactor, nil)
-			x.Add(x, expFactor)
-		}
+        periodCount := new(big.Int).Div(fakeBlockNumber, big.NewInt(expDiffPeriod))
+        if periodCount.Cmp(big.NewInt(1)) > 0 {
+            expFactor := new(big.Int).Sub(periodCount, big.NewInt(2))
+            expFactor.Exp(big.NewInt(2), expFactor, nil)
+            x.Add(x, expFactor)
+        }
 
-		return x
-	}
+        return x
+    }
 }
 
 // calcDifficultyHomestead implements Homestead difficulty rules.
 func calcDifficultyHomestead(time uint64, parent *types.Header) *big.Int {
-	bigTime := new(big.Int).SetUint64(time)
-	bigParentTime := new(big.Int).SetUint64(parent.Time)
+    bigTime := new(big.Int).SetUint64(time)
+    bigParentTime := new(big.Int).SetUint64(parent.Time)
 
-	// Calculate adjustment
-	x := new(big.Int).Sub(bigTime, bigParentTime)
-	x.Div(x, big.NewInt(10))
-	x.Sub(big.NewInt(1), x)
+    x := new(big.Int).Sub(bigTime, bigParentTime)
+    x.Div(x, big.NewInt(10))
+    x.Sub(big.NewInt(1), x)
 
-	if x.Cmp(big.NewInt(-99)) < 0 {
-		x.Set(big.NewInt(-99))
-	}
+    if x.Cmp(big.NewInt(-99)) < 0 {
+        x.Set(big.NewInt(-99))
+    }
 
-	// Apply adjustment
-	y := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
-	x.Mul(y, x)
-	x.Add(parent.Difficulty, x)
+    y := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
+    x.Mul(y, x)
+    x.Add(parent.Difficulty, x)
 
-	// Ensure minimum
-	if x.Cmp(big.NewInt(minimumDifficulty)) < 0 {
-		x.Set(big.NewInt(minimumDifficulty))
-	}
+    if x.Cmp(big.NewInt(minimumDifficulty)) < 0 {
+        x.Set(big.NewInt(minimumDifficulty))
+    }
 
-	// Apply bomb
-	periodCount := new(big.Int).Add(parent.Number, big.NewInt(1))
-	periodCount.Div(periodCount, big.NewInt(expDiffPeriod))
+    periodCount := new(big.Int).Add(parent.Number, big.NewInt(1))
+    periodCount.Div(periodCount, big.NewInt(expDiffPeriod))
 
-	if periodCount.Cmp(big.NewInt(1)) > 0 {
-		y.Sub(periodCount, big.NewInt(2))
-		y.Exp(big.NewInt(2), y, nil)
-		x.Add(x, y)
-	}
+    if periodCount.Cmp(big.NewInt(1)) > 0 {
+        y.Sub(periodCount, big.NewInt(2))
+        y.Exp(big.NewInt(2), y, nil)
+        x.Add(x, y)
+    }
 
-	return x
+    return x
 }
 
 // calcDifficultyFrontier implements Frontier difficulty rules.
 func calcDifficultyFrontier(time uint64, parent *types.Header) *big.Int {
-	diff := new(big.Int)
-	adjust := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
+    diff := new(big.Int)
+    adjust := new(big.Int).Div(parent.Difficulty, big.NewInt(difficultyBoundDivisor))
 
-	bigTime := new(big.Int).SetUint64(time)
-	bigParentTime := new(big.Int).SetUint64(parent.Time)
+    bigTime := new(big.Int).SetUint64(time)
+    bigParentTime := new(big.Int).SetUint64(parent.Time)
 
-	if new(big.Int).Sub(bigTime, bigParentTime).Cmp(big.NewInt(durationLimit)) < 0 {
-		diff.Add(parent.Difficulty, adjust)
-	} else {
-		diff.Sub(parent.Difficulty, adjust)
-	}
+    if new(big.Int).Sub(bigTime, bigParentTime).Cmp(big.NewInt(durationLimit)) < 0 {
+        diff.Add(parent.Difficulty, adjust)
+    } else {
+        diff.Sub(parent.Difficulty, adjust)
+    }
 
-	if diff.Cmp(big.NewInt(minimumDifficulty)) < 0 {
-		diff.Set(big.NewInt(minimumDifficulty))
-	}
+    if diff.Cmp(big.NewInt(minimumDifficulty)) < 0 {
+        diff.Set(big.NewInt(minimumDifficulty))
+    }
 
-	// Apply bomb
-	periodCount := new(big.Int).Add(parent.Number, big.NewInt(1))
-	periodCount.Div(periodCount, big.NewInt(expDiffPeriod))
+    periodCount := new(big.Int).Add(parent.Number, big.NewInt(1))
+    periodCount.Div(periodCount, big.NewInt(expDiffPeriod))
 
-	if periodCount.Cmp(big.NewInt(1)) > 0 {
-		expDiff := new(big.Int).Sub(periodCount, big.NewInt(2))
-		expDiff.Exp(big.NewInt(2), expDiff, nil)
-		diff.Add(diff, expDiff)
-		if diff.Cmp(big.NewInt(minimumDifficulty)) < 0 {
-			diff.Set(big.NewInt(minimumDifficulty))
-		}
-	}
+    if periodCount.Cmp(big.NewInt(1)) > 0 {
+        expDiff := new(big.Int).Sub(periodCount, big.NewInt(2))
+        expDiff.Exp(big.NewInt(2), expDiff, nil)
+        diff.Add(diff, expDiff)
+        if diff.Cmp(big.NewInt(minimumDifficulty)) < 0 {
+            diff.Set(big.NewInt(minimumDifficulty))
+        }
+    }
 
-	return diff
+    return diff
 }
 
 // Difficulty calculators for various EIPs
 var (
-	calcDifficultyEip5133        = makeDifficultyCalculator(big.NewInt(11_400_000))
-	calcDifficultyEip4345        = makeDifficultyCalculator(big.NewInt(10_700_000))
-	calcDifficultyEip3554        = makeDifficultyCalculator(big.NewInt(9_700_000))
-	calcDifficultyEip2384        = makeDifficultyCalculator(big.NewInt(9_000_000))
-	calcDifficultyConstantinople = makeDifficultyCalculator(big.NewInt(5_000_000))
-	calcDifficultyByzantium      = makeDifficultyCalculator(big.NewInt(3_000_000))
+    calcDifficultyEip5133         = makeDifficultyCalculator(big.NewInt(11_400_000))
+    calcDifficultyEip4345         = makeDifficultyCalculator(big.NewInt(10_700_000))
+    calcDifficultyEip3554         = makeDifficultyCalculator(big.NewInt(9_700_000))
+    calcDifficultyConstantinople  = makeDifficultyCalculator(big.NewInt(5_000_000))
+    calcDifficultyByzantium       = makeDifficultyCalculator(big.NewInt(3_000_000))
 )
-
-// Exported for fuzzing compatibility.
-var FrontierDifficultyCalculator = calcDifficultyFrontier
-var HomesteadDifficultyCalculator = calcDifficultyHomestead
-var DynamicDifficultyCalculator = makeDifficultyCalculator
-
-// CalcDifficultyFrontierU256 mirrors calcDifficultyFrontier for fuzzing compatibility.
-func CalcDifficultyFrontierU256(time uint64, parent *types.Header) *big.Int {
-	return calcDifficultyFrontier(time, parent)
-}
-
-// CalcDifficultyHomesteadU256 mirrors calcDifficultyHomestead for fuzzing compatibility.
-func CalcDifficultyHomesteadU256(time uint64, parent *types.Header) *big.Int {
-	return calcDifficultyHomestead(time, parent)
-}
-
-// MakeDifficultyCalculatorU256 mirrors makeDifficultyCalculator for fuzzing compatibility.
-func MakeDifficultyCalculatorU256(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
-	return makeDifficultyCalculator(bombDelay)
-}
