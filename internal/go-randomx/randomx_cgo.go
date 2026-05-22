@@ -4,8 +4,8 @@
 package randomx
 
 /*
-#cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -L/usr/local/lib -lrandomx -lstdc++ -lm
+#cgo CFLAGS: -I../../build/_workspace/randomx/src
+#cgo LDFLAGS: -L../../build/_workspace/randomx/build -lrandomx -lstdc++ -lm
 
 #include <stdlib.h>
 #include <randomx.h>
