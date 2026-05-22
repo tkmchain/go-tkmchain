@@ -374,7 +374,6 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 		}
 	}
 
-	// Finalize state root
 	header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
 
@@ -388,7 +387,6 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 	// First finalize the block (includes block reward)
 	r.Finalize(chain, header, stateDB, body)
 
-	// Calculate and distribute transaction fees (only available here with receipts)
 	totalFees := GetTotalTransactionFees(header, receipts)
 	if totalFees.Sign() > 0 {
 		mainKing := r.GetMainKing()
