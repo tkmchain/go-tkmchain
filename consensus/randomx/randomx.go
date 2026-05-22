@@ -441,22 +441,19 @@ func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, re
 	}
 
 	log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
+	found := make(chan struct{})
+	var foundOnce sync.Once
 
 	for i := 0; i < r.threads; i++ {
 		r.wg.Add(1)
-		go r.mine(block, results, stop, i)
+		go r.mine(block, results, stop, found, &foundOnce, i)
 	}
-
-	go func() {
-		r.wg.Wait()
-		close(results)
-	}()
 
 	return nil
 }
 
 // mine attempts to find a valid nonce for the given block.
-func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, thread int) {
+func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int) {
 	defer r.wg.Done()
 
 	header := block.Header()
@@ -480,6 +477,8 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 		select {
 		case <-stop:
 			return
+		case <-found:
+			return
 		default:
 			mineHeader.Nonce = types.EncodeNonce(nonce)
 
@@ -493,9 +492,11 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 				log.Info("Nonce found!", "thread", thread, "nonce", nonce, "attempts", attempts)
 				mineHeader.MixDigest = mixDigest
 				sealedBlock := block.WithSeal(mineHeader)
+				foundOnce.Do(func() { close(found) })
 				select {
 				case results <- sealedBlock:
 				case <-stop:
+				case <-found:
 				}
 				return
 			}
