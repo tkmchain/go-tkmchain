@@ -730,8 +730,12 @@ func (d *Downloader) processHeaders(origin uint64) error {
 				}
 				if len(chunkHeaders) > 0 {
 					scheduled = true
-					if d.queue.Schedule(chunkHeaders, chunkHashes, origin+uint64(cutoff)) != len(chunkHeaders) {
-						return fmt.Errorf("%w: stale headers", errBadPeer)
+					accepted := d.queue.Schedule(chunkHeaders, chunkHashes, origin+uint64(cutoff))
+					if accepted != len(chunkHeaders) {
+						if accepted == 0 {
+							return fmt.Errorf("%w: stale headers", errBadPeer)
+						}
+						log.Debug("Partially accepted header batch", "accepted", accepted, "requested", len(chunkHeaders), "from", origin+uint64(cutoff))
 					}
 				}
 				headers = headers[limit:]

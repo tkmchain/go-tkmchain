@@ -93,9 +93,9 @@ type Miner struct {
 	pendingMu   sync.Mutex
 
 	// Mining state
-	running    atomic.Bool
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	running atomic.Bool
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 
 	// Metrics
 	blocksMined   uint64
@@ -454,6 +454,18 @@ func (miner *Miner) getPending() *newPayloadResult {
 
 // SubmitWork submits successfully mined block to the blockchain.
 func (miner *Miner) SubmitWork(block *types.Block) error {
+	head := miner.chain.CurrentBlock()
+	if head != nil && block.ParentHash() != head.Hash() {
+		err := fmt.Errorf("stale mined block parent %s, current head %s", block.ParentHash(), head.Hash())
+		log.Warn("Rejecting mined block with non-canonical parent",
+			"number", block.NumberU64(),
+			"hash", block.Hash(),
+			"parent", block.ParentHash(),
+			"head", head.Hash(),
+		)
+		return err
+	}
+
 	// Insert the block into the blockchain
 	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
 		log.Error("Failed to insert mined block", "error", err)
