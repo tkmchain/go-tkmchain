@@ -45,7 +45,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 )
 
@@ -388,12 +387,6 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 		return nil, fmt.Errorf("failed to convert StateDB to expected type")
 	}
 
-	// Get chain with trie database access
-	chainWithTrie, ok := chain.(interface{ TrieDB() *triedb.Database })
-	if !ok {
-		log.Warn("Chain does not support trie database commit")
-	}
-
 	// First finalize the block (includes block reward)
 	r.Finalize(chain, header, stateDB, body)
 
@@ -410,24 +403,6 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 	// Set bloom filter from receipts
 	if len(receipts) > 0 {
 		header.Bloom = types.MergeBloom(receipts)
-	}
-
-	root, err := statedb.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), chain.Config().IsCancun(header.Number, header.Time))
-	if err != nil {
-		return nil, fmt.Errorf("failed to commit state: %w", err)
-	}
-
-	// Verify the committed root matches our header root
-	if root != header.Root {
-		log.Warn("State root mismatch after commit", "computed", root, "header", header.Root)
-		header.Root = root
-	}
-
-	// Also persist the trie nodes to database
-	if chainWithTrie != nil {
-		if err := chainWithTrie.TrieDB().Commit(header.Root, true); err != nil {
-			log.Warn("Failed to persist trie nodes", "root", header.Root, "err", err)
-		}
 	}
 
 	// Create and return the final block
