@@ -6,11 +6,6 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
-// The go-ethereum library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
-//
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
@@ -353,6 +348,7 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 }
 
 // Finalize implements consensus.Engine, accumulating block and uncle rewards.
+// This does NOT commit state - that happens in FinalizeAndAssemble
 func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body) {
 	statedb, ok := stateDB.(*state.StateDB)
 	if !ok {
@@ -377,10 +373,13 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 		}
 	}
 
+	// Set the state root (but don't commit yet - blockchain will commit)
 	header.Root = statedb.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 }
 
 // FinalizeAndAssemble implements consensus.Engine, creating the final block.
+// This is called by the miner when a block is ready to be sealed.
+// Note: The actual state commitment to disk happens in the blockchain's writeBlockWithState
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	statedb, ok := stateDB.(*state.StateDB)
 	if !ok {
@@ -405,13 +404,12 @@ func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header 
 		header.Bloom = types.MergeBloom(receipts)
 	}
 
-	// Create and return the final block
-	block := types.NewBlock(header, body, receipts, nil)
+	// Log the state root for debugging
+	log.Info("Finalized block", "number", header.Number, "stateRoot", header.Root.Hex(), "txs", len(body.Transactions))
 
-	log.Info("Finalized and assembled block",
-		"number", header.Number,
-		"stateRoot", header.Root.Hex(),
-		"txs", len(body.Transactions))
+	// Create and return the final block
+	// The blockchain's InsertChain will handle state commitment via writeBlockWithState
+	block := types.NewBlock(header, body, receipts, nil)
 
 	return block, nil
 }
@@ -429,7 +427,6 @@ func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 	if r.rotatingKing == nil {
 		return common.Address{}
 	}
-	// Pass block height to rotating king manager for proper rotation
 	return r.rotatingKing.GetCurrentKing()
 }
 
@@ -452,31 +449,17 @@ func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, re
 	found := make(chan struct{})
 	var foundOnce sync.Once
 
-	// Reset WaitGroup for this seal attempt
-	var sealWg sync.WaitGroup
-
 	for i := 0; i < r.threads; i++ {
-		sealWg.Add(1)
-		go r.mineWithWg(block, results, stop, found, &foundOnce, i, &sealWg)
+		r.wg.Add(1)
+		go r.mine(block, results, stop, found, &foundOnce, i)
 	}
-
-	// Close results channel when all threads are done
-	go func() {
-		sealWg.Wait()
-		close(results)
-		log.Debug("Seal completed for block", "number", block.NumberU64())
-	}()
 
 	return nil
 }
 
-// mineWithWg is like mine but uses a passed WaitGroup
-func (r *RandomX) mineWithWg(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int, wg *sync.WaitGroup) {
-	defer wg.Done()
-	r.mine(block, results, stop, found, foundOnce, thread)
-}
-
+// mine attempts to find a valid nonce for the given block.
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int) {
+	defer r.wg.Done()
 
 	header := block.Header()
 	target := new(big.Int).Div(maxUint256, header.Difficulty)
@@ -506,7 +489,6 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 
 	started := time.Now()
 	attempts := uint64(0)
-	lastLogTime := time.Now()
 
 	log.Info("�� Starting mining loop",
 		"thread", thread,
@@ -540,10 +522,10 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 				mineHeader.MixDigest = mixDigest
 				sealedBlock := block.WithSeal(mineHeader)
 
-				// Signal other threads to stop FIRST
+				// Signal other threads to stop
 				foundOnce.Do(func() { close(found) })
 
-				// Submit the result - use a separate select to avoid blocking
+				// Submit the result
 				select {
 				case results <- sealedBlock:
 					log.Info("✅ Block submitted to results channel",
@@ -553,13 +535,7 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 				case <-stop:
 					log.Info("Stop signal received after finding nonce", "thread", thread)
 					return
-				case <-found:
-					log.Info("Another thread also found nonce", "thread", thread)
-					return
 				}
-
-				// Brief pause to ensure other threads receive the found signal
-				time.Sleep(10 * time.Millisecond)
 				return
 			}
 
@@ -572,18 +548,6 @@ func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-c
 					"attempts", attempts,
 					"nonce", nonce,
 					"hashrate", fmt.Sprintf("%.2f H/s", hashrate))
-			}
-
-			// Every 10 seconds, log a heartbeat
-			if time.Since(lastLogTime) > 10*time.Second {
-				elapsed := time.Since(started).Seconds()
-				hashrate := float64(attempts) / elapsed
-				log.Info("�� Mining heartbeat",
-					"thread", thread,
-					"attempts", attempts,
-					"hashrate", fmt.Sprintf("%.2f H/s", hashrate),
-					"running_for", fmt.Sprintf("%.1fs", elapsed))
-				lastLogTime = time.Now()
 			}
 		}
 	}
@@ -634,8 +598,6 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	copy(input[32:], nonceBytes)
 
 	output := make([]byte, 32)
-
-	// Calculate hash
 	vm.CalculateHash(input, output)
 
 	mixDigest := common.BytesToHash(output)
@@ -644,12 +606,12 @@ func (r *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_
 	return mixDigest, result
 }
 
+// CalcDifficulty is the difficulty adjustment algorithm.
 func (r *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	// Create a header fetcher function
 	getHeader := func(height uint64) *types.Header {
 		return chain.GetHeaderByNumber(height)
 	}
-
 	return CalculateNextDifficulty(parent, getHeader)
 }
 

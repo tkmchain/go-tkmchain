@@ -195,7 +195,7 @@ func (miner *Miner) GetCurrentRotatingKing(blockHeight uint64) common.Address {
 		return common.Address{}
 	}
 
-	interval := uint64(100) // Default rotation interval
+	interval := uint64(100)
 	if miner.config.RotationInterval > 0 {
 		interval = miner.config.RotationInterval
 	}
@@ -466,17 +466,41 @@ func (miner *Miner) SubmitWork(block *types.Block) error {
 		return err
 	}
 
+	log.Info("Submitting mined block", "number", block.NumberU64(), "hash", block.Hash(), "stateRoot", block.Root().Hex())
+
 	// Insert the block into the blockchain
 	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
 		log.Error("Failed to insert mined block", "error", err)
 		return err
 	}
 
+	// Force state persistence to disk after successful insertion
+	// This ensures the block's state trie nodes are written to disk
+	triedb := miner.chain.TrieDB()
+	if triedb != nil {
+		// Commit the block's state root to disk
+		if err := triedb.Commit(block.Root(), true); err != nil {
+			log.Warn("Failed to commit block state to disk", "number", block.NumberU64(), "root", block.Root(), "err", err)
+		} else {
+			log.Debug("Block state committed to disk", "number", block.NumberU64(), "root", block.Root().Hex())
+		}
+		
+		// Also commit parent state to ensure chain continuity
+		parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1)
+		if parent != nil {
+			if err := triedb.Commit(parent.Root, true); err != nil {
+				log.Warn("Failed to commit parent state to disk", "number", parent.Number, "root", parent.Root, "err", err)
+			}
+		}
+	} else {
+		log.Warn("Trie database not available, state may not persist")
+	}
+
 	// Update metrics
 	atomic.AddUint64(&miner.blocksMined, 1)
 	miner.lastMinedTime = time.Now()
 
-	log.Info("Block successfully mined",
+	log.Info("Block successfully mined and persisted",
 		"number", block.NumberU64(),
 		"hash", block.Hash(),
 		"total_mined", miner.blocksMined,

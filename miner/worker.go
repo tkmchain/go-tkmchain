@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
-	//	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -646,6 +645,7 @@ func (miner *Miner) startMiningLoop() {
 	go miner.miningLoop()
 }
 
+// miningLoop is the main mining loop that uses engine.Seal directly
 func (miner *Miner) miningLoop() {
 	defer func() {
 		miner.running.Store(false)
@@ -682,6 +682,8 @@ func (miner *Miner) miningLoop() {
 			case sealedBlock := <-sealResultCh:
 				if sealedBlock != nil {
 					log.Info("Block sealed successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
+					
+					// Submit the block to the blockchain (state persistence handled in SubmitWork)
 					if err := miner.SubmitWork(sealedBlock); err != nil {
 						log.Error("Failed to submit sealed block", "error", err)
 					}
