@@ -468,44 +468,34 @@ func (miner *Miner) SubmitWork(block *types.Block) error {
 
 	log.Info("Submitting mined block", "number", block.NumberU64(), "hash", block.Hash(), "stateRoot", block.Root().Hex())
 
-	// Insert the block into the blockchain
+	triedb := miner.chain.TrieDB()
+	
+	// Insert the block
 	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
 		log.Error("Failed to insert mined block", "error", err)
 		return err
 	}
 
-	// Force state persistence to disk after successful insertion
-	// This ensures the block's state trie nodes are written to disk
-	triedb := miner.chain.TrieDB()
+	// Persist state to disk
 	if triedb != nil {
-		// Commit the block's state root to disk
-		if err := triedb.Commit(block.Root(), true); err != nil {
-			log.Warn("Failed to commit block state to disk", "number", block.NumberU64(), "root", block.Root(), "err", err)
-		} else {
-			log.Debug("Block state committed to disk", "number", block.NumberU64(), "root", block.Root().Hex())
-		}
-		
-		// Also commit parent state to ensure chain continuity
-		parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1)
-		if parent != nil {
+		// Commit parent state (may already exist)
+		if parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1); parent != nil {
 			if err := triedb.Commit(parent.Root, true); err != nil {
-				log.Warn("Failed to commit parent state to disk", "number", parent.Number, "root", parent.Root, "err", err)
+				// Use DEBUG - this is often "already committed" which is fine
+				log.Debug("Parent state commit", "number", parent.Number, "root", parent.Root, "err", err)
 			}
 		}
-	} else {
-		log.Warn("Trie database not available, state may not persist")
+		
+		// Commit block state
+		if err := triedb.Commit(block.Root(), true); err != nil {
+			log.Error("Failed to commit block state", "number", block.NumberU64(), "root", block.Root(), "err", err)
+		}
 	}
 
-	// Update metrics
 	atomic.AddUint64(&miner.blocksMined, 1)
 	miner.lastMinedTime = time.Now()
 
-	log.Info("Block successfully mined and persisted",
-		"number", block.NumberU64(),
-		"hash", block.Hash(),
-		"total_mined", miner.blocksMined,
-	)
-
+	log.Info("Block successfully mined", "number", block.NumberU64(), "hash", block.Hash())
 	return nil
 }
 
