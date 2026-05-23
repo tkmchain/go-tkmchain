@@ -103,11 +103,20 @@ func StartNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 
 		shutdown := func() {
 			log.Info("Got interrupt, shutting down...")
-			go stack.Close()
+			closed := make(chan struct{})
+			go func() {
+				stack.Close()
+				close(closed)
+			}()
+
 			for i := 10; i > 0; i-- {
-				<-sigc
-				if i > 1 {
-					log.Warn("Already shutting down, interrupt more to panic.", "times", i-1)
+				select {
+				case <-closed:
+					return
+				case <-sigc:
+					if i > 1 {
+						log.Warn("Already shutting down, interrupt more to panic.", "times", i-1)
+					}
 				}
 			}
 			debug.Exit() // ensure trace and CPU profile data is flushed.
