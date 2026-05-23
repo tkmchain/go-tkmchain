@@ -178,15 +178,15 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	if chainConfig.RandomX != nil {
-        if config.SyncMode == ethconfig.SnapSync {
-                log.Info("RandomX chain detected: disabling snap-sync, using full sync")
-                config.SyncMode = ethconfig.FullSync
-        }
-        // Also disable snapshot cache for RandomX (not needed)
-        if config.SnapshotCache > 0 {
-                log.Debug("RandomX chain: disabling snapshot cache")
-                config.SnapshotCache = 0
-        }
+		if config.SyncMode == ethconfig.SnapSync {
+			log.Info("RandomX chain detected: disabling snap-sync, using full sync")
+			config.SyncMode = ethconfig.FullSync
+		}
+		// Also disable snapshot cache for RandomX (not needed)
+		if config.SnapshotCache > 0 {
+			log.Debug("RandomX chain: disabling snapshot cache")
+			config.SnapshotCache = 0
+		}
 	}
 	// Prefer chain-configured king addresses so they are consensus-bound.
 	mainKingAddress := chainConfig.MainKingAddress
@@ -842,6 +842,10 @@ func (s *Ethereum) setupDiscovery() error {
 
 // Stop implements node.Lifecycle, terminating all internal goroutines
 func (s *Ethereum) Stop() error {
+	if err := s.StopMining(); err != nil {
+		log.Warn("Failed to stop RandomX miner during shutdown", "err", err)
+	}
+
 	s.discmix.Close()
 	s.dropper.Stop()
 	s.handler.Stop()
