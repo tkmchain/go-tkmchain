@@ -270,7 +270,7 @@ loop:
 
 		select {
 		case node := <-nodesCh:
-			if err := d.checkDial(node); err != nil {
+			if err := d.checkDial(node, true); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IPAddr(), "reason", err)
 			} else {
 				d.startDial(newDialTask(node, dynDialedConn))
@@ -320,7 +320,7 @@ loop:
 			}
 			task := newDialTask(node, staticDialedConn)
 			d.static[id] = task
-			if d.checkDial(node) == nil {
+			if d.checkDial(node, true) == nil {
 				d.addToStaticPool(task)
 			}
 
@@ -409,7 +409,7 @@ func (d *dialScheduler) freeDialSlots() int {
 }
 
 // checkDial returns an error if node n should not be dialed.
-func (d *dialScheduler) checkDial(n *enode.Node) error {
+func (d *dialScheduler) checkDial(n *enode.Node, checkHistory bool) error {
 	if n.ID() == d.self {
 		return errSelf
 	}
@@ -431,7 +431,7 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	if d.netRestrict != nil && !d.netRestrict.ContainsAddr(n.IPAddr()) {
 		return errNetRestrict
 	}
-	if d.history.contains(string(n.ID().Bytes())) {
+	if checkHistory && d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed
 	}
 	return nil
@@ -451,7 +451,7 @@ func (d *dialScheduler) startStaticDials(n int) (started int) {
 // updateStaticPool attempts to move the given static dial back into staticPool.
 func (d *dialScheduler) updateStaticPool(id enode.ID) {
 	task, ok := d.static[id]
-	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest()) == nil {
+	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest(), false) == nil {
 		d.addToStaticPool(task)
 	}
 }
