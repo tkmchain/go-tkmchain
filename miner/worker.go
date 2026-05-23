@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 )
@@ -308,6 +309,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 
 	env, err := miner.makeEnv(parent, header, genParams.coinbase, witness)
 	if err != nil && genParams.parentHash == (common.Hash{}) && isMissingStateError(err) {
+		logMissingStateError("Sealing parent state unavailable", parent, err)
 		fallbackParent := miner.findLatestHeaderWithState(parent)
 		if fallbackParent != nil && fallbackParent.Hash() != parent.Hash() {
 			log.Warn("Falling back to ancestor with available state for sealing", "from", parent.Number, "to", fallbackParent.Number)
@@ -319,6 +321,9 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 				header.BaseFee = eip1559.CalcBaseFee(miner.chainConfig, parent)
 			}
 			env, err = miner.makeEnv(parent, header, genParams.coinbase, witness)
+			if err != nil && isMissingStateError(err) {
+				logMissingStateError("Fallback parent state unavailable", parent, err)
+			}
 		}
 	}
 	if err != nil {
@@ -339,6 +344,20 @@ func isMissingStateError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "missing trie node") || strings.Contains(err.Error(), "state ") && strings.Contains(err.Error(), "is not available")
+}
+
+func logMissingStateError(msg string, parent *types.Header, err error) {
+	ctx := []interface{}{
+		"parent", parent.Hash(),
+		"number", parent.Number,
+		"root", parent.Root,
+		"err", err,
+	}
+	var missing *trie.MissingNodeError
+	if errors.As(err, &missing) {
+		ctx = append(ctx, "missing_node", missing.NodeHash, "missing_path", fmt.Sprintf("%x", missing.Path), "owner", missing.Owner)
+	}
+	log.Warn(msg, ctx...)
 }
 
 func (miner *Miner) findLatestHeaderWithState(head *types.Header) *types.Header {
