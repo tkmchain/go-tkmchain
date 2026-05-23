@@ -307,7 +307,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 	}
 
 	env, err := miner.makeEnv(parent, header, genParams.coinbase, witness)
-	if err != nil && genParams.parentHash == (common.Hash{}) && isMissingStateError(err) {
+	if err != nil && isMissingStateError(err) {
 		logMissingStateError("Sealing parent state unavailable", parent, err)
 		fallbackParent := miner.findLatestHeaderWithState(parent)
 		if fallbackParent != nil && fallbackParent.Hash() != parent.Hash() {
