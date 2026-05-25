@@ -241,6 +241,8 @@ func getGenesisState(db ethdb.Database, blockhash common.Hash) (alloc types.Gene
 		genesis = DefaultHoleskyGenesisBlock()
 	case params.HoodiGenesisHash:
 		genesis = DefaultHoodiGenesisBlock()
+	case params.RandomXGenesisHash:
+		genesis = DefaultRandomXGenesisBlock()
 	}
 	if genesis != nil {
 		return genesis.Alloc, nil
@@ -305,10 +307,10 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 // SetupGenesisBlock writes or updates the genesis block in db.
 // The block that will be used is:
 //
-//	                     genesis == nil       genesis != nil
-//	                  +------------------------------------------
-//	db has no genesis |  main-net default  |  genesis
-//	db has genesis    |  from DB           |  genesis (if compatible)
+//                           genesis == nil       genesis != nil
+//                        +------------------------------------------
+//      db has no genesis |  randomx default    |  genesis
+//      db has genesis    |  from DB           |  genesis (if compatible)
 //
 // The stored chain configuration will be updated if it is compatible (i.e. does not
 // specify a fork block below the local head block). In case of a conflict, the
@@ -329,8 +331,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	ghash := rawdb.ReadCanonicalHash(db, 0)
 	if (ghash == common.Hash{}) {
 		if genesis == nil {
-			log.Info("Writing default main-net genesis block")
-			genesis = DefaultGenesisBlock()
+			log.Info("Writing default RandomX genesis block")
+			genesis = DefaultRandomXGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
 		}
@@ -354,8 +356,8 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		// networks must explicitly specify the genesis in the config file, mainnet
 		// genesis will be used as default and the initialization will always fail.
 		if genesis == nil {
-			log.Info("Writing default main-net genesis block")
-			genesis = DefaultGenesisBlock()
+			log.Info("Writing default RandomX genesis block")
+			genesis = DefaultRandomXGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
 		}
@@ -445,8 +447,8 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConf
 		return genesis.Config, ghash, nil
 	}
 	// There is no stored chain config and no new config provided,
-	// In this case the default chain config(mainnet) will be used
-	return params.MainnetChainConfig, params.MainnetGenesisHash, nil
+	// In this case return the RandomX chain config
+	return params.RandomXChainConfig, params.RandomXGenesisHash, nil
 }
 
 // chainConfigOrDefault retrieves the attached chain configuration. If the genesis
@@ -464,6 +466,8 @@ func (g *Genesis) chainConfigOrDefault(ghash common.Hash, stored *params.ChainCo
 		return params.SepoliaChainConfig
 	case ghash == params.HoodiGenesisHash:
 		return params.HoodiChainConfig
+	case ghash == params.RandomXGenesisHash:
+		return params.RandomXChainConfig
 	default:
 		return stored
 	}
@@ -672,6 +676,29 @@ func DefaultHoodiGenesisBlock() *Genesis {
 		Difficulty: big.NewInt(0x01),
 		Timestamp:  1742212800,
 		Alloc:      decodePrealloc(hoodiAllocData),
+	}
+}
+
+// DefaultRandomXGenesisBlock returns the default RandomX genesis block.
+func DefaultRandomXGenesisBlock() *Genesis {
+	alloc := make(types.GenesisAlloc)
+	alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
+	}
+	alloc[common.HexToAddress("0xeF2cf0c1167cd037BbecA3AB5D5D1dD7185979Fe")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
+	}
+
+	return &Genesis{
+		Config:     params.RandomXChainConfig,
+		Nonce:      0,
+		Timestamp:  0,
+		ExtraData:  []byte{},
+		GasLimit:   8000000,
+		Difficulty: big.NewInt(3),
+		Mixhash:    common.Hash{},
+		Coinbase:   common.Address{},
+		Alloc:      alloc,
 	}
 }
 

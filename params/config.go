@@ -30,6 +30,8 @@ var (
 	SepoliaGenesisHash = common.HexToHash("0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9")
 	HoleskyGenesisHash = common.HexToHash("0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4")
 	HoodiGenesisHash   = common.HexToHash("0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b")
+        RandomXGenesisHash = common.HexToHash("0x6d88e378ca790312e5637f79afda3555eb0d3c064c9b4f4d3ef0d15e6a5fef10")
+
 )
 
 func newUint64(val uint64) *uint64 { return &val }
@@ -44,6 +46,45 @@ type RandomXConfig struct {
         PersistDataset bool   `json:"persistDataset"`    // Persist dataset to disk
 }
 
+// RandomXChainConfig
+var RandomXChainConfig = &ChainConfig{
+        ChainID:                 big.NewInt(1),
+        HomesteadBlock:          big.NewInt(0),
+        DAOForkBlock:            nil,
+        DAOForkSupport:          true,
+        EIP150Block:             big.NewInt(0),
+        EIP155Block:             big.NewInt(0),
+        EIP158Block:             big.NewInt(0),
+        ByzantiumBlock:          big.NewInt(0),
+        ConstantinopleBlock:     big.NewInt(0),
+        PetersburgBlock:         big.NewInt(0),
+        IstanbulBlock:           big.NewInt(0),
+        BerlinBlock:             big.NewInt(0),
+        LondonBlock:             big.NewInt(0),
+        ArrowGlacierBlock:       nil,
+        GrayGlacierBlock:        nil,
+        ShanghaiTime:            newUint64(0),
+        CancunTime:              nil,
+        PragueTime:              nil,
+        OsakaTime:               nil,
+        BPO1Time:                nil,
+        BPO2Time:                nil,
+        BPO3Time:                nil,
+        BPO4Time:                nil,
+        BPO5Time:                nil,
+        AmsterdamTime:           nil,
+        UBTTime:                 nil,
+        DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
+        MainKingAddress:         common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+        RotatingKingAddresses: []common.Address{
+                common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+        },
+        RotatingKingRotationInterval: 100,
+        RandomX:                      DefaultRandomXConfig(),
+        BlobScheduleConfig: &BlobScheduleConfig{
+                Cancun: DefaultCancunBlobConfig,
+        },
+}
 // String implements the stringer interface, returning the consensus engine details.
 func (c RandomXConfig) String() string {
 	return fmt.Sprintf("randomx(epoch: %d, cache: %dMB, dataset: %dGB)",
