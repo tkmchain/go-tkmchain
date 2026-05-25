@@ -435,47 +435,9 @@ func (d *Downloader) syncToHead() (err error) {
 		log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
 	}(time.Now())
 
-	// For RandomX/PoW chains, get the current head and sync from there
-	var origin uint64
-	if mode == ethconfig.FullSync {
-		head := d.blockchain.CurrentBlock()
-		if head != nil {
-			origin = head.Number.Uint64()
-		}
-	} else if mode == ethconfig.SnapSync {
-		head := d.blockchain.CurrentSnapBlock()
-		if head != nil {
-			origin = head.Number.Uint64()
-		}
-	}
-
-	// Get the highest known block from peers
-	var height uint64 = origin
-	peers := d.peers.AllPeers()
-	for _, p := range peers {
-		// Try to get peer's head block
-		if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
-			headNum := ethPeer.Head()
-			if headNum > height {
-				height = headNum
-				log.Debug("Found peer height", "peer", p.id, "height", headNum)
-			}
-		}
-	}
-
-	if height == origin {
-		// If we have no peer height, try to get from blockchain
-		height = d.blockchain.CurrentBlock().Number.Uint64()
-		log.Warn("Could not determine peer height, using current chain head", "height", height)
-	}
-
-	log.Info("Synchronising with network", "mode", mode, "origin", origin, "height", height)
-
-	// If already synced, exit early
-	if origin >= height {
-		log.Info("Chain already synced", "current", origin, "target", height)
-		return nil
-	}
+	// For RandomX, use simple header fetch without beacon bounds
+	origin := uint64(0)
+	height := uint64(0)
 
 	d.syncStatsLock.Lock()
 	d.syncStatsChainOrigin = origin
@@ -617,16 +579,12 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 		}
 
 		// Calculate how many headers to fetch
-		count := bestPeer.HeaderCapacity(time.Second)
+		count := bestPeer.HeaderCapacity(0)
 		if count > MaxHeaderFetch {
 			count = MaxHeaderFetch
 		}
-		if count < 1 {
-			count = 1
-		}
 
 		// Request headers from the best peer
-		requestStart := time.Now()
 		resultCh := make(chan *eth.Response, 1)
 		req, err := bestPeer.peer.RequestHeadersByNumber(from, count, 0, false, resultCh)
 		if err != nil {
@@ -663,7 +621,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 			}
 
 			// Update peer rate
-			bestPeer.UpdateHeaderRate(len(headerList), time.Since(requestStart))
+			bestPeer.UpdateHeaderRate(len(headerList), time.Since(time.Now()))
 
 			// Send to processor
 			select {

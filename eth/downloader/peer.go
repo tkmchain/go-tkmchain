@@ -171,7 +171,6 @@ type peerSet struct {
 	events event.Feed        // Feed to publish peer lifecycle events on
 
 	lock sync.RWMutex
-
 }
 
 // newPeerSet creates a new peer set top track the active download sources.
@@ -286,21 +285,4 @@ func (ps *peerCapacitySort) Less(i, j int) bool {
 func (ps *peerCapacitySort) Swap(i, j int) {
 	ps.peers[i], ps.peers[j] = ps.peers[j], ps.peers[i]
 	ps.caps[i], ps.caps[j] = ps.caps[j], ps.caps[i]
-}
-
-func (ps *peerSet) MaxHeight() uint64 {
-        ps.lock.RLock()
-        defer ps.lock.RUnlock()
-        
-        var max uint64
-        for _, p := range ps.peers {
-                // Get the peer's head block number from the eth protocol peer
-                if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
-                        head := ethPeer.Head()
-                        if head > max {
-                                max = head
-                        }
-                }
-        }
-        return max
 }
