@@ -419,87 +419,87 @@ func (d *Downloader) SubscribeSyncEvents(ch chan<- SyncEvent) event.Subscription
 
 // syncToHead starts a block synchronization based on the hash chain.
 func (d *Downloader) syncToHead() (err error) {
-        mode := d.getMode()
-        d.feed.Send(SyncEvent{Type: SyncStarted, Mode: mode})
-        defer func() {
-                if err != nil {
-                        d.feed.Send(SyncEvent{Type: SyncFailed, Mode: mode, Err: err})
-                } else {
-                        latest := d.blockchain.CurrentHeader()
-                        d.feed.Send(SyncEvent{Type: SyncCompleted, Mode: mode, Latest: latest})
-                }
-        }()
+	mode := d.getMode()
+	d.feed.Send(SyncEvent{Type: SyncStarted, Mode: mode})
+	defer func() {
+		if err != nil {
+			d.feed.Send(SyncEvent{Type: SyncFailed, Mode: mode, Err: err})
+		} else {
+			latest := d.blockchain.CurrentHeader()
+			d.feed.Send(SyncEvent{Type: SyncCompleted, Mode: mode, Latest: latest})
+		}
+	}()
 
-        log.Debug("Synchronising with the network", "mode", mode)
-        defer func(start time.Time) {
-                log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
-        }(time.Now())
+	log.Debug("Synchronising with the network", "mode", mode)
+	defer func(start time.Time) {
+		log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
+	}(time.Now())
 
-        // For RandomX/PoW chains, get the current head and sync from there
-        var origin uint64
-        if mode == ethconfig.FullSync {
-                head := d.blockchain.CurrentBlock()
-                if head != nil {
-                        origin = head.Number.Uint64()
-                }
-        } else if mode == ethconfig.SnapSync {
-                head := d.blockchain.CurrentSnapBlock()
-                if head != nil {
-                        origin = head.Number.Uint64()
-                }
-        }
+	// For RandomX/PoW chains, get the current head and sync from there
+	var origin uint64
+	if mode == ethconfig.FullSync {
+		head := d.blockchain.CurrentBlock()
+		if head != nil {
+			origin = head.Number.Uint64()
+		}
+	} else if mode == ethconfig.SnapSync {
+		head := d.blockchain.CurrentSnapBlock()
+		if head != nil {
+			origin = head.Number.Uint64()
+		}
+	}
 
-        // Get the highest known block from peers
-        var height uint64 = origin
-        peers := d.peers.AllPeers()
-        for _, p := range peers {
-                // Try to get peer's head block
-                if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
-                        headNum := ethPeer.Head()
-                        if headNum > height {
-                                height = headNum
-                                log.Debug("Found peer height", "peer", p.id, "height", headNum)
-                        }
-                }
-        }
+	// Get the highest known block from peers
+	var height uint64 = origin
+	peers := d.peers.AllPeers()
+	for _, p := range peers {
+		// Try to get peer's head block
+		if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
+			headNum := ethPeer.Head()
+			if headNum > height {
+				height = headNum
+				log.Debug("Found peer height", "peer", p.id, "height", headNum)
+			}
+		}
+	}
 
-        if height == origin {
-                // If we have no peer height, try to get from blockchain
-                height = d.blockchain.CurrentBlock().Number.Uint64()
-                log.Warn("Could not determine peer height, using current chain head", "height", height)
-        }
+	if height == origin {
+		// If we have no peer height, try to get from blockchain
+		height = d.blockchain.CurrentBlock().Number.Uint64()
+		log.Warn("Could not determine peer height, using current chain head", "height", height)
+	}
 
-        log.Info("Synchronising with network", "mode", mode, "origin", origin, "height", height)
+	log.Info("Synchronising with network", "mode", mode, "origin", origin, "height", height)
 
-        // If already synced, exit early
-        if origin >= height {
-                log.Info("Chain already synced", "current", origin, "target", height)
-                return nil
-        }
+	// If already synced, exit early
+	if origin >= height {
+		log.Info("Chain already synced", "current", origin, "target", height)
+		return nil
+	}
 
-        d.syncStatsLock.Lock()
-        d.syncStatsChainOrigin = origin
-        d.syncStatsChainHeight = height
-        d.syncStatsLock.Unlock()
+	d.syncStatsLock.Lock()
+	d.syncStatsChainOrigin = origin
+	d.syncStatsChainHeight = height
+	d.syncStatsLock.Unlock()
 
-        d.committed.Store(true)
+	d.committed.Store(true)
 
-        // Initiate the sync using a concurrent header and content retrieval algorithm
-        d.queue.Prepare(origin+1, mode)
+	// Initiate the sync using a concurrent header and content retrieval algorithm
+	d.queue.Prepare(origin+1, mode)
 
-        fetchers := []func() error{
-                func() error { return d.fetchHeaders(origin + 1) },
-                func() error { return d.fetchBodies(origin + 1) },
-                func() error { return d.fetchReceipts(origin + 1) },
-                func() error { return d.processHeaders(origin + 1) },
-        }
+	fetchers := []func() error{
+		func() error { return d.fetchHeaders(origin + 1) },
+		func() error { return d.fetchBodies(origin + 1) },
+		func() error { return d.fetchReceipts(origin + 1) },
+		func() error { return d.processHeaders(origin + 1) },
+	}
 
-        if mode == ethconfig.SnapSync {
-                fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
-        } else if mode == ethconfig.FullSync {
-                fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
-        }
-        return d.spawnSync(fetchers)
+	if mode == ethconfig.SnapSync {
+		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
+	} else if mode == ethconfig.FullSync {
+		fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
+	}
+	return d.spawnSync(fetchers)
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in
@@ -617,12 +617,16 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 		}
 
 		// Calculate how many headers to fetch
-		count := bestPeer.HeaderCapacity(0)
+		count := bestPeer.HeaderCapacity(time.Second)
 		if count > MaxHeaderFetch {
 			count = MaxHeaderFetch
 		}
+		if count < 1 {
+			count = 1
+		}
 
 		// Request headers from the best peer
+		requestStart := time.Now()
 		resultCh := make(chan *eth.Response, 1)
 		req, err := bestPeer.peer.RequestHeadersByNumber(from, count, 0, false, resultCh)
 		if err != nil {
@@ -659,7 +663,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 			}
 
 			// Update peer rate
-			bestPeer.UpdateHeaderRate(len(headerList), time.Since(time.Now()))
+			bestPeer.UpdateHeaderRate(len(headerList), time.Since(requestStart))
 
 			// Send to processor
 			select {
