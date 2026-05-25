@@ -153,7 +153,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		AncientsDirectory: config.DatabaseFreezer,
 		EraDirectory:      config.DatabaseEra,
 		MetricsNamespace:  "eth/db/chaindata/",
-               ReadOnly:          false,
+		ReadOnly:          false,
 	}
 	chainDb, err := stack.OpenDatabaseWithOptions("chaindata", dbOptions)
 	if err != nil {
@@ -393,9 +393,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
 	// Initialize miner
-	eth.miner = miner.New(eth, config.Miner, eth.engine, mainKingAddress, kingAddresses)
+	eth.miner = miner.New(eth, chainConfig, new(event.TypeMux), eth.engine, config.Miner.Recommit, config.Miner.GasFloor, config.Miner.GasCeil, nil)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
-	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
 	// Setup API backend
 	eth.APIBackend = &EthAPIBackend{
@@ -543,9 +542,7 @@ func (s *Ethereum) StartMining() error {
 
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {
-		if err := s.miner.SetEtherbase(s.config.Miner.Etherbase); err != nil {
-			return err
-		}
+		s.miner.SetEtherbase(s.config.Miner.Etherbase)
 		log.Info("Setting miner etherbase", "address", s.config.Miner.Etherbase.Hex())
 	}
 
@@ -559,13 +556,11 @@ func (s *Ethereum) StartMining() error {
 		s.miner.SetGasPrice(s.config.Miner.GasPrice)
 	}
 	if s.config.Miner.GasLimit > 0 {
-		s.miner.SetGasLimit(s.config.Miner.GasLimit)
+		s.config.Miner.GasCeil = s.config.Miner.GasLimit
 	}
 
 	// Start the miner
-	if err := s.miner.Start(); err != nil {
-		return fmt.Errorf("failed to start RandomX miner: %w", err)
-	}
+	s.miner.Start(s.config.Miner.Etherbase)
 
 	log.Info("RandomX miner started successfully",
 		"threads", s.config.Miner.Threads,
@@ -661,17 +656,13 @@ func (s *Ethereum) SetMinerThreads(threads int) error {
 
 	wasMining := s.miner.Mining()
 	if wasMining {
-		if err := s.miner.Stop(); err != nil {
-			return err
-		}
+		s.miner.Stop()
 	}
 
 	s.config.Miner.Threads = threads
 
 	if wasMining {
-		if err := s.miner.Start(); err != nil {
-			return err
-		}
+		s.miner.Start(s.config.Miner.Etherbase)
 	}
 
 	log.Info("Updated miner threads", "threads", threads)
@@ -688,9 +679,7 @@ func (s *Ethereum) SetMinerEtherbase(address common.Address) error {
 	}
 
 	s.config.Miner.Etherbase = address
-	if err := s.miner.SetEtherbase(address); err != nil {
-		return err
-	}
+	s.miner.SetEtherbase(address)
 	log.Info("Updated miner etherbase", "address", address.Hex())
 	return nil
 }
