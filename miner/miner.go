@@ -18,22 +18,17 @@
 package miner
 
 import (
-	"context"
 	"fmt"
-	"math/big"
-	"runtime"
-	"sync"
 	"sync/atomic"
 	"time"
-        "strings"
+
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+//	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -41,508 +36,134 @@ import (
 // Backend wraps all methods required for mining.
 type Backend interface {
 	BlockChain() *core.BlockChain
-	TxPool() *txpool.TxPool
+	TxPool() *core.TxPool
 }
 
-// Config is the configuration parameters of RandomX mining.
-type Config struct {
-	Enabled             bool           `toml:"-"`          // Whether mining is enabled
-	Threads             int            `toml:"-"`          // Number of CPU threads for RandomX mining (0 = auto)
-	Etherbase           common.Address `toml:"-"`          // Address for block mining rewards (deprecated)
-	PendingFeeRecipient common.Address `toml:"-"`          // Address for pending block rewards
-	ExtraData           hexutil.Bytes  `toml:",omitempty"` // Block extra data set by the miner
-	GasCeil             uint64         `toml:",omitempty"` // Target gas ceiling for mined blocks
-	GasPrice            *big.Int       `toml:",omitempty"` // Minimum gas price for mining a transaction
-	GasLimit            uint64         `toml:",omitempty"` // Target gas limit for mined blocks
-	Recommit            time.Duration  `toml:",omitempty"` // Time interval to re-create mining work
-	MaxBlobsPerBlock    int            `toml:",omitempty"` // Maximum number of blobs per block
-
-	// RandomX specific settings
-	RandomXCacheSize   uint64 `toml:",omitempty"` // RandomX cache size in MB
-	RandomXDatasetSize uint64 `toml:",omitempty"` // RandomX dataset size in GB
-	RandomXEpochLength uint64 `toml:",omitempty"` // RandomX epoch length in blocks
-	RandomXMinMemory   uint64 `toml:",omitempty"` // Minimum memory required for mining in GB
-	RotationInterval   uint64 `toml:",omitempty"` // Block interval for rotating king selection
-}
-
-// DefaultConfig contains default settings for RandomX miner.
-var DefaultConfig = Config{
-	Enabled:            false,
-	Threads:            0, // Auto-detect
-	GasCeil:            60_000_000,
-	GasPrice:           big.NewInt(params.GWei / 1000), // 1 Gwei default
-	GasLimit:           8_000_000,                      // 8 million gas
-	Recommit:           2 * time.Second,
-	RandomXCacheSize:   256,
-	RandomXDatasetSize: 2,
-	RandomXEpochLength: 2048,
-	RandomXMinMemory:   4,
-	RotationInterval:   100,
-}
-
-// Miner is the main object which handles RandomX block creation and mining.
+// Miner creates blocks and searches for proof-of-work values (RandomX).
 type Miner struct {
-	confMu      sync.RWMutex
-	config      *Config
-	chainConfig *params.ChainConfig
-	engine      consensus.Engine
-	txpool      *txpool.TxPool
-	prio        []common.Address // A list of senders to prioritize
-	chain       *core.BlockChain
-	pending     *pending
-	pendingMu   sync.Mutex
+	mux      *event.TypeMux
+	worker   *worker              // RandomX worker (defined in worker.go)
+	coinbase common.Address
+	eth      Backend
+	engine   consensus.Engine
+	exitCh   chan struct{}
 
-	// Mining state
-	running atomic.Bool
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
-
-	// Metrics
-	blocksMined   uint64
-	lastMinedTime time.Time
-
-	// King addresses for reward distribution
-	mainKingAddr  common.Address
-	rotatingKings []common.Address
-	kingMu        sync.RWMutex
+	canStart    int32 // can start indicates whether we can start the mining operation
+	shouldStart int32 // should start indicates whether we should start after sync
 }
 
-// New creates a new RandomX miner with provided config.
-func New(eth Backend, config Config, engine consensus.Engine, mainKing common.Address, rotatingKings []common.Address) *Miner {
-	// Auto-detect threads if not set
-	if config.Threads <= 0 {
-		config.Threads = runtime.NumCPU()
-	}
-
-	// Set default gas price if not set
-	if config.GasPrice == nil || config.GasPrice.Sign() <= 0 {
-		config.GasPrice = new(big.Int).Set(DefaultConfig.GasPrice)
-	}
-
-	// Set default gas limit if not set
-	if config.GasLimit == 0 {
-		config.GasLimit = DefaultConfig.GasLimit
-	}
-
-	// Validate RandomX config
-	if config.RandomXCacheSize == 0 {
-		config.RandomXCacheSize = DefaultConfig.RandomXCacheSize
-	}
-	if config.RandomXDatasetSize == 0 {
-		config.RandomXDatasetSize = DefaultConfig.RandomXDatasetSize
-	}
-	if config.RandomXEpochLength == 0 {
-		config.RandomXEpochLength = DefaultConfig.RandomXEpochLength
-	}
-	if config.RandomXMinMemory == 0 {
-		config.RandomXMinMemory = DefaultConfig.RandomXMinMemory
-	}
-
+// New creates a new RandomX miner with the given configuration.
+func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(block *types.Block) bool) *Miner {
 	miner := &Miner{
-		config:        &config,
-		chainConfig:   eth.BlockChain().Config(),
-		engine:        engine,
-		txpool:        eth.TxPool(),
-		chain:         eth.BlockChain(),
-		pending:       &pending{},
-		stopCh:        make(chan struct{}),
-		mainKingAddr:  mainKing,
-		rotatingKings: rotatingKings,
+		eth:      eth,
+		mux:      mux,
+		engine:   engine,
+		exitCh:   make(chan struct{}),
+		worker:   newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
+		canStart: 1,
 	}
-
-	log.Info("RandomX miner initialized",
-		"threads", config.Threads,
-		"etherbase", config.PendingFeeRecipient.Hex(),
-		"gasprice", config.GasPrice,
-		"gaslimit", config.GasLimit,
-		"enabled", config.Enabled,
-	)
-
+	go miner.update()
 	return miner
 }
 
-func getCurrentRotatingKing(rotatingKings []common.Address, blockHeight uint64) common.Address {
-	if len(rotatingKings) == 0 {
-		return common.Address{}
+// update listens to downloader events and restarts mining after sync.
+func (miner *Miner) update() {
+	events := miner.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	defer events.Unsubscribe()
+
+	for {
+		select {
+		case ev := <-events.Chan():
+			if ev == nil {
+				return
+			}
+			switch ev.Data.(type) {
+			case downloader.StartEvent:
+				atomic.StoreInt32(&miner.canStart, 0)
+				if miner.Mining() {
+					miner.Stop()
+					atomic.StoreInt32(&miner.shouldStart, 1)
+					log.Info("Mining aborted due to sync")
+				}
+			case downloader.DoneEvent, downloader.FailedEvent:
+				shouldStart := atomic.LoadInt32(&miner.shouldStart) == 1
+				atomic.StoreInt32(&miner.canStart, 1)
+				atomic.StoreInt32(&miner.shouldStart, 0)
+				if shouldStart {
+					miner.Start(miner.coinbase)
+				}
+				// stop immediately and ignore all further pending events
+				return
+			}
+		case <-miner.exitCh:
+			return
+		}
 	}
-	interval := uint64(100)
-	index := (blockHeight / interval) % uint64(len(rotatingKings))
-	return rotatingKings[index]
-}
-
-// SetMainKing sets the main king address
-func (miner *Miner) SetMainKing(address common.Address) {
-	miner.kingMu.Lock()
-	defer miner.kingMu.Unlock()
-	miner.mainKingAddr = address
-	log.Info("Main king address updated", "address", address.Hex())
-}
-
-// SetRotatingKings sets the rotating king addresses
-func (miner *Miner) SetRotatingKings(addresses []common.Address) {
-	miner.kingMu.Lock()
-	defer miner.kingMu.Unlock()
-	miner.rotatingKings = addresses
-	log.Info("Rotating kings updated", "count", len(addresses))
-}
-
-// GetCurrentRotatingKing returns the current rotating king based on block height
-func (miner *Miner) GetCurrentRotatingKing(blockHeight uint64) common.Address {
-	miner.kingMu.RLock()
-	defer miner.kingMu.RUnlock()
-
-	if len(miner.rotatingKings) == 0 {
-		return common.Address{}
-	}
-
-	interval := uint64(100)
-	if miner.config.RotationInterval > 0 {
-		interval = miner.config.RotationInterval
-	}
-
-	index := (blockHeight / interval) % uint64(len(miner.rotatingKings))
-	return miner.rotatingKings[index]
-}
-
-// GetMainKing returns the main king address
-func (miner *Miner) GetMainKing() common.Address {
-	miner.kingMu.RLock()
-	defer miner.kingMu.RUnlock()
-	return miner.mainKingAddr
 }
 
 // Start begins the RandomX mining process.
-func (miner *Miner) Start() error {
-	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
+func (miner *Miner) Start(coinbase common.Address) {
+	atomic.StoreInt32(&miner.shouldStart, 1)
+	miner.SetEtherbase(coinbase)
 
-	if !miner.config.Enabled {
-		return fmt.Errorf("mining is not enabled in config")
+	if atomic.LoadInt32(&miner.canStart) == 0 {
+		log.Info("Network syncing, will start miner afterwards")
+		return
 	}
-
-	if miner.running.Load() {
-		return fmt.Errorf("miner already running")
-	}
-
-	// Check if etherbase is set
-	if miner.config.PendingFeeRecipient == (common.Address{}) {
-		return fmt.Errorf("etherbase address not set")
-	}
-
-	// Verify RandomX engine compatibility
-	randomxEngine, ok := miner.engine.(*randomx.RandomX)
-	if !ok {
-		return fmt.Errorf("engine is not RandomX, cannot mine")
-	}
-
-	// Initialize RandomX cache and dataset for current epoch
-	blockNum := miner.chain.CurrentHeader().Number.Uint64()
-	if err := randomxEngine.InitializeForBlock(blockNum); err != nil {
-		return fmt.Errorf("failed to initialize RandomX: %w", err)
-	}
-
-	// Start mining
-	miner.running.Store(true)
-	miner.stopCh = make(chan struct{})
-
-	// Start the mining loop (engine handles threading internally)
-	miner.wg.Add(1)
-	go miner.miningLoop()
-
-	log.Info("RandomX miner started",
-		"threads", miner.config.Threads,
-		"etherbase", miner.config.PendingFeeRecipient.Hex(),
-		"gasprice", miner.config.GasPrice,
-		"gaslimit", miner.config.GasLimit,
-	)
-
-	return nil
+	miner.worker.start()
 }
 
 // Stop terminates the RandomX mining process.
-func (miner *Miner) Stop() error {
-	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
-
-	if !miner.running.Load() {
-		return nil
-	}
-
-	// Signal stop to the mining loop
-	close(miner.stopCh)
-
-	// Wait for mining loop to exit
-	miner.wg.Wait()
-
-	miner.running.Store(false)
-
-	log.Info("RandomX miner stopped", "blocks_mined", miner.blocksMined)
-	return nil
+func (miner *Miner) Stop() {
+	miner.worker.stop()
+	atomic.StoreInt32(&miner.shouldStart, 0)
 }
 
-// Running returns whether the miner is currently running.
-func (miner *Miner) Running() bool {
-	return miner.running.Load()
+// Close shuts down the miner and releases resources.
+func (miner *Miner) Close() {
+	miner.worker.close()
+	close(miner.exitCh)
 }
 
-// Mining returns whether the miner is currently mining (alias for Running).
+// Mining returns true if the miner is currently running.
 func (miner *Miner) Mining() bool {
-	return miner.running.Load()
+	return miner.worker.isRunning()
 }
 
-// HashRate returns the current total mining hashrate in hashes per second.
+// HashRate returns the current hashrate in hashes per second.
 func (miner *Miner) HashRate() uint64 {
-	if randomxEngine, ok := miner.engine.(*randomx.RandomX); ok {
-		return randomxEngine.GetHashRate()
+	if pow, ok := miner.engine.(consensus.PoW); ok {
+		return uint64(pow.Hashrate())
 	}
 	return 0
 }
 
-// GetHashRate returns the current hashrate (RPC friendly).
-func (miner *Miner) GetHashRate() uint64 {
-	return miner.HashRate()
-}
-
-// SetExtra sets the content used to initialize the block extra field.
+// SetExtra sets the extra data field of the block header.
 func (miner *Miner) SetExtra(extra []byte) error {
 	if uint64(len(extra)) > params.MaximumExtraDataSize {
-		return fmt.Errorf("extra exceeds max length. %d > %v", len(extra), params.MaximumExtraDataSize)
+		return fmt.Errorf("extra exceeds max length: %d > %v", len(extra), params.MaximumExtraDataSize)
 	}
-	miner.confMu.Lock()
-	miner.config.ExtraData = extra
-	miner.confMu.Unlock()
+	miner.worker.setExtra(extra)
 	return nil
+}
+
+// SetRecommitInterval sets the interval for re‑creating sealing work.
+func (miner *Miner) SetRecommitInterval(interval time.Duration) {
+	miner.worker.setRecommitInterval(interval)
+}
+
+// Pending returns the currently pending block and its associated state.
+func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
+	return miner.worker.pending()
+}
+
+// PendingBlock returns the currently pending block.
+func (miner *Miner) PendingBlock() *types.Block {
+	return miner.worker.pendingBlock()
 }
 
 // SetEtherbase sets the address that will receive mining rewards.
-func (miner *Miner) SetEtherbase(address common.Address) error {
-	if address == (common.Address{}) {
-		return fmt.Errorf("invalid etherbase address")
-	}
-	miner.confMu.Lock()
-	miner.config.PendingFeeRecipient = address
-	miner.config.Etherbase = address
-	miner.confMu.Unlock()
-	log.Info("Miner etherbase updated", "address", address.Hex())
-	return nil
-}
-
-// SetGasCeil sets the gaslimit to strive for when mining blocks.
-func (miner *Miner) SetGasCeil(ceil uint64) {
-	miner.confMu.Lock()
-	miner.config.GasCeil = ceil
-	miner.confMu.Unlock()
-	log.Info("Miner gas ceiling updated", "ceil", ceil)
-}
-
-// SetGasLimit sets the target gas limit for mined blocks.
-func (miner *Miner) SetGasLimit(limit uint64) {
-	miner.confMu.Lock()
-	miner.config.GasLimit = limit
-	miner.confMu.Unlock()
-	log.Info("Miner gas limit updated", "limit", limit)
-}
-
-// SetGasPrice sets the minimum gas price for transaction inclusion.
-func (miner *Miner) SetGasPrice(price *big.Int) {
-	miner.confMu.Lock()
-	miner.config.GasPrice = price
-	miner.confMu.Unlock()
-	log.Info("Miner gas price updated", "price", price)
-}
-
-// SetThreads dynamically changes the number of mining threads.
-func (miner *Miner) SetThreads(threads int) error {
-	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
-
-	if threads <= 0 {
-		threads = runtime.NumCPU()
-	}
-
-	if !miner.running.Load() {
-		miner.config.Threads = threads
-		return nil
-	}
-
-	// Restart miners with new thread count
-	if err := miner.Stop(); err != nil {
-		return err
-	}
-
-	miner.config.Threads = threads
-	if err := miner.Start(); err != nil {
-		return err
-	}
-
-	log.Info("Miner threads updated", "threads", threads)
-	return nil
-}
-
-// SetPrioAddresses sets a list of addresses to prioritize for transaction inclusion.
-func (miner *Miner) SetPrioAddresses(prio []common.Address) {
-	miner.confMu.Lock()
-	miner.prio = prio
-	miner.confMu.Unlock()
-}
-
-// Pending returns the currently pending block and associated receipts, logs and statedb.
-func (miner *Miner) Pending() (*types.Block, types.Receipts, *state.StateDB) {
-	pending := miner.getPending()
-	if pending == nil {
-		return nil, nil, nil
-	}
-	return pending.block, pending.receipts, pending.stateDB.Copy()
-}
-
-// GetPending returns the pending block (alias for Pending).
-func (miner *Miner) GetPending() (*types.Block, types.Receipts, *state.StateDB) {
-	return miner.Pending()
-}
-
-// BuildPayload builds the payload according to the provided parameters.
-func (miner *Miner) BuildPayload(ctx context.Context, args *BuildPayloadArgs, witness bool) (*Payload, error) {
-	return miner.buildPayload(ctx, args, witness)
-}
-
-// getPending retrieves the pending block based on the current head block.
-func (miner *Miner) getPending() *newPayloadResult {
-	header := miner.chain.CurrentHeader()
-	miner.pendingMu.Lock()
-	defer miner.pendingMu.Unlock()
-
-	if cached := miner.pending.resolve(header.Hash()); cached != nil {
-		return cached
-	}
-
-	var (
-		timestamp  = uint64(time.Now().Unix())
-		withdrawal types.Withdrawals
-		slotNum    *uint64
-	)
-
-	if miner.chainConfig.IsShanghai(new(big.Int).Add(header.Number, big.NewInt(1)), timestamp) {
-		withdrawal = []*types.Withdrawal{}
-	}
-	if miner.chainConfig.IsAmsterdam(new(big.Int).Add(header.Number, big.NewInt(1)), timestamp) {
-		nextSlot := uint64(0)
-		if header.SlotNumber != nil {
-			nextSlot = *header.SlotNumber + 1
-		}
-		slotNum = &nextSlot
-	}
-
-	ret := miner.generateWork(context.Background(),
-		&generateParams{
-			timestamp:   timestamp,
-			forceTime:   false,
-			parentHash:  header.Hash(),
-			coinbase:    miner.config.PendingFeeRecipient,
-			random:      common.Hash{},
-			withdrawals: withdrawal,
-			beaconRoot:  nil,
-			slotNum:     slotNum,
-			noTxs:       false,
-		}, false)
-
-	if ret.err != nil {
-		return nil
-	}
-	miner.pending.update(header.Hash(), ret)
-	return ret
-}
-
-// SubmitWork submits successfully mined block to the blockchain.
-func (miner *Miner) SubmitWork(block *types.Block) error {
-	head := miner.chain.CurrentBlock()
-	if head != nil && block.ParentHash() != head.Hash() {
-		err := fmt.Errorf("stale mined block parent %s, current head %s", block.ParentHash(), head.Hash())
-		log.Warn("Rejecting mined block with non-canonical parent",
-			"number", block.NumberU64(),
-			"hash", block.Hash(),
-			"parent", block.ParentHash(),
-			"head", head.Hash(),
-		)
-		return err
-	}
-
-	log.Info("Submitting mined block", "number", block.NumberU64(), "hash", block.Hash(), "stateRoot", block.Root().Hex())
-
-	//triedb := miner.chain.TrieDB()
-	
-	// Insert the block
-	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
-		log.Error("Failed to insert mined block", "error", err)
-		return err
-	}
-
-	// Persist state to disk
-    if triedb := miner.chain.TrieDB(); triedb != nil {
-        // Commit parent state (may already exist)
-        if parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1); parent != nil {
-            if err := triedb.Commit(parent.Root, true); err != nil && !strings.Contains(err.Error(), "disk layer") {
-                log.Error("Parent state commit failed", "err", err)
-            }
-        }
-        // Commit block state
-        if err := triedb.Commit(block.Root(), true); err != nil && !strings.Contains(err.Error(), "disk layer") {
-            log.Error("Failed to commit block state", "err", err)
-        }
-    }
-
-
-	atomic.AddUint64(&miner.blocksMined, 1)
-	miner.lastMinedTime = time.Now()
-
-	log.Info("Block successfully mined", "number", block.NumberU64(), "hash", block.Hash())
-	return nil
-}
-
-// GetMiningInfo returns detailed mining information for RPC.
-func (miner *Miner) GetMiningInfo() map[string]interface{} {
-	miner.confMu.RLock()
-	defer miner.confMu.RUnlock()
-
-	info := map[string]interface{}{
-		"enabled":      miner.config.Enabled,
-		"mining":       miner.running.Load(),
-		"threads":      miner.config.Threads,
-		"etherbase":    miner.config.PendingFeeRecipient.Hex(),
-		"hashrate":     miner.HashRate(),
-		"gasprice":     miner.config.GasPrice.String(),
-		"gaslimit":     miner.config.GasLimit,
-		"blocks_mined": atomic.LoadUint64(&miner.blocksMined),
-	}
-
-	if !miner.lastMinedTime.IsZero() {
-		info["last_mined"] = miner.lastMinedTime.Unix()
-	}
-
-	// Add RandomX specific info
-	if randomxEngine, ok := miner.engine.(*randomx.RandomX); ok {
-		info["randomx"] = map[string]interface{}{
-			"epoch":           randomxEngine.CurrentEpoch(),
-			"cache_size_mb":   miner.config.RandomXCacheSize,
-			"dataset_size_gb": miner.config.RandomXDatasetSize,
-			"epoch_length":    miner.config.RandomXEpochLength,
-			"min_memory_gb":   miner.config.RandomXMinMemory,
-		}
-	}
-
-	return info
-}
-
-// GetStats returns miner statistics.
-func (miner *Miner) GetStats() (uint64, uint64, time.Time) {
-	return miner.HashRate(), atomic.LoadUint64(&miner.blocksMined), miner.lastMinedTime
-}
-
-// Update pending block after new head
-func (miner *Miner) updatePending() {
-	miner.pendingMu.Lock()
-	defer miner.pendingMu.Unlock()
-
-	// Clear cached pending block when head changes
-	header := miner.chain.CurrentHeader()
-	miner.pending.clear(header.Hash())
+func (miner *Miner) SetEtherbase(addr common.Address) {
+	miner.coinbase = addr
+	miner.worker.setEtherbase(addr)
 }
