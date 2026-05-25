@@ -50,6 +50,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/shutdowncheck"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -553,7 +554,7 @@ func (s *Ethereum) StartMining() error {
 
 	// Set gas price and limit
 	if s.config.Miner.GasPrice != nil && s.config.Miner.GasPrice.Sign() > 0 {
-		s.miner.SetGasPrice(s.config.Miner.GasPrice)
+		s.txPool.SetGasTip(s.config.Miner.GasPrice)
 	}
 	if s.config.Miner.GasLimit > 0 {
 		s.config.Miner.GasCeil = s.config.Miner.GasLimit
@@ -563,7 +564,7 @@ func (s *Ethereum) StartMining() error {
 	s.miner.Start(s.config.Miner.Etherbase)
 
 	log.Info("RandomX miner started successfully",
-		"threads", s.config.Miner.Threads,
+		"threads", runtime.NumCPU(),
 		"etherbase", s.config.Miner.Etherbase.Hex(),
 		"gasprice", s.config.Miner.GasPrice,
 		"gaslimit", s.config.Miner.GasLimit,
@@ -601,7 +602,7 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	info := map[string]interface{}{
 		"enabled":      s.config.Miner.Enabled,
 		"mining":       s.miner.Mining(),
-		"threads":      s.config.Miner.Threads,
+		"threads":      runtime.NumCPU(),
 		"etherbase":    s.config.Miner.Etherbase.Hex(),
 		"hashrate":     s.miner.HashRate(),
 		"gasprice":     s.config.Miner.GasPrice.String(),
@@ -614,10 +615,8 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	// Add RandomX specific info from engine
 	if r, ok := s.engine.(*randomx.RandomX); ok {
 		info["randomx"] = map[string]interface{}{
-			"epoch":           r.CurrentEpoch(),
-			"cache_size_mb":   s.config.Miner.RandomXCacheSize,
-			"dataset_size_gb": s.config.Miner.RandomXDatasetSize,
-			"mining_mode":     "full",
+			"epoch":       r.CurrentEpoch(),
+			"mining_mode": "full",
 		}
 	}
 
@@ -645,28 +644,9 @@ func (s *Ethereum) getCurrentRotatingKing() common.Address {
 	return s.kingAddresses[index]
 }
 
-// SetMinerThreads dynamically sets the number of mining threads
+// SetMinerThreads is unsupported for this miner implementation.
 func (s *Ethereum) SetMinerThreads(threads int) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	if threads <= 0 {
-		threads = runtime.NumCPU()
-	}
-
-	wasMining := s.miner.Mining()
-	if wasMining {
-		s.miner.Stop()
-	}
-
-	s.config.Miner.Threads = threads
-
-	if wasMining {
-		s.miner.Start(s.config.Miner.Etherbase)
-	}
-
-	log.Info("Updated miner threads", "threads", threads)
-	return nil
+	return fmt.Errorf("setting miner threads is not supported")
 }
 
 // SetMinerEtherbase dynamically sets the reward recipient address
