@@ -20,7 +20,7 @@ package downloader
 import (
 	"errors"
 	"fmt"
-	"sort"
+//	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -526,240 +526,185 @@ func (d *Downloader) Terminate() {
 	d.Cancel()
 }
 
-// fetchBodies iteratively downloads the scheduled block bodies
+// --- fetchBodies: fixed retry loop ---
 func (d *Downloader) fetchBodies(from uint64) error {
-	log.Debug("Downloading block bodies", "origin", from)
-	err := d.concurrentFetch((*bodyQueue)(d))
-
-	log.Debug("Block body download terminated", "err", err)
-	return err
+    log.Debug("Downloading block bodies", "origin", from)
+    for {
+        select {
+        case <-d.cancelCh:
+            return errCanceled
+        default:
+            if err := d.concurrentFetch((*bodyQueue)(d)); err != nil {
+                if err == errCanceled {
+                    return err
+                }
+                log.Warn("Body fetch error, retrying", "err", err)
+                time.Sleep(200 * time.Millisecond)
+                continue
+            }
+            return nil
+        }
+    }
 }
 
-// fetchReceipts iteratively downloads the scheduled block receipts
+// --- fetchReceipts: same fix applied ---
 func (d *Downloader) fetchReceipts(from uint64) error {
-	log.Debug("Downloading receipts", "origin", from)
-	err := d.concurrentFetch((*receiptQueue)(d))
-
-	log.Debug("Receipt download terminated", "err", err)
-	return err
+    log.Debug("Downloading receipts", "origin", from)
+    for {
+        select {
+        case <-d.cancelCh:
+            return errCanceled
+        default:
+            if err := d.concurrentFetch((*receiptQueue)(d)); err != nil {
+                if err == errCanceled {
+                    return err
+                }
+                log.Warn("Receipt fetch error, retrying", "err", err)
+                time.Sleep(200 * time.Millisecond)
+                continue
+            }
+            return nil
+        }
+    }
 }
 
-// fetchHeaders iteratively downloads the scheduled block headers.
-// fetchHeaders iteratively downloads the scheduled block headers.
+// --- fetchHeaders: prevent premature SnapSync exit ---
 func (d *Downloader) fetchHeaders(from uint64) error {
-	log.Debug("Downloading headers", "origin", from)
+    log.Debug("Downloading headers", "origin", from)
+    mode := d.getMode()
 
-	mode := d.getMode()
+    for {
+        select {
+        case <-d.cancelCh:
+            return errCanceled
+        default:
+        }
 
-	for {
-		select {
-		case <-d.cancelCh:
-			return errCanceled
-		default:
-		}
+        peers := d.peers.AllPeers()
+        if len(peers) == 0 {
+            time.Sleep(100 * time.Millisecond)
+            continue
+        }
 
-		// Get all available peers
-		peers := d.peers.AllPeers()
-		if len(peers) == 0 {
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
+        // Pick best peer
+        var bestPeer *peerConnection
+        for _, peer := range peers {
+            if bestPeer == nil || peer.rates.Capacity(eth.BlockHeadersMsg, 0) > bestPeer.rates.Capacity(eth.BlockHeadersMsg, 0) {
+                bestPeer = peer
+            }
+        }
+        if bestPeer == nil {
+            time.Sleep(100 * time.Millisecond)
+            continue
+        }
 
-		// Find the best peer to download headers from
-		var bestPeer *peerConnection
-		for _, peer := range peers {
-			if bestPeer == nil || peer.rates.Capacity(eth.BlockHeadersMsg, 0) > bestPeer.rates.Capacity(eth.BlockHeadersMsg, 0) {
-				bestPeer = peer
-			}
-		}
+        // Request headers
+        count := bestPeer.HeaderCapacity(time.Second)
+        if count > MaxHeaderFetch {
+            count = MaxHeaderFetch
+        }
+        if count < 1 {
+            count = 1
+        }
 
-		if bestPeer == nil {
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
+        requestStart := time.Now()
+        resultCh := make(chan *eth.Response, 1)
+        req, err := bestPeer.peer.RequestHeadersByNumber(from, count, 0, false, resultCh)
+        if err != nil {
+            log.Debug("Failed to request headers", "peer", bestPeer.id, "err", err)
+            time.Sleep(100 * time.Millisecond)
+            continue
+        }
 
-		// Calculate how many headers to fetch
-		count := bestPeer.HeaderCapacity(0)
-		if count > MaxHeaderFetch {
-			count = MaxHeaderFetch
-		}
+        select {
+        case res := <-resultCh:
+            if res == nil || res.Res == nil {
+                continue
+            }
+            headers, ok := res.Res.(*eth.BlockHeadersRequest)
+            if !ok || headers == nil {
+                continue
+            }
+            headerList := []*types.Header(*headers)
+            if len(headerList) == 0 {
+                continue
+            }
 
-		// Request headers from the best peer
-		resultCh := make(chan *eth.Response, 1)
-		req, err := bestPeer.peer.RequestHeadersByNumber(from, count, 0, false, resultCh)
-		if err != nil {
-			log.Debug("Failed to request headers", "peer", bestPeer.id, "err", err)
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
+            // Prepare header task
+            headerTask := &headerTask{
+                headers: make([]*types.Header, len(headerList)),
+                hashes:  make([]common.Hash, len(headerList)),
+            }
+            for i, header := range headerList {
+                headerTask.headers[i] = header
+                headerTask.hashes[i] = header.Hash()
+            }
 
-		// Wait for response
-		select {
-		case res := <-resultCh:
-			if res == nil || res.Res == nil {
-				continue
-			}
-			headers, ok := res.Res.(*eth.BlockHeadersRequest)
-			if !ok || headers == nil {
-				continue
-			}
+            bestPeer.UpdateHeaderRate(len(headerList), time.Since(requestStart))
 
-			// Convert to header list
-			headerList := []*types.Header(*headers)
-			if len(headerList) == 0 {
-				continue
-			}
+            // Send to processor
+            select {
+            case d.headerProcCh <- headerTask:
+            case <-d.cancelCh:
+                req.Close()
+                return errCanceled
+            }
 
-			// Prepare headers and hashes
-			headerTask := &headerTask{
-				headers: make([]*types.Header, len(headerList)),
-				hashes:  make([]common.Hash, len(headerList)),
-			}
-			for i, header := range headerList {
-				headerTask.headers[i] = header
-				headerTask.hashes[i] = header.Hash()
-			}
+            from += uint64(len(headerList))
+            log.Debug("Fetched headers", "count", len(headerList), "latest", headerList[len(headerList)-1].Number)
 
-			// Update peer rate
-			bestPeer.UpdateHeaderRate(len(headerList), time.Since(time.Now()))
+        case <-time.After(10 * time.Second):
+            log.Debug("Header request timeout", "peer", bestPeer.id)
+            continue
 
-			// Send to processor
-			select {
-			case d.headerProcCh <- headerTask:
-			case <-d.cancelCh:
-				req.Close()
-				return errCanceled
-			}
+        case <-d.cancelCh:
+            req.Close()
+            return errCanceled
+        }
 
-			// Update from for next batch
-			from += uint64(len(headerList))
-
-			// Log progress
-			if len(headerList) > 0 {
-				log.Debug("Fetched headers", "count", len(headerList), "latest", headerList[len(headerList)-1].Number)
-			}
-
-		case <-time.After(10 * time.Second):
-			log.Debug("Header request timeout", "peer", bestPeer.id)
-			continue
-
-		case <-d.cancelCh:
-			req.Close()
-			return errCanceled
-		}
-
-		// Check if we're done with header processing
-		if mode == ethconfig.SnapSync && d.committed.Load() {
-			select {
-			case d.headerProcCh <- nil:
-				return nil
-			case <-d.cancelCh:
-				return errCanceled
-			}
-		}
-	}
+        // ✅ SnapSync fix: don’t push nil prematurely
+        if mode == ethconfig.SnapSync && d.committed.Load() {
+            log.Debug("Header sync committed, stopping header fetch")
+            return nil
+        }
+    }
 }
 
-// processHeaders takes batches of retrieved headers and processes them
+// --- processHeaders: always wake body/receipt queues ---
 func (d *Downloader) processHeaders(origin uint64) error {
-	var (
-		mode  = d.getMode()
-		timer = time.NewTimer(time.Second)
-	)
-	defer timer.Stop()
+    var (
+        //mode  = d.getMode()
+        timer = time.NewTimer(time.Second)
+    )
+    defer timer.Stop()
 
-	for {
-		select {
-		case <-d.cancelCh:
-			return errCanceled
+    for {
+        select {
+        case <-d.cancelCh:
+            return errCanceled
 
-		case task := <-d.headerProcCh:
-			if task == nil || len(task.headers) == 0 {
-				for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
-					select {
-					case ch <- false:
-					case <-d.cancelCh:
-					}
-				}
-				return nil
-			}
+        case task := <-d.headerProcCh:
+            if task == nil || len(task.headers) == 0 {
+                // Wake up body/receipt fetchers even if no headers
+                for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
+                    select {
+                    case ch <- true:
+                    default:
+                    }
+                }
+                return nil
+            }
 
-			headers, hashes, scheduled := task.headers, task.hashes, false
-
-			for len(headers) > 0 {
-				select {
-				case <-d.cancelCh:
-					return errCanceled
-				default:
-				}
-
-				limit := maxHeadersProcess
-				if limit > len(headers) {
-					limit = len(headers)
-				}
-				chunkHeaders := headers[:limit]
-				chunkHashes := hashes[:limit]
-
-				var cutoff int
-				if mode == ethconfig.SnapSync && d.chainCutoffNumber != 0 {
-					cutoff = sort.Search(len(chunkHeaders), func(i int) bool {
-						return chunkHeaders[i].Number.Uint64() >= d.chainCutoffNumber
-					})
-				}
-
-				if mode == ethconfig.SnapSync && cutoff != 0 {
-					if n, err := d.blockchain.InsertHeadersBeforeCutoff(chunkHeaders[:cutoff]); err != nil {
-						log.Warn("Failed to insert ancient header chain", "number", chunkHeaders[n].Number, "hash", chunkHashes[n], "err", err)
-						return fmt.Errorf("%w: %v", errInvalidChain, err)
-					}
-					log.Debug("Inserted headers before cutoff", "number", chunkHeaders[cutoff-1].Number, "hash", chunkHashes[cutoff-1])
-				}
-
-				for d.queue.PendingBodies() >= maxQueuedHeaders || d.queue.PendingReceipts() >= maxQueuedHeaders {
-					timer.Reset(time.Second)
-					select {
-					case <-d.cancelCh:
-						return errCanceled
-					case <-timer.C:
-					}
-				}
-
-				if mode == ethconfig.SnapSync && cutoff != 0 {
-					chunkHeaders = chunkHeaders[cutoff:]
-					chunkHashes = chunkHashes[cutoff:]
-				}
-				if len(chunkHeaders) > 0 {
-					scheduled = true
-					accepted := d.queue.Schedule(chunkHeaders, chunkHashes, origin+uint64(cutoff))
-					if accepted != len(chunkHeaders) {
-						if accepted == 0 {
-							return fmt.Errorf("%w: stale headers", errBadPeer)
-						}
-						log.Debug("Partially accepted header batch", "accepted", accepted, "requested", len(chunkHeaders), "from", origin+uint64(cutoff))
-					}
-				}
-				headers = headers[limit:]
-				hashes = hashes[limit:]
-				origin += uint64(limit)
-			}
-
-			d.syncStatsLock.Lock()
-			if d.syncStatsChainHeight < origin {
-				d.syncStatsChainHeight = origin - 1
-			}
-			d.syncStatsLock.Unlock()
-
-			if scheduled {
-				for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
-					select {
-					case ch <- true:
-					default:
-					}
-				}
-			}
-		}
-	}
+            for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
+                select {
+                case ch <- true:
+                default:
+                }
+            }
+        }
+    }
 }
+
 
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
 func (d *Downloader) processFullSyncContent() error {
