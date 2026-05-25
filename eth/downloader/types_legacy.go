@@ -11,9 +11,10 @@ import (
 type SyncMode = ethconfig.SyncMode
 
 const (
-	FullSync SyncMode = ethconfig.FullSync
-	FastSync SyncMode = ethconfig.SnapSync
-	SnapSync SyncMode = ethconfig.SnapSync
+	FullSync  SyncMode = ethconfig.FullSync
+	FastSync  SyncMode = ethconfig.SnapSync
+	SnapSync  SyncMode = ethconfig.SnapSync
+	LightSync SyncMode = SyncMode(2)
 )
 
 // peerDropFn is a callback type for dropping misbehaving peers.
