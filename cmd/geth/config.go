@@ -269,9 +269,9 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 	// Apply miner config to eth config
 	if cfg.RandomX.Enabled {
 		cfg.Eth.Miner.Enabled = true
-		if cfg.RandomX.Threads > 0 {
+		/*if cfg.RandomX.Threads > 0 {
 			cfg.Eth.Miner.Threads = cfg.RandomX.Threads
-		}
+		}*/
 		if cfg.RandomX.Etherbase != "" {
 			cfg.Eth.Miner.Etherbase = common.HexToAddress(cfg.RandomX.Etherbase)
 		}

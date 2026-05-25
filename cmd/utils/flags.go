@@ -1695,7 +1695,7 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Enabled = ctx.Bool(MiningEnabledFlag.Name)
 	}
 	if ctx.IsSet(MinerThreadsFlag.Name) {
-		cfg.Threads = ctx.Int(MinerThreadsFlag.Name)
+		log.Warn("The flag --miner.threads is deprecated and has no effect")
 	}
 	if ctx.IsSet(MinerExtraDataFlag.Name) {
 		cfg.ExtraData = []byte(ctx.String(MinerExtraDataFlag.Name))
@@ -1714,7 +1714,7 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Recommit = ctx.Duration(MinerNewPayloadTimeoutFlag.Name)
 	}
 	if ctx.IsSet(MinerMaxBlobsFlag.Name) {
-		cfg.MaxBlobsPerBlock = ctx.Int(MinerMaxBlobsFlag.Name)
+		log.Warn("The flag --miner.maxblobs is deprecated and has no effect")
 	}
 }
 
