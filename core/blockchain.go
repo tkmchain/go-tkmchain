@@ -1335,8 +1335,32 @@ func (bc *BlockChain) stopWithoutSaving() {
 // Stop stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt.
 func (bc *BlockChain) Stop() {
+    // Force save state before stopping
+    head := bc.CurrentBlock()
+    if head != nil && head.Number.Uint64() > 0 {
+        log.Info("Saving blockchain state before shutdown", "block", head.Number, "root", head.Root)
+        
+        // Force commit of current state
+        if err := bc.triedb.Commit(head.Root, true); err != nil {
+            log.Error("Failed to commit state", "err", err)
+        }
+        
+        // Force snapshot journal
+        if bc.snaps != nil {
+            if _, err := bc.snaps.Journal(head.Root); err != nil {
+                log.Error("Failed to journal snapshot", "err", err)
+            }
+        }
+    }
+    
 	bc.stopWithoutSaving()
 
+    // Ensure state is saved after stop
+    if head != nil && head.Number.Uint64() > 0 {
+        if err := bc.triedb.Commit(head.Root, true); err != nil {
+            log.Error("Failed final state commit", "err", err)
+        }
+    }
 	// Ensure that the entirety of the state snapshot is journaled to disk.
 	var snapBase common.Hash
 	if bc.snaps != nil {

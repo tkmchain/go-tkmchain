@@ -36,7 +36,7 @@ var (
 	GenesisPremine = new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18))
 
 	// Block timing constants
-	TargetBlockTimeSeconds = uint64(120)                          // Default block time for RandomX chain
+	TargetBlockTimeSeconds = 120                          // Default block time for RandomX chain
 	BlocksPerHalving       = uint64(4 * 365 * 24 * 60 * 60 / 12) // ~4 years
 	GenesisTimestamp       = int64(1763731821)                   // Dec 1, 2025
 	MaxHalvings            = uint64(64)

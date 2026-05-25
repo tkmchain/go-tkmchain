@@ -14,6 +14,7 @@ package randomx
 
 import (
 	"bytes"
+//        "context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -49,8 +50,12 @@ var (
 	ByzantiumBlockReward          = uint256.NewInt(3e+18)
 	ConstantinopleBlockReward     = uint256.NewInt(2e+18)
 	maxUncles                     = 2
-	allowedFutureBlockTimeSeconds = int64(15)
+	allowedFutureBlockTimeSeconds = int64(60)
 	maxUint256                    = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+)
+
+const (
+    shutdownTimeout = 10 * time.Second
 )
 
 // Various error messages to mark blocks invalid.
@@ -85,6 +90,11 @@ type RandomX struct {
 
 	hashRate   uint64
 	hashRateMu sync.RWMutex
+
+        sealResults  chan *types.Block
+
+        miningMu     sync.Mutex
+        miningActive bool
 }
 
 // New creates a new RandomX consensus engine.
@@ -119,6 +129,7 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
 		rotatingKing:   kingManager,
 		persistDataset: true,
 		useRAMCache:    useRAMCache,
+                sealResults:    make(chan *types.Block, 1), // Buffered channel
 	}, nil
 }
 
@@ -302,6 +313,18 @@ func (r *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header, parent
 	}
 
 	expected := r.CalcDifficulty(chain, header.Time, parent)
+    log.Error("�� DIFFICULTY MISMATCH DETECTED",
+        "block", header.Number,
+        "parent_block", parent.Number,
+        "header_difficulty", header.Difficulty,
+        "expected_difficulty", expected,
+        "parent_difficulty", parent.Difficulty,
+        "parent_time", parent.Time,
+        "header_time", header.Time,
+        "time_diff", header.Time - parent.Time,
+        "current_height", parent.Number.Uint64(),
+        "is_early_block", parent.Number.Uint64() < 100)
+
 	if expected.Cmp(header.Difficulty) != 0 {
 		return fmt.Errorf("invalid difficulty: have %v, want %v", header.Difficulty, expected)
 	}
@@ -343,6 +366,17 @@ func (r *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Heade
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
+
+	currentTime := uint64(time.Now().Unix())
+	if header.Time > currentTime {
+		log.Warn("Adjusting future timestamp in Prepare", "original", header.Time, "adjusted", currentTime)
+		header.Time = currentTime
+	}
+	
+	// Ensure timestamp is greater than parent
+	if header.Time <= parent.Time {
+		header.Time = parent.Time + 1
+	}
 	header.Difficulty = r.CalcDifficulty(chain, header.Time, parent)
 	return nil
 }
@@ -381,6 +415,12 @@ func (r *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Head
 // This is called by the miner when a block is ready to be sealed.
 // Note: The actual state commitment to disk happens in the blockchain's writeBlockWithState
 func (r *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, stateDB vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
+	// Ensure timestamp is not in the future
+	currentTime := uint64(time.Now().Unix())
+	if header.Time > currentTime {
+		log.Warn("Block timestamp in future, adjusting", "original", header.Time, "current", currentTime)
+		header.Time = currentTime
+	}
 	statedb, ok := stateDB.(*state.StateDB)
 	if !ok {
 		return nil, fmt.Errorf("failed to convert StateDB to expected type")
@@ -432,125 +472,135 @@ func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 
 // Seal generates a new sealing request for the given input block.
 func (r *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	if r.fakeMode {
-		select {
-		case results <- block.WithSeal(block.Header()):
-		case <-stop:
-		}
-		return nil
-	}
-
-	epoch := r.epoch(block.NumberU64())
-	if err := r.updateCacheForEpoch(epoch); err != nil {
-		return fmt.Errorf("failed to update RandomX cache: %w", err)
-	}
-
-	log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
-	found := make(chan struct{})
-	var foundOnce sync.Once
-
-	for i := 0; i < r.threads; i++ {
-		r.wg.Add(1)
-		go r.mine(block, results, stop, found, &foundOnce, i)
-	}
-
-	return nil
+    if r.fakeMode {
+        select {
+        case results <- block.WithSeal(block.Header()):
+        case <-stop:
+        }
+        return nil
+    }
+    
+   // r.miningMu.Lock()
+   // r.miningActive = true
+   // r.miningMu.Unlock()
+    
+    epoch := r.epoch(block.NumberU64())
+    if err := r.updateCacheForEpoch(epoch); err != nil {
+        return fmt.Errorf("failed to update RandomX cache: %w", err)
+    }
+    
+    log.Info("Starting seal on block", "number", block.NumberU64(), "parent", block.ParentHash())
+    
+    found := make(chan struct{})
+    var foundOnce sync.Once
+    
+    for i := 0; i < r.threads; i++ {
+        r.wg.Add(1)
+        go r.mine(block, results, stop, found, &foundOnce, i)
+    }
+    
+    // Monitor for stop signal
+        go func() {
+                <-stop
+                log.Info("Seal stopped by external signal")
+        }()
+    
+    return nil
 }
+
 
 // mine attempts to find a valid nonce for the given block.
 func (r *RandomX) mine(block *types.Block, results chan<- *types.Block, stop <-chan struct{}, found chan struct{}, foundOnce *sync.Once, thread int) {
-	defer r.wg.Done()
-
-	header := block.Header()
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	mineHeader := types.CopyHeader(header)
-
-	log.Info("�� Mining thread started",
-		"thread", thread,
-		"difficulty", header.Difficulty,
-		"block_number", block.NumberU64())
-
-	// Get RandomX VM
-	vm, err := r.getVM()
-	if err != nil {
-		log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
-		return
-	}
-	defer vm.Close()
-
-	log.Info("✅ RandomX VM acquired", "thread", thread)
-
-	// Calculate seed hash for this epoch
-	seed := r.seedHash(block.NumberU64())
-
-	// Distribute nonces across threads
-	startNonce := uint64(thread)
-	step := uint64(r.threads)
-
-	started := time.Now()
-	attempts := uint64(0)
-
-	log.Info("�� Starting mining loop",
-		"thread", thread,
-		"startNonce", startNonce,
-		"step", step,
-		"total_threads", r.threads)
-
-	for nonce := startNonce; ; nonce += step {
-		select {
-		case <-stop:
-			log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts)
-			return
-		case <-found:
-			log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
-			return
-		default:
-			mineHeader.Nonce = types.EncodeNonce(nonce)
-
-			// Compute RandomX hash
-			mixDigest, result := r.hashimoto(mineHeader, seed, vm)
-			attempts++
-
-			// Check if nonce is valid
-			if result.Cmp(target) <= 0 {
-				log.Info("�� NONCE FOUND!",
-					"thread", thread,
-					"nonce", nonce,
-					"attempts", attempts,
-					"duration", time.Since(started).String())
-
-				mineHeader.MixDigest = mixDigest
-				sealedBlock := block.WithSeal(mineHeader)
-
-				// Signal other threads to stop
-				foundOnce.Do(func() { close(found) })
-
-				// Submit the result
-				select {
-				case results <- sealedBlock:
-					log.Info("✅ Block submitted to results channel",
-						"thread", thread,
-						"number", block.NumberU64(),
-						"nonce", nonce)
-				case <-stop:
-					log.Info("Stop signal received after finding nonce", "thread", thread)
-					return
-				}
-				return
-			}
-
-			// Periodic logging (every 100,000 attempts)
-			if attempts%100000 == 0 {
-				elapsed := time.Since(started).Seconds()
-				hashrate := float64(attempts) / elapsed
-				log.Info("�� Mining progress",
-					"thread", thread,
-					"attempts", attempts,
-					"nonce", nonce,
-					"hashrate", fmt.Sprintf("%.2f H/s", hashrate))
-			}
-		}
-	}
+    defer r.wg.Done()
+    
+    header := block.Header()
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    mineHeader := types.CopyHeader(header)
+    
+    log.Info("Mining thread started",
+        "thread", thread,
+        "difficulty", header.Difficulty,
+        "block_number", block.NumberU64())
+    
+    // Get RandomX VM
+    vm, err := r.getVM()
+    if err != nil {
+        log.Error("Failed to get RandomX VM", "thread", thread, "error", err)
+        return
+    }
+    defer vm.Close()
+    
+    // Calculate seed hash for this epoch
+    seed := r.seedHash(block.NumberU64())
+    
+    // Distribute nonces across threads
+    startNonce := uint64(thread)
+    step := uint64(r.threads)
+    
+    started := time.Now()
+    attempts := uint64(0)
+    
+    for nonce := startNonce; ; nonce += step {
+        select {
+        case <-stop:
+            log.Info("Mining stopped by stop signal", "thread", thread, "attempts", attempts, "duration", time.Since(started))
+            return
+        case <-found:
+            log.Info("Mining stopped - nonce found by another thread", "thread", thread, "attempts", attempts)
+            return
+        case <-r.stopCh: // Add this to catch internal stop signal
+            log.Info("Mining stopped by internal shutdown", "thread", thread, "attempts", attempts)
+            return
+        default:
+            mineHeader.Nonce = types.EncodeNonce(nonce)
+            
+            // Compute RandomX hash
+            mixDigest, result := r.hashimoto(mineHeader, seed, vm)
+            attempts++
+            
+            // Check if nonce is valid
+            if result.Cmp(target) <= 0 {
+                log.Info("NONCE FOUND!",
+                    "thread", thread,
+                    "nonce", nonce,
+                    "attempts", attempts,
+                    "duration", time.Since(started))
+                
+                mineHeader.MixDigest = mixDigest
+                sealedBlock := block.WithSeal(mineHeader)
+                
+                // Signal other threads to stop
+                foundOnce.Do(func() { close(found) })
+                
+                // Submit the result with timeout
+                select {
+                case results <- sealedBlock:
+                    log.Info("Block submitted to results channel",
+                        "thread", thread,
+                        "number", block.NumberU64(),
+                        "nonce", nonce)
+                case <-stop:
+                    log.Info("Stop signal received after finding nonce", "thread", thread)
+                    return
+                case <-time.After(5 * time.Second):
+                    log.Warn("Timeout submitting mined block", "thread", thread)
+                    return
+                }
+                return
+            }
+            
+            // Periodic logging
+            if attempts%100000 == 0 {
+                elapsed := time.Since(started).Seconds()
+                hashrate := float64(attempts) / elapsed
+                log.Info("Mining progress",
+                    "thread", thread,
+                    "attempts", attempts,
+                    "nonce", nonce,
+                    "hashrate", fmt.Sprintf("%.2f H/s", hashrate))
+            }
+        }
+    }
 }
 
 // VerifySeal verifies the RandomX proof-of-work.
@@ -624,32 +674,61 @@ func (r *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	}}
 }
 
+func (r *RandomX) Stop() error {
+        log.Info("Stopping RandomX engine...")
+        
+        // Close the stop channel to signal all goroutines
+        select {
+        case <-r.stopCh:
+                // Already closed
+        default:
+                close(r.stopCh)
+        }
+        
+        // Wait for all mining goroutines to finish
+        done := make(chan struct{})
+        go func() {
+                r.wg.Wait()
+                close(done)
+        }()
+        
+        select {
+        case <-done:
+                log.Info("All mining threads stopped")
+        case <-time.After(shutdownTimeout):
+                log.Warn("Mining threads did not stop within timeout")
+        }
+        
+        return nil
+}
+
 // Close with RAM cleanup
 func (r *RandomX) Close() error {
-	select {
-	case <-r.stopCh:
-	default:
-		close(r.stopCh)
-	}
-	r.wg.Wait()
+        // Stop mining first
+        if err := r.Stop(); err != nil {
+                log.Warn("Error stopping RandomX", "err", err)
+        }
 
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
+        // Clean up RandomX resources
+        r.cacheMu.Lock()
+        defer r.cacheMu.Unlock()
 
-	if r.cache != nil {
-		r.cache.Close()
-	}
-	if r.dataset != nil {
-		r.dataset.Close()
-	}
+        if r.cache != nil {
+                r.cache.Close()
+                log.Info("RandomX cache closed")
+        }
+        if r.dataset != nil {
+                r.dataset.Close()
+                log.Info("RandomX dataset closed")
+        }
 
-	if r.datasetRAM != nil {
-		r.datasetRAM = nil
-		log.Info("Freed RandomX RAM cache")
-		runtime.GC()
-	}
+        if r.datasetRAM != nil {
+                r.datasetRAM = nil
+                log.Info("Freed RandomX RAM cache")
+        }
 
-	return nil
+        log.Info("RandomX engine shutdown complete")
+        return nil
 }
 
 // GetDatasetLocation returns current dataset storage mode
