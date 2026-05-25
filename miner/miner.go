@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -52,12 +51,12 @@ type Miner struct {
 // New creates a new RandomX miner with the given configuration.
 func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(block *types.Block) bool) *Miner {
 	miner := &Miner{
-		eth:    eth,
-		mux:    mux,
+		eth:      eth,
+		mux:      mux,
 		recommit: recommit,
-		engine: engine,
-		exitCh: make(chan struct{}),
-		worker: newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
+		engine:   engine,
+		exitCh:   make(chan struct{}),
+		worker:   newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
 	}
 	return miner
 }

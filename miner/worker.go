@@ -861,7 +861,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     num.Add(num, common.Big1),
-		GasLimit:   core.CalcGasLimit(parent.GasLimit, w.gasFloor, w.gasCeil),
+		GasLimit:   core.CalcGasLimit(parent.GasLimit, w.gasCeil),
 		Extra:      w.extra,
 		Time:       uint64(timestamp),
 	}
@@ -938,9 +938,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	}
 
 	// Fill the block with all available pending transactions.
-	filter := txpool.PendingFilter{
-		MinTip: uint256.MustFromBig(w.tip),
-	}
+	filter := txpool.PendingFilter{}
 	if env.header.BaseFee != nil {
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
 	}
@@ -969,10 +967,9 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 		*receipts[i] = *l
 	}
 	s := w.current.state.Copy()
-	block, err := w.engine.Finalize(w.chain, w.current.header, s, w.current.txs, uncles, w.current.receipts)
-	if err != nil {
-		return err
-	}
+	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
+	w.engine.Finalize(w.chain, w.current.header, s, body)
+	block := types.NewBlock(w.current.header, body, w.current.receipts, trie.NewStackTrie(nil))
 	if w.isRunning() {
 		if interval != nil {
 			interval()
