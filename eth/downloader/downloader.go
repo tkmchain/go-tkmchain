@@ -419,49 +419,67 @@ func (d *Downloader) SubscribeSyncEvents(ch chan<- SyncEvent) event.Subscription
 
 // syncToHead starts a block synchronization based on the hash chain.
 func (d *Downloader) syncToHead() (err error) {
-	mode := d.getMode()
-	d.feed.Send(SyncEvent{Type: SyncStarted, Mode: mode})
-	defer func() {
-		if err != nil {
-			d.feed.Send(SyncEvent{Type: SyncFailed, Mode: mode, Err: err})
-		} else {
-			latest := d.blockchain.CurrentHeader()
-			d.feed.Send(SyncEvent{Type: SyncCompleted, Mode: mode, Latest: latest})
-		}
-	}()
+        mode := d.getMode()
+        d.feed.Send(SyncEvent{Type: SyncStarted, Mode: mode})
+        defer func() {
+                if err != nil {
+                        d.feed.Send(SyncEvent{Type: SyncFailed, Mode: mode, Err: err})
+                } else {
+                        latest := d.blockchain.CurrentHeader()
+                        d.feed.Send(SyncEvent{Type: SyncCompleted, Mode: mode, Latest: latest})
+                }
+        }()
 
-	log.Debug("Synchronising with the network", "mode", mode)
-	defer func(start time.Time) {
-		log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
-	}(time.Now())
+        log.Debug("Synchronising with the network", "mode", mode)
+        defer func(start time.Time) {
+                log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
+        }(time.Now())
 
-	// For RandomX, use simple header fetch without beacon bounds
-	origin := uint64(0)
-	height := uint64(0)
+        // For RandomX/PoW chains, get the current head and sync from there
+        var origin uint64
+        if mode == ethconfig.FullSync {
+                head := d.blockchain.CurrentBlock()
+                if head != nil {
+                        origin = head.Number.Uint64()
+                }
+        } else if mode == ethconfig.SnapSync {
+                head := d.blockchain.CurrentSnapBlock()
+                if head != nil {
+                        origin = head.Number.Uint64()
+                }
+        }
 
-	d.syncStatsLock.Lock()
-	d.syncStatsChainOrigin = origin
-	d.syncStatsChainHeight = height
-	d.syncStatsLock.Unlock()
+        // Get the highest known block from peers
+        height := d.peers.MaxHeight()
+        if height < origin {
+                height = origin
+        }
 
-	d.committed.Store(true)
+        log.Info("Synchronising with network", "mode", mode, "origin", origin, "height", height)
 
-	// Initiate the sync using a concurrent header and content retrieval algorithm
-	d.queue.Prepare(origin+1, mode)
+        d.syncStatsLock.Lock()
+        d.syncStatsChainOrigin = origin
+        d.syncStatsChainHeight = height
+        d.syncStatsLock.Unlock()
 
-	fetchers := []func() error{
-		func() error { return d.fetchHeaders(origin + 1) },
-		func() error { return d.fetchBodies(origin + 1) },
-		func() error { return d.fetchReceipts(origin + 1) },
-		func() error { return d.processHeaders(origin + 1) },
-	}
+        d.committed.Store(true)
 
-	if mode == ethconfig.SnapSync {
-		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
-	} else if mode == ethconfig.FullSync {
-		fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
-	}
-	return d.spawnSync(fetchers)
+        // Initiate the sync using a concurrent header and content retrieval algorithm
+        d.queue.Prepare(origin+1, mode)
+
+        fetchers := []func() error{
+                func() error { return d.fetchHeaders(origin + 1) },
+                func() error { return d.fetchBodies(origin + 1) },
+                func() error { return d.fetchReceipts(origin + 1) },
+                func() error { return d.processHeaders(origin + 1) },
+        }
+
+        if mode == ethconfig.SnapSync {
+                fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
+        } else if mode == ethconfig.FullSync {
+                fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
+        }
+        return d.spawnSync(fetchers)
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in

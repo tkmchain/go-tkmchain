@@ -286,3 +286,20 @@ func (ps *peerCapacitySort) Swap(i, j int) {
 	ps.peers[i], ps.peers[j] = ps.peers[j], ps.peers[i]
 	ps.caps[i], ps.caps[j] = ps.caps[j], ps.caps[i]
 }
+
+func (ps *peerSet) MaxHeight() uint64 {
+        ps.lock.RLock()
+        defer ps.lock.RUnlock()
+        
+        var max uint64
+        for _, p := range ps.peers {
+                // Get the peer's head block number from the eth protocol
+                if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
+                        height := ethPeer.Head()
+                        if height > max {
+                                max = height
+                        }
+                }
+        }
+        return max
+}
