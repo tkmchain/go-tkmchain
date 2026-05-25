@@ -622,7 +622,7 @@ func (w *worker) resultLoop() {
 
 // makeCurrent creates a new environment for the current cycle.
 func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
-	state, err := w.chain.StateAt(parent.Root())
+	state, err := w.chain.StateAt(parent.Header())
 	if err != nil {
 		return err
 	}
@@ -694,9 +694,9 @@ func (w *worker) updateSnapshot() {
 
 	w.snapshotBlock = types.NewBlock(
 		w.current.header,
-		w.current.txs,
-		uncles,
+		&types.Body{Transactions: w.current.txs, Uncles: uncles},
 		w.current.receipts,
+		trie.NewStackTrie(nil),
 	)
 
 	w.snapshotState = w.current.state.Copy()
@@ -705,11 +705,15 @@ func (w *worker) updateSnapshot() {
 func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address) ([]*types.Log, error) {
 	snap := w.current.state.Snapshot()
 
-	receipt, _, err := core.ApplyTransaction(w.config, w.chain, &coinbase, w.current.gasPool, w.current.state, w.current.header, tx, &w.current.header.GasUsed, *w.chain.GetVMConfig())
+	blockContext := core.NewEVMBlockContext(w.current.header, w.chain, &coinbase)
+	evm := vm.NewEVM(blockContext, w.current.state, w.config, *w.chain.GetVMConfig())
+	w.current.state.SetTxContext(tx.Hash(), len(w.current.txs))
+	receipt, err := core.ApplyTransaction(evm, w.current.gasPool, w.current.state, w.current.header, tx)
 	if err != nil {
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
 	}
+	w.current.header.GasUsed = w.current.gasPool.Used()
 	w.current.txs = append(w.current.txs, tx)
 	w.current.receipts = append(w.current.receipts, receipt)
 
@@ -723,7 +727,7 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 	}
 
 	if w.current.gasPool == nil {
-		w.current.gasPool = new(core.GasPool).AddGas(w.current.header.GasLimit)
+		w.current.gasPool = core.NewGasPool(w.current.header.GasLimit)
 	}
 
 	var coalescedLogs []*types.Log
@@ -755,9 +759,14 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 			break
 		}
 		// Retrieve the next transaction and abort if all done
-		tx := txs.Peek()
-		if tx == nil {
+		ltx, _ := txs.Peek()
+		if ltx == nil {
 			break
+		}
+		tx := ltx.Resolve()
+		if tx == nil {
+			txs.Pop()
+			continue
 		}
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance is the transaction pool.
@@ -773,8 +782,6 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 			continue
 		}
 		// Start executing the transaction
-		w.current.state.Prepare(tx.Hash(), common.Hash{}, w.current.tcount)
-
 		logs, err := w.commitTransaction(tx, coinbase)
 		switch err {
 		case core.ErrGasLimitReached:
@@ -819,7 +826,7 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 			cpy[i] = new(types.Log)
 			*cpy[i] = *l
 		}
-		go w.mux.Post(core.PendingLogsEvent{Logs: cpy})
+		_ = cpy
 	}
 	// Notify resubmit loop to decrease resubmitting interval if current interval is larger
 	// than the user-specified one.
