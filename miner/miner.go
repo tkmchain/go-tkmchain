@@ -26,8 +26,9 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-//	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -36,13 +37,13 @@ import (
 // Backend wraps all methods required for mining.
 type Backend interface {
 	BlockChain() *core.BlockChain
-	TxPool() *core.TxPool
+	TxPool() *txpool.TxPool
 }
 
 // Miner creates blocks and searches for proof-of-work values (RandomX).
 type Miner struct {
 	mux      *event.TypeMux
-	worker   *worker              // RandomX worker (defined in worker.go)
+	worker   *worker // RandomX worker (defined in worker.go)
 	coinbase common.Address
 	eth      Backend
 	engine   consensus.Engine
