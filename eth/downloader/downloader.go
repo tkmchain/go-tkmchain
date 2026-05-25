@@ -450,12 +450,32 @@ func (d *Downloader) syncToHead() (err error) {
         }
 
         // Get the highest known block from peers
-        height := d.peers.MaxHeight()
-        if height < origin {
-                height = origin
+        var height uint64 = origin
+        peers := d.peers.AllPeers()
+        for _, p := range peers {
+                // Try to get peer's head block
+                if ethPeer, ok := p.peer.(interface{ Head() uint64 }); ok {
+                        headNum := ethPeer.Head()
+                        if headNum > height {
+                                height = headNum
+                                log.Debug("Found peer height", "peer", p.id, "height", headNum)
+                        }
+                }
+        }
+
+        if height == origin {
+                // If we have no peer height, try to get from blockchain
+                height = d.blockchain.CurrentBlock().Number.Uint64()
+                log.Warn("Could not determine peer height, using current chain head", "height", height)
         }
 
         log.Info("Synchronising with network", "mode", mode, "origin", origin, "height", height)
+
+        // If already synced, exit early
+        if origin >= height {
+                log.Info("Chain already synced", "current", origin, "target", height)
+                return nil
+        }
 
         d.syncStatsLock.Lock()
         d.syncStatsChainOrigin = origin

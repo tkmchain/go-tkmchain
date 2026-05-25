@@ -162,7 +162,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		syncMode = ethconfig.FullSync
 	}
 	// Construct the downloader (long sync)
-	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures)
+        h.downloader = downloader.New(config.Database, syncMode, h.chain, h.removePeer, h.enableSyncedFeatures)
 
 	// If snap sync is requested but snapshots are disabled, fail loudly
 	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
