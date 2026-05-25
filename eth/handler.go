@@ -155,14 +155,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
 	}
-
-	syncMode := config.Sync
-	if config.Chain.Config().RandomX != nil && syncMode == ethconfig.SnapSync {
-		log.Warn("RandomX chain: snap-sync disabled in handler, using full sync")
-		syncMode = ethconfig.FullSync
-	}
 	// Construct the downloader (long sync)
-        h.downloader = downloader.New(config.Database, syncMode, h.chain, h.removePeer, h.enableSyncedFeatures)
+	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures)
 
 	// If snap sync is requested but snapshots are disabled, fail loudly
 	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
@@ -278,7 +272,6 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	if p == nil {
 		return errors.New("peer dropped during handling")
 	}
-
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
 	if err := h.downloader.RegisterPeer(peer.ID(), peer.Version(), peer); err != nil {
 		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
@@ -290,34 +283,6 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			return err
 		}
 	}
-
-	// Start synchronization if we're not already synced and this is a suitable peer.
-	// Keep retrying while this peer is connected so a transient failure doesn't
-	// leave the node stuck waiting for a brand new peer event.
-	syncStop := make(chan struct{})
-	defer close(syncStop)
-	if !h.synced.Load() {
-		go func() {
-			timer := time.NewTimer(2 * time.Second)
-			defer timer.Stop()
-
-			for {
-				select {
-				case <-syncStop:
-					return
-				case <-timer.C:
-				}
-
-				peer.Log().Info("Initiating blockchain sync")
-				if err := h.downloader.Sync(); err != nil && err != downloader.ErrBusy {
-					peer.Log().Warn("Failed to start sync", "err", err)
-				}
-
-				timer.Reset(5 * time.Second)
-			}
-		}()
-	}
-
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
 	h.syncTransactions(peer)
@@ -370,7 +335,6 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			}
 		}(number, hash, req)
 	}
-
 	// Handle incoming messages until the connection is torn down
 	return handler(peer)
 }
@@ -666,8 +630,7 @@ func (st *blockRangeState) update(chain *core.BlockChain, latest *types.Header) 
 // want to send it immediately.
 func (st *blockRangeState) shouldSend() bool {
 	next := st.next.Load()
-	return (st.prev.LatestBlock < 32 && next.LatestBlock > st.prev.LatestBlock) ||
-		next.LatestBlock < st.prev.LatestBlock ||
+	return next.LatestBlock < st.prev.LatestBlock ||
 		next.LatestBlock-st.prev.LatestBlock >= 32
 }
 
