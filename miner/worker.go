@@ -33,9 +33,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 )
 
 const (
@@ -844,8 +847,8 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	tstart := time.Now()
 	parent := w.chain.CurrentBlock()
 
-	if parent.Time() >= uint64(timestamp) {
-		timestamp = int64(parent.Time() + 1)
+	if parent.Time >= uint64(timestamp) {
+		timestamp = int64(parent.Time + 1)
 	}
 	// this will ensure we're not going off too far in the future
 	if now := time.Now().Unix(); timestamp > now+1 {
@@ -854,11 +857,11 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		time.Sleep(wait)
 	}
 
-	num := parent.Number()
+	num := new(big.Int).Set(parent.Number)
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     num.Add(num, common.Big1),
-		GasLimit:   core.CalcGasLimit(parent, w.gasFloor, w.gasCeil),
+		GasLimit:   core.CalcGasLimit(parent.GasLimit, w.gasFloor, w.gasCeil),
 		Extra:      w.extra,
 		Time:       uint64(timestamp),
 	}
@@ -888,7 +891,12 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		}
 	}
 	// Could potentially happen if starting to mine in an odd state.
-	err := w.makeCurrent(parent, header)
+	parentBlock := w.chain.GetBlock(parent.Hash(), parent.Number.Uint64())
+	if parentBlock == nil {
+		log.Error("Failed to retrieve parent block", "number", parent.Number, "hash", parent.Hash())
+		return
+	}
+	err := w.makeCurrent(parentBlock, header)
 	if err != nil {
 		log.Error("Failed to create mining context", "err", err)
 		return
@@ -930,32 +938,20 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	}
 
 	// Fill the block with all available pending transactions.
-	pending, err := w.eth.TxPool().Pending()
-	if err != nil {
-		log.Error("Failed to fetch pending transactions", "err", err)
-		return
+	filter := txpool.PendingFilter{
+		MinTip: uint256.MustFromBig(w.tip),
 	}
+	if env.header.BaseFee != nil {
+		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
+	}
+	pending, _ := w.eth.TxPool().Pending(filter)
 	// Short circuit if there is no available pending transactions
 	if len(pending) == 0 {
 		w.updateSnapshot()
 		return
 	}
-	// Split the pending transactions into locals and remotes
-	localTxs, remoteTxs := make(map[common.Address]types.Transactions), pending
-	for _, account := range w.eth.TxPool().Locals() {
-		if txs := remoteTxs[account]; len(txs) > 0 {
-			delete(remoteTxs, account)
-			localTxs[account] = txs
-		}
-	}
-	if len(localTxs) > 0 {
-		txs := newTransactionsByPriceAndNonce(w.current.signer, mapTransactionsToLazy(localTxs), env.header.BaseFee)
-		if w.commitTransactions(txs, w.coinbase, interrupt) {
-			return
-		}
-	}
-	if len(remoteTxs) > 0 {
-		txs := newTransactionsByPriceAndNonce(w.current.signer, mapTransactionsToLazy(remoteTxs), env.header.BaseFee)
+	if len(pending) > 0 {
+		txs := newTransactionsByPriceAndNonce(w.current.signer, pending, env.header.BaseFee)
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
 			return
 		}
