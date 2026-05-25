@@ -25,7 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
+        "strings"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -468,7 +468,7 @@ func (miner *Miner) SubmitWork(block *types.Block) error {
 
 	log.Info("Submitting mined block", "number", block.NumberU64(), "hash", block.Hash(), "stateRoot", block.Root().Hex())
 
-	triedb := miner.chain.TrieDB()
+	//triedb := miner.chain.TrieDB()
 	
 	// Insert the block
 	if _, err := miner.chain.InsertChain([]*types.Block{block}); err != nil {
@@ -477,20 +477,19 @@ func (miner *Miner) SubmitWork(block *types.Block) error {
 	}
 
 	// Persist state to disk
-	if triedb != nil {
-		// Commit parent state (may already exist)
-		if parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1); parent != nil {
-			if err := triedb.Commit(parent.Root, true); err != nil {
-				// Use DEBUG - this is often "already committed" which is fine
-				log.Debug("Parent state commit", "number", parent.Number, "root", parent.Root, "err", err)
-			}
-		}
-		
-		// Commit block state
-		if err := triedb.Commit(block.Root(), true); err != nil {
-			log.Error("Failed to commit block state", "number", block.NumberU64(), "root", block.Root(), "err", err)
-		}
-	}
+    if triedb := miner.chain.TrieDB(); triedb != nil {
+        // Commit parent state (may already exist)
+        if parent := miner.chain.GetHeader(block.ParentHash(), block.NumberU64()-1); parent != nil {
+            if err := triedb.Commit(parent.Root, true); err != nil && !strings.Contains(err.Error(), "disk layer") {
+                log.Error("Parent state commit failed", "err", err)
+            }
+        }
+        // Commit block state
+        if err := triedb.Commit(block.Root(), true); err != nil && !strings.Contains(err.Error(), "disk layer") {
+            log.Error("Failed to commit block state", "err", err)
+        }
+    }
+
 
 	atomic.AddUint64(&miner.blocksMined, 1)
 	miner.lastMinedTime = time.Now()

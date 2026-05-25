@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+        "github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -682,10 +683,15 @@ func (miner *Miner) miningLoop() {
 			case sealedBlock := <-sealResultCh:
 				if sealedBlock != nil {
 					log.Info("Block sealed successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
-					
+
 					// Submit the block to the blockchain (state persistence handled in SubmitWork)
 					if err := miner.SubmitWork(sealedBlock); err != nil {
 						log.Error("Failed to submit sealed block", "error", err)
+					} else {
+						// CRITICAL FIX: Force state to disk after each mined block
+						// This ensures the state trie for the new head is persisted,
+						// preventing "missing trie node" errors on next startup.
+						miner.commitStateAfterMining(sealedBlock)
 					}
 				}
 			case <-miner.stopCh:
@@ -703,4 +709,32 @@ func (miner *Miner) getWorkForMining() *types.Block {
 		return nil
 	}
 	return pending
+}
+
+// commitStateAfterMining forces the state trie of the newly mined block to disk.
+// It also optionally flushes the database to ensure durability.
+func (miner *Miner) commitStateAfterMining(block *types.Block) {
+    if miner.chain == nil {
+        return
+    }
+    head := miner.chain.CurrentBlock()
+    if head == nil {
+        return
+    }
+    root := head.Root
+    triedb := miner.chain.TrieDB()
+
+    switch triedb.Scheme() {
+    case rawdb.HashScheme:
+        log.Info("Forcing state commit after mining (hash scheme)", "block", block.NumberU64(), "state_root", root)
+        if err := triedb.Commit(root, true); err != nil {
+            log.Error("Failed to commit state after mining", "err", err)
+        }
+    case rawdb.PathScheme:
+        // Path scheme persists state automatically – no extra work needed.
+        // Do NOT call Journal() here – it would cause read‑only errors.
+        log.Debug("Path scheme: state already durable", "block", block.NumberU64())
+    default:
+        log.Warn("Unknown state scheme", "scheme", triedb.Scheme())
+    }
 }

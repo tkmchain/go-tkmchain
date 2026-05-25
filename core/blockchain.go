@@ -1717,11 +1717,19 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			return err
 		}
 	}
+
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
-	if bc.triedb.Scheme() == rawdb.PathScheme {
-		return nil
-	}
+    if err := bc.triedb.Commit(root, true); err != nil {
+        // For path scheme, "disk layer" means the state is already durable – ignore it.
+        if !strings.Contains(err.Error(), "disk layer") {
+            return err
+        }
+        log.Debug("State already on disk (path scheme)", "root", root)
+    }
+    if bc.triedb.Scheme() == rawdb.PathScheme {
+        return nil
+    }
 	// If we're running an archive node, always flush
 	if bc.cfg.ArchiveMode {
 		return bc.triedb.Commit(root, false)
