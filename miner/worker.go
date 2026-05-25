@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -91,6 +92,18 @@ type environment struct {
 	header   *types.Header
 	txs      []*types.Transaction
 	receipts []*types.Receipt
+}
+
+func mapTransactionsToLazy(txs map[common.Address]types.Transactions) map[common.Address][]*txpool.LazyTransaction {
+	lazy := make(map[common.Address][]*txpool.LazyTransaction, len(txs))
+	for addr, list := range txs {
+		lazyList := make([]*txpool.LazyTransaction, len(list))
+		for i, tx := range list {
+			lazyList[i] = &txpool.LazyTransaction{Tx: tx}
+		}
+		lazy[addr] = lazyList
+	}
+	return lazy
 }
 
 // task contains all information for consensus engine sealing and result submitting.
@@ -208,7 +221,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
 	}
 	// Subscribe NewTxsEvent for tx pool
-	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
+	worker.txsSub = eth.TxPool().SubscribeTransactions(worker.txsCh, true)
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 
@@ -345,19 +358,19 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 	for {
 		select {
 		case <-w.startCh:
-			clearPending(w.chain.CurrentBlock().NumberU64())
+			clearPending(w.chain.CurrentBlock().Number.Uint64())
 			timestamp = time.Now().Unix()
 			commit(false, commitInterruptNewHead)
 
 		case head := <-w.chainHeadCh:
-			clearPending(head.Block.NumberU64())
+			clearPending(head.Header.Number.Uint64())
 			timestamp = time.Now().Unix()
 			commit(false, commitInterruptNewHead)
 
 		case <-timer.C:
 			// If mining is running resubmit a new work cycle periodically to pull in
 			// higher priced transactions. Disable this overhead for pending blocks.
-			if w.isRunning() && (w.config.Clique == nil || w.config.Clique.Period > 0) {
+			if w.isRunning() {
 				// Short circuit if no new transaction arrives.
 				if atomic.LoadInt32(&w.newTxs) == 0 {
 					timer.Reset(recommit)
@@ -466,14 +479,12 @@ func (w *worker) mainLoop() {
 					acc, _ := types.Sender(w.current.signer, tx)
 					txs[acc] = append(txs[acc], tx)
 				}
-				txset := types.NewTransactionsByPriceAndNonce(w.current.signer, txs)
+				txset := newTransactionsByPriceAndNonce(w.current.signer, mapTransactionsToLazy(txs), w.current.header.BaseFee)
 				w.commitTransactions(txset, coinbase, nil)
 				w.updateSnapshot()
-			} else {
-				// If we're mining, but nothing is being processed, wake on new transactions
-				if w.config.Clique != nil && w.config.Clique.Period == 0 {
-					w.commitNewWork(nil, false, time.Now().Unix())
-				}
+			} else if w.isRunning() {
+				// If we're mining, wake on new transactions.
+				w.commitNewWork(nil, false, time.Now().Unix())
 			}
 			atomic.AddInt32(&w.newTxs, int32(len(ev.Txs)))
 
@@ -576,7 +587,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 			// Commit block and state to database.
-			stat, err := w.chain.WriteBlockWithState(block, receipts, task.state)
+			_, err := w.chain.InsertChain(types.Blocks{block})
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
@@ -598,17 +609,7 @@ func (w *worker) resultLoop() {
 			// =============================================
 
 			// Broadcast the block and announce chain insertion event
-			w.mux.Post(core.NewMinedBlockEvent{Block: block})
-
-			var events []interface{}
-			switch stat {
-			case core.CanonStatTy:
-				events = append(events, core.ChainEvent{Block: block, Hash: block.Hash(), Logs: logs})
-				events = append(events, core.ChainHeadEvent{Block: block})
-			case core.SideStatTy:
-				events = append(events, chainSideEvent{Block: block})
-			}
-			w.chain.PostChainEvents(events, logs)
+			_ = logs
 
 			// Insert the block into the set of pending ones to resultLoop for confirmations
 			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
@@ -941,13 +942,13 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		}
 	}
 	if len(localTxs) > 0 {
-		txs := types.NewTransactionsByPriceAndNonce(w.current.signer, localTxs)
+		txs := newTransactionsByPriceAndNonce(w.current.signer, mapTransactionsToLazy(localTxs), env.header.BaseFee)
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
 			return
 		}
 	}
 	if len(remoteTxs) > 0 {
-		txs := types.NewTransactionsByPriceAndNonce(w.current.signer, remoteTxs)
+		txs := newTransactionsByPriceAndNonce(w.current.signer, mapTransactionsToLazy(remoteTxs), env.header.BaseFee)
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
 			return
 		}

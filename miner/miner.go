@@ -19,7 +19,6 @@ package miner
 
 import (
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -43,81 +41,36 @@ type Backend interface {
 // Miner creates blocks and searches for proof-of-work values (RandomX).
 type Miner struct {
 	mux      *event.TypeMux
-	worker   *worker // RandomX worker (defined in worker.go)
+	worker   *worker // RandomX worker
+	recommit time.Duration
 	coinbase common.Address
 	eth      Backend
 	engine   consensus.Engine
 	exitCh   chan struct{}
-
-	canStart    int32 // can start indicates whether we can start the mining operation
-	shouldStart int32 // should start indicates whether we should start after sync
 }
 
 // New creates a new RandomX miner with the given configuration.
 func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(block *types.Block) bool) *Miner {
 	miner := &Miner{
-		eth:      eth,
-		mux:      mux,
-		engine:   engine,
-		exitCh:   make(chan struct{}),
-		worker:   newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
-		canStart: 1,
+		eth:    eth,
+		mux:    mux,
+		recommit: recommit,
+		engine: engine,
+		exitCh: make(chan struct{}),
+		worker: newWorker(config, engine, eth, mux, recommit, gasFloor, gasCeil, isLocalBlock),
 	}
-	go miner.update()
 	return miner
-}
-
-// update listens to downloader events and restarts mining after sync.
-func (miner *Miner) update() {
-	events := miner.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
-	defer events.Unsubscribe()
-
-	for {
-		select {
-		case ev := <-events.Chan():
-			if ev == nil {
-				return
-			}
-			switch ev.Data.(type) {
-			case downloader.StartEvent:
-				atomic.StoreInt32(&miner.canStart, 0)
-				if miner.Mining() {
-					miner.Stop()
-					atomic.StoreInt32(&miner.shouldStart, 1)
-					log.Info("Mining aborted due to sync")
-				}
-			case downloader.DoneEvent, downloader.FailedEvent:
-				shouldStart := atomic.LoadInt32(&miner.shouldStart) == 1
-				atomic.StoreInt32(&miner.canStart, 1)
-				atomic.StoreInt32(&miner.shouldStart, 0)
-				if shouldStart {
-					miner.Start(miner.coinbase)
-				}
-				// stop immediately and ignore all further pending events
-				return
-			}
-		case <-miner.exitCh:
-			return
-		}
-	}
 }
 
 // Start begins the RandomX mining process.
 func (miner *Miner) Start(coinbase common.Address) {
-	atomic.StoreInt32(&miner.shouldStart, 1)
 	miner.SetEtherbase(coinbase)
-
-	if atomic.LoadInt32(&miner.canStart) == 0 {
-		log.Info("Network syncing, will start miner afterwards")
-		return
-	}
 	miner.worker.start()
 }
 
 // Stop terminates the RandomX mining process.
 func (miner *Miner) Stop() {
 	miner.worker.stop()
-	atomic.StoreInt32(&miner.shouldStart, 0)
 }
 
 // Close shuts down the miner and releases resources.
@@ -133,9 +86,6 @@ func (miner *Miner) Mining() bool {
 
 // HashRate returns the current hashrate in hashes per second.
 func (miner *Miner) HashRate() uint64 {
-	if pow, ok := miner.engine.(consensus.PoW); ok {
-		return uint64(pow.Hashrate())
-	}
 	return 0
 }
 
@@ -150,6 +100,7 @@ func (miner *Miner) SetExtra(extra []byte) error {
 
 // SetRecommitInterval sets the interval for re‑creating sealing work.
 func (miner *Miner) SetRecommitInterval(interval time.Duration) {
+	miner.recommit = interval
 	miner.worker.setRecommitInterval(interval)
 }
 

@@ -52,7 +52,7 @@ type BuildPayloadArgs struct {
 	Withdrawals  types.Withdrawals // The provided withdrawals
 	BeaconRoot   *common.Hash      // The provided beaconRoot (Cancun) - optional for RandomX
 	SlotNum      *uint64           // The provided slotNumber - optional for RandomX
-	
+
 	// King addresses for reward distribution
 	MainKingAddr     common.Address
 	RotatingKingAddr common.Address
@@ -124,7 +124,7 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) (resu
 		return false // reject stale update
 	default:
 	}
-	
+
 	if payload.full == nil || r.fees.Cmp(payload.fullFees) > 0 {
 		payload.full = r.block
 		payload.fullFees = r.fees
@@ -217,11 +217,11 @@ func (payload *Payload) ResolveFull() *ExecutionPayloadEnvelope {
 
 // ExecutionPayloadEnvelope wraps the execution payload for delivery
 type ExecutionPayloadEnvelope struct {
-	Block      *types.Block
-	Fees       *big.Int
-	Sidecars   []*types.BlobTxSidecar
-	Requests   [][]byte
-	Witness    *hexutil.Bytes
+	Block    *types.Block
+	Fees     *big.Int
+	Sidecars []*types.BlobTxSidecar
+	Requests [][]byte
+	Witness  *hexutil.Bytes
 }
 
 // BlockToExecutableData converts a block to executable data
@@ -277,7 +277,7 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 	if empty.err != nil {
 		return nil, empty.err
 	}
-	
+
 	payload := newPayload(empty.block, empty.requests, empty.witness, payloadID)
 
 	// Spin up a routine for updating the payload in background
@@ -308,7 +308,7 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 			slotNum:     args.SlotNum,
 			noTxs:       false,
 		}
-		
+
 		for {
 			select {
 			case <-timer.C:
@@ -322,7 +322,7 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 				start := time.Now()
 				iteration++
 				miner.runBuildIteration(bCtx, start, iteration, payload, fullParams, witness)
-				timer.Reset(max(0, miner.config.Recommit-time.Since(start)))
+				timer.Reset(max(0, miner.recommit-time.Since(start)))
 			case <-payload.stop:
 				payload.updateSpanForDelivery(bSpan)
 				log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
