@@ -85,7 +85,7 @@ var (
 	txFetchTimeout = 5 * time.Second
 )
 
-var errTerminated = errors.New("terminated")
+var errTxTerminated = errors.New("terminated")
 
 // txAnnounce is the notification of the availability of a batch
 // of new transactions in the network.
@@ -290,7 +290,7 @@ func (f *TxFetcher) Notify(peer string, types []byte, sizes []uint32, hashes []c
 	case f.notify <- announce:
 		return nil
 	case <-f.quit:
-		return errTerminated
+		return errTxTerminated
 	}
 }
 
@@ -399,7 +399,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 	case f.cleanup <- &txDelivery{origin: peer, hashes: added, metas: metas, direct: direct, violation: violation}:
 		return nil
 	case <-f.quit:
-		return errTerminated
+		return errTxTerminated
 	}
 }
 
@@ -410,7 +410,7 @@ func (f *TxFetcher) Drop(peer string) error {
 	case f.drop <- &txDrop{peer: peer}:
 		return nil
 	case <-f.quit:
-		return errTerminated
+		return errTxTerminated
 	}
 }
 

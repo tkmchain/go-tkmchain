@@ -22,6 +22,7 @@ package downloader
 import (
 	"errors"
 	"math/big"
+	"sort"
 	"sync"
 	"time"
 
@@ -130,6 +131,45 @@ func (p *peerConnection) ReceiptCapacity(targetRTT time.Duration) int {
 		cap = MaxReceiptFetch
 	}
 	return cap
+}
+
+// FetchHeaders sends a header retrieval request to the remote peer.
+func (p *peerConnection) FetchHeaders(from uint64, count int) error {
+	_, err := p.peer.RequestHeadersByNumber(from, count, 0, false, nil)
+	return err
+}
+
+// FetchBodies sends a body retrieval request to the remote peer.
+func (p *peerConnection) FetchBodies(req *fetchRequest) error {
+	hashes := make([]common.Hash, len(req.Headers))
+	for i, header := range req.Headers {
+		hashes[i] = header.Hash()
+	}
+	_, err := p.peer.RequestBodies(hashes, nil)
+	return err
+}
+
+// FetchReceipts sends a receipt retrieval request to the remote peer.
+func (p *peerConnection) FetchReceipts(req *fetchRequest) error {
+	hashes := make([]common.Hash, len(req.Headers))
+	numbers := make([]uint64, len(req.Headers))
+	times := make([]uint64, len(req.Headers))
+	for i, header := range req.Headers {
+		hashes[i] = header.Hash()
+		numbers[i] = header.Number.Uint64()
+		times[i] = header.Time
+	}
+	_, err := p.peer.RequestReceipts(hashes, numbers, times, nil)
+	return err
+}
+
+func (p *peerConnection) SetHeadersIdle(int)  {}
+func (p *peerConnection) SetBodiesIdle(int)   {}
+func (p *peerConnection) SetReceiptsIdle(int) {}
+
+// BlockCapacity is kept for compatibility with legacy downloader code paths.
+func (p *peerConnection) BlockCapacity(targetRTT time.Duration) int {
+	return p.BodyCapacity(targetRTT)
 }
 
 // MarkLacking appends a new entity to the set of items (blocks, receipts, states)
@@ -287,4 +327,43 @@ func (ps *peerCapacitySort) Less(i, j int) bool {
 func (ps *peerCapacitySort) Swap(i, j int) {
 	ps.peers[i], ps.peers[j] = ps.peers[j], ps.peers[i]
 	ps.caps[i], ps.caps[j] = ps.caps[j], ps.caps[i]
+}
+
+// HeaderIdlePeers retrieves up to the requested amount of peers, sorted by header capacity.
+func (ps *peerSet) HeaderIdlePeers(max int, targetRTT time.Duration) ([]*peerConnection, int) {
+	return ps.idlePeers(max, func(p *peerConnection) int { return p.HeaderCapacity(targetRTT) })
+}
+
+// BodyIdlePeers retrieves up to the requested amount of peers, sorted by body capacity.
+func (ps *peerSet) BodyIdlePeers(max int, targetRTT time.Duration) ([]*peerConnection, int) {
+	return ps.idlePeers(max, func(p *peerConnection) int { return p.BodyCapacity(targetRTT) })
+}
+
+// ReceiptIdlePeers retrieves up to the requested amount of peers, sorted by receipt capacity.
+func (ps *peerSet) ReceiptIdlePeers(max int, targetRTT time.Duration) ([]*peerConnection, int) {
+	return ps.idlePeers(max, func(p *peerConnection) int { return p.ReceiptCapacity(targetRTT) })
+}
+
+func (ps *peerSet) idlePeers(max int, capFn func(*peerConnection) int) ([]*peerConnection, int) {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*peerConnection, 0, len(ps.peers))
+	caps := make([]int, 0, len(ps.peers))
+	total := 0
+	for _, p := range ps.peers {
+		cap := capFn(p)
+		if cap <= 0 {
+			continue
+		}
+		list = append(list, p)
+		caps = append(caps, cap)
+		total += cap
+	}
+	ordered := &peerCapacitySort{peers: list, caps: caps}
+	sort.Sort(ordered)
+	if max > 0 && len(list) > max {
+		list = list[:max]
+	}
+	return list, total
 }

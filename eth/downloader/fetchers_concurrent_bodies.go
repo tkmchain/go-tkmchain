@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -31,13 +32,13 @@ type bodyQueue Downloader
 // waker returns a notification channel that gets pinged in case more body
 // fetches have been queued up, so the fetcher might assign it to idle peers.
 func (q *bodyQueue) waker() chan bool {
-	return q.queue.blockWakeCh
+	return q.bodyWakeCh
 }
 
 // pending returns the number of bodies that are currently queued for fetching
 // by the concurrent downloader.
 func (q *bodyQueue) pending() int {
-	return q.queue.PendingBodies()
+	return q.queue.PendingBlocks()
 }
 
 // capacity is responsible for calculating how many bodies a particular peer is
@@ -55,20 +56,21 @@ func (q *bodyQueue) updateCapacity(peer *peerConnection, items int, span time.Du
 // reserve is responsible for allocating a requested number of pending bodies
 // from the download queue to the specified peer.
 func (q *bodyQueue) reserve(peer *peerConnection, items int) (*fetchRequest, bool, bool) {
-	return q.queue.ReserveBodies(peer, items)
+	req, progress, err := q.queue.ReserveBodies(peer, items)
+	return req, progress, err != nil
 }
 
 // unreserve is responsible for removing the current body retrieval allocation
 // assigned to a specific peer and placing it back into the pool to allow
 // reassigning to some other peer.
 func (q *bodyQueue) unreserve(peer string) int {
-	fails := q.queue.ExpireBodies(peer)
-	if fails > 2 {
+	fails := q.queue.ExpireBodies(downloaderRequeueTTL)
+	if fails[peer] > 2 {
 		log.Trace("Body delivery timed out", "peer", peer)
 	} else {
 		log.Debug("Body delivery stalling", "peer", peer)
 	}
-	return fails
+	return fails[peer]
 }
 
 // request is responsible for converting a generic fetch request into a body
@@ -89,8 +91,13 @@ func (q *bodyQueue) request(peer *peerConnection, req *fetchRequest, resCh chan 
 // fetcher, unpacking the body data and delivering it to the downloader's queue.
 func (q *bodyQueue) deliver(peer *peerConnection, packet *eth.Response) (int, error) {
 	resp := packet.Res.(*eth.BlockBodiesResponse)
-	meta := packet.Meta.(eth.BlockBodyHashes)
-	accepted, err := q.queue.DeliverBodies(peer.id, meta, *resp)
+	txs := make([][]*types.Transaction, len(*resp))
+	uncles := make([][]*types.Header, len(*resp))
+	for i, body := range *resp {
+		txs[i] = body.Transactions
+		uncles[i] = body.Uncles
+	}
+	accepted, err := q.queue.DeliverBodies(peer.id, txs, uncles)
 	switch {
 	case err == nil && len(*resp) == 0:
 		peer.log.Trace("Requested bodies delivered")

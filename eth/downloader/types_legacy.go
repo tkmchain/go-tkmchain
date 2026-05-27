@@ -50,7 +50,7 @@ func (p *bodyPack) Stats() string {
 
 type receiptPack struct {
 	peerID   string
-	receipts []types.Receipts
+	receipts [][]*types.Receipt
 }
 
 func (p *receiptPack) PeerId() string { return p.peerID }

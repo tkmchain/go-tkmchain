@@ -33,6 +33,8 @@ import (
 // to each request. Failing to do so is considered a protocol violation.
 var timeoutGracePeriod = 2 * time.Minute
 
+var errCanceled = errors.New("sync canceled")
+
 // typedQueue is an interface defining the adaptor needed to translate the type
 // specific downloader/queue schedulers into the type-agnostic general concurrent
 // fetcher algorithm calls.

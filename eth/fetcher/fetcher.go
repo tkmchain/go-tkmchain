@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 const (
@@ -125,9 +126,9 @@ type Fetcher struct {
 	completing map[common.Hash]*announce   // Blocks with headers, currently body-completing
 
 	// Block cache
-	queue  *prque.Prque            // Queue containing the import operations (block number sorted)
-	queues map[string]int          // Per peer block counts to prevent memory exhaustion
-	queued map[common.Hash]*inject // Set of already queued blocks (to dedupe imports)
+	queue  *prque.Prque[int64, *inject] // Queue containing the import operations (block number sorted)
+	queues map[string]int               // Per peer block counts to prevent memory exhaustion
+	queued map[common.Hash]*inject      // Set of already queued blocks (to dedupe imports)
 
 	// Callbacks
 	getBlock       blockRetrievalFn   // Retrieves a block from the local chain
@@ -160,7 +161,7 @@ func New(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBloc
 		fetching:       make(map[common.Hash]*announce),
 		fetched:        make(map[common.Hash][]*announce),
 		completing:     make(map[common.Hash]*announce),
-		queue:          prque.New(nil),
+		queue:          prque.New[int64, *inject](nil),
 		queues:         make(map[string]int),
 		queued:         make(map[common.Hash]*inject),
 		getBlock:       getBlock,
@@ -291,7 +292,7 @@ func (f *Fetcher) loop() {
 		// Import any queued blocks that could potentially fit
 		height := f.chainHeight()
 		for !f.queue.Empty() {
-			op := f.queue.PopItem().(*inject)
+			op := f.queue.PopItem()
 			hash := op.block.Hash()
 			if f.queueChangeHook != nil {
 				f.queueChangeHook(hash, false)
@@ -460,7 +461,7 @@ func (f *Fetcher) loop() {
 						announce.time = task.time
 
 						// If the block is empty (header only), short circuit into the final import queue
-						if header.TxHash == types.DeriveSha(types.Transactions{}) && header.UncleHash == types.CalcUncleHash([]*types.Header{}) {
+						if header.TxHash == types.DeriveSha(types.Transactions{}, trie.NewStackTrie(nil)) && header.UncleHash == types.CalcUncleHash([]*types.Header{}) {
 							log.Trace("Block empty, skipping body retrieval", "peer", announce.origin, "number", header.Number, "hash", header.Hash())
 
 							block := types.NewBlockWithHeader(header)
@@ -522,7 +523,7 @@ func (f *Fetcher) loop() {
 
 				for hash, announce := range f.completing {
 					if f.queued[hash] == nil {
-						txnHash := types.DeriveSha(types.Transactions(task.transactions[i]))
+						txnHash := types.DeriveSha(types.Transactions(task.transactions[i]), trie.NewStackTrie(nil))
 						uncleHash := types.CalcUncleHash(task.uncles[i])
 
 						if txnHash == announce.header.TxHash && uncleHash == announce.header.UncleHash && announce.origin == task.peer {
@@ -530,7 +531,7 @@ func (f *Fetcher) loop() {
 							matched = true
 
 							if f.getBlock(hash) == nil {
-								block := types.NewBlockWithHeader(announce.header).WithBody(task.transactions[i], task.uncles[i])
+								block := types.NewBlockWithHeader(announce.header).WithBody(types.Body{Transactions: task.transactions[i], Uncles: task.uncles[i]})
 								block.ReceivedAt = task.time
 
 								blocks = append(blocks, block)
