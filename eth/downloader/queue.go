@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -66,33 +65,31 @@ type fetchResult struct {
 
 // queue represents hashes that are either need fetching or are being fetched
 type queue struct {
-	mode SyncMode // Synchronisation mode to decide on the block parts to schedule for fetching
+	mode SyncMode
 
-	// Headers are "special", they download in batches, supported by a skeleton chain
-	headerHead      common.Hash                    // [eth/62] Hash of the last queued header to verify order
-	headerTaskPool  map[uint64]*types.Header       // [eth/62] Pending header retrieval tasks, mapping starting indexes to skeleton headers
-	headerTaskQueue *prque.Prque[int64, uint64]    // [eth/62] Priority queue of the skeleton indexes to fetch the filling headers for
-	headerPeerMiss  map[string]map[uint64]struct{} // [eth/62] Set of per-peer header batches known to be unavailable
-	headerPendPool  map[string]*fetchRequest       // [eth/62] Currently pending header retrieval operations
-	headerResults   []*types.Header                // [eth/62] Result cache accumulating the completed headers
-	headerProced    int                            // [eth/62] Number of headers already processed from the results
-	headerOffset    uint64                         // [eth/62] Number of the first header in the result cache
-	headerContCh    chan bool                      // [eth/62] Channel to notify when header download finishes
+	headerHead      common.Hash
+	headerTaskPool  map[uint64]*types.Header
+	headerTaskQueue *prque.Prque[int64, uint64] // priority = -int64(index), value = index
+	headerPeerMiss  map[string]map[uint64]struct{}
+	headerPendPool  map[string]*fetchRequest
+	headerResults   []*types.Header
+	headerProced    int
+	headerOffset    uint64
+	headerContCh    chan bool
 
-	// All data retrievals below are based on an already assembles header chain
-	blockTaskPool  map[common.Hash]*types.Header      // [eth/62] Pending block (body) retrieval tasks, mapping hashes to headers
-	blockTaskQueue *prque.Prque[int64, *types.Header] // [eth/62] Priority queue of the headers to fetch the blocks (bodies) for
-	blockPendPool  map[string]*fetchRequest           // [eth/62] Currently pending block (body) retrieval operations
-	blockDonePool  map[common.Hash]struct{}           // [eth/62] Set of the completed block (body) fetches
+	blockTaskPool  map[common.Hash]*types.Header
+	blockTaskQueue *prque.Prque[int64, *types.Header]
+	blockPendPool  map[string]*fetchRequest
+	blockDonePool  map[common.Hash]struct{}
 
-	receiptTaskPool  map[common.Hash]*types.Header      // [eth/63] Pending receipt retrieval tasks, mapping hashes to headers
-	receiptTaskQueue *prque.Prque[int64, *types.Header] // [eth/63] Priority queue of the headers to fetch the receipts for
-	receiptPendPool  map[string]*fetchRequest           // [eth/63] Currently pending receipt retrieval operations
-	receiptDonePool  map[common.Hash]struct{}           // [eth/63] Set of the completed receipt fetches
+	receiptTaskPool  map[common.Hash]*types.Header
+	receiptTaskQueue *prque.Prque[int64, *types.Header]
+	receiptPendPool  map[string]*fetchRequest
+	receiptDonePool  map[common.Hash]struct{}
 
-	resultCache  []*fetchResult     // Downloaded but not yet delivered fetch results
-	resultOffset uint64             // Offset of the first cached fetch result in the block chain
-	resultSize   common.StorageSize // Approximate size of a block (exponential moving average)
+	resultCache  []*fetchResult
+	resultOffset uint64
+	resultSize   common.StorageSize
 
 	lock   *sync.Mutex
 	active *sync.Cond
@@ -394,7 +391,7 @@ func (q *queue) Results(block bool) []*fetchResult {
 				size += receipt.Size()
 			}
 			for _, tx := range result.Transactions {
-				size += tx.Size()
+				size += common.StorageSize(tx.Size())
 			}
 			q.resultSize = common.StorageSize(blockCacheSizeWeight)*size + (1-common.StorageSize(blockCacheSizeWeight))*q.resultSize
 		}
@@ -485,7 +482,7 @@ func (q *queue) ReserveReceipts(p *peerConnection, count int) (*fetchRequest, bo
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque[int64, *types.Header],
+func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, isNoop func(*types.Header) bool) (*fetchRequest, bool, error) {
 	// Short circuit if the pool has been depleted, or if the peer's already
 	// downloading something (sanity check not to corrupt state)
@@ -504,7 +501,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 
 	progress := false
 	for proc := 0; proc < space && len(send) < count && !taskQueue.Empty(); proc++ {
-		header := taskQueue.PopItem()
+		header := taskQueue.PopItem().(*types.Header)
 		hash := header.Hash()
 
 		// If we're the first to request this task, initialise the result container
@@ -581,7 +578,7 @@ func (q *queue) CancelReceipts(request *fetchRequest) {
 }
 
 // Cancel aborts a fetch request, returning all pending hashes to the task queue.
-func (q *queue) cancel(request *fetchRequest, taskQueue *prque.Prque[int64, *types.Header], pendPool map[string]*fetchRequest) {
+func (q *queue) cancel(request *fetchRequest, taskQueue *prque.Prque, pendPool map[string]*fetchRequest) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -648,7 +645,7 @@ func (q *queue) ExpireReceipts(timeout time.Duration) map[string]int {
 // Note, this method expects the queue lock to be already held. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest, taskQueue *prque.Prque[int64, *types.Header], timeoutMeter metrics.Meter) map[string]int {
+func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest, taskQueue *prque.Prque, timeoutMeter metrics.Meter) map[string]int {
 	// Iterate over the expired requests and return each to the queue
 	expiries := make(map[string]int)
 	for id, request := range pendPool {
@@ -769,7 +766,7 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 	defer q.lock.Unlock()
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
-		if types.DeriveSha(types.Transactions(txLists[index]), trie.NewStackTrie(nil)) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+		if types.DeriveSha(types.Transactions(txLists[index])) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
 			return errInvalidBody
 		}
 		result.Transactions = txLists[index]
@@ -787,7 +784,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 	defer q.lock.Unlock()
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
-		if types.DeriveSha(types.Receipts(receiptList[index]), trie.NewStackTrie(nil)) != header.ReceiptHash {
+		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
 			return errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]
@@ -801,7 +798,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque[int64, *types.Header],
+func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, reqTimer metrics.Timer,
 	results int, reconstruct func(header *types.Header, index int, result *fetchResult) error) (int, error) {
 
