@@ -607,6 +607,24 @@ func (d *Downloader) Terminate() {
 func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
     p.log.Debug("Retrieving remote chain height")
     
+    // Original approach but with debug
+    head, _ := p.peer.Head()
+    p.log.Debug("Got peer head hash", "hash", head)
+    
+    headers, _, err := d.fetchHeadersByHash(p, head, 1, 0, false)
+    if err != nil {
+        p.log.Debug("fetchHeadersByHash failed", "err", err)
+        return nil, err
+    }
+    if len(headers) != 1 {
+        p.log.Debug("Unexpected number of headers", "count", len(headers))
+        return nil, errBadPeer
+    }
+    return headers[0], nil
+}
+/*func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
+    p.log.Debug("Retrieving remote chain height")
+    
     // Get the peer's head hash
     head, td := p.peer.Head()
     p.log.Debug("Got peer head", "hash", head, "td", td)
@@ -650,7 +668,7 @@ func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
             // Out of bounds delivery, ignore
         }
     }
-}
+}*/
 
 // calculateRequestSpan calculates what headers to request from a peer when trying to determine the
 // common ancestor.
