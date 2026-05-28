@@ -256,7 +256,20 @@ func (d *Downloader) ConfigSyncMode() SyncMode {
 	return d.mode
 }
 
-func (d *Downloader) BeaconSync(head *types.Header, _ interface{}) error {
+func (d *Downloader) GetHeader(hash common.Hash) (*types.Header, error) {
+	if header := d.lightchain.GetHeaderByHash(hash); header != nil {
+		return header, nil
+	}
+	for _, peer := range d.peers.AllPeers() {
+		headers, _, err := d.fetchHeadersByHash(peer, hash, 1, 0, false)
+		if err == nil && len(headers) == 1 && headers[0].Hash() == hash {
+			return headers[0], nil
+		}
+	}
+	return nil, errors.New("header not found")
+}
+
+func (d *Downloader) RandomXSync(head *types.Header) error {
 	return d.Synchronise("", head.Hash(), nil, d.mode)
 }
 

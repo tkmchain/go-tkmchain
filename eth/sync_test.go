@@ -79,7 +79,7 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	time.Sleep(250 * time.Millisecond)
 
 	// Check that snap sync was disabled
-	if err := empty.handler.downloader.BeaconSync(full.chain.CurrentBlock(), nil); err != nil {
+	if err := empty.handler.downloader.RandomXSync(full.chain.CurrentBlock()); err != nil {
 		t.Fatal("sync failed:", err)
 	}
 	// Snap sync and mode switching happen asynchronously, poll for completion.

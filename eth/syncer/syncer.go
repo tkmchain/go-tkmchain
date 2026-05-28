@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/beacon/params"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
@@ -80,6 +80,13 @@ func Register(stack *node.Node, backend *eth.Ethereum, cfg Config) (*Syncer, err
 
 // APIs return the collection of RPC services the ethereum package offers.
 // NOTE, some of these services probably need to be moved to somewhere else.
+func (s *Syncer) randomXEpochLength() uint64 {
+	if config := s.backend.BlockChain().Config(); config != nil && config.RandomX != nil && config.RandomX.EpochLength != 0 {
+		return config.RandomX.EpochLength
+	}
+	return params.DefaultRandomXConfig().EpochLength
+}
+
 func (s *Syncer) APIs() []rpc.API {
 	return []rpc.API{
 		{
@@ -144,7 +151,7 @@ func (s *Syncer) run() {
 				if mode := s.backend.Downloader().ConfigSyncMode(); mode != ethconfig.FullSync {
 					req.errc <- fmt.Errorf("unsupported syncmode %v, please relaunch geth with --syncmode full", mode)
 				} else {
-					req.errc <- s.backend.Downloader().BeaconDevSync(target)
+					req.errc <- s.backend.Downloader().RandomXSync(target)
 				}
 			}
 
@@ -163,12 +170,12 @@ func (s *Syncer) run() {
 				// Set the finalized and safe markers relative to the current head.
 				// The finalized marker is set two epochs behind the target,
 				// and the safe marker is set one epoch behind the target.
-				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - params.EpochLength*2); header != nil {
+				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - s.randomXEpochLength()*2); header != nil {
 					if final := s.backend.BlockChain().CurrentFinalBlock(); final == nil || final.Number.Cmp(header.Number) < 0 {
 						s.backend.BlockChain().SetFinalized(header)
 					}
 				}
-				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - params.EpochLength); header != nil {
+				if header := s.backend.BlockChain().GetHeaderByNumber(head.Number.Uint64() - s.randomXEpochLength()); header != nil {
 					if safe := s.backend.BlockChain().CurrentSafeBlock(); safe == nil || safe.Number.Cmp(header.Number) < 0 {
 						s.backend.BlockChain().SetSafe(header)
 					}

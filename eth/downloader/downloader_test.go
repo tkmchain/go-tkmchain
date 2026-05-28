@@ -427,7 +427,7 @@ func testCanonSync(t *testing.T, protocol uint, mode SyncMode) {
 	tester.newPeer("peer", protocol, chain.blocks[1:])
 
 	// Synchronise with the peer and make sure all relevant data was retrieved
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 		t.Fatalf("failed to beacon-sync chain: %v", err)
 	}
 	select {
@@ -461,7 +461,7 @@ func testThrottling(t *testing.T, protocol uint, mode SyncMode) {
 	// Start a synchronisation concurrently
 	errc := make(chan error, 1)
 	go func() {
-		errc <- tester.downloader.BeaconSync(testChainBase.blocks[len(testChainBase.blocks)-1].Header(), nil)
+		errc <- tester.downloader.RandomXSync(testChainBase.blocks[len(testChainBase.blocks)-1].Header())
 	}()
 	// Iteratively take some blocks, always checking the retrieval count
 	for {
@@ -538,7 +538,7 @@ func testCancel(t *testing.T, protocol uint, mode SyncMode) {
 		t.Errorf("download queue not idle")
 	}
 	// Synchronise with the peer, but cancel afterwards
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 		t.Fatalf("failed to synchronise blocks: %v", err)
 	}
 	<-complete
@@ -573,7 +573,7 @@ func testEmptyShortCircuit(t *testing.T, protocol uint, mode SyncMode) {
 		receiptsHave.Add(int32(len(headers)))
 	}
 
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 		t.Fatalf("failed to synchronise blocks: %v", err)
 	}
 	select {
@@ -619,18 +619,18 @@ func checkProgress(t *testing.T, d *Downloader, stage string, want ethereum.Sync
 
 // Tests that peers below a pre-configured checkpoint block are prevented from
 // being fast-synced from, avoiding potential cheap eclipse attacks.
-func TestBeaconSyncFull(t *testing.T) { testBeaconSync(t, eth.ETH69, FullSync) }
-func TestBeaconSyncSnap(t *testing.T) { testBeaconSync(t, eth.ETH69, SnapSync) }
+func TestRandomXSyncFull(t *testing.T) { testRandomXSync(t, eth.ETH69, FullSync) }
+func TestRandomXSyncSnap(t *testing.T) { testRandomXSync(t, eth.ETH69, SnapSync) }
 
-func testBeaconSync(t *testing.T, protocol uint, mode SyncMode) {
+func testRandomXSync(t *testing.T, protocol uint, mode SyncMode) {
 	var cases = []struct {
 		name  string // The name of testing scenario
 		local int    // The length of local chain(canonical chain assumed), 0 means genesis is the head
 	}{
-		{name: "Beacon sync since genesis", local: 0},
-		{name: "Beacon sync with short local chain", local: 1},
-		{name: "Beacon sync with long local chain", local: blockCacheMaxItems - 15 - fsMinFullBlocks/2},
-		{name: "Beacon sync with full local chain", local: blockCacheMaxItems - 15 - 1},
+		{name: "RandomX sync since genesis", local: 0},
+		{name: "RandomX sync with short local chain", local: 1},
+		{name: "RandomX sync with long local chain", local: blockCacheMaxItems - 15 - fsMinFullBlocks/2},
+		{name: "RandomX sync with full local chain", local: blockCacheMaxItems - 15 - 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -647,7 +647,7 @@ func testBeaconSync(t *testing.T, protocol uint, mode SyncMode) {
 			if c.local > 0 {
 				tester.chain.InsertChain(chain.blocks[1 : c.local+1])
 			}
-			if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+			if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 				t.Fatalf("Failed to beacon sync chain %v %v", c.name, err)
 			}
 			select {
@@ -685,7 +685,7 @@ func testSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 		faultyPeer.withholdBodies[header.Hash()] = struct{}{}
 	}
 
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)/2-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)/2-1].Header()); err != nil {
 		t.Fatalf("failed to beacon-sync chain: %v", err)
 	}
 	select {
@@ -701,7 +701,7 @@ func testSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 
 	// Synchronise all the blocks and check continuation progress
 	tester.newPeer("peer-full", protocol, chain.blocks[1:])
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 		t.Fatalf("failed to beacon-sync chain: %v", err)
 	}
 	startingBlock := uint64(len(chain.blocks)/2 - 1)
@@ -727,7 +727,7 @@ func TestInvalidBodyPeerDrop(t *testing.T) {
 	peer := tester.newPeer("corrupt", eth.ETH69, chain.blocks[1:])
 	peer.corruptBodies = true
 
-	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+	if err := tester.downloader.RandomXSync(chain.blocks[len(chain.blocks)-1].Header()); err != nil {
 		t.Fatalf("failed to beacon-sync chain: %v", err)
 	}
 	select {
