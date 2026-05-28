@@ -22,6 +22,7 @@ import (
 	"errors"
 	"maps"
 	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -110,6 +111,41 @@ type handlerConfig struct {
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 }
 
+type downloaderBlockChain struct {
+	*core.BlockChain
+}
+
+func (bc downloaderBlockChain) CurrentBlock() *types.Block {
+	header := bc.BlockChain.CurrentBlock()
+	if header == nil {
+		return nil
+	}
+	return bc.GetBlock(header.Hash(), header.Number.Uint64())
+}
+
+func (bc downloaderBlockChain) CurrentFastBlock() *types.Block {
+	return bc.CurrentBlock()
+}
+
+func (bc downloaderBlockChain) InsertHeaderChain(headers []*types.Header, _ int) (int, error) {
+	return bc.BlockChain.InsertHeaderChain(headers)
+}
+
+func (bc downloaderBlockChain) GetTd(common.Hash, uint64) *big.Int {
+	return new(big.Int)
+}
+
+func (bc downloaderBlockChain) FastSyncCommitHead(hash common.Hash) error {
+	return bc.SnapSyncComplete(hash)
+}
+
+func (bc downloaderBlockChain) Rollback([]common.Hash) {
+}
+
+func (bc downloaderBlockChain) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts) (int, error) {
+	return bc.BlockChain.InsertReceiptChain(blocks, types.EncodeBlockReceiptLists(receipts), 0)
+}
+
 type handler struct {
 	nodeID    enode.ID
 	networkID uint64
@@ -156,7 +192,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		handlerStartCh: make(chan struct{}),
 	}
 	// Construct the downloader (long sync)
-	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures)
+	h.downloader = downloader.New(config.Sync, 0, config.Database, nil, downloaderBlockChain{h.chain}, nil, h.removePeer)
+	h.downloader.SnapSyncer = snap.NewSyncer(config.Database, config.Chain.TrieDB().Scheme())
 
 	// If snap sync is requested but snapshots are disabled, fail loudly
 	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
@@ -273,7 +310,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		return errors.New("peer dropped during handling")
 	}
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
-	if err := h.downloader.RegisterPeer(peer.ID(), peer.Version(), peer); err != nil {
+	if err := h.downloader.RegisterPeer(peer.ID(), int(peer.Version()), p); err != nil {
 		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
 		return err
 	}

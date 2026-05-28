@@ -27,7 +27,9 @@ import (
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -99,6 +101,7 @@ type Downloader struct {
 	mode     SyncMode       // Synchronisation mode defining the strategy used (per sync cycle)
 	mux      *event.TypeMux // Event multiplexer to announce sync operation events
 	syncFeed event.Feed     // Event feed to track sync lifecycle events
+	SnapSyncer *snap.Syncer
 
 	checkpoint uint64   // Checkpoint block number to enforce head against (e.g. fast sync)
 	genesis    uint64   // Genesis block number to limit sync to (e.g. light client CHT)
@@ -242,10 +245,39 @@ func New(mode SyncMode, checkpoint uint64, stateDb ethdb.Database, mux *event.Ty
 			processed: 0,
 		},
 		trackStateReq: make(chan *stateReq),
+		SnapSyncer:    snap.NewSyncer(stateDb, rawdb.HashScheme),
 	}
 	go dl.qosTuner()
 	go dl.stateFetcher()
 	return dl
+}
+
+func (d *Downloader) ConfigSyncMode() SyncMode {
+	return d.mode
+}
+
+func (d *Downloader) BeaconSync(head *types.Header, _ interface{}) error {
+	return d.Synchronise("", head.Hash(), nil, d.mode)
+}
+
+func (d *Downloader) DeliverSnapPacket(peer *snap.Peer, packet snap.Packet) error {
+	switch packet := packet.(type) {
+	case *snap.AccountRangePacket:
+		hashes, accounts, err := packet.Unpack()
+		if err != nil {
+			return err
+		}
+		return d.SnapSyncer.OnAccounts(peer, packet.ID, hashes, accounts, packet.Proof)
+	case *snap.StorageRangesPacket:
+		hashes, slots := packet.Unpack()
+		return d.SnapSyncer.OnStorage(peer, packet.ID, hashes, slots, packet.Proof)
+	case *snap.ByteCodesPacket:
+		return d.SnapSyncer.OnByteCodes(peer, packet.ID, packet.Codes)
+	case *snap.TrieNodesPacket:
+		return d.SnapSyncer.OnTrieNodes(peer, packet.ID, packet.Nodes)
+	default:
+		return errors.New("unexpected snap packet")
+	}
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin

@@ -17,6 +17,8 @@
 package eth
 
 import (
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
@@ -39,6 +41,13 @@ type peerBlockRange struct {
 type ethPeer struct {
 	*eth.Peer
 	snapExt *snapPeer // Satellite `snap` connection
+}
+
+func (p *ethPeer) Head() (common.Hash, *big.Int) {
+	if br := p.BlockRange(); br != nil {
+		return br.LatestBlockHash, new(big.Int).SetUint64(br.LatestBlock)
+	}
+	return common.Hash{}, new(big.Int)
 }
 
 // info gathers and returns some `eth` protocol metadata known about a peer.
