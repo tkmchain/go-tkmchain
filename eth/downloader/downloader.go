@@ -608,9 +608,10 @@ func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
     p.log.Debug("Retrieving remote chain height")
     
     // Get the peer's head hash
-    head, _ := p.peer.Head()
+    head, td := p.peer.Head()
+    p.log.Debug("Got peer head", "hash", head, "td", td)
     
-    // Request the header by hash using nil sink (like other request methods)
+    // Request the header by hash using nil sink
     go p.peer.RequestHeadersByHash(head, 1, 0, false, nil)
     
     ttl := d.requestTTL()
@@ -628,6 +629,7 @@ func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
                 continue
             }
             headers := packet.(*headerPack).headers
+            p.log.Debug("Received headers from peer", "count", len(headers))
             if len(headers) == 0 {
                 p.log.Warn("Empty head header set")
                 return nil, errEmptyHeaderSet
