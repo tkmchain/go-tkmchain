@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
+        "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -604,17 +605,39 @@ func (d *Downloader) Terminate() {
 // fetchHeight retrieves the head header of the remote peer to aid in estimating
 // the total time a pending synchronisation would take.
 func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
-	p.log.Debug("Retrieving remote chain height")
-
-	head, _ := p.peer.Head()
-	headers, _, err := d.fetchHeadersByHash(p, head, 1, 0, false)
-	if err != nil {
-		return nil, err
-	}
-	if len(headers) != 1 {
-		return nil, errBadPeer
-	}
-	return headers[0], nil
+    p.log.Debug("Retrieving remote chain height")
+    
+    // Create a response sink of the correct type
+    sink := make(chan *eth.Response, 1)
+    
+    // Request the latest header - block number 0 typically returns the current head
+    go p.peer.RequestHeadersByNumber(0, 1, 0, false, sink)
+    
+    ttl := d.requestTTL()
+    timeout := time.After(ttl)
+    
+    select {
+    case resp := <-sink:
+        if resp == nil {
+            return nil, errBadPeer
+        }
+        // Extract headers from the response
+        headers, ok := resp.Res.([]*types.Header)
+        if !ok {
+            return nil, errBadPeer
+        }
+        if len(headers) != 1 {
+            return nil, errBadPeer
+        }
+        return headers[0], nil
+        
+    case <-timeout:
+        p.log.Debug("Waiting for remote chain height timed out", "elapsed", ttl)
+        return nil, errTimeout
+        
+    case <-d.cancelCh:
+        return nil, errCancelHeaderFetch
+    }
 }
 
 // calculateRequestSpan calculates what headers to request from a peer when trying to determine the
