@@ -24,6 +24,7 @@ import (
 
 var (
 	headerInMeter      = metrics.NewRegisteredMeter("eth/downloader/headers/in", nil)
+	headerDropMeter    = metrics.NewRegisteredMeter("eth/downloader/headers/drop", nil)
 	headerReqTimer     = metrics.NewRegisteredTimer("eth/downloader/headers/req", nil)
 	headerTimeoutMeter = metrics.NewRegisteredMeter("eth/downloader/headers/timeout", nil)
 
@@ -36,6 +37,9 @@ var (
 	receiptReqTimer     = metrics.NewRegisteredTimer("eth/downloader/receipts/req", nil)
 	receiptDropMeter    = metrics.NewRegisteredMeter("eth/downloader/receipts/drop", nil)
 	receiptTimeoutMeter = metrics.NewRegisteredMeter("eth/downloader/receipts/timeout", nil)
+
+	stateInMeter   = metrics.NewRegisteredMeter("eth/downloader/states/in", nil)
+	stateDropMeter = metrics.NewRegisteredMeter("eth/downloader/states/drop", nil)
 
 	throttleCounter = metrics.NewRegisteredCounter("eth/downloader/throttle", nil)
 )

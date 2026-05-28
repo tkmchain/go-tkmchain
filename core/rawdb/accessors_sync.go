@@ -17,11 +17,31 @@
 package rawdb
 
 import (
+	"encoding/binary"
+
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
+
+// ReadFastTrieProgress retrieves the number of trie nodes imported during fast sync.
+func ReadFastTrieProgress(db ethdb.KeyValueReader) uint64 {
+	data, _ := db.Get(fastTrieProgressKey)
+	if len(data) != 8 {
+		return 0
+	}
+	return binary.BigEndian.Uint64(data)
+}
+
+// WriteFastTrieProgress stores the number of trie nodes imported during fast sync.
+func WriteFastTrieProgress(db ethdb.KeyValueWriter, count uint64) {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], count)
+	if err := db.Put(fastTrieProgressKey, buf[:]); err != nil {
+		log.Crit("Failed to store fast trie progress", "err", err)
+	}
+}
 
 // ReadSkeletonSyncStatus retrieves the serialized sync status saved at shutdown.
 func ReadSkeletonSyncStatus(db ethdb.KeyValueReader) []byte {

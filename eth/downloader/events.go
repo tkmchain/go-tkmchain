@@ -37,3 +37,14 @@ type SyncEvent struct {
 	Err    error         // Set when Type is SyncFailed
 	Latest *types.Header // Set when Type is SyncCompleted
 }
+
+// StartEvent is posted into the legacy event mux when synchronisation starts.
+type StartEvent struct{}
+
+// DoneEvent is posted into the legacy event mux when synchronisation completes.
+type DoneEvent struct{}
+
+// FailedEvent is posted into the legacy event mux when synchronisation fails.
+type FailedEvent struct {
+	Err error
+}
