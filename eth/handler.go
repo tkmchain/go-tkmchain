@@ -666,14 +666,14 @@ func (st *blockRangeState) update(chain *core.BlockChain, latest *types.Header) 
 	})
 }
 
-// shouldSend decides whether it is time to send a block range update. We don't want to
-// send these updates constantly, so they will usually only be sent every 32 blocks.
-// However, there is a special case: if the range would move back, i.e. due to SetHead, we
-// want to send it immediately.
+// shouldSend decides whether it is time to send a block range update. Send updates
+// for every local head change so peers can start downloading newly mined blocks
+// without waiting for the periodic sync loop.
 func (st *blockRangeState) shouldSend() bool {
 	next := st.next.Load()
-	return next.LatestBlock < st.prev.LatestBlock ||
-		next.LatestBlock-st.prev.LatestBlock >= 32
+	return next.EarliestBlock != st.prev.EarliestBlock ||
+		next.LatestBlock != st.prev.LatestBlock ||
+		next.LatestBlockHash != st.prev.LatestBlockHash
 }
 
 func (st *blockRangeState) stop() {

@@ -662,7 +662,6 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	if err := update.Validate(); err != nil {
 		return err
 	}
-	// We don't do anything with these messages for now, just store them on the peer.
 	peer.lastRange.Store(&update)
-	return nil
+	return backend.Handle(peer, &update)
 }

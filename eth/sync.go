@@ -73,6 +73,20 @@ func (h *handler) synchroniseWithBestPeer() {
 	}
 }
 
+func (h *handler) synchroniseWithPeerRange(id string, update *eth.BlockRangeUpdatePacket) {
+	local := h.chain.CurrentBlock()
+	if local == nil || update.LatestBlock <= local.Number.Uint64() {
+		return
+	}
+	if h.peers.peer(id) == nil {
+		return
+	}
+	td := new(big.Int).SetUint64(update.LatestBlock)
+	if err := h.downloader.Synchronise(id, update.LatestBlockHash, td, downloader.FullSync); err == nil {
+		h.enableSyncedFeatures()
+	}
+}
+
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *eth.Peer) {
 	var hashes []common.Hash

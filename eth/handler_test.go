@@ -328,3 +328,42 @@ func closePeers(peers []*ethPeer) {
 		p.Close()
 	}
 }
+
+func TestBlockRangeShouldSendEveryHeadChange(t *testing.T) {
+	st := &blockRangeState{
+		prev: eth.BlockRangeUpdatePacket{
+			EarliestBlock:   0,
+			LatestBlock:     1,
+			LatestBlockHash: common.Hash{0x01},
+		},
+	}
+
+	st.next.Store(&eth.BlockRangeUpdatePacket{
+		EarliestBlock:   0,
+		LatestBlock:     2,
+		LatestBlockHash: common.Hash{0x02},
+	})
+	if !st.shouldSend() {
+		t.Fatal("expected block range update for single-block head advance")
+	}
+
+	st.prev = *st.next.Load()
+	st.next.Store(&eth.BlockRangeUpdatePacket{
+		EarliestBlock:   0,
+		LatestBlock:     2,
+		LatestBlockHash: common.Hash{0x03},
+	})
+	if !st.shouldSend() {
+		t.Fatal("expected block range update for same-height head hash change")
+	}
+
+	st.prev = *st.next.Load()
+	st.next.Store(&eth.BlockRangeUpdatePacket{
+		EarliestBlock:   0,
+		LatestBlock:     2,
+		LatestBlockHash: common.Hash{0x03},
+	})
+	if st.shouldSend() {
+		t.Fatal("did not expect block range update when the range is unchanged")
+	}
+}

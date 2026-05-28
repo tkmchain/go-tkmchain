@@ -81,6 +81,10 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return h.txFetcher.Enqueue(peer.ID(), txs, true)
 
+	case *eth.BlockRangeUpdatePacket:
+		go (*handler)(h).synchroniseWithPeerRange(peer.ID(), packet)
+		return nil
+
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
 	}
