@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -425,12 +426,12 @@ func (q *queue) ReserveHeaders(p *peerConnection, count int) *fetchRequest {
 	for send == 0 && !q.headerTaskQueue.Empty() {
 		from, _ := q.headerTaskQueue.Pop()
 		if q.headerPeerMiss[p.id] != nil {
-			if _, ok := q.headerPeerMiss[p.id][from.(uint64)]; ok {
-				skip = append(skip, from.(uint64))
+			if _, ok := q.headerPeerMiss[p.id][from]; ok {
+				skip = append(skip, from)
 				continue
 			}
 		}
-		send = from.(uint64)
+		send = from
 	}
 	// Merge all the skipped batches back
 	for _, from := range skip {
@@ -482,7 +483,7 @@ func (q *queue) ReserveReceipts(p *peerConnection, count int) (*fetchRequest, bo
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
+func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque[int64, *types.Header],
 	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, isNoop func(*types.Header) bool) (*fetchRequest, bool, error) {
 	// Short circuit if the pool has been depleted, or if the peer's already
 	// downloading something (sanity check not to corrupt state)
@@ -501,7 +502,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 
 	progress := false
 	for proc := 0; proc < space && len(send) < count && !taskQueue.Empty(); proc++ {
-		header := taskQueue.PopItem().(*types.Header)
+		header := taskQueue.PopItem()
 		hash := header.Hash()
 
 		// If we're the first to request this task, initialise the result container
@@ -562,7 +563,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 
 // CancelHeaders aborts a fetch request, returning all pending skeleton indexes to the queue.
 func (q *queue) CancelHeaders(request *fetchRequest) {
-	q.cancel(request, q.headerTaskQueue, q.headerPendPool)
+	q.cancelHeaders(request)
 }
 
 // CancelBodies aborts a body fetch request, returning all pending headers to the
@@ -577,14 +578,22 @@ func (q *queue) CancelReceipts(request *fetchRequest) {
 	q.cancel(request, q.receiptTaskQueue, q.receiptPendPool)
 }
 
-// Cancel aborts a fetch request, returning all pending hashes to the task queue.
-func (q *queue) cancel(request *fetchRequest, taskQueue *prque.Prque, pendPool map[string]*fetchRequest) {
+// cancelHeaders aborts a header fetch request, returning the pending skeleton index to the task queue.
+func (q *queue) cancelHeaders(request *fetchRequest) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	if request.From > 0 {
-		taskQueue.Push(request.From, -int64(request.From))
+		q.headerTaskQueue.Push(request.From, -int64(request.From))
 	}
+	delete(q.headerPendPool, request.Peer.id)
+}
+
+// cancel aborts a fetch request, returning all pending headers to the task queue.
+func (q *queue) cancel(request *fetchRequest, taskQueue *prque.Prque[int64, *types.Header], pendPool map[string]*fetchRequest) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
 	for _, header := range request.Headers {
 		taskQueue.Push(header, -int64(header.Number.Uint64()))
 	}
@@ -618,7 +627,7 @@ func (q *queue) ExpireHeaders(timeout time.Duration) map[string]int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	return q.expire(timeout, q.headerPendPool, q.headerTaskQueue, headerTimeoutMeter)
+	return q.expireHeaders(timeout)
 }
 
 // ExpireBodies checks for in flight block body requests that exceeded a timeout
@@ -645,7 +654,23 @@ func (q *queue) ExpireReceipts(timeout time.Duration) map[string]int {
 // Note, this method expects the queue lock to be already held. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest, taskQueue *prque.Prque, timeoutMeter metrics.Meter) map[string]int {
+func (q *queue) expireHeaders(timeout time.Duration) map[string]int {
+	// Iterate over the expired requests and return each to the queue.
+	expiries := make(map[string]int)
+	for id, request := range q.headerPendPool {
+		if time.Since(request.Time) > timeout {
+			headerTimeoutMeter.Mark(1)
+			if request.From > 0 {
+				q.headerTaskQueue.Push(request.From, -int64(request.From))
+			}
+			expiries[id] = len(request.Headers)
+			delete(q.headerPendPool, id)
+		}
+	}
+	return expiries
+}
+
+func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest, taskQueue *prque.Prque[int64, *types.Header], timeoutMeter *metrics.Meter) map[string]int {
 	// Iterate over the expired requests and return each to the queue
 	expiries := make(map[string]int)
 	for id, request := range pendPool {
@@ -653,10 +678,6 @@ func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest,
 			// Update the metrics with the timeout
 			timeoutMeter.Mark(1)
 
-			// Return any non satisfied requests to the pool
-			if request.From > 0 {
-				taskQueue.Push(request.From, -int64(request.From))
-			}
 			for _, header := range request.Headers {
 				taskQueue.Push(header, -int64(header.Number.Uint64()))
 			}
@@ -766,7 +787,7 @@ func (q *queue) DeliverBodies(id string, txLists [][]*types.Transaction, uncleLi
 	defer q.lock.Unlock()
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
-		if types.DeriveSha(types.Transactions(txLists[index])) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
+		if types.DeriveSha(types.Transactions(txLists[index]), trie.NewStackTrie(nil)) != header.TxHash || types.CalcUncleHash(uncleLists[index]) != header.UncleHash {
 			return errInvalidBody
 		}
 		result.Transactions = txLists[index]
@@ -784,7 +805,7 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 	defer q.lock.Unlock()
 
 	reconstruct := func(header *types.Header, index int, result *fetchResult) error {
-		if types.DeriveSha(types.Receipts(receiptList[index])) != header.ReceiptHash {
+		if types.DeriveSha(types.Receipts(receiptList[index]), trie.NewStackTrie(nil)) != header.ReceiptHash {
 			return errInvalidReceipt
 		}
 		result.Receipts = receiptList[index]
@@ -798,8 +819,8 @@ func (q *queue) DeliverReceipts(id string, receiptList [][]*types.Receipt) (int,
 // Note, this method expects the queue lock to be already held for writing. The
 // reason the lock is not obtained in here is because the parameters already need
 // to access the queue, so they already need a lock anyway.
-func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque,
-	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, reqTimer metrics.Timer,
+func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header, taskQueue *prque.Prque[int64, *types.Header],
+	pendPool map[string]*fetchRequest, donePool map[common.Hash]struct{}, reqTimer *metrics.Timer,
 	results int, reconstruct func(header *types.Header, index int, result *fetchResult) error) (int, error) {
 
 	// Short circuit if the data was never requested
