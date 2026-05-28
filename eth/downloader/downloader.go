@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
-        "github.com/ethereum/go-ethereum/eth/protocols/eth"
+//        "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -607,36 +607,38 @@ func (d *Downloader) Terminate() {
 func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
     p.log.Debug("Retrieving remote chain height")
     
-    // Create a response sink of the correct type
-    sink := make(chan *eth.Response, 1)
-    
-    // Request the latest header - block number 0 typically returns the current head
-    go p.peer.RequestHeadersByNumber(0, 1, 0, false, sink)
+    // Use the same pattern as findAncestor
+    go p.peer.RequestHeadersByNumber(0, 1, 0, false, nil)
     
     ttl := d.requestTTL()
     timeout := time.After(ttl)
     
-    select {
-    case resp := <-sink:
-        if resp == nil {
-            return nil, errBadPeer
+    for {
+        select {
+        case <-d.cancelCh:
+            return nil, errCancelHeaderFetch
+            
+        case packet := <-d.headerCh:
+            // Discard anything not from the origin peer
+            if packet.PeerId() != p.id {
+                log.Debug("Received headers from incorrect peer", "peer", packet.PeerId())
+                break
+            }
+            headers := packet.(*headerPack).headers
+            if len(headers) != 1 {
+                p.log.Warn("Unexpected number of headers", "count", len(headers))
+                return nil, errBadPeer
+            }
+            return headers[0], nil
+            
+        case <-timeout:
+            p.log.Debug("Waiting for head header timed out", "elapsed", ttl)
+            return nil, errTimeout
+            
+        case <-d.bodyCh:
+        case <-d.receiptCh:
+            // Out of bounds delivery, ignore
         }
-        // Extract headers from the response
-        headers, ok := resp.Res.([]*types.Header)
-        if !ok {
-            return nil, errBadPeer
-        }
-        if len(headers) != 1 {
-            return nil, errBadPeer
-        }
-        return headers[0], nil
-        
-    case <-timeout:
-        p.log.Debug("Waiting for remote chain height timed out", "elapsed", ttl)
-        return nil, errTimeout
-        
-    case <-d.cancelCh:
-        return nil, errCancelHeaderFetch
     }
 }
 
