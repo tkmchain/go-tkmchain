@@ -17,10 +17,61 @@
 package eth
 
 import (
+	"math/big"
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 )
+
+func (h *handler) chainSyncLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		h.synchroniseWithBestPeer()
+		select {
+		case <-ticker.C:
+		case <-h.quitSync:
+			return
+		}
+	}
+}
+
+func (h *handler) synchroniseWithBestPeer() {
+	local := h.chain.CurrentBlock()
+	if local == nil {
+		return
+	}
+	var best *ethPeer
+	var bestHead common.Hash
+	var bestHeight uint64
+	var bestTd = new(big.Int)
+	peers := h.peers.all()
+	for _, peer := range peers {
+		head, td := peer.Head()
+		if td == nil || !td.IsUint64() {
+			continue
+		}
+		if height := td.Uint64(); height > local.Number.Uint64() && height > bestHeight {
+			best = peer
+			bestHead = head
+			bestHeight = height
+			bestTd = td
+		}
+	}
+	if best == nil {
+		if len(peers) > 0 {
+			h.enableSyncedFeatures()
+		}
+		return
+	}
+	if err := h.downloader.Synchronise(best.ID(), bestHead, bestTd, downloader.FullSync); err == nil {
+		h.enableSyncedFeatures()
+	}
+}
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *eth.Peer) {

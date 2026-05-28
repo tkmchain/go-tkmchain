@@ -455,6 +455,11 @@ func (h *handler) Start(maxPeers int) {
 
 	// start sync handlers
 	h.txFetcher.Start()
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.chainSyncLoop()
+	}()
 
 	// start peer handler tracker
 	h.wg.Add(1)
