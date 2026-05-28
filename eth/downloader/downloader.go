@@ -196,6 +196,12 @@ type BlockChain interface {
 	// CurrentFastBlock retrieves the head fast block from the local chain.
 	CurrentFastBlock() *types.Block
 
+	// CurrentSnapBlock retrieves the current snap-sync head block of the canonical chain.
+	CurrentSnapBlock() *types.Header
+
+	// HasState verifies that the state trie is available.
+	HasState(common.Hash) bool
+
 	// FastSyncCommitHead directly commits the head block to a certain entity.
 	FastSyncCommitHead(common.Hash) error
 

@@ -166,6 +166,13 @@ func (p *peerConnection) FetchReceipts(req *fetchRequest) error {
 func (p *peerConnection) SetHeadersIdle(int)  {}
 func (p *peerConnection) SetBodiesIdle(int)   {}
 func (p *peerConnection) SetReceiptsIdle(int) {}
+func (p *peerConnection) SetNodeDataIdle(int) {}
+
+func (p *peerConnection) NodeDataCapacity(targetRTT time.Duration) int {
+	return p.BodyCapacity(targetRTT)
+}
+
+func (p *peerConnection) FetchNodeData([]common.Hash) {}
 
 // BlockCapacity is kept for compatibility with legacy downloader code paths.
 func (p *peerConnection) BlockCapacity(targetRTT time.Duration) int {
@@ -342,6 +349,42 @@ func (ps *peerSet) BodyIdlePeers(max int, targetRTT time.Duration) ([]*peerConne
 // ReceiptIdlePeers retrieves up to the requested amount of peers, sorted by receipt capacity.
 func (ps *peerSet) ReceiptIdlePeers(max int, targetRTT time.Duration) ([]*peerConnection, int) {
 	return ps.idlePeers(max, func(p *peerConnection) int { return p.ReceiptCapacity(targetRTT) })
+}
+
+func (ps *peerSet) NodeDataIdlePeers() ([]*peerConnection, int) {
+	return ps.idlePeers(0, func(p *peerConnection) int { return p.NodeDataCapacity(0) })
+}
+
+func (ps *peerSet) SubscribeNewPeers(ch chan<- *peerConnection) event.Subscription {
+	return ps.subscribePeers(ch, true)
+}
+
+func (ps *peerSet) SubscribePeerDrops(ch chan<- *peerConnection) event.Subscription {
+	return ps.subscribePeers(ch, false)
+}
+
+func (ps *peerSet) subscribePeers(ch chan<- *peerConnection, join bool) event.Subscription {
+	events := make(chan *peeringEvent, 16)
+	sub := ps.SubscribeEvents(events)
+	return event.NewSubscription(func(unsub <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case ev := <-events:
+				if ev != nil && ev.join == join {
+					select {
+					case ch <- ev.peer:
+					case <-unsub:
+						return nil
+					}
+				}
+			case err := <-sub.Err():
+				return err
+			case <-unsub:
+				return nil
+			}
+		}
+	})
 }
 
 func (ps *peerSet) idlePeers(max int, capFn func(*peerConnection) int) ([]*peerConnection, int) {

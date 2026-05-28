@@ -64,6 +64,22 @@ type fetchResult struct {
 	Receipts     types.Receipts
 }
 
+func newFetchResult(header *types.Header, snapSync bool) *fetchResult {
+	pending := 1
+	if snapSync {
+		pending = 2
+	}
+	return &fetchResult{
+		Pending: pending,
+		Hash:    header.Hash(),
+		Header:  header,
+	}
+}
+
+func (r *fetchResult) AllDone() bool {
+	return r.Pending == 0
+}
+
 // queue represents hashes that are either need fetching or are being fetched
 type queue struct {
 	mode SyncMode

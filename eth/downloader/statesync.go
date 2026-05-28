@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
@@ -232,6 +233,8 @@ type stateSync struct {
 // peers already attempted retrieval from to detect stalled syncs and abort.
 type stateTask struct {
 	attempts map[string]struct{}
+	path     string
+	code     bool
 }
 
 // newStateSync creates a new state trie download scheduler. This method does not
@@ -239,7 +242,7 @@ type stateTask struct {
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{
 		d:       d,
-		sched:   state.NewStateSync(root, d.stateDB),
+		sched:   state.NewStateSync(root, d.stateDB, nil, rawdb.HashScheme),
 		keccak:  sha3.NewLegacyKeccak256(),
 		tasks:   make(map[common.Hash]*stateTask),
 		deliver: make(chan *stateReq),
@@ -330,7 +333,7 @@ func (s *stateSync) commit(force bool) error {
 	}
 	start := time.Now()
 	b := s.d.stateDB.NewBatch()
-	if written, err := s.sched.Commit(b); written == 0 || err != nil {
+	if err := s.sched.Commit(b); err != nil {
 		return err
 	}
 	if err := b.Write(); err != nil {
@@ -371,9 +374,12 @@ func (s *stateSync) assignTasks() {
 func (s *stateSync) fillTasks(n int, req *stateReq) {
 	// Refill available tasks from the scheduler.
 	if len(s.tasks) < n {
-		new := s.sched.Missing(n - len(s.tasks))
-		for _, hash := range new {
-			s.tasks[hash] = &stateTask{make(map[string]struct{})}
+		nodePaths, nodeHashes, codeHashes := s.sched.Missing(n - len(s.tasks))
+		for i, hash := range nodeHashes {
+			s.tasks[hash] = &stateTask{attempts: make(map[string]struct{}), path: nodePaths[i]}
+		}
+		for _, hash := range codeHashes {
+			s.tasks[hash] = &stateTask{attempts: make(map[string]struct{}), code: true}
 		}
 	}
 	// Find tasks that haven't been tried with the request's peer.
@@ -412,7 +418,9 @@ func (s *stateSync) process(req *stateReq) (int, error) {
 
 	// Iterate over all the delivered data and inject one-by-one into the trie
 	for _, blob := range req.response {
-		_, hash, err := s.processNodeData(blob)
+		hash := common.BytesToHash(crypto.Keccak256(blob))
+		task := req.tasks[hash]
+		_, err := s.processNodeData(blob, hash, task)
 		switch err {
 		case nil:
 			s.numUncommitted++
@@ -452,13 +460,14 @@ func (s *stateSync) process(req *stateReq) (int, error) {
 // processNodeData tries to inject a trie node data blob delivered from a remote
 // peer into the state trie, returning whether anything useful was written or any
 // error occurred.
-func (s *stateSync) processNodeData(blob []byte) (bool, common.Hash, error) {
-	res := trie.SyncResult{Data: blob}
-	s.keccak.Reset()
-	s.keccak.Write(blob)
-	s.keccak.Sum(res.Hash[:0])
-	committed, _, err := s.sched.Process([]trie.SyncResult{res})
-	return committed, res.Hash, err
+func (s *stateSync) processNodeData(blob []byte, hash common.Hash, task *stateTask) (bool, error) {
+	if task == nil {
+		return false, trie.ErrNotRequested
+	}
+	if task.code {
+		return true, s.sched.ProcessCode(trie.CodeSyncResult{Hash: hash, Data: blob})
+	}
+	return true, s.sched.ProcessNode(trie.NodeSyncResult{Path: task.path, Data: blob})
 }
 
 // updateStats bumps the various state sync progress counters and displays a log
@@ -474,8 +483,5 @@ func (s *stateSync) updateStats(written, duplicate, unexpected int, duration tim
 
 	if written > 0 || duplicate > 0 || unexpected > 0 {
 		log.Info("Imported new state entries", "count", written, "elapsed", common.PrettyDuration(duration), "processed", s.d.syncStatsState.processed, "pending", s.d.syncStatsState.pending, "retry", len(s.tasks), "duplicate", s.d.syncStatsState.duplicate, "unexpected", s.d.syncStatsState.unexpected)
-	}
-	if written > 0 {
-		rawdb.WriteFastTrieProgress(s.d.stateDB, s.d.syncStatsState.processed)
 	}
 }
