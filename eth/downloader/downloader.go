@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
-//        "github.com/ethereum/go-ethereum/eth/protocols/eth"
+        "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -607,68 +607,58 @@ func (d *Downloader) Terminate() {
 func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
     p.log.Debug("Retrieving remote chain height")
     
-    // Original approach but with debug
-    head, _ := p.peer.Head()
-    p.log.Debug("Got peer head hash", "hash", head)
-    
-    headers, _, err := d.fetchHeadersByHash(p, head, 1, 0, false)
-    if err != nil {
-        p.log.Debug("fetchHeadersByHash failed", "err", err)
-        return nil, err
-    }
-    if len(headers) != 1 {
-        p.log.Debug("Unexpected number of headers", "count", len(headers))
-        return nil, errBadPeer
-    }
-    return headers[0], nil
-}
-/*func (d *Downloader) fetchHeight(p *peerConnection) (*types.Header, error) {
-    p.log.Debug("Retrieving remote chain height")
+    // Create the response sink
+    resCh := make(chan *eth.Response)
     
     // Get the peer's head hash
-    head, td := p.peer.Head()
-    p.log.Debug("Got peer head", "hash", head, "td", td)
+    head, _ := p.peer.Head()
     
-    // Request the header by hash using nil sink
-    go p.peer.RequestHeadersByHash(head, 1, 0, false, nil)
+    // Request the header by hash
+    req, err := p.peer.RequestHeadersByHash(head, 1, 0, false, resCh)
+    if err != nil {
+        return nil, err
+    }
+    defer req.Close()
     
+    // Wait for the response with timeout
     ttl := d.requestTTL()
     timeout := time.After(ttl)
     
-    for {
-        select {
-        case <-d.cancelCh:
-            return nil, errCancelHeaderFetch
-            
-        case packet := <-d.headerCh:
-            // Discard anything not from our peer
-            if packet.PeerId() != p.id {
-                log.Debug("Received headers from incorrect peer", "peer", packet.PeerId())
-                continue
-            }
-            headers := packet.(*headerPack).headers
-            p.log.Debug("Received headers from peer", "count", len(headers))
-            if len(headers) == 0 {
-                p.log.Warn("Empty head header set")
-                return nil, errEmptyHeaderSet
-            }
-            if len(headers) != 1 {
-                p.log.Warn("Unexpected number of headers", "count", len(headers))
-                return nil, errBadPeer
-            }
-            p.log.Debug("Successfully retrieved remote chain height", "number", headers[0].Number, "hash", headers[0].Hash())
-            return headers[0], nil
-            
-        case <-timeout:
-            p.log.Debug("Waiting for head header timed out", "elapsed", ttl)
-            return nil, errTimeout
-            
-        case <-d.bodyCh:
-        case <-d.receiptCh:
-            // Out of bounds delivery, ignore
+    select {
+    case <-timeout:
+        p.log.Debug("Waiting for remote chain height timed out", "elapsed", ttl)
+        return nil, errTimeout
+        
+    case res := <-resCh:
+        if res == nil {
+            p.log.Debug("Received nil response from peer")
+            return nil, errBadPeer
         }
+        
+        // Extract headers - the response is *eth.BlockHeadersRequest, not []*types.Header
+        headers, ok := res.Res.(*eth.BlockHeadersRequest)
+        if !ok {
+            p.log.Debug("Failed to extract headers from response", "type", fmt.Sprintf("%T", res.Res))
+            return nil, errBadPeer
+        }
+        
+        // Convert BlockHeadersRequest to []*types.Header
+        if headers == nil || len(*headers) != 1 {
+            p.log.Debug("Unexpected number of headers", "count", len(*headers))
+            return nil, errBadPeer
+        }
+        
+        // Signal done
+        res.Done <- nil
+        
+        header := (*headers)[0]
+        p.log.Debug("Successfully retrieved remote chain height", "number", header.Number, "hash", header.Hash())
+        return header, nil
+        
+    case <-d.cancelCh:
+        return nil, errCancelHeaderFetch
     }
-}*/
+}
 
 // calculateRequestSpan calculates what headers to request from a peer when trying to determine the
 // common ancestor.
