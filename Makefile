@@ -49,7 +49,7 @@ evm: randomx
 #? all: Build all packages and executables.
 all: randomx
 	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
-		$(GORUN) build/ci.go install
+		$(GORUN)  build/ci.go install
 
 #? test: Run the tests.
 test: all

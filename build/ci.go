@@ -258,7 +258,7 @@ func doInstall(cmdline []string) {
 		tc.Root = build.DownloadGo(csdb)
 	}
 	// Disable CLI markdown doc generation in release builds.
-	buildTags := []string{"urfave_cli_no_docs"}
+	buildTags := []string{"urfave_cli_no_docs", "randomx", "cgo"}
 
 	// Enable linking the CKZG library since we can make it work with additional flags.
 	if env.UbuntuVersion != "trusty" {
