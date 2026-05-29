@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	stdmath "math"
 	"math/big"
 	"os"
 	"reflect"
@@ -134,10 +133,6 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *t
 		tconf.HashDB = hashdb.Defaults
 	}
 
-	// if ttd is not specified, set an arbitrary huge value
-	if gspec.Config.TerminalTotalDifficulty == nil {
-		gspec.Config.TerminalTotalDifficulty = big.NewInt(stdmath.MaxInt64)
-	}
 	triedb := triedb.NewDatabase(db, tconf)
 	gblock, err := gspec.Commit(db, triedb, nil)
 	if err != nil {

@@ -56,7 +56,7 @@ func (test *DifficultyTest) Run(config *params.ChainConfig) error {
 		UncleHash:  test.UncleHash,
 	}
 
-	actual := randomx.CalcDifficulty(config, test.CurrentTimestamp, parent)
+	actual := randomx.CalcDifficulty(config, test.CurrentTimestamp, parent, nil)
 	exp := test.CurrentDifficulty
 
 	if actual.Cmp(exp) != 0 {
