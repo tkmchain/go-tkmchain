@@ -721,15 +721,6 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 	if current, ok := s.rkLocks[address]; !ok || unlock.After(current) {
 		s.rkLocks[address] = unlock
 	}
-	for _, existing := range s.kingAddresses {
-		if existing == address {
-			return
-		}
-	}
-	s.kingAddresses = append(s.kingAddresses, address)
-	if engine, ok := s.engine.(*randomx.RandomX); ok {
-		engine.AddRotatingKing(address)
-	}
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height
