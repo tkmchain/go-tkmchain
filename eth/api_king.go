@@ -22,6 +22,11 @@ var (
 	rkLockPeriod    = 30 * 24 * time.Hour
 )
 
+type rkLockInfo struct {
+	UnlockTime   time.Time
+	UnlockHeight uint64
+}
+
 type RKStatus struct {
 	Address       common.Address `json:"address"`
 	Registered    bool           `json:"registered"`
@@ -29,6 +34,7 @@ type RKStatus struct {
 	Next          bool           `json:"next"`
 	LockedAmount  *big.Int       `json:"lockedAmount"`
 	UnlockTime    *time.Time     `json:"unlockTime,omitempty"`
+	UnlockHeight  uint64         `json:"unlockHeight,omitempty"`
 	TotalReceived *big.Int       `json:"totalReceived"`
 }
 
@@ -63,7 +69,7 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	}
 	unlock := time.Now().UTC().Add(rkLockPeriod)
 	api.e.lock.Lock()
-	api.e.recordRotatingKingLocked(address, unlock)
+	api.e.recordRotatingKingLocked(address, unlock, api.e.unlockHeightForTime(unlock))
 	status := api.statusLocked(address)
 	api.e.lock.Unlock()
 
@@ -102,7 +108,7 @@ func (api *KingAPI) Status(address common.Address) RKStatus {
 }
 
 func (api *KingAPI) statusLocked(address common.Address) RKStatus {
-	unlock, locked := api.e.rkLocks[address]
+	lockInfo, locked := api.e.rkLocks[address]
 	registered := locked
 	for _, addr := range api.e.kingAddresses {
 		if addr == address {
@@ -122,8 +128,9 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 		status.LockedAmount.Set(rkRequiredStake)
 	}
 	if locked {
-		unlockCopy := unlock
+		unlockCopy := lockInfo.UnlockTime
 		status.UnlockTime = &unlockCopy
+		status.UnlockHeight = lockInfo.UnlockHeight
 	}
 	return status
 }

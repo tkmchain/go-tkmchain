@@ -31,6 +31,9 @@ var (
 	// databaseVersionKey tracks the current database version.
 	databaseVersionKey = []byte("DatabaseVersion")
 
+	// rotatingKingLocksKey tracks dynamically registered rotating kings and their unlock times.
+	rotatingKingLocksKey = []byte("RotatingKingLocks")
+
 	// headHeaderKey tracks the latest known header's hash.
 	headHeaderKey = []byte("LastHeader")
 

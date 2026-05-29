@@ -120,7 +120,7 @@ type Ethereum struct {
 	// Rotating King configuration
 	mainKingAddress    common.Address
 	kingAddresses      []common.Address
-	rkLocks            map[common.Address]time.Time
+	rkLocks            map[common.Address]rkLockInfo
 	miningStartPending bool
 }
 
@@ -239,8 +239,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
 		mainKingAddress: mainKingAddress,
 		kingAddresses:   kingAddresses,
-		rkLocks:         make(map[common.Address]time.Time),
+		rkLocks:         make(map[common.Address]rkLockInfo),
 	}
+	eth.loadRotatingKingLocks()
 
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
@@ -714,13 +715,65 @@ func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.recordRotatingKingLocked(address, unlock)
+	s.recordRotatingKingLocked(address, unlock, s.unlockHeightForTime(unlock))
 }
 
-func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.Time) {
-	if current, ok := s.rkLocks[address]; !ok || unlock.After(current) {
-		s.rkLocks[address] = unlock
+func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.Time, unlockHeight uint64) {
+	if address == (common.Address{}) {
+		return
 	}
+	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight}
+	if current, ok := s.rkLocks[address]; ok {
+		if info.UnlockTime.Before(current.UnlockTime) {
+			info.UnlockTime = current.UnlockTime
+		}
+		if info.UnlockHeight < current.UnlockHeight {
+			info.UnlockHeight = current.UnlockHeight
+		}
+		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight {
+			return
+		}
+	}
+	s.rkLocks[address] = info
+	s.persistRotatingKingLocksLocked()
+}
+
+func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return 0
+	}
+	now := time.Now()
+	seconds := uint64(0)
+	if unlock.After(now) {
+		seconds = uint64(unlock.Sub(now).Seconds())
+	}
+	blocks := seconds / uint64(randomx.TargetBlockTimeSeconds)
+	if seconds%uint64(randomx.TargetBlockTimeSeconds) != 0 {
+		blocks++
+	}
+	return head.Number.Uint64() + blocks
+}
+
+func (s *Ethereum) loadRotatingKingLocks() {
+	for _, lock := range rawdb.ReadRotatingKingLocks(s.chainDb) {
+		s.rkLocks[lock.Address] = rkLockInfo{
+			UnlockTime:   time.Unix(int64(lock.UnlockTime), 0).UTC(),
+			UnlockHeight: lock.UnlockHeight,
+		}
+	}
+}
+
+func (s *Ethereum) persistRotatingKingLocksLocked() {
+	locks := make([]rawdb.RotatingKingLock, 0, len(s.rkLocks))
+	for address, info := range s.rkLocks {
+		locks = append(locks, rawdb.RotatingKingLock{
+			Address:      address,
+			UnlockTime:   uint64(info.UnlockTime.Unix()),
+			UnlockHeight: info.UnlockHeight,
+		})
+	}
+	rawdb.WriteRotatingKingLocks(s.chainDb, locks)
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height

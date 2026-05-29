@@ -53,6 +53,38 @@ func WriteDatabaseVersion(db ethdb.KeyValueWriter, version uint64) {
 	}
 }
 
+// RotatingKingLock stores one dynamically registered rotating king lock.
+type RotatingKingLock struct {
+	Address      common.Address
+	UnlockTime   uint64
+	UnlockHeight uint64
+}
+
+// ReadRotatingKingLocks retrieves dynamically registered rotating king locks.
+func ReadRotatingKingLocks(db ethdb.KeyValueReader) []RotatingKingLock {
+	data, _ := db.Get(rotatingKingLocksKey)
+	if len(data) == 0 {
+		return nil
+	}
+	var locks []RotatingKingLock
+	if err := rlp.DecodeBytes(data, &locks); err != nil {
+		log.Error("Invalid rotating king locks RLP", "err", err)
+		return nil
+	}
+	return locks
+}
+
+// WriteRotatingKingLocks stores dynamically registered rotating king locks.
+func WriteRotatingKingLocks(db ethdb.KeyValueWriter, locks []RotatingKingLock) {
+	data, err := rlp.EncodeToBytes(locks)
+	if err != nil {
+		log.Crit("Failed to encode rotating king locks", "err", err)
+	}
+	if err := db.Put(rotatingKingLocksKey, data); err != nil {
+		log.Crit("Failed to store rotating king locks", "err", err)
+	}
+}
+
 // ReadChainConfig retrieves the consensus settings based on the given genesis hash.
 func ReadChainConfig(db ethdb.KeyValueReader, hash common.Hash) *params.ChainConfig {
 	data, _ := db.Get(configKey(hash))
