@@ -8,7 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 )
 
-func TestRecordRotatingKingLockedDoesNotChangeActiveSchedule(t *testing.T) {
+func TestRecordRotatingKingLockedAddsPendingAddress(t *testing.T) {
 	active := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	pending := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	eth := &Ethereum{
@@ -21,20 +21,45 @@ func TestRecordRotatingKingLockedDoesNotChangeActiveSchedule(t *testing.T) {
 	unlockHeight := uint64(100)
 	eth.recordRotatingKingLocked(pending, unlock, unlockHeight)
 
-	if len(eth.kingAddresses) != 1 || eth.kingAddresses[0] != active {
-		t.Fatalf("active rotating king schedule changed: %v", eth.kingAddresses)
+	if len(eth.kingAddresses) != 2 || eth.kingAddresses[0] != active || eth.kingAddresses[1] != pending {
+		t.Fatalf("active rotating king schedule = %v, want [%v %v]", eth.kingAddresses, active, pending)
 	}
 	if got := eth.rkLocks[pending]; !got.UnlockTime.Equal(unlock) || got.UnlockHeight != unlockHeight {
 		t.Fatalf("pending rotating king lock = %v, want unlock %v height %d", got, unlock, unlockHeight)
 	}
 	reloaded := &Ethereum{
-		chainDb: rawdb.NewMemoryDatabase(),
-		rkLocks: make(map[common.Address]rkLockInfo),
+		chainDb:       rawdb.NewMemoryDatabase(),
+		kingAddresses: []common.Address{active},
+		rkLocks:       make(map[common.Address]rkLockInfo),
 	}
 	reloaded.chainDb = eth.chainDb
 	reloaded.loadRotatingKingLocks()
 	if got := reloaded.rkLocks[pending]; !got.UnlockTime.Equal(unlock) || got.UnlockHeight != unlockHeight {
 		t.Fatalf("reloaded rotating king lock = %v, want unlock %v height %d", got, unlock, unlockHeight)
+	}
+	if len(reloaded.kingAddresses) != 2 || reloaded.kingAddresses[0] != active || reloaded.kingAddresses[1] != pending {
+		t.Fatalf("reloaded rotating king schedule = %v, want [%v %v]", reloaded.kingAddresses, active, pending)
+	}
+}
+
+func TestRotatingKingAtActivatesLockedAddressAtNextRotation(t *testing.T) {
+	active := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	pending := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	eth := &Ethereum{
+		kingAddresses: []common.Address{active, pending},
+		rkLocks: map[common.Address]rkLockInfo{
+			pending: {ActivationHeight: 400},
+		},
+	}
+
+	if got := eth.rotatingKingAt(399); got != active {
+		t.Fatalf("rotating king at 399 = %v, want %v", got, active)
+	}
+	if got := eth.rotatingKingAt(400); got != pending {
+		t.Fatalf("rotating king at 400 = %v, want %v", got, pending)
+	}
+	if got := eth.rotatingKingAt(500); got != active {
+		t.Fatalf("rotating king at 500 = %v, want %v", got, active)
 	}
 }
 

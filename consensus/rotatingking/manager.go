@@ -35,11 +35,12 @@ type RotatingKingManager struct {
 // NewRotatingKingManager creates a new rotating king manager
 func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Address, rotationInterval uint64) *RotatingKingManager {
 	config := &RotatingKingConfig{
-		RotationInterval: rotationInterval,
-		RotationOffset:   0,
-		KingAddresses:    kingAddresses,
-		ActivationDelay:  2,
-		MinStakeRequired: new(big.Int).Set(EligibilityThreshold),
+		RotationInterval:  rotationInterval,
+		RotationOffset:    0,
+		KingAddresses:     kingAddresses,
+		ActivationHeights: make(map[common.Address]uint64),
+		ActivationDelay:   2,
+		MinStakeRequired:  new(big.Int).Set(EligibilityThreshold),
 	}
 
 	state := &RotatingKingState{
@@ -94,15 +95,52 @@ func (m *RotatingKingManager) GetKingAtHeight(blockHeight uint64) common.Address
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if len(m.config.KingAddresses) == 0 {
+	return m.kingAtHeightLocked(blockHeight)
+}
+
+func (m *RotatingKingManager) kingAtHeightLocked(blockHeight uint64) common.Address {
+	active := m.activeKingAddressesAtLocked(0)
+	if len(active) == 0 {
 		return common.Address{}
 	}
+	current := active[0]
 	interval := m.config.RotationInterval
 	if interval == 0 {
 		interval = 100
 	}
-	index := (blockHeight / interval) % uint64(len(m.config.KingAddresses))
-	return m.config.KingAddresses[index]
+	for height := interval; height <= blockHeight; height += interval {
+		active = m.activeKingAddressesAtLocked(height)
+		if len(active) == 0 {
+			return common.Address{}
+		}
+		index := indexOfKingAddress(active, current)
+		if index < 0 {
+			current = active[0]
+			continue
+		}
+		current = active[(index+1)%len(active)]
+	}
+	return current
+}
+
+func (m *RotatingKingManager) activeKingAddressesAtLocked(blockHeight uint64) []common.Address {
+	active := make([]common.Address, 0, len(m.config.KingAddresses))
+	for _, address := range m.config.KingAddresses {
+		if activationHeight := m.config.ActivationHeights[address]; activationHeight > blockHeight {
+			continue
+		}
+		active = append(active, address)
+	}
+	return active
+}
+
+func indexOfKingAddress(addresses []common.Address, address common.Address) int {
+	for index, candidate := range addresses {
+		if candidate == address {
+			return index
+		}
+	}
+	return -1
 }
 
 // SetRotationInterval updates how many blocks each rotating king receives rewards for.
@@ -118,6 +156,11 @@ func (m *RotatingKingManager) SetRotationInterval(interval uint64) {
 
 // AddKingAddress registers an address in the rotating king list if it is not present.
 func (m *RotatingKingManager) AddKingAddress(address common.Address) {
+	m.AddKingAddressAt(address, 0)
+}
+
+// AddKingAddressAt registers an address in the rotating king list from activationHeight onward.
+func (m *RotatingKingManager) AddKingAddressAt(address common.Address, activationHeight uint64) {
 	if address == (common.Address{}) {
 		return
 	}
@@ -125,10 +168,16 @@ func (m *RotatingKingManager) AddKingAddress(address common.Address) {
 	defer m.mu.Unlock()
 	for _, existing := range m.config.KingAddresses {
 		if existing == address {
+			if currentHeight, ok := m.config.ActivationHeights[address]; ok && activationHeight != 0 && activationHeight < currentHeight {
+				m.config.ActivationHeights[address] = activationHeight
+			}
 			return
 		}
 	}
 	m.config.KingAddresses = append(m.config.KingAddresses, address)
+	if activationHeight != 0 {
+		m.config.ActivationHeights[address] = activationHeight
+	}
 }
 
 // ShouldRotate checks if rotation should occur at the given block height

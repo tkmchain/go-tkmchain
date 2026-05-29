@@ -479,8 +479,13 @@ func (r *RandomX) SetRotationInterval(interval uint64) {
 
 // AddRotatingKing adds an address to the RandomX rotating king reward schedule.
 func (r *RandomX) AddRotatingKing(address common.Address) {
+	r.AddRotatingKingAt(address, 0)
+}
+
+// AddRotatingKingAt adds an address to the RandomX rotating king reward schedule from activationHeight onward.
+func (r *RandomX) AddRotatingKingAt(address common.Address, activationHeight uint64) {
 	if r.rotatingKing != nil {
-		r.rotatingKing.AddKingAddress(address)
+		r.rotatingKing.AddKingAddressAt(address, activationHeight)
 	}
 }
 

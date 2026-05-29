@@ -722,7 +722,11 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 	if address == (common.Address{}) {
 		return
 	}
-	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight}
+	activationHeight := uint64(0)
+	if indexOfRotatingKing(s.kingAddresses, address) < 0 {
+		activationHeight = s.nextRotatingKingActivationHeight()
+	}
+	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight, ActivationHeight: activationHeight}
 	if current, ok := s.rkLocks[address]; ok {
 		if info.UnlockTime.Before(current.UnlockTime) {
 			info.UnlockTime = current.UnlockTime
@@ -730,12 +734,55 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 		if info.UnlockHeight < current.UnlockHeight {
 			info.UnlockHeight = current.UnlockHeight
 		}
-		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight {
+		if current.ActivationHeight != 0 && (info.ActivationHeight == 0 || current.ActivationHeight < info.ActivationHeight) {
+			info.ActivationHeight = current.ActivationHeight
+		}
+		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight {
 			return
 		}
 	}
 	s.rkLocks[address] = info
+	s.addRotatingKingAddressLocked(address)
 	s.persistRotatingKingLocksLocked()
+}
+
+func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {
+	activationHeight := uint64(0)
+	if lockInfo, locked := s.rkLocks[address]; locked {
+		activationHeight = lockInfo.ActivationHeight
+	}
+	for _, existing := range s.kingAddresses {
+		if existing == address {
+			s.addRotatingKingToEngine(address, activationHeight)
+			return
+		}
+	}
+	s.kingAddresses = append(s.kingAddresses, address)
+	s.addRotatingKingToEngine(address, activationHeight)
+}
+
+func (s *Ethereum) addRotatingKingToEngine(address common.Address, activationHeight uint64) {
+	if engine, ok := s.engine.(interface {
+		AddRotatingKingAt(common.Address, uint64)
+	}); ok {
+		engine.AddRotatingKingAt(address, activationHeight)
+		return
+	}
+	if engine, ok := s.engine.(interface{ AddRotatingKing(common.Address) }); ok {
+		engine.AddRotatingKing(address)
+	}
+}
+
+func (s *Ethereum) nextRotatingKingActivationHeight() uint64 {
+	if s.blockchain == nil {
+		return 0
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return 0
+	}
+	interval := s.rotatingKingInterval()
+	return ((head.Number.Uint64() / interval) + 1) * interval
 }
 
 func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
@@ -758,9 +805,11 @@ func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 func (s *Ethereum) loadRotatingKingLocks() {
 	for _, lock := range rawdb.ReadRotatingKingLocks(s.chainDb) {
 		s.rkLocks[lock.Address] = rkLockInfo{
-			UnlockTime:   time.Unix(int64(lock.UnlockTime), 0).UTC(),
-			UnlockHeight: lock.UnlockHeight,
+			UnlockTime:       time.Unix(int64(lock.UnlockTime), 0).UTC(),
+			UnlockHeight:     lock.UnlockHeight,
+			ActivationHeight: lock.ActivationHeight,
 		}
+		s.addRotatingKingAddressLocked(lock.Address)
 	}
 }
 
@@ -768,9 +817,10 @@ func (s *Ethereum) persistRotatingKingLocksLocked() {
 	locks := make([]rawdb.RotatingKingLock, 0, len(s.rkLocks))
 	for address, info := range s.rkLocks {
 		locks = append(locks, rawdb.RotatingKingLock{
-			Address:      address,
-			UnlockTime:   uint64(info.UnlockTime.Unix()),
-			UnlockHeight: info.UnlockHeight,
+			Address:          address,
+			UnlockTime:       uint64(info.UnlockTime.Unix()),
+			UnlockHeight:     info.UnlockHeight,
+			ActivationHeight: info.ActivationHeight,
 		})
 	}
 	rawdb.WriteRotatingKingLocks(s.chainDb, locks)
@@ -796,12 +846,45 @@ func (s *Ethereum) getNextRotatingKing() common.Address {
 }
 
 func (s *Ethereum) rotatingKingAt(blockNum uint64) common.Address {
-	if len(s.kingAddresses) == 0 {
+	active := s.activeRotatingKingsAt(0)
+	if len(active) == 0 {
 		return common.Address{}
 	}
+	current := active[0]
 	interval := s.rotatingKingInterval()
-	index := (blockNum / interval) % uint64(len(s.kingAddresses))
-	return s.kingAddresses[index]
+	for height := interval; height <= blockNum; height += interval {
+		active = s.activeRotatingKingsAt(height)
+		if len(active) == 0 {
+			return common.Address{}
+		}
+		index := indexOfRotatingKing(active, current)
+		if index < 0 {
+			current = active[0]
+			continue
+		}
+		current = active[(index+1)%len(active)]
+	}
+	return current
+}
+
+func (s *Ethereum) activeRotatingKingsAt(blockNum uint64) []common.Address {
+	active := make([]common.Address, 0, len(s.kingAddresses))
+	for _, address := range s.kingAddresses {
+		if lockInfo, locked := s.rkLocks[address]; locked && lockInfo.ActivationHeight > blockNum {
+			continue
+		}
+		active = append(active, address)
+	}
+	return active
+}
+
+func indexOfRotatingKing(addresses []common.Address, address common.Address) int {
+	for index, candidate := range addresses {
+		if candidate == address {
+			return index
+		}
+	}
+	return -1
 }
 
 func (s *Ethereum) nextRotationHeight(address common.Address) (uint64, bool) {
@@ -812,7 +895,16 @@ func (s *Ethereum) nextRotationHeight(address common.Address) (uint64, bool) {
 	if head == nil {
 		return 0, false
 	}
-	return nextRotationHeight(head.Number.Uint64(), s.rotatingKingInterval(), s.kingAddresses, address)
+	if indexOfRotatingKing(s.kingAddresses, address) < 0 {
+		return 0, false
+	}
+	blockNum := head.Number.Uint64()
+	interval := s.rotatingKingInterval()
+	for height := ((blockNum / interval) + 1) * interval; ; height += interval {
+		if s.rotatingKingAt(height) == address {
+			return height, true
+		}
+	}
 }
 
 func nextRotationHeight(blockNum uint64, interval uint64, kingAddresses []common.Address, address common.Address) (uint64, bool) {
@@ -822,29 +914,30 @@ func nextRotationHeight(blockNum uint64, interval uint64, kingAddresses []common
 	if interval == 0 {
 		interval = 100
 	}
-	targetIndex := -1
-	for index, kingAddress := range kingAddresses {
-		if kingAddress == address {
-			targetIndex = index
-			break
-		}
-	}
-	if targetIndex < 0 {
+	if indexOfRotatingKing(kingAddresses, address) < 0 {
 		return 0, false
 	}
-
-	rotationRound := blockNum / interval
-	currentIndex := int(rotationRound % uint64(len(kingAddresses)))
-	roundsUntilRotation := (targetIndex - currentIndex + len(kingAddresses)) % len(kingAddresses)
-	if roundsUntilRotation == 0 {
-		roundsUntilRotation = len(kingAddresses)
+	for height := ((blockNum / interval) + 1) * interval; ; height += interval {
+		if rotatingKingAtHeight(height, interval, kingAddresses) == address {
+			return height, true
+		}
 	}
-	return (rotationRound + uint64(roundsUntilRotation)) * interval, true
+}
+
+func rotatingKingAtHeight(blockNum uint64, interval uint64, kingAddresses []common.Address) common.Address {
+	if len(kingAddresses) == 0 {
+		return common.Address{}
+	}
+	if interval == 0 {
+		interval = 100
+	}
+	index := (blockNum / interval) % uint64(len(kingAddresses))
+	return kingAddresses[index]
 }
 
 func (s *Ethereum) rotatingKingInterval() uint64 {
 	interval := uint64(100)
-	if s.blockchain.Config().RotatingKingRotationInterval > 0 {
+	if s.blockchain != nil && s.blockchain.Config().RotatingKingRotationInterval > 0 {
 		interval = s.blockchain.Config().RotatingKingRotationInterval
 	}
 	return interval

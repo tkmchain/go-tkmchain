@@ -23,8 +23,9 @@ var (
 )
 
 type rkLockInfo struct {
-	UnlockTime   time.Time
-	UnlockHeight uint64
+	UnlockTime       time.Time
+	UnlockHeight     uint64
+	ActivationHeight uint64
 }
 
 type RKStatus struct {

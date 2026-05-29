@@ -40,11 +40,12 @@ type MonitoringCategory struct {
 
 // RotatingKingConfig holds configuration for the rotating king system
 type RotatingKingConfig struct {
-	RotationInterval uint64           `json:"rotationInterval"`
-	RotationOffset   uint64           `json:"rotationOffset"`
-	KingAddresses    []common.Address `json:"kingAddresses"`
-	ActivationDelay  uint64           `json:"activationDelay"`
-	MinStakeRequired *big.Int         `json:"minStakeRequired"`
+	RotationInterval  uint64                    `json:"rotationInterval"`
+	RotationOffset    uint64                    `json:"rotationOffset"`
+	KingAddresses     []common.Address          `json:"kingAddresses"`
+	ActivationHeights map[common.Address]uint64 `json:"activationHeights"`
+	ActivationDelay   uint64                    `json:"activationDelay"`
+	MinStakeRequired  *big.Int                  `json:"minStakeRequired"`
 }
 
 // RewardDistribution defines how rewards are split
