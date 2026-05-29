@@ -118,9 +118,10 @@ type Ethereum struct {
 	shutdownTracker *shutdowncheck.ShutdownTracker // Tracks if and when the node has shutdown ungracefully
 
 	// Rotating King configuration
-	mainKingAddress common.Address
-	kingAddresses   []common.Address
-	rkLocks         map[common.Address]time.Time
+	mainKingAddress    common.Address
+	kingAddresses      []common.Address
+	rkLocks            map[common.Address]time.Time
+	miningStartPending bool
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -214,6 +215,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	engine, err := randomx.New(chainConfig.RandomX, config.RandomXMinerThreads, mainKingAddress, kingAddresses)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RandomX engine: %w", err)
+	}
+	if chainConfig.RotatingKingRotationInterval > 0 {
+		engine.SetRotationInterval(chainConfig.RotatingKingRotationInterval)
 	}
 
 	// Set networkID to chainID by default
@@ -528,20 +532,94 @@ func (s *Ethereum) GetMainKingAddress() common.Address {
 
 // GetKingAddresses returns all rotating king addresses
 func (s *Ethereum) GetKingAddresses() []common.Address {
-	return s.kingAddresses
+	addresses := make([]common.Address, len(s.kingAddresses))
+	copy(addresses, s.kingAddresses)
+	return addresses
 }
 
-// StartMining starts the RandomX miner with the configured settings
+// StartMining starts the RandomX miner with the configured settings. If the node is
+// still alone or behind a connected peer, mining is deferred until peer sync catches up.
 func (s *Ethereum) StartMining() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	// Check if mining is enabled in config
 	if !s.config.Miner.Enabled {
 		log.Info("Mining is not enabled in config, use --mine flag to enable")
 		return nil
 	}
+	if s.miner.Mining() {
+		return nil
+	}
+	if ready, reason, local, highest := s.readyToMine(); !ready {
+		if !s.miningStartPending {
+			s.miningStartPending = true
+			go s.waitForMiningReady()
+		}
+		log.Info("RandomX mining deferred", "reason", reason, "local", local, "peerHeight", highest)
+		return nil
+	}
+	return s.startMiningLocked()
+}
 
+func (s *Ethereum) waitForMiningReady() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.lock.Lock()
+			if !s.miningStartPending || !s.config.Miner.Enabled || s.miner.Mining() {
+				s.miningStartPending = false
+				s.lock.Unlock()
+				return
+			}
+			if ready, reason, local, highest := s.readyToMine(); ready {
+				s.miningStartPending = false
+				if err := s.startMiningLocked(); err != nil {
+					log.Error("Failed to start deferred RandomX mining", "error", err)
+				}
+				s.lock.Unlock()
+				return
+			} else {
+				log.Debug("RandomX mining still deferred", "reason", reason, "local", local, "peerHeight", highest)
+			}
+			s.lock.Unlock()
+		case <-s.handler.quitSync:
+			s.lock.Lock()
+			s.miningStartPending = false
+			s.lock.Unlock()
+			return
+		}
+	}
+}
+
+func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
+	localHead := s.blockchain.CurrentBlock()
+	if localHead == nil {
+		return false, "no local head", 0, 0
+	}
+	localHeight := localHead.Number.Uint64()
+	if s.handler == nil || s.handler.peers.len() == 0 {
+		return false, "waiting for peer", localHeight, localHeight
+	}
+	highest := localHeight
+	for _, peer := range s.handler.peers.all() {
+		_, td := peer.Head()
+		if td == nil || !td.IsUint64() {
+			continue
+		}
+		if height := td.Uint64(); height > highest {
+			highest = height
+		}
+	}
+	if highest > localHeight {
+		return false, "syncing before mining", localHeight, highest
+	}
+	return true, "", localHeight, highest
+}
+
+func (s *Ethereum) startMiningLocked() error {
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {
 		s.miner.SetEtherbase(s.config.Miner.Etherbase)
@@ -579,6 +657,7 @@ func (s *Ethereum) StopMining() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	s.miningStartPending = false
 	if !s.miner.Mining() {
 		return nil
 	}
@@ -629,6 +708,10 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 }
 
 func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
+	minimumUnlock := time.Now().UTC().Add(rkLockPeriod)
+	if unlock.Before(minimumUnlock) {
+		unlock = minimumUnlock
+	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.recordRotatingKingLocked(address, unlock)
@@ -644,6 +727,9 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 		}
 	}
 	s.kingAddresses = append(s.kingAddresses, address)
+	if engine, ok := s.engine.(*randomx.RandomX); ok {
+		engine.AddRotatingKing(address)
+	}
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height
@@ -651,16 +737,35 @@ func (s *Ethereum) getCurrentRotatingKing() common.Address {
 	if len(s.kingAddresses) == 0 {
 		return common.Address{}
 	}
+	blockNum := s.blockchain.CurrentBlock().Number.Uint64()
+	return s.rotatingKingAt(blockNum)
+}
 
-	// Get rotation interval from chain config or use default
+func (s *Ethereum) getNextRotatingKing() common.Address {
+	if len(s.kingAddresses) == 0 {
+		return common.Address{}
+	}
+	blockNum := s.blockchain.CurrentBlock().Number.Uint64()
+	interval := s.rotatingKingInterval()
+	nextRotation := ((blockNum / interval) + 1) * interval
+	return s.rotatingKingAt(nextRotation)
+}
+
+func (s *Ethereum) rotatingKingAt(blockNum uint64) common.Address {
+	if len(s.kingAddresses) == 0 {
+		return common.Address{}
+	}
+	interval := s.rotatingKingInterval()
+	index := (blockNum / interval) % uint64(len(s.kingAddresses))
+	return s.kingAddresses[index]
+}
+
+func (s *Ethereum) rotatingKingInterval() uint64 {
 	interval := uint64(100)
 	if s.blockchain.Config().RotatingKingRotationInterval > 0 {
 		interval = s.blockchain.Config().RotatingKingRotationInterval
 	}
-
-	blockNum := s.blockchain.CurrentBlock().Number.Uint64()
-	index := (blockNum / interval) % uint64(len(s.kingAddresses))
-	return s.kingAddresses[index]
+	return interval
 }
 
 // SetMinerThreads is unsupported for this miner implementation.

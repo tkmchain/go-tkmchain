@@ -467,7 +467,21 @@ func (r *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
 	if r.rotatingKing == nil {
 		return common.Address{}
 	}
-	return r.rotatingKing.GetCurrentKing()
+	return r.rotatingKing.GetKingAtHeight(blockHeight)
+}
+
+// SetRotationInterval configures the rotating king reward interval in blocks.
+func (r *RandomX) SetRotationInterval(interval uint64) {
+	if r.rotatingKing != nil {
+		r.rotatingKing.SetRotationInterval(interval)
+	}
+}
+
+// AddRotatingKing adds an address to the RandomX rotating king reward schedule.
+func (r *RandomX) AddRotatingKing(address common.Address) {
+	if r.rotatingKing != nil {
+		r.rotatingKing.AddKingAddress(address)
+	}
 }
 
 // Seal generates a new sealing request for the given input block.

@@ -89,6 +89,48 @@ func (m *RotatingKingManager) GetNextKing() common.Address {
 	return m.config.KingAddresses[nextIndex]
 }
 
+// GetKingAtHeight returns the rotating king scheduled for a block height.
+func (m *RotatingKingManager) GetKingAtHeight(blockHeight uint64) common.Address {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.config.KingAddresses) == 0 {
+		return common.Address{}
+	}
+	interval := m.config.RotationInterval
+	if interval == 0 {
+		interval = 100
+	}
+	index := (blockHeight / interval) % uint64(len(m.config.KingAddresses))
+	return m.config.KingAddresses[index]
+}
+
+// SetRotationInterval updates how many blocks each rotating king receives rewards for.
+func (m *RotatingKingManager) SetRotationInterval(interval uint64) {
+	if interval == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.RotationInterval = interval
+	m.state.NextRotationAt = m.state.RotationHeight + interval
+}
+
+// AddKingAddress registers an address in the rotating king list if it is not present.
+func (m *RotatingKingManager) AddKingAddress(address common.Address) {
+	if address == (common.Address{}) {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.config.KingAddresses {
+		if existing == address {
+			return
+		}
+	}
+	m.config.KingAddresses = append(m.config.KingAddresses, address)
+}
+
 // ShouldRotate checks if rotation should occur at the given block height
 func (m *RotatingKingManager) ShouldRotate(blockHeight uint64) bool {
 	m.mu.RLock()

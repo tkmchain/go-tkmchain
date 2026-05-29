@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -16,14 +17,19 @@ type KingAPI struct {
 	e *Ethereum
 }
 
-var rkRequiredStake = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))
+var (
+	rkRequiredStake = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))
+	rkLockPeriod    = 30 * 24 * time.Hour
+)
 
 type RKStatus struct {
-	Address      common.Address `json:"address"`
-	Registered   bool           `json:"registered"`
-	Current      bool           `json:"current"`
-	LockedAmount *big.Int       `json:"lockedAmount"`
-	UnlockTime   *time.Time     `json:"unlockTime,omitempty"`
+	Address       common.Address `json:"address"`
+	Registered    bool           `json:"registered"`
+	Current       bool           `json:"current"`
+	Next          bool           `json:"next"`
+	LockedAmount  *big.Int       `json:"lockedAmount"`
+	UnlockTime    *time.Time     `json:"unlockTime,omitempty"`
+	TotalReceived *big.Int       `json:"totalReceived"`
 }
 
 // NewKingAPI creates a new king RPC API service.
@@ -55,7 +61,7 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	if balance.Cmp(rkRequiredStake) < 0 {
 		return RKStatus{}, fmt.Errorf("insufficient balance: need at least %s wei", rkRequiredStake.String())
 	}
-	unlock := time.Now().UTC().Add(30 * 24 * time.Hour)
+	unlock := time.Now().UTC().Add(rkLockPeriod)
 	api.e.lock.Lock()
 	api.e.recordRotatingKingLocked(address, unlock)
 	status := api.statusLocked(address)
@@ -69,8 +75,20 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 func (api *KingAPI) List() []RKStatus {
 	api.e.lock.RLock()
 	defer api.e.lock.RUnlock()
-	list := make([]RKStatus, 0, len(api.e.rkLocks))
+	seen := make(map[common.Address]struct{})
+	list := make([]RKStatus, 0, len(api.e.kingAddresses)+len(api.e.rkLocks))
+	for _, addr := range api.e.kingAddresses {
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		list = append(list, api.statusLocked(addr))
+	}
 	for addr := range api.e.rkLocks {
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
 		list = append(list, api.statusLocked(addr))
 	}
 	return list
@@ -84,19 +102,49 @@ func (api *KingAPI) Status(address common.Address) RKStatus {
 }
 
 func (api *KingAPI) statusLocked(address common.Address) RKStatus {
-	unlock, ok := api.e.rkLocks[address]
-	status := RKStatus{
-		Address:      address,
-		Registered:   ok,
-		Current:      api.e.getCurrentRotatingKing() == address,
-		LockedAmount: new(big.Int),
+	unlock, locked := api.e.rkLocks[address]
+	registered := locked
+	for _, addr := range api.e.kingAddresses {
+		if addr == address {
+			registered = true
+			break
+		}
 	}
-	if ok {
+	status := RKStatus{
+		Address:       address,
+		Registered:    registered,
+		Current:       api.e.getCurrentRotatingKing() == address,
+		Next:          api.e.getNextRotatingKing() == address,
+		LockedAmount:  new(big.Int),
+		TotalReceived: api.e.totalRotatingKingReward(address),
+	}
+	if registered {
 		status.LockedAmount.Set(rkRequiredStake)
+	}
+	if locked {
 		unlockCopy := unlock
 		status.UnlockTime = &unlockCopy
 	}
 	return status
+}
+
+func (s *Ethereum) totalRotatingKingReward(address common.Address) *big.Int {
+	total := new(big.Int)
+	head := s.blockchain.CurrentBlock()
+	if head == nil || len(s.kingAddresses) == 0 {
+		return total
+	}
+	distribution := randomx.DefaultRewardDistribution()
+	for block := uint64(1); block <= head.Number.Uint64(); block++ {
+		if s.rotatingKingAt(block) != address {
+			continue
+		}
+		reward := randomx.CalculateBlockReward(block)
+		reward.Mul(reward, big.NewInt(int64(distribution.RotatingKingPercent)))
+		reward.Div(reward, big.NewInt(100))
+		total.Add(total, reward)
+	}
+	return total
 }
 
 func (s *Ethereum) broadcastRotatingKing(address common.Address, unlock time.Time) {
