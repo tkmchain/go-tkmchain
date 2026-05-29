@@ -41,6 +41,25 @@ type RKStatus struct {
 	TotalReceived       *big.Int       `json:"totalReceived"`
 }
 
+// RotatingKingInfo describes the current rotating king schedule.
+type RotatingKingInfo struct {
+	MainKing            common.Address   `json:"mainKing"`
+	CurrentKing         common.Address   `json:"currentKing"`
+	NextKing            common.Address   `json:"nextKing"`
+	KingAddresses       []common.Address `json:"kingAddresses"`
+	RotationInterval    uint64           `json:"rotationInterval"`
+	CurrentBlock        uint64           `json:"currentBlock"`
+	NextRotationHeight  uint64           `json:"nextRotationHeight"`
+	BlocksUntilRotation uint64           `json:"blocksUntilRotation"`
+}
+
+// RotationHistoryEntry describes one historical rotating king slot.
+type RotationHistoryEntry struct {
+	BlockHeight  uint64         `json:"blockHeight"`
+	PreviousKing common.Address `json:"previousKing"`
+	NewKing      common.Address `json:"newKing"`
+}
+
 // NewKingAPI creates a new king RPC API service.
 func NewKingAPI(e *Ethereum) *KingAPI {
 	return &KingAPI{e: e}
@@ -54,6 +73,84 @@ func (api *KingAPI) MainAddress() common.Address {
 // Addresses returns the configured rotating king addresses.
 func (api *KingAPI) Addresses() []common.Address {
 	return api.e.GetKingAddresses()
+}
+
+// GetInfo returns the current rotating king schedule.
+func (api *KingAPI) GetInfo() RotatingKingInfo {
+	api.e.lock.RLock()
+	defer api.e.lock.RUnlock()
+
+	var currentBlock uint64
+	if head := api.e.blockchain.CurrentBlock(); head != nil {
+		currentBlock = head.Number.Uint64()
+	}
+	interval := api.e.rotatingKingInterval()
+	nextRotation := uint64(0)
+	blocksUntilRotation := uint64(0)
+	if interval > 0 {
+		nextRotation = ((currentBlock / interval) + 1) * interval
+		if nextRotation > currentBlock {
+			blocksUntilRotation = nextRotation - currentBlock
+		}
+	}
+
+	return RotatingKingInfo{
+		MainKing:            api.e.GetMainKingAddress(),
+		CurrentKing:         api.e.getCurrentRotatingKing(),
+		NextKing:            api.e.getNextRotatingKing(),
+		KingAddresses:       api.e.GetKingAddresses(),
+		RotationInterval:    interval,
+		CurrentBlock:        currentBlock,
+		NextRotationHeight:  nextRotation,
+		BlocksUntilRotation: blocksUntilRotation,
+	}
+}
+
+// GetKingAddresses returns all configured rotating king addresses.
+func (api *KingAPI) GetKingAddresses() []common.Address {
+	return api.Addresses()
+}
+
+// GetCurrentKing returns the current rotating king address.
+func (api *KingAPI) GetCurrentKing() common.Address {
+	api.e.lock.RLock()
+	defer api.e.lock.RUnlock()
+	return api.e.getCurrentRotatingKing()
+}
+
+// GetRotationHistory returns recent rotating king changes derived from the chain height.
+func (api *KingAPI) GetRotationHistory() []RotationHistoryEntry {
+	api.e.lock.RLock()
+	defer api.e.lock.RUnlock()
+
+	head := api.e.blockchain.CurrentBlock()
+	if head == nil || len(api.e.kingAddresses) == 0 {
+		return nil
+	}
+	interval := api.e.rotatingKingInterval()
+	if interval == 0 {
+		return nil
+	}
+	currentBlock := head.Number.Uint64()
+	if currentBlock < interval {
+		return nil
+	}
+
+	firstHeight := interval
+	lastHeight := (currentBlock / interval) * interval
+	if rotations := lastHeight / interval; rotations > 100 {
+		firstHeight = (rotations - 99) * interval
+	}
+
+	history := make([]RotationHistoryEntry, 0, (lastHeight-firstHeight)/interval+1)
+	for height := firstHeight; height <= lastHeight; height += interval {
+		history = append(history, RotationHistoryEntry{
+			BlockHeight:  height,
+			PreviousKing: api.e.rotatingKingAt(height - 1),
+			NewKing:      api.e.rotatingKingAt(height),
+		})
+	}
+	return history
 }
 
 // Add registers an address as rotating king if stake requirement is met.

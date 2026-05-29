@@ -482,6 +482,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Namespace: "rk",
 			Service:   NewKingAPI(s),
 		},
+		{
+			Namespace: "rotatingking",
+			Service:   NewKingAPI(s),
+		},
 	}...)
 }
 
