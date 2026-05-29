@@ -172,7 +172,8 @@ func (api *KingAPI) GetRotationHistory(limit *uint64) []RotationHistoryEntry {
 }
 
 // GetKingStats returns the current rotating king schedule and registered king statuses.
-func (api *KingAPI) GetKingStats() KingStats {
+// The optional ignored argument accepts legacy callers that send a placeholder param.
+func (api *KingAPI) GetKingStats(_ *interface{}) KingStats {
 	api.e.lock.RLock()
 	defer api.e.lock.RUnlock()
 
