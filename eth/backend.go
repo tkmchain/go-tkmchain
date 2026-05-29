@@ -804,6 +804,44 @@ func (s *Ethereum) rotatingKingAt(blockNum uint64) common.Address {
 	return s.kingAddresses[index]
 }
 
+func (s *Ethereum) nextRotationHeight(address common.Address) (uint64, bool) {
+	if s.blockchain == nil {
+		return 0, false
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return 0, false
+	}
+	return nextRotationHeight(head.Number.Uint64(), s.rotatingKingInterval(), s.kingAddresses, address)
+}
+
+func nextRotationHeight(blockNum uint64, interval uint64, kingAddresses []common.Address, address common.Address) (uint64, bool) {
+	if len(kingAddresses) == 0 {
+		return 0, false
+	}
+	if interval == 0 {
+		interval = 100
+	}
+	targetIndex := -1
+	for index, kingAddress := range kingAddresses {
+		if kingAddress == address {
+			targetIndex = index
+			break
+		}
+	}
+	if targetIndex < 0 {
+		return 0, false
+	}
+
+	rotationRound := blockNum / interval
+	currentIndex := int(rotationRound % uint64(len(kingAddresses)))
+	roundsUntilRotation := (targetIndex - currentIndex + len(kingAddresses)) % len(kingAddresses)
+	if roundsUntilRotation == 0 {
+		roundsUntilRotation = len(kingAddresses)
+	}
+	return (rotationRound + uint64(roundsUntilRotation)) * interval, true
+}
+
 func (s *Ethereum) rotatingKingInterval() uint64 {
 	interval := uint64(100)
 	if s.blockchain.Config().RotatingKingRotationInterval > 0 {

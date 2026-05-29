@@ -28,14 +28,16 @@ type rkLockInfo struct {
 }
 
 type RKStatus struct {
-	Address       common.Address `json:"address"`
-	Registered    bool           `json:"registered"`
-	Current       bool           `json:"current"`
-	Next          bool           `json:"next"`
-	LockedAmount  *big.Int       `json:"lockedAmount"`
-	UnlockTime    *time.Time     `json:"unlockTime,omitempty"`
-	UnlockHeight  uint64         `json:"unlockHeight,omitempty"`
-	TotalReceived *big.Int       `json:"totalReceived"`
+	Address             common.Address `json:"address"`
+	Registered          bool           `json:"registered"`
+	Current             bool           `json:"current"`
+	Next                bool           `json:"next"`
+	NextRotationHeight  uint64         `json:"nextRotationHeight,omitempty"`
+	BlocksUntilRotation uint64         `json:"blocksUntilRotation,omitempty"`
+	LockedAmount        *big.Int       `json:"lockedAmount"`
+	UnlockTime          *time.Time     `json:"unlockTime,omitempty"`
+	UnlockHeight        uint64         `json:"unlockHeight,omitempty"`
+	TotalReceived       *big.Int       `json:"totalReceived"`
 }
 
 // NewKingAPI creates a new king RPC API service.
@@ -123,6 +125,12 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 		Next:          api.e.getNextRotatingKing() == address,
 		LockedAmount:  new(big.Int),
 		TotalReceived: api.e.totalRotatingKingReward(address),
+	}
+	if height, ok := api.e.nextRotationHeight(address); ok {
+		status.NextRotationHeight = height
+		if head := api.e.blockchain.CurrentBlock(); head != nil && height > head.Number.Uint64() {
+			status.BlocksUntilRotation = height - head.Number.Uint64()
+		}
 	}
 	if registered {
 		status.LockedAmount.Set(rkRequiredStake)
