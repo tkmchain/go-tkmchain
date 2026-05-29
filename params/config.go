@@ -103,6 +103,17 @@ func DefaultRandomXConfig() *RandomXConfig {
 	}
 }
 
+// CliqueConfig is the consensus engine configs for proof-of-authority based sealing.
+type CliqueConfig struct {
+	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
+	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
+}
+
+// String implements the stringer interface, returning the consensus engine details.
+func (c CliqueConfig) String() string {
+	return "clique"
+}
+
 // ChainConfig is the core config which determines the blockchain settings.
 type ChainConfig struct {
 	ChainID *big.Int `json:"chainId"`
@@ -144,6 +155,7 @@ type ChainConfig struct {
 
 	// RandomX consensus engine
 	RandomX            *RandomXConfig      `json:"randomx,omitempty"`
+	Clique             *CliqueConfig       `json:"clique,omitempty"`
 	BlobScheduleConfig *BlobScheduleConfig `json:"blobSchedule,omitempty"`
 }
 
@@ -305,6 +317,28 @@ var TestChainConfig = &ChainConfig{
 
 var (
         AllRandomXProtocolChanges  = TestChainConfig
+        AllCliqueProtocolChanges   = &ChainConfig{
+                ChainID:             big.NewInt(1337),
+                HomesteadBlock:      big.NewInt(0),
+                DAOForkBlock:        nil,
+                DAOForkSupport:      false,
+                EIP150Block:         big.NewInt(0),
+                EIP155Block:         big.NewInt(0),
+                EIP158Block:         big.NewInt(0),
+                ByzantiumBlock:      big.NewInt(0),
+                ConstantinopleBlock: big.NewInt(0),
+                PetersburgBlock:     big.NewInt(0),
+                IstanbulBlock:       big.NewInt(0),
+                BerlinBlock:         big.NewInt(0),
+                LondonBlock:         big.NewInt(0),
+                Clique: &CliqueConfig{
+                        Period: 0,
+                        Epoch:  30000,
+                },
+                BlobScheduleConfig: &BlobScheduleConfig{
+                        Cancun: DefaultCancunBlobConfig,
+                },
+        }
         AllDevChainProtocolChanges = TestChainConfig
         MergedTestChainConfig      = &ChainConfig{
                 ChainID:             big.NewInt(1337),

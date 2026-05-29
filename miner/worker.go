@@ -103,7 +103,15 @@ func mapTransactionsToLazy(txs map[common.Address]types.Transactions) map[common
 	for addr, list := range txs {
 		lazyList := make([]*txpool.LazyTransaction, len(list))
 		for i, tx := range list {
-			lazyList[i] = &txpool.LazyTransaction{Tx: tx}
+			lazyList[i] = &txpool.LazyTransaction{
+				Hash:      tx.Hash(),
+				Tx:        tx,
+				Time:      tx.Time(),
+				GasFeeCap: uint256.MustFromBig(tx.GasFeeCap()),
+				GasTipCap: uint256.MustFromBig(tx.GasTipCap()),
+				Gas:       tx.Gas(),
+				BlobGas:   tx.BlobGas(),
+			}
 		}
 		lazy[addr] = lazyList
 	}

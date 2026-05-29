@@ -1,0 +1,25 @@
+time=2026-05-28T22:53:48.836Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:37:25.458Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:38:06.208Z level=INFO msg=Version api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:38:06.208Z level=INFO msg=Version api=signer type=response data=6.1.0 error=<nil>
+time=2026-05-29T00:39:45.626Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:40:11.721Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:42:09.161Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:42:54.544Z level=INFO msg=Version api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:42:54.545Z level=INFO msg=Version api=signer type=response data=6.1.0 error=<nil>
+time=2026-05-29T00:49:51.759Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:50:18.735Z level=INFO msg=Version api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:50:18.736Z level=INFO msg=Version api=signer type=response data=6.1.0 error=<nil>
+time=2026-05-29T00:51:39.523Z level=INFO msg=Version api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:51:39.523Z level=INFO msg=Version api=signer type=response data=6.1.0 error=<nil>
+time=2026-05-29T00:52:49.152Z level=INFO msg=Configured api=signer "audit log"=audit.log
+time=2026-05-29T00:53:19.041Z level=INFO msg=Version api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:53:19.041Z level=INFO msg=Version api=signer type=response data=6.1.0 error=<nil>
+time=2026-05-29T00:54:00.334Z level=INFO msg=List api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:54:33.127Z level=INFO msg=List api=signer type=response data=[0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2]
+time=2026-05-29T00:54:33.936Z level=INFO msg=SignTransaction api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}" tx="{\"from\":\"0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2\",\"to\":\"0xf68a4A26f5a38c29Bd3281dd68036e65A6659555\",\"gas\":\"0x5208\",\"gasPrice\":null,\"maxFeePerGas\":\"0x3b9aca0e\",\"maxPriorityFeePerGas\":\"0x3b9aca00\",\"value\":\"0x1a784379d99db42000000\",\"nonce\":\"0x0\",\"input\":\"0x\",\"accessList\":[],\"chainId\":\"0x1\"}" methodSelector=<nil>
+time=2026-05-29T00:55:09.050Z level=INFO msg=SignTransaction api=signer type=response data=<nil> error="could not decrypt key with given password"
+time=2026-05-29T00:55:23.747Z level=INFO msg=List api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}"
+time=2026-05-29T00:55:28.233Z level=INFO msg=List api=signer type=response data=[0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2]
+time=2026-05-29T00:55:28.355Z level=INFO msg=SignTransaction api=signer type=request metadata="{\"remote\":\"NA\",\"local\":\"NA\",\"scheme\":\"ipc\",\"User-Agent\":\"\",\"Origin\":\"\"}" tx="{\"from\":\"0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2\",\"to\":\"0xf68a4A26f5a38c29Bd3281dd68036e65A6659555\",\"gas\":\"0x5208\",\"gasPrice\":null,\"maxFeePerGas\":\"0x3b9aca0e\",\"maxPriorityFeePerGas\":\"0x3b9aca00\",\"value\":\"0x1a784379d99db42000000\",\"nonce\":\"0x0\",\"input\":\"0x\",\"accessList\":[],\"chainId\":\"0x1\"}" methodSelector=<nil>
+time=2026-05-29T00:55:41.745Z level=INFO msg=SignTransaction api=signer type=response data=02f8740180843b9aca00843b9aca0e82520894f68a4a26f5a38c29bd3281dd68036e65a66595558b01a784379d99db4200000080c001a0b9b5a6d6322a4e00db52370e97b24640a433d6e0727bbc13d79a5fc9f7b2b36e9f53872eb477b0fa5f0bd79053cbaa833df04c88c3f4728f4ad92ebbe04121ae error=<nil>

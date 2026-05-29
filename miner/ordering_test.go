@@ -35,6 +35,31 @@ func TestTransactionPriceNonceSortLegacy(t *testing.T) {
 	testTransactionPriceNonceSort(t, nil)
 }
 
+func TestMapTransactionsToLazyIncludesPriceCaps(t *testing.T) {
+	t.Parallel()
+
+	tx := types.NewTx(&types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       21000,
+		GasFeeCap: big.NewInt(10),
+		GasTipCap: big.NewInt(2),
+	})
+	addr := common.Address{0x1}
+	lazies := mapTransactionsToLazy(map[common.Address]types.Transactions{addr: {tx}})
+
+	if lazies[addr][0].GasFeeCap == nil {
+		t.Fatal("missing lazy transaction gas fee cap")
+	}
+	if lazies[addr][0].GasTipCap == nil {
+		t.Fatal("missing lazy transaction gas tip cap")
+	}
+	txset := newTransactionsByPriceAndNonce(types.LatestSignerForChainID(common.Big1), lazies, big.NewInt(7))
+	_, tip := txset.Peek()
+	if tip == nil || tip.Cmp(uint256.NewInt(2)) != 0 {
+		t.Fatalf("unexpected effective miner tip: %v", tip)
+	}
+}
+
 func TestTransactionPriceNonceSort1559(t *testing.T) {
 	t.Parallel()
 	testTransactionPriceNonceSort(t, big.NewInt(0))
