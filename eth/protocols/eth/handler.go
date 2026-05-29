@@ -181,6 +181,7 @@ var eth69 = map[uint64]msgHandler{
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+	RotatingKingUpdateMsg:         handleRotatingKingUpdate,
 }
 
 var eth70 = map[uint64]msgHandler{
@@ -195,6 +196,7 @@ var eth70 = map[uint64]msgHandler{
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+	RotatingKingUpdateMsg:         handleRotatingKingUpdate,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a remote

@@ -43,7 +43,7 @@ var ProtocolVersions = []uint{ETH70, ETH69}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH69: 18, ETH70: 18}
+var protocolLengths = map[uint]uint64{ETH69: 19, ETH70: 19}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -66,6 +66,7 @@ const (
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
 	BlockRangeUpdateMsg           = 0x11
+	RotatingKingUpdateMsg         = 0x12
 )
 
 var (
@@ -288,6 +289,12 @@ type BlockRangeUpdatePacket struct {
 	LatestBlockHash common.Hash
 }
 
+// RotatingKingUpdatePacket announces a newly registered rotating king.
+type RotatingKingUpdatePacket struct {
+	Address    common.Address
+	UnlockTime uint64
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -326,3 +333,6 @@ func (*ReceiptsRLPResponse) Kind() byte   { return ReceiptsMsg }
 
 func (*BlockRangeUpdatePacket) Name() string { return "BlockRangeUpdate" }
 func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }
+
+func (*RotatingKingUpdatePacket) Name() string { return "RotatingKingUpdate" }
+func (*RotatingKingUpdatePacket) Kind() byte   { return RotatingKingUpdateMsg }

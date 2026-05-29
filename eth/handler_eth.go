@@ -19,6 +19,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -83,6 +84,12 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 
 	case *eth.BlockRangeUpdatePacket:
 		go (*handler)(h).synchroniseWithPeerRange(peer.ID(), packet)
+		return nil
+
+	case *eth.RotatingKingUpdatePacket:
+		if h.rotatingKingUpdate != nil {
+			h.rotatingKingUpdate(packet.Address, time.Unix(int64(packet.UnlockTime), 0).UTC())
+		}
 		return nil
 
 	default:

@@ -665,3 +665,11 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	peer.lastRange.Store(&update)
 	return backend.Handle(peer, &update)
 }
+
+func handleRotatingKingUpdate(backend Backend, msg Decoder, peer *Peer) error {
+	var update RotatingKingUpdatePacket
+	if err := msg.Decode(&update); err != nil {
+		return fmt.Errorf("msg %v: %w", update.Name(), err)
+	}
+	return backend.Handle(peer, &update)
+}

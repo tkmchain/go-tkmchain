@@ -580,6 +580,14 @@ func (p *Peer) SendBlockRangeUpdate(msg BlockRangeUpdatePacket) error {
 	return p2p.Send(p.rw, BlockRangeUpdateMsg, &msg)
 }
 
+// SendRotatingKingUpdate sends a rotating king registration announcement to the peer.
+func (p *Peer) SendRotatingKingUpdate(msg RotatingKingUpdatePacket) error {
+	if p.version < ETH69 {
+		return nil
+	}
+	return p2p.Send(p.rw, RotatingKingUpdateMsg, &msg)
+}
+
 // knownCache is a cache for known hashes.
 type knownCache struct {
 	hashes mapset.Set[common.Hash]

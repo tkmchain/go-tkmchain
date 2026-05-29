@@ -378,14 +378,15 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Create network handler
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
-		NodeID:         eth.p2pServer.Self().ID(),
-		Database:       chainDb,
-		Chain:          eth.blockchain,
-		TxPool:         eth.txPool,
-		Network:        networkID,
-		Sync:           config.SyncMode,
-		BloomCache:     uint64(cacheLimit),
-		RequiredBlocks: config.RequiredBlocks,
+		NodeID:             eth.p2pServer.Self().ID(),
+		Database:           chainDb,
+		Chain:              eth.blockchain,
+		TxPool:             eth.txPool,
+		Network:            networkID,
+		Sync:               config.SyncMode,
+		BloomCache:         uint64(cacheLimit),
+		RequiredBlocks:     config.RequiredBlocks,
+		RotatingKingUpdate: eth.noteRotatingKing,
 	}); err != nil {
 		return nil, err
 	}
@@ -625,6 +626,24 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	info["rotating_king"] = s.getCurrentRotatingKing()
 
 	return info
+}
+
+func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.recordRotatingKingLocked(address, unlock)
+}
+
+func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.Time) {
+	if current, ok := s.rkLocks[address]; !ok || unlock.After(current) {
+		s.rkLocks[address] = unlock
+	}
+	for _, existing := range s.kingAddresses {
+		if existing == address {
+			return
+		}
+	}
+	s.kingAddresses = append(s.kingAddresses, address)
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height
