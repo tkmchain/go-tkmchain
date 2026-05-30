@@ -4036,7 +4036,7 @@ func makeSignedRaw(t *testing.T, api *TransactionAPI, from, to common.Address, v
 	return signRes.Raw, signRes.Tx
 }
 
-// makeSelfSignedRaw is a convenience for a 0-ETH self-transfer.
+// makeSelfSignedRaw is a convenience for a 0-TKM self-transfer.
 func makeSelfSignedRaw(t *testing.T, api *TransactionAPI, addr common.Address) (hexutil.Bytes, *types.Transaction) {
 	return makeSignedRaw(t, api, addr, addr, big.NewInt(0))
 }

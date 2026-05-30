@@ -798,7 +798,7 @@ func TestTransactionReceiptsSubscription(t *testing.T) {
 		addr1        = crypto.PubkeyToAddress(key1.PublicKey)
 		signer       = types.NewLondonSigner(big.NewInt(1))
 		genesis      = &core.Genesis{
-			Alloc:   types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000000000000000)}}, // 1 ETH
+			Alloc:   types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000000000000000)}}, // 1 TKM
 			Config:  params.TestChainConfig,
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}

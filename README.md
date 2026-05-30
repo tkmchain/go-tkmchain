@@ -109,8 +109,8 @@ Specifying the `--holesky` flag, however, will reconfigure your `geth` instance 
  * Instead of connecting to the main Ethereum network, the client will connect to the Holesky 
    test network, which uses different P2P bootnodes, different network IDs and genesis
    states.
- * Instead of using the default data directory (`~/.ethereum` on Linux for example), `geth`
-   will nest itself one level deeper into a `holesky` subfolder (`~/.ethereum/holesky` on
+ * Instead of using the default data directory (`~/.tkmchain` on Linux for example), `geth`
+   will nest itself one level deeper into a `holesky` subfolder (`~/.tkmchain/holesky` on
    Linux). Note, on OSX and Linux this also means that attaching to a running testnet node
    requires the use of a custom endpoint since `geth attach` will try to attach to a
    production node endpoint by default, e.g.,

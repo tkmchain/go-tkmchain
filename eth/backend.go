@@ -77,7 +77,7 @@ const (
 	maxParallelENRRequests = 16
 )
 
-// Config contains the configuration options of the ETH protocol.
+// Config contains the configuration options of the TKM protocol.
 // Deprecated: use ethconfig.Config instead.
 type Config = ethconfig.Config
 

@@ -65,7 +65,7 @@ type logMarshaling struct {
 	Index          hexutil.Uint
 }
 
-// EthTransferLog creates an ETH transfer log according to EIP-7708.
+// EthTransferLog creates a TKM transfer log according to EIP-7708.
 func EthTransferLog(from, to common.Address, amount *uint256.Int) *Log {
 	amount32 := amount.Bytes32()
 	return &Log{
@@ -79,7 +79,7 @@ func EthTransferLog(from, to common.Address, amount *uint256.Int) *Log {
 	}
 }
 
-// EthBurnLog creates an ETH burn log according to EIP-7708.
+// EthBurnLog creates a TKM burn log according to EIP-7708.
 func EthBurnLog(from common.Address, amount *uint256.Int) *Log {
 	amount32 := amount.Bytes32()
 	return &Log{

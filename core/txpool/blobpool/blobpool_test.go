@@ -101,7 +101,7 @@ func (bc *testBlockChain) CurrentBlock() *types.Header {
 	// Yolo, life is too short to invert misc.CalcBaseFee and misc.CalcBlobFee,
 	// just binary search it them.
 
-	// The base fee at 5714 ETH translates into the 21000 base gas higher than
+	// The base fee at 5714 TKM translates into the 21000 base gas higher than
 	// mainnet ether existence, use that as a cap for the tests.
 	var (
 		blockNumber = new(big.Int).Add(bc.config.LondonBlock, big.NewInt(1))

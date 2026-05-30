@@ -786,7 +786,7 @@ func (st *stateTransition) calcRefund() vm.GasBudget {
 	return vm.NewGasBudget(refund)
 }
 
-// returnGas returns ETH for remaining gas,
+// returnGas returns TKM for remaining gas,
 // exchanged at the original rate.
 func (st *stateTransition) returnGas() {
 	remaining := uint256.NewInt(st.gasRemaining.RegularGas)

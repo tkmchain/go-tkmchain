@@ -54,7 +54,7 @@ contract TestLogs {
 }
 */
 
-// TestEthTransferLogs tests EIP-7708 ETH transfer log output by simulating a
+// TestEthTransferLogs tests EIP-7708 TKM transfer log output by simulating a
 // scenario including transaction, CALL and SELFDESTRUCT value transfers, and
 // also "ordinary" logs emitted. The same scenario is also tested with no value
 // transferred.
@@ -145,7 +145,7 @@ func testEthTransferLogs(t *testing.T, value uint64) {
 		},
 	}
 	if value == 0 {
-		// no ETH transfer logs expected with zero value
+		// no TKM transfer logs expected with zero value
 		expLogs = []*types.Log{expLogs[1], expLogs[3]}
 	}
 	for i, log := range expLogs {

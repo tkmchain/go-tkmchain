@@ -815,7 +815,7 @@ func TestSimulateV1(t *testing.T) {
 		t.Fatalf("Failed to get header: %v", err)
 	}
 
-	// Simple test: transfer ETH from one account to another
+	// Simple test: transfer TKM from one account to another
 	from := testAddr
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	value := big.NewInt(100)
@@ -950,7 +950,7 @@ func TestSimulateV1WithStateOverrides(t *testing.T) {
 
 	from := testAddr
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
-	value := big.NewInt(1000000000000000000) // 1 ETH
+	value := big.NewInt(1000000000000000000) // 1 TKM
 	gas := uint64(100000)
 	maxFeePerGas := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
 
