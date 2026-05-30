@@ -26,11 +26,11 @@ import (
 
 // Genesis hashes to enforce below configs on.
 var (
-	MainnetGenesisHash = common.HexToHash("0x20475d53a46020785df35ac59e24e4af7f1292e486c6bdc6a7b9ffb6fbd23650")
+	MainnetGenesisHash = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
 	SepoliaGenesisHash = common.HexToHash("0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9")
 	HoleskyGenesisHash = common.HexToHash("0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4")
 	HoodiGenesisHash   = common.HexToHash("0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b")
-        RandomXGenesisHash = common.HexToHash("0x6d88e378ca790312e5637f79afda3555eb0d3c064c9b4f4d3ef0d15e6a5fef10")
+        RandomXGenesisHash = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
 
 )
 
