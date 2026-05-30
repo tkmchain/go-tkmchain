@@ -99,26 +99,22 @@ func (m *RotatingKingManager) GetKingAtHeight(blockHeight uint64) common.Address
 }
 
 func (m *RotatingKingManager) kingAtHeightLocked(blockHeight uint64) common.Address {
-	active := m.activeKingAddressesAtLocked(0)
-	if len(active) == 0 {
-		return common.Address{}
-	}
-	current := active[0]
 	interval := m.config.RotationInterval
 	if interval == 0 {
 		interval = 100
 	}
-	for height := interval; height <= blockHeight; height += interval {
-		active = m.activeKingAddressesAtLocked(height)
+	var current common.Address
+	for height := uint64(0); height <= blockHeight; height += interval {
+		active := m.activeKingAddressesAtLocked(height)
 		if len(active) == 0 {
-			return common.Address{}
-		}
-		index := indexOfKingAddress(active, current)
-		if index < 0 {
-			current = active[0]
 			continue
 		}
-		current = active[(index+1)%len(active)]
+		index := indexOfKingAddress(active, current)
+		if current == (common.Address{}) || index < 0 {
+			current = active[0]
+		} else if height != 0 {
+			current = active[(index+1)%len(active)]
+		}
 	}
 	return current
 }

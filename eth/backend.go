@@ -713,6 +713,10 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 }
 
 func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
+	if err := s.ensureRotatingKingEligible(address); err != nil {
+		log.Warn("Ignoring ineligible rotating king update", "address", address.Hex(), "err", err)
+		return
+	}
 	minimumUnlock := time.Now().UTC().Add(rkLockPeriod)
 	if unlock.Before(minimumUnlock) {
 		unlock = minimumUnlock
@@ -850,23 +854,19 @@ func (s *Ethereum) getNextRotatingKing() common.Address {
 }
 
 func (s *Ethereum) rotatingKingAt(blockNum uint64) common.Address {
-	active := s.activeRotatingKingsAt(0)
-	if len(active) == 0 {
-		return common.Address{}
-	}
-	current := active[0]
 	interval := s.rotatingKingInterval()
-	for height := interval; height <= blockNum; height += interval {
-		active = s.activeRotatingKingsAt(height)
+	var current common.Address
+	for height := uint64(0); height <= blockNum; height += interval {
+		active := s.activeRotatingKingsAt(height)
 		if len(active) == 0 {
-			return common.Address{}
-		}
-		index := indexOfRotatingKing(active, current)
-		if index < 0 {
-			current = active[0]
 			continue
 		}
-		current = active[(index+1)%len(active)]
+		index := indexOfRotatingKing(active, current)
+		if current == (common.Address{}) || index < 0 {
+			current = active[0]
+		} else if height != 0 {
+			current = active[(index+1)%len(active)]
+		}
 	}
 	return current
 }

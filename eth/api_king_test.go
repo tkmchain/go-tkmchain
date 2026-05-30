@@ -1,12 +1,90 @@
 package eth
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 )
+
+func newTestKingAPI(t *testing.T, alloc types.GenesisAlloc) (*KingAPI, *Ethereum) {
+	t.Helper()
+	db := rawdb.NewMemoryDatabase()
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc:  alloc,
+	}
+	chain, err := core.NewBlockChain(db, genesis, randomx.NewFaker(), nil)
+	if err != nil {
+		t.Fatalf("failed to create test chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+	eth := &Ethereum{
+		chainDb:       db,
+		blockchain:    chain,
+		kingAddresses: nil,
+		rkLocks:       make(map[common.Address]rkLockInfo),
+	}
+	return NewKingAPI(eth), eth
+}
+
+func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
+	eligible := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	emptyBalance := common.HexToAddress("0x0000000000000000000000000000000000000003")
+	api, eth := newTestKingAPI(t, types.GenesisAlloc{
+		(common.Address{}): {Balance: new(big.Int).Set(rkRequiredStake)},
+		eligible:           {Balance: new(big.Int).Set(rkRequiredStake)},
+		underfunded:        {Balance: new(big.Int).Sub(rkRequiredStake, big.NewInt(1))},
+	})
+
+	for _, address := range []common.Address{common.Address{}, underfunded, emptyBalance} {
+		if _, err := api.Add(address); err == nil {
+			t.Fatalf("Add(%s) succeeded for ineligible address", address.Hex())
+		}
+	}
+	if len(eth.kingAddresses) != 0 {
+		t.Fatalf("ineligible addresses changed rotating king schedule: %v", eth.kingAddresses)
+	}
+	if len(eth.rkLocks) != 0 {
+		t.Fatalf("ineligible addresses created rotating king locks: %v", eth.rkLocks)
+	}
+
+	status, err := api.Add(eligible)
+	if err != nil {
+		t.Fatalf("Add(%s) failed: %v", eligible.Hex(), err)
+	}
+	if !status.Registered || status.Address != eligible {
+		t.Fatalf("eligible address status = %+v, want registered %s", status, eligible.Hex())
+	}
+	if len(eth.kingAddresses) != 1 || eth.kingAddresses[0] != eligible {
+		t.Fatalf("rotating king schedule = %v, want [%v]", eth.kingAddresses, eligible)
+	}
+	if _, ok := eth.rkLocks[eligible]; !ok {
+		t.Fatalf("eligible address missing lock entry")
+	}
+}
+
+func TestNoteRotatingKingRejectsIneligibleUpdate(t *testing.T) {
+	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	_, eth := newTestKingAPI(t, types.GenesisAlloc{
+		underfunded: {Balance: new(big.Int).Sub(rkRequiredStake, big.NewInt(1))},
+	})
+
+	eth.noteRotatingKing(underfunded, time.Now().UTC().Add(rkLockPeriod))
+	if len(eth.kingAddresses) != 0 {
+		t.Fatalf("ineligible update changed rotating king schedule: %v", eth.kingAddresses)
+	}
+	if len(eth.rkLocks) != 0 {
+		t.Fatalf("ineligible update created rotating king locks: %v", eth.rkLocks)
+	}
+}
 
 func TestRecordRotatingKingLockedAddsPendingAddress(t *testing.T) {
 	active := common.HexToAddress("0x0000000000000000000000000000000000000001")

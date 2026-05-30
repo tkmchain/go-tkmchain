@@ -223,17 +223,8 @@ func (api *KingAPI) GetKingStats(_ *interface{}) KingStats {
 
 // Add registers an address as rotating king if stake requirement is met.
 func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
-	header := api.e.blockchain.CurrentBlock()
-	if header == nil {
-		return RKStatus{}, fmt.Errorf("no head block available")
-	}
-	statedb, err := api.e.blockchain.StateAt(header)
-	if err != nil {
+	if err := api.e.ensureRotatingKingEligible(address); err != nil {
 		return RKStatus{}, err
-	}
-	balance := statedb.GetBalance(address).ToBig()
-	if balance.Cmp(rkRequiredStake) < 0 {
-		return RKStatus{}, fmt.Errorf("insufficient balance: need at least %s wei", rkRequiredStake.String())
 	}
 	unlock := time.Now().UTC().Add(rkLockPeriod)
 	api.e.lock.Lock()
@@ -307,6 +298,31 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 		status.UnlockHeight = lockInfo.UnlockHeight
 	}
 	return status
+}
+
+func (s *Ethereum) ensureRotatingKingEligible(address common.Address) error {
+	if address == (common.Address{}) {
+		return fmt.Errorf("invalid rotating king address: zero address")
+	}
+	if s.blockchain == nil {
+		return fmt.Errorf("no blockchain available")
+	}
+	header := s.blockchain.CurrentBlock()
+	if header == nil {
+		return fmt.Errorf("no head block available")
+	}
+	statedb, err := s.blockchain.StateAt(header)
+	if err != nil {
+		return err
+	}
+	balance := statedb.GetBalance(address).ToBig()
+	if balance.Sign() == 0 {
+		return fmt.Errorf("insufficient balance: address has no balance, need at least %s wei", rkRequiredStake.String())
+	}
+	if balance.Cmp(rkRequiredStake) < 0 {
+		return fmt.Errorf("insufficient balance: have %s wei, need at least %s wei", balance.String(), rkRequiredStake.String())
+	}
+	return nil
 }
 
 func (s *Ethereum) totalRotatingKingReward(address common.Address) *big.Int {
