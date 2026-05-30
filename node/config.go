@@ -318,8 +318,8 @@ func (c *Config) ExtRPCEnabled() bool {
 func (c *Config) NodeName() string {
 	name := c.name()
 	// Backwards compatibility: previous versions used title-cased "Geth", keep that.
-	if name == "geth" || name == "geth-testnet" {
-		name = "Geth"
+	if name == "gtkm" || name == "gtkm-testnet" {
+		name = "Gtkm"
 	}
 	if c.UserIdent != "" {
 		name += "/" + c.UserIdent
@@ -364,13 +364,13 @@ func (c *Config) ResolvePath(path string) string {
 	// by geth 1.4 are used if they exist.
 	if warn, isOld := isOldGethResource[path]; isOld {
 		oldpath := ""
-		if c.name() == "geth" {
+		if c.name() == "gtkm" {
 			oldpath = filepath.Join(c.DataDir, path)
 		}
 		if oldpath != "" && common.FileExist(oldpath) {
 			if warn && !c.oldGethResourceWarning {
 				c.oldGethResourceWarning = true
-				log.Warn("Using deprecated resource file, please move this file to the 'geth' subdirectory of datadir.", "file", oldpath)
+				log.Warn("Using deprecated resource file, please move this file to the 'gtkm' subdirectory of datadir.", "file", oldpath)
 			}
 			return oldpath
 		}

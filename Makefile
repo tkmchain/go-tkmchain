@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm all test lint fmt clean devtools help randomx randomx-clean randomx-install randomx-check
+.PHONY: gtkm evm all test lint fmt clean devtools help randomx randomx-clean randomx-install randomx-check
 
 GOBIN = ./build/bin
 GO ?= latest
@@ -23,9 +23,9 @@ RANDOMX_LIB_PATH = $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB_STATIC)
 CGO_CFLAGS = -I$(RANDOMX_SRC_DIR)
 CGO_LDFLAGS = -L$(RANDOMX_BUILD_DIR) -lrandomx -lstdc++ -lm
 
-#? geth: Build geth with RandomX support.
-geth:
-	@echo "Building geth with RandomX..."
+#? gtkm: Build gtkm with RandomX support.
+gtkm:
+	@echo "Building gtkm with RandomX..."
 	@if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
 		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
 		echo "Please run 'make randomx' first to build the library"; \
@@ -35,9 +35,9 @@ geth:
 	@echo "✓ Using CGO_CFLAGS=$(CGO_CFLAGS)"
 	@echo "✓ Using CGO_LDFLAGS=$(CGO_LDFLAGS)"
 	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
-		go build -tags "randomx,cgo" -o $(GOBIN)/geth ./cmd/geth
+		go build -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "Done building."
-	@echo "Run \"$(GOBIN)/geth\" to launch geth."
+	@echo "Run \"$(GOBIN)/gtkm\" to launch gtkm."
 
 #? evm: Build evm.
 evm: randomx
@@ -117,7 +117,7 @@ randomx:
 		echo "✓ CGO_CFLAGS=$(CGO_CFLAGS)"; \
 		echo "✓ CGO_LDFLAGS=$(CGO_LDFLAGS)"; \
 		echo ""; \
-		echo "Now run: make geth"; \
+		echo "Now run: make gtkm"; \
 	else \
 		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC)"; \
 		echo "Build directory contents:"; \
@@ -136,7 +136,7 @@ randomx-install: randomx
 	@echo "Installing RandomX to /usr/local..."
 	cd $(RANDOMX_BUILD_DIR) && sudo make install
 	@echo "RandomX installed to /usr/local"
-	@echo "You can now build geth with: CGO_ENABLED=1 go build -tags 'randomx,cgo' ./cmd/geth"
+	@echo "You can now build gtkm with: CGO_ENABLED=1 go build -tags 'randomx,cgo' ./cmd/gtkm"
 
 #? randomx-check: Check RandomX build status.
 randomx-check:
@@ -156,7 +156,7 @@ randomx-check:
 	fi
 	@echo ""
 	@if [ -f "$(RANDOMX_LIB_PATH)" ] && [ -f "$(RANDOMX_SRC_DIR)/randomx.h" ]; then \
-		echo "✅ RandomX is ready! Run 'make geth' to build."; \
+		echo "✅ RandomX is ready! Run 'make gtkm' to build."; \
 	else \
 		echo "❌ RandomX is not ready. Run 'make randomx' to build."; \
 	fi

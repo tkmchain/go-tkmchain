@@ -81,7 +81,7 @@ Commit messages must be prefixed with the package(s) they modify, followed by a 
 Examples:
 - `core/vm: fix stack overflow in PUSH instruction`
 - `eth, rpc: make trace configs optional`
-- `cmd/geth: add new flag for sync mode`
+- `cmd/gtkm: add new flag for sync mode`
 
 Use comma-separated package names when multiple areas are affected. Keep the description concise.
 
@@ -96,7 +96,7 @@ PR titles follow the same convention as commit messages:
 Examples:
 - `core/vm: fix stack overflow in PUSH instruction`
 - `core, eth: add arena allocator support`
-- `cmd/geth, internal/ethapi: refactor transaction args`
+- `cmd/gtkm, internal/ethapi: refactor transaction args`
 - `trie/archiver: streaming subtree archival to fix OOM`
 
 Use the top-level package paths, comma-separated if multiple areas are affected. Only mention the directories with functional changes, interface changes that trickle all over the codebase should not generate an exhaustive list. The description should be a short, lowercase summary of the change.

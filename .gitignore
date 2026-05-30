@@ -21,14 +21,14 @@
 /build/_workspace/
 /build/cache/
 /build/bin/
-/geth*.zip
+/gtkm*.zip
 
 # used by the build/ci.go archive + upload tool
-/geth*.tar.gz
-/geth*.tar.gz.sig
-/geth*.tar.gz.asc
-/geth*.zip.sig
-/geth*.zip.asc
+/gtkm*.tar.gz
+/gtkm*.tar.gz.sig
+/gtkm*.tar.gz.asc
+/gtkm*.zip.sig
+/gtkm*.zip.asc
 
 
 # travis
@@ -53,7 +53,7 @@ cmd/devp2p/devp2p
 cmd/era/era
 cmd/ethkey/ethkey
 cmd/evm/evm
-cmd/geth/geth
+cmd/gtkm/gtkm
 cmd/rlpdump/rlpdump
 cmd/workload/workload
 cmd/keeper/keeper

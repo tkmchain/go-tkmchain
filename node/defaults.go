@@ -50,7 +50,7 @@ var (
 	DefaultAuthVhosts  = []string{"localhost"} // Default virtual hosts for the authenticated apis
 	DefaultAuthOrigins = []string{"localhost"} // Default origins for the authenticated apis
 	DefaultAuthPrefix  = ""                    // Default prefix for the authenticated apis
-	DefaultAuthModules = []string{"eth", "engine"}
+	DefaultAuthModules = []string{"tkm", "engine"}
 )
 
 // DefaultConfig contains reasonable default settings.
@@ -86,17 +86,17 @@ func DefaultDataDir() string {
 	if home != "" {
 		switch runtime.GOOS {
 		case "darwin":
-			return filepath.Join(home, "Library", "Ethereum")
+			return filepath.Join(home, "Library", "Tkmchain")
 		case "windows":
 			// We used to put everything in %HOME%\AppData\Roaming, but this caused
 			// problems with non-typical setups. If this fallback location exists and
 			// is non-empty, use it, otherwise DTRT and check %LOCALAPPDATA%.
-			fallback := filepath.Join(home, "AppData", "Roaming", "Ethereum")
+			fallback := filepath.Join(home, "AppData", "Roaming", "Tkmchain")
 			appdata := windowsAppData()
 			if appdata == "" || common.IsNonEmptyDir(fallback) {
 				return fallback
 			}
-			return filepath.Join(appdata, "Ethereum")
+			return filepath.Join(appdata, "Tkmchain")
 		default:
 			return filepath.Join(home, ".tkmchain")
 		}
