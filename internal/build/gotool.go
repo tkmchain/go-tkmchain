@@ -43,7 +43,7 @@ func (g *GoToolchain) Go(command string, args ...string) *exec.Cmd {
 
 	// Configure environment for cross build. Force CGO_ENABLED=1 whenever
 	// either GOOS or GOARCH differs from the host: Go's default is
-	// CGO_ENABLED=0 for any cross-compile, but geth's release builds rely
+	// CGO_ENABLED=0 for any cross-compile, but gtkm's release builds rely
 	// on cgo (c-kzg-4844, secp256k1) regardless of which axis is crossing.
 	crossArch := g.GOARCH != "" && g.GOARCH != runtime.GOARCH
 	crossOS := g.GOOS != "" && g.GOOS != runtime.GOOS
@@ -129,7 +129,7 @@ func DownloadGo(csdb *download.ChecksumDB) string {
 		log.Fatal(err)
 	}
 
-	godir := filepath.Join(ucache, fmt.Sprintf("geth-go-%s-%s-%s", version, os, arch))
+	godir := filepath.Join(ucache, fmt.Sprintf("gtkm-go-%s-%s-%s", version, os, arch))
 	if err := ExtractArchive(dst, godir); err != nil {
 		log.Fatal(err)
 	}

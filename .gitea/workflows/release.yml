@@ -30,7 +30,7 @@ jobs:
 
     - name: Create/upload archive (amd64)
       run: |
-        go run build/ci.go archive -arch amd64 -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch amd64 -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
         rm -f build/bin/*
       env:
         LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
@@ -42,7 +42,7 @@ jobs:
 
     - name: Create/upload archive (386)
       run: |
-        go run build/ci.go archive -arch 386 -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch 386 -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
         rm -f build/bin/*
       env:
         LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
@@ -72,7 +72,7 @@ jobs:
 
     - name: Create/upload archive (arm64)
       run: |
-        go run build/ci.go archive -arch arm64 -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch arm64 -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
         rm -fr build/bin/*
       env:
         LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
@@ -86,7 +86,7 @@ jobs:
 
     - name: Create/upload archive (arm5)
       run: |
-        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
       env:
         GOARM: "5"
         LINUX_SIGNING_KEY: ${{ secrets.LINUX_SIGNING_KEY }}
@@ -100,7 +100,7 @@ jobs:
 
     - name: Create/upload archive (arm6)
       run: |
-        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
         rm -fr build/bin/*
       env:
         GOARM: "6"
@@ -115,7 +115,7 @@ jobs:
 
     - name: Create/upload archive (arm7)
       run: |
-        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -arch arm -type tar -signer LINUX_SIGNING_KEY -upload gtkmstore/builds
         rm -fr build/bin/*
       env:
         GOARM: "7"
@@ -167,14 +167,14 @@ jobs:
 
     - name: "Create/upload archive (amd64)"
       run: |
-        go run build/ci.go archive -os windows -arch amd64 -type zip -signer WINDOWS_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -os windows -arch amd64 -type zip -signer WINDOWS_SIGNING_KEY -upload gtkmstore/builds
       env:
         WINDOWS_SIGNING_KEY: ${{ secrets.WINDOWS_SIGNING_KEY }}
         AZURE_BLOBSTORE_TOKEN: ${{ secrets.AZURE_BLOBSTORE_TOKEN }}
 
     - name: "Create/upload NSIS installer (amd64)"
       run: |
-        go run build/ci.go nsis -arch amd64 -signer WINDOWS_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go nsis -arch amd64 -signer WINDOWS_SIGNING_KEY -upload gtkmstore/builds
         rm -f build/bin/*
       env:
         WINDOWS_SIGNING_KEY: ${{ secrets.WINDOWS_SIGNING_KEY }}
@@ -186,14 +186,14 @@ jobs:
 
     - name: "Create/upload archive (386)"
       run: |
-        go run build/ci.go archive -os windows -arch 386 -type zip -signer WINDOWS_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go archive -os windows -arch 386 -type zip -signer WINDOWS_SIGNING_KEY -upload gtkmstore/builds
       env:
         WINDOWS_SIGNING_KEY: ${{ secrets.WINDOWS_SIGNING_KEY }}
         AZURE_BLOBSTORE_TOKEN: ${{ secrets.AZURE_BLOBSTORE_TOKEN }}
 
     - name: "Create/upload NSIS installer (386)"
       run: |
-        go run build/ci.go nsis -arch 386 -signer WINDOWS_SIGNING_KEY -upload gethstore/builds
+        go run build/ci.go nsis -arch 386 -signer WINDOWS_SIGNING_KEY -upload gtkmstore/builds
         rm -f build/bin/*
       env:
         WINDOWS_SIGNING_KEY: ${{ secrets.WINDOWS_SIGNING_KEY }}

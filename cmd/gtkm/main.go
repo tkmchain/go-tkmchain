@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
-// geth is a command-line client for Ethereum with RandomX PoW consensus.
+// gtkm is a command-line client for Ethereum with RandomX PoW consensus.
 package main
 
 import (
@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	clientIdentifier = "geth" // Client identifier to advertise over the network
+	clientIdentifier = "gtkm" // Client identifier to advertise over the network
 )
 
 var (
@@ -218,7 +218,7 @@ var (
 var app = flags.NewApp("the go-ethereum command line interface with RandomX PoW")
 
 func init() {
-	// Initialize the CLI app and start Geth
+	// Initialize the CLI app and start gtkm
 	app.Action = geth
 	app.Commands = []*cli.Command{
 		// See chaincmd.go:
@@ -317,7 +317,7 @@ func prepare(ctx *cli.Context) {
 	}
 }
 
-// geth is the main entry point into the system if no special subcommand is run.
+// gtkm is the main entry point into the system if no special subcommand is run.
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down
 func geth(ctx *cli.Context) error {
@@ -378,7 +378,7 @@ func startNode(ctx *cli.Context, stack *node.Node, isConsole bool) {
 	events := make(chan accounts.WalletEvent, 16)
 	stack.AccountManager().Subscribe(events)
 
-	// Create a client to interact with local geth node.
+	// Create a client to interact with local gtkm node.
 	rpcClient := stack.Attach()
 	ethClient := ethclient.NewClient(rpcClient)
 
