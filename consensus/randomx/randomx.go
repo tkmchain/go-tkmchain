@@ -313,7 +313,7 @@ func (r *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header, parent
 	}
 
 	expected := r.CalcDifficulty(chain, header.Time, parent)
-    log.Error("�� DIFFICULTY MISMATCH DETECTED",
+    log.Info("�� DIFFICULTY Details",
         "block", header.Number,
         "parent_block", parent.Number,
         "header_difficulty", header.Difficulty,
