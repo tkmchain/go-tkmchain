@@ -188,6 +188,20 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+// Tests that the Ethereum JavaScript namespace is exposed as tkm in the console.
+func TestTkmAlias(t *testing.T) {
+	tester := newTester(t, nil)
+	defer tester.Close(t)
+
+	result, err := tester.console.jsre.Run("typeof tkm + ':' + typeof eth")
+	if err != nil {
+		t.Fatalf("failed to evaluate aliases: %v", err)
+	}
+	if have, want := result.String(), "object:undefined"; have != want {
+		t.Fatalf("unexpected aliases: have %s, want %s", have, want)
+	}
+}
+
 // Tests that the console can be used in interactive mode.
 func TestInteractive(t *testing.T) {
 	// Create a tester and run an interactive console in the background

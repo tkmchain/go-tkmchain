@@ -22,6 +22,7 @@ var Modules = map[string]string{
 	"clique": CliqueJs,
 	"debug":  DebugJs,
 	"eth":    EthJs,
+	"tkm":    EthJs,
 	"miner":  MinerJs,
 	"net":    NetJs,
 	"rpc":    RpcJs,

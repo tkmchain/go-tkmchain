@@ -214,12 +214,16 @@ func (c *Console) initExtensions() error {
 	}
 
 	// Compute aliases from server-provided modules.
-	aliases := map[string]struct{}{"eth": {}}
+	aliases := map[string]string{"tkm": "eth"}
 	for api := range apis {
 		if api == "web3" {
 			continue
 		}
-		aliases[api] = struct{}{}
+		alias := api
+		if api == "eth" || api == "tkm" {
+			alias = "tkm"
+		}
+		aliases[alias] = api
 		if file, ok := web3ext.Modules[api]; ok {
 			if err = c.jsre.Compile(api+".js", file); err != nil {
 				return fmt.Errorf("%s.js: %v", api, err)
@@ -230,9 +234,12 @@ func (c *Console) initExtensions() error {
 	// Apply aliases.
 	c.jsre.Do(func(vm *goja.Runtime) {
 		web3 := getObject(vm, "web3")
-		for name := range aliases {
-			if v := web3.Get(name); v != nil {
-				vm.Set(name, v)
+		for alias, api := range aliases {
+			if api == "tkm" {
+				api = "eth"
+			}
+			if v := web3.Get(api); v != nil {
+				vm.Set(alias, v)
 			}
 		}
 	})
@@ -277,7 +284,7 @@ func (c *Console) AutoCompleteInput(line string, pos int) (string, []string, str
 		return "", nil, ""
 	}
 	// Chunk data to relevant part for autocompletion
-	// E.g. in case of nested lines eth.getBalance(eth.coinb<tab><tab>
+	// E.g. in case of nested lines tkm.getBalance(tkm.coinb<tab><tab>
 	start := pos - 1
 	for ; start > 0; start-- {
 		// Skip all methods and namespaces (i.e. including the dot)
@@ -300,7 +307,7 @@ func (c *Console) Welcome() {
 	// Print some generic Geth metadata
 	if res, err := c.jsre.Run(`
 		var message = "instance: " + web3.version.node + "\n";
-		message += "at block: " + eth.blockNumber + " (" + new Date(1000 * eth.getBlock(eth.blockNumber).timestamp) + ")\n";
+		message += "at block: " + tkm.blockNumber + " (" + new Date(1000 * tkm.getBlock(tkm.blockNumber).timestamp) + ")\n";
 		try {
 			message += " datadir: " + admin.datadir + "\n";
 		} catch (err) {}
