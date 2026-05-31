@@ -248,7 +248,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol with RandomX",
+	log.Info("Initialising Tkmchain protocol with RandomX",
 		"network", networkID,
 		"dbversion", dbVer,
 		"mainKing", mainKingAddress.Hex(),
@@ -257,7 +257,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Check database version
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
-			return nil, fmt.Errorf("database version is v%d, Geth %s only supports v%d", *bcVersion, version.WithMeta, core.BlockChainVersion)
+			return nil, fmt.Errorf("database version is v%d, Gtkm %s only supports v%d", *bcVersion, version.WithMeta, core.BlockChainVersion)
 		} else if bcVersion == nil || *bcVersion < core.BlockChainVersion {
 			if bcVersion != nil {
 				log.Warn("Upgrade blockchain database version", "from", dbVer, "to", core.BlockChainVersion)
@@ -426,7 +426,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Mark successful startup
 	eth.shutdownTracker.MarkStartup()
 
-	log.Info("Ethereum backend initialized successfully with RandomX and Rotating King")
+	log.Info("Tkmchain backend initialized successfully with RandomX and Rotating King")
 	return eth, nil
 }
 
@@ -436,7 +436,7 @@ func makeExtraData(extra []byte) []byte {
 		// Create default extradata
 		extra, _ = rlp.EncodeToBytes([]interface{}{
 			uint(gethversion.Major<<16 | gethversion.Minor<<8 | gethversion.Patch),
-			"geth",
+			"gtkm",
 			runtime.Version(),
 			runtime.GOOS,
 		})
@@ -459,7 +459,7 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(s),
 		},
 		{
-			Namespace: "eth",
+			Namespace: "tkm",
 			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
 		},
 		{
@@ -998,7 +998,7 @@ func (s *Ethereum) Start() error {
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
 
-	log.Info("Ethereum backend started with RandomX consensus")
+	log.Info("Tkmchain backend started with RandomX consensus")
 	return nil
 }
 
@@ -1134,7 +1134,7 @@ func (s *Ethereum) Stop() error {
 	s.shutdownTracker.Stop()
 	s.chainDb.Close()
 
-	log.Info("Ethereum backend stopped")
+	log.Info("Tkmchain backend stopped")
 	return nil
 }
 
