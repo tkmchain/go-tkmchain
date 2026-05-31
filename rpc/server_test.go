@@ -59,6 +59,24 @@ func TestServerRegisterName(t *testing.T) {
 	}
 }
 
+func TestServerModulesRenamesEth(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer()
+	defer server.Stop()
+	if err := server.RegisterName("eth", new(testService)); err != nil {
+		t.Fatal(err)
+	}
+
+	modules := (&RPCService{server: server}).Modules()
+	if _, ok := modules["eth"]; ok {
+		t.Fatal("eth module should be reported as tkm")
+	}
+	if got := modules["tkm"]; got != "1.0" {
+		t.Fatalf("tkm module version mismatch: got %q, want %q", got, "1.0")
+	}
+}
+
 func TestServer(t *testing.T) {
 	t.Parallel()
 

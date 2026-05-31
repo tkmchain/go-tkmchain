@@ -30,8 +30,8 @@ import (
 )
 
 const (
-	ipcAPIs  = "admin:1.0 debug:1.0 eth:1.0 king:1.0 miner:1.0 net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 txpool:1.0 web3:1.0"
-	httpAPIs = "eth:1.0 net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 web3:1.0"
+	ipcAPIs  = "admin:1.0 debug:1.0 king:1.0 miner:1.0 net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 txpool:1.0 web3:1.0"
+	httpAPIs = "net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 web3:1.0"
 )
 
 // spawns geth with the given command line args, using a set of flags to minimise
@@ -70,7 +70,7 @@ func TestConsoleWelcome(t *testing.T) {
 	geth.Expect(`
 Welcome to the Geth JavaScript console!
 
-instance: Geth/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
+instance: Gtkm/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
 at block: 0 ({{niltime}})
  datadir: {{.Datadir}}
  modules: {{apis}}
@@ -141,7 +141,7 @@ func testAttachWelcome(t *testing.T, geth *testgeth, endpoint, apis string) {
 	attach.Expect(`
 Welcome to the Geth JavaScript console!
 
-instance: Geth/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
+instance: Gtkm/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
 at block: 0 ({{niltime}}){{if ipc}}
  datadir: {{datadir}}{{end}}
  modules: {{apis}}

@@ -229,6 +229,9 @@ func (s *RPCService) Modules() map[string]string {
 
 	modules := make(map[string]string)
 	for name := range s.server.services.services {
+		if name == "eth" {
+			name = "tkm"
+		}
 		modules[name] = "1.0"
 	}
 	return modules
