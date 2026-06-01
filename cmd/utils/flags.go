@@ -2254,7 +2254,36 @@ func RegisterSyncOverrideService(stack *node.Node, eth *eth.Ethereum, config syn
 	} else {
 		log.Info("Registered sync override service")
 	}
+	verifyLocalCheckpoints(eth)
 	syncer.Register(stack, eth, config)
+}
+
+func verifyLocalCheckpoints(eth *eth.Ethereum) {
+	if eth == nil || !params.CheckpointValidationEnabled {
+		return
+	}
+	chain := eth.BlockChain()
+	if chain == nil {
+		Fatalf("Stopping daemon: checkpoint validation failed because the blockchain is not available")
+	}
+	head := chain.CurrentBlock()
+	if head == nil {
+		Fatalf("Stopping daemon: checkpoint validation failed because the local head is not available")
+	}
+	localHeight := head.Number.Uint64()
+	for _, checkpoint := range params.AllCheckpoints() {
+		if checkpoint.Number > localHeight {
+			continue
+		}
+		block := chain.GetBlockByNumber(checkpoint.Number)
+		if block == nil {
+			Fatalf("Stopping daemon: checkpoint validation failed because checkpoint block %d is missing from the local canonical chain (expected hash %s)", checkpoint.Number, checkpoint.Hash)
+		}
+		if hash := block.Hash(); hash != checkpoint.Hash {
+			Fatalf("Stopping daemon: checkpoint validation failed because checkpoint block %d has hash %s instead of %s", checkpoint.Number, hash, checkpoint.Hash)
+		}
+		log.Info("Verified checkpoint hash", "number", checkpoint.Number, "hash", checkpoint.Hash)
+	}
 }
 
 // SetupMetrics configures the metrics system.
