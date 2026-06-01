@@ -116,6 +116,16 @@ func (api *EthereumAPI) Mining() bool {
 	return api.b.Mining()
 }
 
+// GetWork returns the current mining work package for external miners.
+func (api *EthereumAPI) GetWork() ([4]string, error) {
+	return api.b.GetWork()
+}
+
+// SubmitWork submits a proof-of-work solution from an external miner.
+func (api *EthereumAPI) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
+	return api.b.SubmitWork(nonce, hash, digest)
+}
+
 // ProtocolVersion returns the current Ethereum protocol version.
 func (api *EthereumAPI) ProtocolVersion() hexutil.Uint {
 	return hexutil.Uint(ethprotocol.ProtocolVersions[0])

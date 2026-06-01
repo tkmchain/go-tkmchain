@@ -531,6 +531,10 @@ func (b testBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc
 
 func (b testBackend) CurrentHeader() *types.Header { return b.chain.CurrentHeader() }
 func (b testBackend) CurrentBlock() *types.Header  { return b.chain.CurrentBlock() }
+func (b testBackend) GetWork() ([4]string, error)  { panic("implement me") }
+func (b testBackend) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
+	panic("implement me")
+}
 func (b testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
 	if number == rpc.LatestBlockNumber {
 		head := b.chain.CurrentBlock()

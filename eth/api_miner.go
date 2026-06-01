@@ -21,6 +21,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // MinerAPI provides an API to control the miner.
@@ -31,6 +32,16 @@ type MinerAPI struct {
 // NewMinerAPI creates a new MinerAPI instance.
 func NewMinerAPI(e *Ethereum) *MinerAPI {
 	return &MinerAPI{e}
+}
+
+// GetWork returns the current mining work package for external miners.
+func (api *MinerAPI) GetWork() ([4]string, error) {
+	return api.e.Miner().GetWork()
+}
+
+// SubmitWork submits a proof-of-work solution from an external miner.
+func (api *MinerAPI) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
+	return api.e.Miner().SubmitWork(nonce, hash, digest)
 }
 
 // SetExtra sets the extra data string that is included when this miner mines a block.

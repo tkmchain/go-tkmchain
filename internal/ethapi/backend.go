@@ -66,6 +66,8 @@ type Backend interface {
 	Etherbase() common.Address
 	Mining() bool
 	HashRate() uint64
+	GetWork() ([4]string, error)
+	SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
 	BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error)
 	BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error)

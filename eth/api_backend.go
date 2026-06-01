@@ -73,6 +73,14 @@ func (b *EthAPIBackend) HashRate() uint64 {
 	return b.eth.miner.HashRate()
 }
 
+func (b *EthAPIBackend) GetWork() ([4]string, error) {
+	return b.eth.miner.GetWork()
+}
+
+func (b *EthAPIBackend) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
+	return b.eth.miner.SubmitWork(nonce, hash, digest)
+}
+
 func (b *EthAPIBackend) SetHead(number uint64) {
 	b.eth.handler.downloader.Cancel()
 	b.eth.blockchain.SetHead(number)
