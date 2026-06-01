@@ -70,9 +70,28 @@ type EthereumAPI struct {
 	b Backend
 }
 
+// CheckpointResult is the RPC representation of a hardcoded checkpoint.
+type CheckpointResult struct {
+	Number hexutil.Uint64 `json:"number"`
+	Hash   common.Hash    `json:"hash"`
+}
+
 // NewEthereumAPI creates a new Ethereum protocol API.
 func NewEthereumAPI(b Backend) *EthereumAPI {
 	return &EthereumAPI{b}
+}
+
+// ShowCheckpoints returns all globally configured hardcoded validation checkpoints.
+func (api *EthereumAPI) ShowCheckpoints() []CheckpointResult {
+	checkpoints := params.AllCheckpoints()
+	results := make([]CheckpointResult, len(checkpoints))
+	for i, checkpoint := range checkpoints {
+		results[i] = CheckpointResult{
+			Number: hexutil.Uint64(checkpoint.Number),
+			Hash:   checkpoint.Hash,
+		}
+	}
+	return results
 }
 
 // Coinbase returns the coinbase address for the current head.

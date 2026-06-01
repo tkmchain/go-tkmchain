@@ -1848,6 +1848,13 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 				prev.Hash().Bytes()[:4], i, block.NumberU64(), block.Hash().Bytes()[:4], block.ParentHash().Bytes()[:4])
 		}
 	}
+	if params.CheckpointValidationEnabled {
+		for i, block := range chain {
+			if checkpoint, ok := params.GetCheckpoint(block.NumberU64()); ok && checkpoint != block.Hash() {
+				return i, fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", block.NumberU64(), block.Hash(), checkpoint)
+			}
+		}
+	}
 	// Pre-checks passed, start the full block imports
 	if !bc.chainmu.TryLock() {
 		return 0, errChainStopped

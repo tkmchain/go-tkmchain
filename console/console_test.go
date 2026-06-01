@@ -202,6 +202,19 @@ func TestTkmAlias(t *testing.T) {
 	}
 }
 
+func TestTkmShowCheckpoints(t *testing.T) {
+	tester := newTester(t, nil)
+	defer tester.Close(t)
+
+	result, err := tester.console.jsre.Run("typeof tkm.showcheckpoints + ':' + tkm.showcheckpoints()[0].number")
+	if err != nil {
+		t.Fatalf("failed to evaluate tkm.showcheckpoints: %v", err)
+	}
+	if have, want := result.String(), "function:0x0"; have != want {
+		t.Fatalf("unexpected checkpoint output: have %s, want %s", have, want)
+	}
+}
+
 // Tests that the console can be used in interactive mode.
 func TestInteractive(t *testing.T) {
 	// Create a tester and run an interactive console in the background

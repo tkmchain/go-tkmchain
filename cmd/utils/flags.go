@@ -243,6 +243,12 @@ var (
 		Usage:    "Comma separated block number-to-hash mappings to require for peering (<number>=<hash>)",
 		Category: flags.EthCategory,
 	}
+	CheckpointValidationFlag = &cli.BoolFlag{
+		Name:     "checkpoints",
+		Usage:    "Enforce hardcoded blockchain validation checkpoints",
+		Value:    true,
+		Category: flags.EthCategory,
+	}
 	BloomFilterSizeFlag = &cli.Uint64Flag{
 		Name:     "bloomfilter.size",
 		Usage:    "Megabytes of memory allocated to bloom-filter for pruning",
@@ -1759,6 +1765,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setBlobPool(ctx, &cfg.BlobPool)
 	setMiner(ctx, &cfg.Miner)
 	setRequiredBlocks(ctx, cfg)
+	params.SetCheckpointValidation(ctx.Bool(CheckpointValidationFlag.Name))
 
 	// Cap the cache allowance and tune the garbage collector
 	mem, err := gopsutil.VirtualMemory()
@@ -2434,6 +2441,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	if err != nil {
 		Fatalf("%v", err)
 	}
+	params.SetCheckpointValidation(ctx.Bool(CheckpointValidationFlag.Name))
 	options := &core.BlockChainConfig{
 		TrieCleanLimit:          ethconfig.Defaults.TrieCleanCache,
 		NoPrefetch:              ctx.Bool(CacheNoPrefetchFlag.Name),
