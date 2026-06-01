@@ -48,7 +48,7 @@ func initRandomXCheckpoints() *Checkpoints {
 		Points: make(map[uint64]common.Hash),
 	}
 	// Example checkpoint: block 0 (genesis) must match the actual genesis hash.
-	cp.Points[0] = common.HexToHash(RandomXCheckpointHash)
+	cp.Points[0] = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
 
 	// Add more checkpoints at strategic heights
 	// cp.Points[1000] = common.HexToHash("0x...")
