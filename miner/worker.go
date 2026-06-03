@@ -196,6 +196,8 @@ type worker struct {
 	// atomic status counters
 	running int32 // The indicator whether the consensus engine is running or not.
 	newTxs  int32 // New arrival transaction count since last sealing work submitting.
+	// externalOnly controls whether work is generated only for external miners.
+	externalOnly int32
 
 	// External functions
 	isLocalBlock func(block *types.Block) bool // Function used to determine whether the specified block is mined by local miner.
@@ -271,6 +273,20 @@ func (w *worker) setExtra(extra []byte) {
 // setRecommitInterval updates the interval for miner sealing work recommitting.
 func (w *worker) setRecommitInterval(interval time.Duration) {
 	w.resubmitIntervalCh <- interval
+}
+
+// setExternalOnly toggles whether generated work should only be exposed to external miners.
+func (w *worker) setExternalOnly(externalOnly bool) {
+	if externalOnly {
+		atomic.StoreInt32(&w.externalOnly, 1)
+	} else {
+		atomic.StoreInt32(&w.externalOnly, 0)
+	}
+}
+
+// isExternalOnly returns whether generated work is reserved for external miners.
+func (w *worker) isExternalOnly() bool {
+	return atomic.LoadInt32(&w.externalOnly) == 1
 }
 
 // pending returns the pending state and corresponding block.
@@ -548,6 +564,9 @@ func (w *worker) taskLoop() {
 			w.pendingTasks[w.engine.SealHash(task.block.Header())] = task
 			w.pendingMu.Unlock()
 
+			if w.isExternalOnly() {
+				continue
+			}
 			if err := w.engine.Seal(w.chain, task.block, w.resultCh, stopCh); err != nil {
 				log.Warn("Block sealing failed", "err", err)
 			}
