@@ -122,6 +122,7 @@ type Ethereum struct {
 	kingAddresses      []common.Address
 	rkLocks            map[common.Address]rkLockInfo
 	miningStartPending bool
+	miningStartPool    bool
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -459,6 +460,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(s),
 		},
 		{
+			Namespace: "randomx",
+			Service:   NewRandomXAPI(s),
+		},
+		{
 			Namespace: "tkm",
 			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
 		},
@@ -545,6 +550,15 @@ func (s *Ethereum) GetKingAddresses() []common.Address {
 // StartMining starts the RandomX miner with the configured settings. If the node is
 // still alone or behind a connected peer, mining is deferred until peer sync catches up.
 func (s *Ethereum) StartMining() error {
+	return s.startMining(false)
+}
+
+// StartPoolMining starts RandomX work generation for external pool miners only.
+func (s *Ethereum) StartPoolMining() error {
+	return s.startMining(true)
+}
+
+func (s *Ethereum) startMining(pool bool) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -556,6 +570,7 @@ func (s *Ethereum) StartMining() error {
 		return nil
 	}
 	if ready, reason, local, highest := s.readyToMine(); !ready {
+		s.miningStartPool = pool
 		if !s.miningStartPending {
 			s.miningStartPending = true
 			go s.waitForMiningReady()
@@ -563,7 +578,7 @@ func (s *Ethereum) StartMining() error {
 		log.Info("RandomX mining deferred", "reason", reason, "local", local, "peerHeight", highest)
 		return nil
 	}
-	return s.startMiningLocked()
+	return s.startMiningLocked(pool)
 }
 
 func (s *Ethereum) waitForMiningReady() {
@@ -580,8 +595,10 @@ func (s *Ethereum) waitForMiningReady() {
 				return
 			}
 			if ready, reason, local, highest := s.readyToMine(); ready {
+				pool := s.miningStartPool
 				s.miningStartPending = false
-				if err := s.startMiningLocked(); err != nil {
+				s.miningStartPool = false
+				if err := s.startMiningLocked(pool); err != nil {
 					log.Error("Failed to start deferred RandomX mining", "error", err)
 				}
 				s.lock.Unlock()
@@ -593,6 +610,7 @@ func (s *Ethereum) waitForMiningReady() {
 		case <-s.handler.quitSync:
 			s.lock.Lock()
 			s.miningStartPending = false
+			s.miningStartPool = false
 			s.lock.Unlock()
 			return
 		}
@@ -624,7 +642,7 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 	return true, "", localHeight, highest
 }
 
-func (s *Ethereum) startMiningLocked() error {
+func (s *Ethereum) startMiningLocked(pool bool) error {
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {
 		s.miner.SetEtherbase(s.config.Miner.Etherbase)
@@ -645,9 +663,14 @@ func (s *Ethereum) startMiningLocked() error {
 	}
 
 	// Start the miner
-	s.miner.Start(s.config.Miner.Etherbase)
+	if pool {
+		s.miner.StartExternal(s.config.Miner.Etherbase)
+	} else {
+		s.miner.Start(s.config.Miner.Etherbase)
+	}
 
 	log.Info("RandomX miner started successfully",
+		"pool", pool,
 		"threads", runtime.NumCPU(),
 		"etherbase", s.config.Miner.Etherbase.Hex(),
 		"gasprice", s.config.Miner.GasPrice,

@@ -30,6 +30,12 @@ var (
 		Category: flags.MinerCategory,
 	}
 
+	PoolMiningFlag = &cli.BoolFlag{
+		Name:     "pool",
+		Usage:    "Enable RandomX pool mining mode (generate external work without local CPU sealing)",
+		Category: flags.MinerCategory,
+	}
+
 	// Thread configuration
 	MinerThreadsFlag = &cli.IntFlag{
 		Name:     "miner.threads",
@@ -76,18 +82,18 @@ var (
 		Category: flags.MinerCategory,
 	}
 
-       // RandomX RAM cache flag
-       RandomXRAMCacheFlag = &cli.BoolFlag{
-                Name:     "randomx.ram-cache",
-                Usage:    "Store RandomX dataset in RAM instead of disk (faster but uses more memory)",
-                Category: flags.MinerCategory,
-       }
+	// RandomX RAM cache flag
+	RandomXRAMCacheFlag = &cli.BoolFlag{
+		Name:     "randomx.ram-cache",
+		Usage:    "Store RandomX dataset in RAM instead of disk (faster but uses more memory)",
+		Category: flags.MinerCategory,
+	}
 
-       RandomXNoPersistFlag = &cli.BoolFlag{
-                Name:     "randomx.no-persist",
-                Usage:    "Don't persist RandomX dataset to disk (generate fresh on each start)",
-                Category: flags.MinerCategory,
-        }
+	RandomXNoPersistFlag = &cli.BoolFlag{
+		Name:     "randomx.no-persist",
+		Usage:    "Don't persist RandomX dataset to disk (generate fresh on each start)",
+		Category: flags.MinerCategory,
+	}
 	// King mining rewards
 	MainKingAddressFlag = &cli.StringFlag{
 		Name:     "king.main",
@@ -112,6 +118,7 @@ var (
 // RandomXMiningFlags groups all RandomX mining flags
 var RandomXMiningFlags = []cli.Flag{
 	MiningEnabledFlag,
+	PoolMiningFlag,
 	MinerThreadsFlag,
 	MinerEtherbaseFlag,
 	MinerExtraDataFlag,
@@ -121,8 +128,8 @@ var RandomXMiningFlags = []cli.Flag{
 	RandomXDatasetSizeFlag,
 	RandomXEpochLengthFlag,
 	RandomXMinMemoryFlag,
-        RandomXRAMCacheFlag,
-        RandomXNoPersistFlag,
+	RandomXRAMCacheFlag,
+	RandomXNoPersistFlag,
 	MainKingAddressFlag,
 	RotatingKingAddressesFlag,
 	KingRotationIntervalFlag,

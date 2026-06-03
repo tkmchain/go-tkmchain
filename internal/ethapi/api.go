@@ -44,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/internal/ethapi/override"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -114,6 +115,20 @@ func (api *EthereumAPI) Hashrate() hexutil.Uint64 {
 // Mining returns whether this node is currently mining blocks.
 func (api *EthereumAPI) Mining() bool {
 	return api.b.Mining()
+}
+
+// GetSeedHash returns the RandomX seed hash for the next block.
+func (api *EthereumAPI) GetSeedHash() (common.Hash, error) {
+	head := api.b.CurrentHeader()
+	if head == nil {
+		return common.Hash{}, errors.New("latest header unavailable")
+	}
+	return miner.RandomXSeedHash(api.b.ChainConfig(), head.Number.Uint64()+1), nil
+}
+
+// GetSeedHashForBlock returns the RandomX seed hash for a specific block number.
+func (api *EthereumAPI) GetSeedHashForBlock(block hexutil.Uint64) common.Hash {
+	return miner.RandomXSeedHash(api.b.ChainConfig(), uint64(block))
 }
 
 // GetWork returns the current mining work package for external miners.

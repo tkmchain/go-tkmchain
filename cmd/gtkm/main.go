@@ -18,14 +18,14 @@
 package main
 
 import (
-//        "context"
+	//        "context"
 	"fmt"
 	"os"
-        "os/signal"
-        "syscall"
-        "time"
+	"os/signal"
 	"slices"
 	"sort"
+	"syscall"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -35,7 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
-//        "github.com/ethereum/go-ethereum/eth"
+	//        "github.com/ethereum/go-ethereum/eth"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Force-load the tracer engines to trigger registration
@@ -114,6 +114,7 @@ var (
 		utils.MaxPendingPeersFlag,
 		// RandomX mining flags (restored, not deprecated)
 		utils.MiningEnabledFlag,
+		utils.PoolMiningFlag,
 		utils.MinerThreadsFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
@@ -274,15 +275,16 @@ func init() {
 			return err
 		}
 		flags.CheckEnvVars(ctx, app.Flags, "GETH")
-		
+
 		// Log RandomX mining configuration if enabled
-		if ctx.Bool(utils.MiningEnabledFlag.Name) {
+		if ctx.Bool(utils.MiningEnabledFlag.Name) || ctx.Bool(utils.PoolMiningFlag.Name) {
 			log.Info("RandomX mining enabled",
 				"threads", ctx.Int(utils.MinerThreadsFlag.Name),
 				"etherbase", ctx.String(utils.MinerEtherbaseFlag.Name),
+				"pool", ctx.Bool(utils.PoolMiningFlag.Name),
 			)
 		}
-		
+
 		return nil
 	}
 	app.After = func(ctx *cli.Context) error {
@@ -322,47 +324,47 @@ func prepare(ctx *cli.Context) {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down
 func geth(ctx *cli.Context) error {
-    if args := ctx.Args().Slice(); len(args) > 0 {
-        return fmt.Errorf("invalid command: %q", args[0])
-    }
+	if args := ctx.Args().Slice(); len(args) > 0 {
+		return fmt.Errorf("invalid command: %q", args[0])
+	}
 
-    prepare(ctx)
-    stack, ethBackend := makeFullNodeWithBackend(ctx)
-    defer stack.Close()
+	prepare(ctx)
+	stack, ethBackend := makeFullNodeWithBackend(ctx)
+	defer stack.Close()
 
-    // Setup signal handling with state saving
-    sigc := make(chan os.Signal, 1)
-    signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-    
-    go func() {
-        <-sigc
-        log.Info("Received interrupt, saving state before shutdown...")
-        
-        if ethBackend != nil {
-            blockchain := ethBackend.BlockChain()
-            if blockchain != nil {
-                head := blockchain.CurrentBlock()
-                if head != nil && head.Number.Uint64() > 0 {
-                    log.Info("Flushing state to disk", "block", head.Number, "root", head.Root)
-                    
-                    // For path scheme, we don't need to commit - it's already on disk
-                    // Just log that state is safe
-                    log.Info("State is persistent", "scheme", blockchain.TrieDB().Scheme())
-                }
-            }
-        }
-        
-        // Give a moment for any pending writes
-        time.Sleep(1 * time.Second)
-        
-        // Force exit - don't wait for peer discovery to stop
-        log.Info("Forcing exit to avoid peer discovery hang")
-        os.Exit(0)
-    }()
+	// Setup signal handling with state saving
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 
-    startNode(ctx, stack, false)
-    stack.Wait()
-    return nil
+	go func() {
+		<-sigc
+		log.Info("Received interrupt, saving state before shutdown...")
+
+		if ethBackend != nil {
+			blockchain := ethBackend.BlockChain()
+			if blockchain != nil {
+				head := blockchain.CurrentBlock()
+				if head != nil && head.Number.Uint64() > 0 {
+					log.Info("Flushing state to disk", "block", head.Number, "root", head.Root)
+
+					// For path scheme, we don't need to commit - it's already on disk
+					// Just log that state is safe
+					log.Info("State is persistent", "scheme", blockchain.TrieDB().Scheme())
+				}
+			}
+		}
+
+		// Give a moment for any pending writes
+		time.Sleep(1 * time.Second)
+
+		// Force exit - don't wait for peer discovery to stop
+		log.Info("Forcing exit to avoid peer discovery hang")
+		os.Exit(0)
+	}()
+
+	startNode(ctx, stack, false)
+	stack.Wait()
+	return nil
 }
 
 // startNode boots up the system node and all registered protocols, after which

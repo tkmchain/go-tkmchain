@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/syncer"
 	"github.com/ethereum/go-ethereum/internal/flags"
@@ -47,7 +48,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
-        "github.com/ethereum/go-ethereum/eth"
 	"github.com/naoina/toml"
 	"github.com/urfave/cli/v2"
 )
@@ -111,6 +111,7 @@ type ethstatsConfig struct {
 // RandomXMinerConfig holds RandomX mining configuration
 type RandomXMinerConfig struct {
 	Enabled          bool     `toml:",omitempty"`
+	Pool             bool     `toml:",omitempty"`
 	Threads          int      `toml:",omitempty"`
 	Etherbase        string   `toml:",omitempty"`
 	ExtraData        string   `toml:",omitempty"`
@@ -153,8 +154,8 @@ func defaultNodeConfig() node.Config {
 	cfg := node.DefaultConfig
 	cfg.Name = clientIdentifier
 	cfg.Version = version.WithCommit(git.Commit, git.Date)
-	cfg.HTTPModules = append(cfg.HTTPModules, "eth")
-	cfg.WSModules = append(cfg.WSModules, "eth")
+	cfg.HTTPModules = append(cfg.HTTPModules, "eth", "miner", "randomx")
+	cfg.WSModules = append(cfg.WSModules, "eth", "miner", "randomx")
 	cfg.IPCPath = clientIdentifier + ".ipc"
 	return cfg
 }
@@ -201,6 +202,12 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
 	// Mining enabled
 	if ctx.IsSet(utils.MiningEnabledFlag.Name) {
 		cfg.RandomX.Enabled = ctx.Bool(utils.MiningEnabledFlag.Name)
+	}
+	if ctx.IsSet(utils.PoolMiningFlag.Name) {
+		cfg.RandomX.Pool = ctx.Bool(utils.PoolMiningFlag.Name)
+		if cfg.RandomX.Pool {
+			cfg.RandomX.Enabled = true
+		}
 	}
 
 	// Threads
@@ -312,6 +319,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 			"etherbase", cfg.RandomX.Etherbase,
 			"gasprice", cfg.RandomX.GasPrice,
 			"gaslimit", cfg.RandomX.GasLimit,
+			"pool", cfg.RandomX.Pool,
 		)
 	}
 
@@ -369,180 +377,189 @@ func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
 // makeFullNodeWithBackend loads geth configuration and creates the Ethereum backend,
 // returning both the node and the eth backend for state management.
 func makeFullNodeWithBackend(ctx *cli.Context) (*node.Node, *eth.Ethereum) {
-    stack, cfg := makeConfigNode(ctx)
-    if ctx.IsSet(utils.OverrideOsaka.Name) {
-        v := ctx.Uint64(utils.OverrideOsaka.Name)
-        cfg.Eth.OverrideOsaka = &v
-    }
-    if ctx.IsSet(utils.OverrideBPO1.Name) {
-        v := ctx.Uint64(utils.OverrideBPO1.Name)
-        cfg.Eth.OverrideBPO1 = &v
-    }
-    if ctx.IsSet(utils.OverrideBPO2.Name) {
-        v := ctx.Uint64(utils.OverrideBPO2.Name)
-        cfg.Eth.OverrideBPO2 = &v
-    }
-    if ctx.IsSet(utils.OverrideUBT.Name) {
-        v := ctx.Uint64(utils.OverrideUBT.Name)
-        cfg.Eth.OverrideUBT = &v
-    }
+	stack, cfg := makeConfigNode(ctx)
+	if ctx.IsSet(utils.OverrideOsaka.Name) {
+		v := ctx.Uint64(utils.OverrideOsaka.Name)
+		cfg.Eth.OverrideOsaka = &v
+	}
+	if ctx.IsSet(utils.OverrideBPO1.Name) {
+		v := ctx.Uint64(utils.OverrideBPO1.Name)
+		cfg.Eth.OverrideBPO1 = &v
+	}
+	if ctx.IsSet(utils.OverrideBPO2.Name) {
+		v := ctx.Uint64(utils.OverrideBPO2.Name)
+		cfg.Eth.OverrideBPO2 = &v
+	}
+	if ctx.IsSet(utils.OverrideUBT.Name) {
+		v := ctx.Uint64(utils.OverrideUBT.Name)
+		cfg.Eth.OverrideUBT = &v
+	}
 
-    // Start metrics export if enabled.
-    utils.SetupMetrics(&cfg.Metrics)
+	// Start metrics export if enabled.
+	utils.SetupMetrics(&cfg.Metrics)
 
-    // Setup OpenTelemetry reporting if enabled.
-    if err := tracesetup.SetupTelemetry(cfg.Node.OpenTelemetry, stack); err != nil {
-        utils.Fatalf("failed to setup OpenTelemetry: %v", err)
-    }
+	// Setup OpenTelemetry reporting if enabled.
+	if err := tracesetup.SetupTelemetry(cfg.Node.OpenTelemetry, stack); err != nil {
+		utils.Fatalf("failed to setup OpenTelemetry: %v", err)
+	}
 
-    // Add Ethereum service and capture the backend
-    backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	// Add Ethereum service and capture the backend
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
 
-    // Create gauge with geth system and build information
-    if eth != nil {
-        var protos []string
-        for _, p := range eth.Protocols() {
-            protos = append(protos, fmt.Sprintf("%v/%d", p.Name, p.Version))
-        }
-        metrics.NewRegisteredGaugeInfo("geth/info", nil).Update(metrics.GaugeInfoValue{
-            "arch":      runtime.GOARCH,
-            "os":        runtime.GOOS,
-            "version":   cfg.Node.Version,
-            "protocols": strings.Join(protos, ","),
-        })
-    }
+	// Create gauge with geth system and build information
+	if eth != nil {
+		var protos []string
+		for _, p := range eth.Protocols() {
+			protos = append(protos, fmt.Sprintf("%v/%d", p.Name, p.Version))
+		}
+		metrics.NewRegisteredGaugeInfo("geth/info", nil).Update(metrics.GaugeInfoValue{
+			"arch":      runtime.GOARCH,
+			"os":        runtime.GOOS,
+			"version":   cfg.Node.Version,
+			"protocols": strings.Join(protos, ","),
+		})
+	}
 
-    // Configure log filter RPC API.
-    filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
+	// Configure log filter RPC API.
+	filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
 
-    // Configure GraphQL if requested.
-    if ctx.Bool(utils.GraphQLEnabledFlag.Name) {
-        utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
-    }
-    
-    // Add the Ethereum Stats daemon if requested.
-    if cfg.Ethstats.URL != "" {
-        utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
-    }
+	// Configure GraphQL if requested.
+	if ctx.Bool(utils.GraphQLEnabledFlag.Name) {
+		utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
+	}
 
-    // Configure synchronization override service
-    syncConfig := syncer.Config{
-        ExitWhenSynced: ctx.Bool(utils.ExitWhenSyncedFlag.Name),
-    }
-    if ctx.IsSet(utils.SyncTargetFlag.Name) {
-        target := ctx.String(utils.SyncTargetFlag.Name)
-        if !common.IsHexHash(target) {
-            utils.Fatalf("sync target hash is not a valid hex hash: %s", target)
-        }
-        syncConfig.TargetBlock = common.HexToHash(target)
-    }
-    utils.RegisterSyncOverrideService(stack, eth, syncConfig)
+	// Add the Ethereum Stats daemon if requested.
+	if cfg.Ethstats.URL != "" {
+		utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
+	}
 
-    if ctx.Bool(utils.DeveloperFlag.Name) {
-        banner := constructDevModeBanner(ctx, cfg)
-        for _, line := range strings.Split(banner, "\n") {
-            log.Warn(line)
-        }
-    }
+	// Configure synchronization override service
+	syncConfig := syncer.Config{
+		ExitWhenSynced: ctx.Bool(utils.ExitWhenSyncedFlag.Name),
+	}
+	if ctx.IsSet(utils.SyncTargetFlag.Name) {
+		target := ctx.String(utils.SyncTargetFlag.Name)
+		if !common.IsHexHash(target) {
+			utils.Fatalf("sync target hash is not a valid hex hash: %s", target)
+		}
+		syncConfig.TargetBlock = common.HexToHash(target)
+	}
+	utils.RegisterSyncOverrideService(stack, eth, syncConfig)
 
-    // Start mining if enabled in config
-    if cfg.RandomX.Enabled && !randomxlib.Available() {
-        log.Error("RandomX mining disabled", "error", "randomx requires cgo (build with CGO_ENABLED=1 and -tags randomx)")
-    } else if cfg.RandomX.Enabled && eth != nil {
-        if err := eth.StartMining(); err != nil {
-            log.Error("Failed to start RandomX mining", "error", err)
-        }
-    }
+	if ctx.Bool(utils.DeveloperFlag.Name) {
+		banner := constructDevModeBanner(ctx, cfg)
+		for _, line := range strings.Split(banner, "\n") {
+			log.Warn(line)
+		}
+	}
 
-    return stack, eth
+	// Start mining if enabled in config
+	if cfg.RandomX.Enabled && !randomxlib.Available() {
+		log.Error("RandomX mining disabled", "error", "randomx requires cgo (build with CGO_ENABLED=1 and -tags randomx)")
+	} else if cfg.RandomX.Enabled && eth != nil {
+		if cfg.RandomX.Pool {
+			if err := eth.StartPoolMining(); err != nil {
+				log.Error("Failed to start RandomX pool mining", "error", err)
+			}
+		} else if err := eth.StartMining(); err != nil {
+			log.Error("Failed to start RandomX mining", "error", err)
+		}
+	}
+
+	return stack, eth
 }
+
 // makeFullNode loads geth configuration and creates the Ethereum backend.
 func makeFullNode(ctx *cli.Context) (*node.Node, *eth.Ethereum) {
-        stack, cfg := makeConfigNode(ctx)
-        if ctx.IsSet(utils.OverrideOsaka.Name) {
-                v := ctx.Uint64(utils.OverrideOsaka.Name)
-                cfg.Eth.OverrideOsaka = &v
-        }
-        if ctx.IsSet(utils.OverrideBPO1.Name) {
-                v := ctx.Uint64(utils.OverrideBPO1.Name)
-                cfg.Eth.OverrideBPO1 = &v
-        }
-        if ctx.IsSet(utils.OverrideBPO2.Name) {
-                v := ctx.Uint64(utils.OverrideBPO2.Name)
-                cfg.Eth.OverrideBPO2 = &v
-        }
-        if ctx.IsSet(utils.OverrideUBT.Name) {
-                v := ctx.Uint64(utils.OverrideUBT.Name)
-                cfg.Eth.OverrideUBT = &v
-        }
+	stack, cfg := makeConfigNode(ctx)
+	if ctx.IsSet(utils.OverrideOsaka.Name) {
+		v := ctx.Uint64(utils.OverrideOsaka.Name)
+		cfg.Eth.OverrideOsaka = &v
+	}
+	if ctx.IsSet(utils.OverrideBPO1.Name) {
+		v := ctx.Uint64(utils.OverrideBPO1.Name)
+		cfg.Eth.OverrideBPO1 = &v
+	}
+	if ctx.IsSet(utils.OverrideBPO2.Name) {
+		v := ctx.Uint64(utils.OverrideBPO2.Name)
+		cfg.Eth.OverrideBPO2 = &v
+	}
+	if ctx.IsSet(utils.OverrideUBT.Name) {
+		v := ctx.Uint64(utils.OverrideUBT.Name)
+		cfg.Eth.OverrideUBT = &v
+	}
 
-        // Start metrics export if enabled.
-        utils.SetupMetrics(&cfg.Metrics)
+	// Start metrics export if enabled.
+	utils.SetupMetrics(&cfg.Metrics)
 
-        // Setup OpenTelemetry reporting if enabled.
-        if err := tracesetup.SetupTelemetry(cfg.Node.OpenTelemetry, stack); err != nil {
-                utils.Fatalf("failed to setup OpenTelemetry: %v", err)
-        }
+	// Setup OpenTelemetry reporting if enabled.
+	if err := tracesetup.SetupTelemetry(cfg.Node.OpenTelemetry, stack); err != nil {
+		utils.Fatalf("failed to setup OpenTelemetry: %v", err)
+	}
 
-        // Add Ethereum service and capture the backend
-        backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	// Add Ethereum service and capture the backend
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
 
-        // Create gauge with geth system and build information
-        if eth != nil { // The 'eth' backend may be nil in light mode
-                var protos []string
-                for _, p := range eth.Protocols() {
-                        protos = append(protos, fmt.Sprintf("%v/%d", p.Name, p.Version))
-                }
-                metrics.NewRegisteredGaugeInfo("geth/info", nil).Update(metrics.GaugeInfoValue{
-                        "arch":      runtime.GOARCH,
-                        "os":        runtime.GOOS,
-                        "version":   cfg.Node.Version,
-                        "protocols": strings.Join(protos, ","),
-                })
-        }
+	// Create gauge with geth system and build information
+	if eth != nil { // The 'eth' backend may be nil in light mode
+		var protos []string
+		for _, p := range eth.Protocols() {
+			protos = append(protos, fmt.Sprintf("%v/%d", p.Name, p.Version))
+		}
+		metrics.NewRegisteredGaugeInfo("geth/info", nil).Update(metrics.GaugeInfoValue{
+			"arch":      runtime.GOARCH,
+			"os":        runtime.GOOS,
+			"version":   cfg.Node.Version,
+			"protocols": strings.Join(protos, ","),
+		})
+	}
 
-        // Configure log filter RPC API.
-        filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
+	// Configure log filter RPC API.
+	filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
 
-        // Configure GraphQL if requested.
-        if ctx.Bool(utils.GraphQLEnabledFlag.Name) {
-                utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
-        }
-        // Add the Ethereum Stats daemon if requested.
-        if cfg.Ethstats.URL != "" {
-                utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
-        }
+	// Configure GraphQL if requested.
+	if ctx.Bool(utils.GraphQLEnabledFlag.Name) {
+		utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
+	}
+	// Add the Ethereum Stats daemon if requested.
+	if cfg.Ethstats.URL != "" {
+		utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
+	}
 
-        // Configure synchronization override service
-        syncConfig := syncer.Config{
-                ExitWhenSynced: ctx.Bool(utils.ExitWhenSyncedFlag.Name),
-        }
-        if ctx.IsSet(utils.SyncTargetFlag.Name) {
-                target := ctx.String(utils.SyncTargetFlag.Name)
-                if !common.IsHexHash(target) {
-                        utils.Fatalf("sync target hash is not a valid hex hash: %s", target)
-                }
-                syncConfig.TargetBlock = common.HexToHash(target)
-        }
-        utils.RegisterSyncOverrideService(stack, eth, syncConfig)
+	// Configure synchronization override service
+	syncConfig := syncer.Config{
+		ExitWhenSynced: ctx.Bool(utils.ExitWhenSyncedFlag.Name),
+	}
+	if ctx.IsSet(utils.SyncTargetFlag.Name) {
+		target := ctx.String(utils.SyncTargetFlag.Name)
+		if !common.IsHexHash(target) {
+			utils.Fatalf("sync target hash is not a valid hex hash: %s", target)
+		}
+		syncConfig.TargetBlock = common.HexToHash(target)
+	}
+	utils.RegisterSyncOverrideService(stack, eth, syncConfig)
 
-        if ctx.Bool(utils.DeveloperFlag.Name) {
-                banner := constructDevModeBanner(ctx, cfg)
-                for _, line := range strings.Split(banner, "\n") {
-                        log.Warn(line)
-                }
-        }
+	if ctx.Bool(utils.DeveloperFlag.Name) {
+		banner := constructDevModeBanner(ctx, cfg)
+		for _, line := range strings.Split(banner, "\n") {
+			log.Warn(line)
+		}
+	}
 
-        // Start mining if enabled in config
-        if cfg.RandomX.Enabled && !randomxlib.Available() {
-                log.Error("RandomX mining disabled", "error", "randomx requires cgo (build with CGO_ENABLED=1 and -tags randomx)")
-        } else if cfg.RandomX.Enabled && eth != nil {
-                if err := eth.StartMining(); err != nil {
-                        log.Error("Failed to start RandomX mining", "error", err)
-                }
-        }
+	// Start mining if enabled in config
+	if cfg.RandomX.Enabled && !randomxlib.Available() {
+		log.Error("RandomX mining disabled", "error", "randomx requires cgo (build with CGO_ENABLED=1 and -tags randomx)")
+	} else if cfg.RandomX.Enabled && eth != nil {
+		if cfg.RandomX.Pool {
+			if err := eth.StartPoolMining(); err != nil {
+				log.Error("Failed to start RandomX pool mining", "error", err)
+			}
+		} else if err := eth.StartMining(); err != nil {
+			log.Error("Failed to start RandomX mining", "error", err)
+		}
+	}
 
-        return stack, eth
+	return stack, eth
 }
 
 // dumpConfig is the dumpconfig command.

@@ -65,7 +65,7 @@ func (w *worker) getWork() ([4]string, error) {
 	target := new(big.Int).Div(new(big.Int).Lsh(common.Big1, 256), header.Difficulty)
 
 	res[0] = sealHash.Hex()
-	res[1] = randomXSeedHash(w.config, header.Number.Uint64()).Hex()
+	res[1] = RandomXSeedHash(w.config, header.Number.Uint64()).Hex()
 	res[2] = common.BytesToHash(target.Bytes()).Hex()
 	res[3] = common.BytesToHash(new(big.Int).SetUint64(header.Number.Uint64()).Bytes()).Hex()
 	return res, nil
@@ -105,7 +105,8 @@ func (w *worker) submitWork(nonce types.BlockNonce, hash common.Hash, digest com
 	}
 }
 
-func randomXSeedHash(config *params.ChainConfig, block uint64) common.Hash {
+// RandomXSeedHash returns the RandomX seed hash for the epoch containing block.
+func RandomXSeedHash(config *params.ChainConfig, block uint64) common.Hash {
 	epochLength := uint64(2048)
 	if config != nil && config.RandomX != nil && config.RandomX.EpochLength != 0 {
 		epochLength = config.RandomX.EpochLength

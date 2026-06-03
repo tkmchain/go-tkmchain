@@ -17,11 +17,13 @@
 package eth
 
 import (
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/miner"
 )
 
 // MinerAPI provides an API to control the miner.
@@ -32,6 +34,18 @@ type MinerAPI struct {
 // NewMinerAPI creates a new MinerAPI instance.
 func NewMinerAPI(e *Ethereum) *MinerAPI {
 	return &MinerAPI{e}
+}
+
+// GetSeedHash returns the RandomX seed hash for the next block.
+func (api *MinerAPI) GetSeedHash() (common.Hash, error) {
+	if api.e == nil || api.e.blockchain == nil {
+		return common.Hash{}, errors.New("blockchain unavailable")
+	}
+	head := api.e.blockchain.CurrentBlock()
+	if head == nil {
+		return common.Hash{}, errors.New("latest block unavailable")
+	}
+	return miner.RandomXSeedHash(api.e.blockchain.Config(), head.Number.Uint64()+1), nil
 }
 
 // GetWork returns the current mining work package for external miners.

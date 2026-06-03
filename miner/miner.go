@@ -64,6 +64,14 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 // Start begins the RandomX mining process.
 func (miner *Miner) Start(coinbase common.Address) {
 	miner.SetEtherbase(coinbase)
+	miner.worker.setExternalOnly(false)
+	miner.worker.start()
+}
+
+// StartExternal begins work generation for external miners without local sealing.
+func (miner *Miner) StartExternal(coinbase common.Address) {
+	miner.SetEtherbase(coinbase)
+	miner.worker.setExternalOnly(true)
 	miner.worker.start()
 }
 

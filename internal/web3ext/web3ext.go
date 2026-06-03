@@ -18,17 +18,18 @@
 package web3ext
 
 var Modules = map[string]string{
-	"admin":  AdminJs,
-	"clique": CliqueJs,
-	"debug":  DebugJs,
-	"eth":    EthJs,
-	"tkm":    EthJs,
-	"miner":  MinerJs,
-	"net":    NetJs,
-	"rpc":    RpcJs,
-	"rk":     RkJs,
-	"txpool": TxpoolJs,
-	"dev":    DevJs,
+	"admin":   AdminJs,
+	"clique":  CliqueJs,
+	"debug":   DebugJs,
+	"eth":     EthJs,
+	"tkm":     EthJs,
+	"miner":   MinerJs,
+	"net":     NetJs,
+	"rpc":     RpcJs,
+	"rk":      RkJs,
+	"randomx": RandomXJs,
+	"txpool":  TxpoolJs,
+	"dev":     DevJs,
 }
 
 const RkJs = `
@@ -671,10 +672,33 @@ web3._extend({
 });
 `
 
+const RandomXJs = `
+web3._extend({
+	property: 'randomx',
+	methods: [
+		new web3._extend.Method({
+			name: 'getSeedHash',
+			call: 'randomx_getSeedHash'
+		}),
+		new web3._extend.Method({
+			name: 'getSeedHashForBlock',
+			call: 'randomx_getSeedHashForBlock',
+			params: 1,
+			inputFormatter: [web3._extend.utils.fromDecimal]
+		}),
+	],
+	properties: []
+});
+`
+
 const MinerJs = `
 web3._extend({
 	property: 'miner',
 	methods: [
+		new web3._extend.Method({
+			name: 'getSeedHash',
+			call: 'miner_getSeedHash'
+		}),
 		new web3._extend.Method({
 			name: 'setExtra',
 			call: 'miner_setExtra',
