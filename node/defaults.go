@@ -50,7 +50,7 @@ var (
 	DefaultAuthVhosts  = []string{"localhost"} // Default virtual hosts for the authenticated apis
 	DefaultAuthOrigins = []string{"localhost"} // Default origins for the authenticated apis
 	DefaultAuthPrefix  = ""                    // Default prefix for the authenticated apis
-	DefaultAuthModules = []string{"tkm", "engine"}
+	DefaultAuthModules = []string{"tkm", "engine", "randomx"}
 )
 
 // DefaultConfig contains reasonable default settings.
@@ -60,11 +60,11 @@ var DefaultConfig = Config{
 	AuthAddr:             DefaultAuthHost,
 	AuthPort:             DefaultAuthPort,
 	AuthVirtualHosts:     DefaultAuthVhosts,
-	HTTPModules:          []string{"net", "web3", "rk", "rotatingking"},
+	HTTPModules:          []string{"net", "web3", "rk", "rotatingking", "randomx"},
 	HTTPVirtualHosts:     []string{"localhost"},
 	HTTPTimeouts:         rpc.DefaultHTTPTimeouts,
 	WSPort:               DefaultWSPort,
-	WSModules:            []string{"net", "web3", "rk", "rotatingking"},
+	WSModules:            []string{"net", "web3", "rk", "rotatingking", "randomx"},
 	BatchRequestLimit:    1000,
 	BatchResponseMaxSize: 25 * 1000 * 1000,
 	GraphQLVirtualHosts:  []string{"localhost"},

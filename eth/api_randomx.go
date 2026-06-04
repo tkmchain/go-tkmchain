@@ -34,8 +34,8 @@ func NewRandomXAPI(e *Ethereum) *RandomXAPI {
 	return &RandomXAPI{e: e}
 }
 
-// GetSeedHash returns the RandomX seed hash for the next block.
-func (api *RandomXAPI) GetSeedHash() (common.Hash, error) {
+// GetSeedHash returns the RandomX seed hash for the next block, or a specific block when provided.
+func (api *RandomXAPI) GetSeedHash(block *hexutil.Uint64) (common.Hash, error) {
 	if api.e == nil || api.e.blockchain == nil {
 		return common.Hash{}, errors.New("blockchain unavailable")
 	}
@@ -43,7 +43,11 @@ func (api *RandomXAPI) GetSeedHash() (common.Hash, error) {
 	if head == nil {
 		return common.Hash{}, errors.New("latest block unavailable")
 	}
-	return miner.RandomXSeedHash(api.e.blockchain.Config(), head.Number.Uint64()+1), nil
+	blockNumber := head.Number.Uint64() + 1
+	if block != nil {
+		blockNumber = uint64(*block)
+	}
+	return miner.RandomXSeedHash(api.e.blockchain.Config(), blockNumber), nil
 }
 
 // GetSeedHashForBlock returns the RandomX seed hash for a specific block number.
