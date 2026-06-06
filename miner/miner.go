@@ -25,6 +25,7 @@ import (
         "github.com/ethereum/go-ethereum/common"
         "github.com/ethereum/go-ethereum/common/hexutil"
         "github.com/ethereum/go-ethereum/consensus"
+        "github.com/ethereum/go-ethereum/crypto"
         "github.com/ethereum/go-ethereum/core"
         "github.com/ethereum/go-ethereum/core/state"
         "github.com/ethereum/go-ethereum/core/txpool"
@@ -155,7 +156,7 @@ func (miner *Miner) GetWork() ([4]string, error) {
         result := [4]string{
                 header.Hash().Hex(),           // Header hash (for block verification)
                 seedHash.Hex(),                 // Seed hash (for RandomX calculation)
-                target.Hex(),                   // Target difficulty
+                hexutil.EncodeBig(target),         // Target difficulty
                 hexutil.EncodeUint64(height),   // Block height
         }
         
@@ -205,7 +206,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
         }
         
         // Verify the seal using the consensus engine
-        if err := miner.engine.VerifySeal(miner.eth.BlockChain(), newHeader); err != nil {
+        if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
                 log.Warn("Invalid proof-of-work submitted", "err", err)
                 return false
         }
