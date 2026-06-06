@@ -721,9 +721,10 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	info["pending_txs"] = pending + queued
 
 	// Add RandomX specific info from engine
-	if r, ok := s.engine.(*randomx.RandomX); ok {
+	if _, ok := s.engine.(*randomx.RandomX); ok {
+		number := s.blockchain.CurrentBlock().Number.Uint64()
 		info["randomx"] = map[string]interface{}{
-			"epoch":       r.CurrentEpoch(),
+			"epoch":       number / 2048,
 			"mining_mode": "full",
 		}
 	}
