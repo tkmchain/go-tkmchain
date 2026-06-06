@@ -13,16 +13,138 @@ package randomx
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math/big"
 	"sort"
-        "fmt"
+
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 )
+
+// Difficulty calculator bomb delays for Ethereum proof-of-work hard forks.
+var (
+	byzantiumDifficultyBombDelay      = big.NewInt(3000000)
+	constantinopleDifficultyBombDelay = big.NewInt(5000000)
+	muirGlacierDifficultyBombDelay    = big.NewInt(9000000)
+	arrowGlacierDifficultyBombDelay   = big.NewInt(10700000)
+	grayGlacierDifficultyBombDelay    = big.NewInt(11400000)
+)
+
+// CalcDifficulty calculates the difficulty of a header at the given time.
+func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header, _ func(number uint64) *types.Header) *big.Int {
+	next := new(big.Int).Add(parent.Number, big.NewInt(1))
+	if config != nil {
+		switch {
+		case config.IsGrayGlacier(next):
+			return DynamicDifficultyCalculator(grayGlacierDifficultyBombDelay)(time, parent)
+		case config.IsArrowGlacier(next):
+			return DynamicDifficultyCalculator(arrowGlacierDifficultyBombDelay)(time, parent)
+		case config.IsMuirGlacier(next):
+			return DynamicDifficultyCalculator(muirGlacierDifficultyBombDelay)(time, parent)
+		case config.IsConstantinople(next):
+			return DynamicDifficultyCalculator(constantinopleDifficultyBombDelay)(time, parent)
+		case config.IsByzantium(next):
+			return DynamicDifficultyCalculator(byzantiumDifficultyBombDelay)(time, parent)
+		case config.IsHomestead(next):
+			return HomesteadDifficultyCalculator(time, parent)
+		}
+	}
+	return FrontierDifficultyCalculator(time, parent)
+}
+
+// FrontierDifficultyCalculator is the Frontier difficulty adjustment algorithm.
+func FrontierDifficultyCalculator(time uint64, parent *types.Header) *big.Int {
+	adjust := new(big.Int).Div(parent.Difficulty, params.DifficultyBoundDivisor)
+	difficulty := new(big.Int).Set(parent.Difficulty)
+	if time-parent.Time < params.DurationLimit.Uint64() {
+		difficulty.Add(difficulty, adjust)
+	} else {
+		difficulty.Sub(difficulty, adjust)
+	}
+	return addDifficultyBomb(ensureMinimumDifficulty(difficulty), new(big.Int).Add(parent.Number, big.NewInt(1)))
+}
+
+// HomesteadDifficultyCalculator is the Homestead difficulty adjustment algorithm.
+func HomesteadDifficultyCalculator(time uint64, parent *types.Header) *big.Int {
+	return calcDifficultyHomestead(time, parent, new(big.Int).Add(parent.Number, big.NewInt(1)))
+}
+
+// DynamicDifficultyCalculator returns a Byzantium-style calculator with a delayed difficulty bomb.
+func DynamicDifficultyCalculator(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
+	return func(time uint64, parent *types.Header) *big.Int {
+		fakeBlockNumber := new(big.Int).Add(parent.Number, big.NewInt(1))
+		if fakeBlockNumber.Cmp(bombDelay) >= 0 {
+			fakeBlockNumber.Sub(fakeBlockNumber, bombDelay)
+		} else {
+			fakeBlockNumber.SetUint64(0)
+		}
+		return calcDifficultyByzantium(time, parent, fakeBlockNumber)
+	}
+}
+
+// CalcDifficultyFrontierU256 calculates Frontier difficulty.
+func CalcDifficultyFrontierU256(time uint64, parent *types.Header) *big.Int {
+	return FrontierDifficultyCalculator(time, parent)
+}
+
+// CalcDifficultyHomesteadU256 calculates Homestead difficulty.
+func CalcDifficultyHomesteadU256(time uint64, parent *types.Header) *big.Int {
+	return HomesteadDifficultyCalculator(time, parent)
+}
+
+// MakeDifficultyCalculatorU256 returns a dynamic difficulty calculator.
+func MakeDifficultyCalculatorU256(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
+	return DynamicDifficultyCalculator(bombDelay)
+}
+
+func calcDifficultyHomestead(time uint64, parent *types.Header, bombBlockNumber *big.Int) *big.Int {
+	x := new(big.Int).SetUint64((time - parent.Time) / 10)
+	x.Sub(big.NewInt(1), x)
+	return calcDifficultyWithAdjustment(parent, x, bombBlockNumber)
+}
+
+func calcDifficultyByzantium(time uint64, parent *types.Header, bombBlockNumber *big.Int) *big.Int {
+	x := new(big.Int).SetUint64((time - parent.Time) / 9)
+	if parent.UncleHash == types.EmptyUncleHash {
+		x.Sub(big.NewInt(1), x)
+	} else {
+		x.Sub(big.NewInt(2), x)
+	}
+	return calcDifficultyWithAdjustment(parent, x, bombBlockNumber)
+}
+
+func calcDifficultyWithAdjustment(parent *types.Header, adjustmentFactor *big.Int, bombBlockNumber *big.Int) *big.Int {
+	if adjustmentFactor.Cmp(big.NewInt(-99)) < 0 {
+		adjustmentFactor.SetInt64(-99)
+	}
+	adjust := new(big.Int).Div(parent.Difficulty, params.DifficultyBoundDivisor)
+	adjust.Mul(adjust, adjustmentFactor)
+	difficulty := new(big.Int).Add(parent.Difficulty, adjust)
+	return addDifficultyBomb(ensureMinimumDifficulty(difficulty), bombBlockNumber)
+}
+
+func ensureMinimumDifficulty(difficulty *big.Int) *big.Int {
+	if difficulty.Cmp(params.MinimumDifficulty) < 0 {
+		return new(big.Int).Set(params.MinimumDifficulty)
+	}
+	return difficulty
+}
+
+func addDifficultyBomb(difficulty *big.Int, blockNumber *big.Int) *big.Int {
+	periodCount := new(big.Int).Div(blockNumber, big.NewInt(100000))
+	if periodCount.Cmp(big.NewInt(1)) > 0 {
+		bomb := new(big.Int).Sub(periodCount, big.NewInt(2))
+		bomb.Exp(big.NewInt(2), bomb, nil)
+		difficulty.Add(difficulty, bomb)
+	}
+	return difficulty
+}
 
 // Difficulty constants
 const (
-	DifficultyWindow = 720   // DIFFICULTY_WINDOW - number of blocks for difficulty calculation
-	DifficultyCut    = 60    // DIFFICULTY_CUT - number of blocks to cut from each end
-	TargetSeconds    = 120   // Target block time in seconds
+	DifficultyWindow = 720 // DIFFICULTY_WINDOW - number of blocks for difficulty calculation
+	DifficultyCut    = 60  // DIFFICULTY_CUT - number of blocks to cut from each end
+	TargetSeconds    = 120 // Target block time in seconds
 )
 
 // MaxUint256 is the maximum 256-bit integer (2^256 - 1)
@@ -51,14 +173,14 @@ func CheckHash64(hash []byte, difficulty uint64) bool {
 	// Process each word
 	low, cur = mul128(hashWords[0], difficulty)
 	low, high = mul128(hashWords[1], difficulty)
-	
+
 	carry := addWithCarry(cur, low, false)
 	cur = high
-	
+
 	low, high = mul128(hashWords[2], difficulty)
 	carry = addWithCarry(cur, low, carry)
 	carry = addWithCarry(high, top, carry)
-	
+
 	return !carry
 }
 

@@ -27,6 +27,10 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
+var(
+
+ MinimumDifficulty      = big.NewInt(1310)
+)
 // RandomX is the RandomX proof-of-work consensus engine.
 type RandomX struct {
 	config           *params.RandomXConfig

@@ -182,7 +182,7 @@ var Bls12381G2MultiExpDiscountTable = [128]uint64{1000, 1000, 923, 884, 855, 832
 var (
 	DifficultyBoundDivisor = big.NewInt(2048)    // The bound divisor of the difficulty
 	GenesisDifficulty      = big.NewInt(4194304) // YOUR genesis difficulty (0x400000)
-	MinimumDifficulty      = big.NewInt(131072)  // The minimum that the difficulty may ever be
+	MinimumDifficulty      = big.NewInt(1310)  // The minimum that the difficulty may ever be
 	DurationLimit          = big.NewInt(13)      // The decision boundary on the blocktime duration
 )
 
