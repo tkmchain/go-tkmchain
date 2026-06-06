@@ -59,7 +59,7 @@ const (
 )
 
 // MinimumDifficulty is the absolute lowest allowed difficulty
-var MinimumDifficulty = big.NewInt(1310)
+//var MinimumDifficulty = big.NewInt(1310)
 
 // RandomX is a consensus engine based on proof-of-work implementing the RandomX algorithm.
 type RandomX struct {
