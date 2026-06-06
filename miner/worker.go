@@ -1000,6 +1000,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	s := w.current.state.Copy()
 	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
 	w.engine.Finalize(w.chain, w.current.header, s, body)
+	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
 	block := types.NewBlock(w.current.header, body, w.current.receipts, trie.NewStackTrie(nil))
 	if w.isRunning() {
 		if interval != nil {

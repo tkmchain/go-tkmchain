@@ -857,7 +857,9 @@ func ReadAllBadBlocks(db ethdb.Reader) []*types.Block {
 func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 	blob, err := db.Get(badBlockKey)
 	if err != nil {
-		log.Warn("Failed to load old bad blocks", "error", err)
+		if has, hasErr := db.Has(badBlockKey); hasErr != nil || has {
+			log.Warn("Failed to load old bad blocks", "error", err)
+		}
 	}
 	var badBlocks []*badBlock
 	if len(blob) > 0 {
