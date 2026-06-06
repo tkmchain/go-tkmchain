@@ -136,7 +136,7 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 		if parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1); parent != nil {
 			header.Difficulty = rx.CalcDifficulty(chain, header.Time, parent)
 		} else {
-			header.Difficulty = new(big.Int).SetUint64(MinimumDifficulty)
+			header.Difficulty = new(big.Int).Set(MinimumDifficulty)
 		}
 	}
 	return nil
