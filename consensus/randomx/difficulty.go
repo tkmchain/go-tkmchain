@@ -12,160 +12,196 @@
 package randomx
 
 import (
-        "math/big"
-
-        "github.com/ethereum/go-ethereum/core/types"
-        "github.com/ethereum/go-ethereum/log"
-        "github.com/ethereum/go-ethereum/params"
+	"encoding/binary"
+	"math/big"
+	"sort"
+        "fmt"
 )
 
-// RandomX difficulty constants
+// Difficulty constants
 const (
-        // TargetBlockTimeSeconds is the desired time between blocks
-//        TargetBlockTimeSeconds = 120
-
-        // MinimumDifficulty is the absolute lowest allowed difficulty
-        MinimumDifficulty = 3
-
-        // MaxAdjustmentPercent is the maximum difficulty change per block (10%)
-        MaxAdjustmentPercent = 10
+	DifficultyWindow = 720   // DIFFICULTY_WINDOW - number of blocks for difficulty calculation
+	DifficultyCut    = 60    // DIFFICULTY_CUT - number of blocks to cut from each end
+	TargetSeconds    = 120   // Target block time in seconds
 )
 
-// CalcDifficulty calculates the difficulty for the next block.
-func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
-        currentHeight := parent.Number.Uint64()
-        nextHeight := currentHeight + 1
+// MaxUint256 is the maximum 256-bit integer (2^256 - 1)
+var MaxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 
-        // Genesis block: use minimum difficulty
-        if currentHeight == 0 {
-                log.Info("Initializing difficulty for genesis block", "difficulty", MinimumDifficulty)
-                return new(big.Int).SetUint64(MinimumDifficulty)
-        }
+// CheckHash64 checks if a hash meets the difficulty requirement (64-bit version)
+func CheckHash64(hash []byte, difficulty uint64) bool {
+	if len(hash) < 32 {
+		return false
+	}
 
-        // For first 100 blocks, use simple linear progression
-        if currentHeight < 100 {
-                diff := MinimumDifficulty + (currentHeight / 2)
-                if diff < MinimumDifficulty {
-                        diff = MinimumDifficulty
-                }
-                result := new(big.Int).SetUint64(diff)
-                log.Debug("Early block difficulty (linear)", "height", nextHeight, "difficulty", result)
-                return result
-        }
+	// Convert hash words to little-endian
+	hashWords := make([]uint64, 4)
+	for i := 0; i < 4; i++ {
+		hashWords[i] = binary.LittleEndian.Uint64(hash[i*8 : (i+1)*8])
+	}
 
-        // Calculate actual time since parent block
-        parentTime := parent.Time
-        var actualTime uint64
-        if time > parentTime {
-                actualTime = time - parentTime
-        } else {
-                actualTime = uint64(TargetBlockTimeSeconds) // Convert to uint64
-        }
+	var low, high, top, cur uint64
 
-        targetTime := uint64(TargetBlockTimeSeconds) // Convert to uint64
-        parentDiff := parent.Difficulty.Uint64()
+	// Check the highest word first
+	top, high = mul128(hashWords[3], difficulty)
+	if high != 0 {
+		return false
+	}
 
-        // Calculate difficulty adjustment based on time ratio
-        var newDiffVal uint64
-        
-        if actualTime < targetTime {
-                // Block too fast → increase difficulty
-                // Calculate proportional increase
-                var increase uint64
-                if actualTime > 0 {
-                        // new_diff = parent_diff * target_time / actual_time
-                        // But limit to 10% max
-                        calculated := uint64(float64(parentDiff) * float64(targetTime) / float64(actualTime))
-                        if calculated > parentDiff {
-                                increase = calculated - parentDiff
-                        }
-                } else {
-                        increase = parentDiff * MaxAdjustmentPercent / 100
-                }
-                
-                // Limit to 10% max increase
-                maxIncrease := parentDiff * MaxAdjustmentPercent / 100
-                if increase > maxIncrease {
-                        increase = maxIncrease
-                }
-                if increase < 1 {
-                        increase = 1
-                }
-                newDiffVal = parentDiff + increase
-                log.Debug("Increasing difficulty", 
-                        "actual", actualTime, "target", targetTime, 
-                        "increase", increase, "new", newDiffVal)
-        } else if actualTime > targetTime {
-                // Block too slow → decrease difficulty
-                // Calculate proportional decrease
-                var decrease uint64
-                // new_diff = parent_diff * target_time / actual_time
-                calculated := uint64(float64(parentDiff) * float64(targetTime) / float64(actualTime))
-                if calculated < parentDiff {
-                        decrease = parentDiff - calculated
-                }
-                
-                // Limit to 10% max decrease
-                maxDecrease := parentDiff * MaxAdjustmentPercent / 100
-                if decrease > maxDecrease {
-                        decrease = maxDecrease
-                }
-                if decrease < 1 {
-                        decrease = 1
-                }
-                if parentDiff > decrease {
-                        newDiffVal = parentDiff - decrease
-                } else {
-                        newDiffVal = MinimumDifficulty
-                }
-                log.Debug("Decreasing difficulty", 
-                        "actual", actualTime, "target", targetTime,
-                        "decrease", decrease, "new", newDiffVal)
-        } else {
-                // Perfect timing, keep same difficulty
-                newDiffVal = parentDiff
-        }
-
-        if newDiffVal < MinimumDifficulty {
-                newDiffVal = MinimumDifficulty
-        }
-
-        newDiff := new(big.Int).SetUint64(newDiffVal)
-
-        log.Info("Difficulty calculated",
-                "height", nextHeight,
-                "actual_time", actualTime,
-                "target_time", targetTime,
-                "parent_diff", parentDiff,
-                "new_diff", newDiff)
-
-        return newDiff
+	// Process each word
+	low, cur = mul128(hashWords[0], difficulty)
+	low, high = mul128(hashWords[1], difficulty)
+	
+	carry := addWithCarry(cur, low, false)
+	cur = high
+	
+	low, high = mul128(hashWords[2], difficulty)
+	carry = addWithCarry(cur, low, carry)
+	carry = addWithCarry(high, top, carry)
+	
+	return !carry
 }
 
-// CalculateNextDifficulty is the main exported function for difficulty calculation
-func CalculateNextDifficulty(parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
-        return CalcDifficulty(nil, 0, parent, getHeader)
+// CheckHash128 checks if a hash meets the difficulty requirement (128-bit version)
+func CheckHash128(hash []byte, difficulty *big.Int) bool {
+	if len(hash) < 32 {
+		return false
+	}
+
+	// Convert hash to big integer (little-endian)
+	hashVal := new(big.Int)
+	for i := 3; i >= 0; i-- {
+		word := binary.LittleEndian.Uint64(hash[i*8 : (i+1)*8])
+		hashVal.Lsh(hashVal, 64)
+		hashVal.Or(hashVal, new(big.Int).SetUint64(word))
+	}
+
+	// Check if hash * difficulty <= MaxUint256
+	product := new(big.Int).Mul(hashVal, difficulty)
+	return product.Cmp(MaxUint256) <= 0
 }
 
-// Legacy functions kept for compatibility
-func makeDifficultyCalculator(bombDelay *big.Int) func(time uint64, parent *types.Header) *big.Int {
-        return func(time uint64, parent *types.Header) *big.Int {
-                return new(big.Int).Set(parent.Difficulty)
-        }
+// CheckHash checks if a hash meets the difficulty requirement
+func CheckHash(hash []byte, difficulty *big.Int) bool {
+	// If difficulty fits in 64 bits, use faster check
+	if difficulty.IsUint64() {
+		return CheckHash64(hash, difficulty.Uint64())
+	}
+	return CheckHash128(hash, difficulty)
 }
 
-func calcDifficultyHomestead(time uint64, parent *types.Header) *big.Int {
-        return new(big.Int).Set(parent.Difficulty)
+// NextDifficulty calculates the next difficulty based on timestamps and cumulative difficulties
+func NextDifficulty(timestamps []uint64, cumulativeDifficulties []*big.Int, targetSeconds uint64) *big.Int {
+	// Ensure we don't have more than DIFFICULTY_WINDOW entries
+	if len(timestamps) > DifficultyWindow {
+		timestamps = timestamps[len(timestamps)-DifficultyWindow:]
+		cumulativeDifficulties = cumulativeDifficulties[len(cumulativeDifficulties)-DifficultyWindow:]
+	}
+
+	length := len(timestamps)
+	if length <= 1 {
+		return big.NewInt(1)
+	}
+
+	if length > DifficultyWindow {
+		length = DifficultyWindow
+	}
+
+	// Sort timestamps for median calculation
+	sortedTimestamps := make([]uint64, length)
+	copy(sortedTimestamps, timestamps)
+	sort.Slice(sortedTimestamps, func(i, j int) bool { return sortedTimestamps[i] < sortedTimestamps[j] })
+
+	// Determine cut boundaries
+	cutBegin, cutEnd := 0, length
+	if length > DifficultyWindow-2*DifficultyCut {
+		cutBegin = (length - (DifficultyWindow - 2*DifficultyCut) + 1) / 2
+		cutEnd = cutBegin + (DifficultyWindow - 2*DifficultyCut)
+	}
+
+	if cutBegin+2 > cutEnd || cutEnd > length {
+		return big.NewInt(1)
+	}
+
+	// Calculate time span
+	timeSpan := sortedTimestamps[cutEnd-1] - sortedTimestamps[cutBegin]
+	if timeSpan == 0 {
+		timeSpan = 1
+	}
+
+	// Calculate total work
+	totalWork := new(big.Int).Sub(cumulativeDifficulties[cutEnd-1], cumulativeDifficulties[cutBegin])
+	if totalWork.Sign() <= 0 {
+		return big.NewInt(1)
+	}
+
+	// Calculate new difficulty: (totalWork * targetSeconds + timeSpan - 1) / timeSpan
+	temp := new(big.Int).Mul(totalWork, new(big.Int).SetUint64(targetSeconds))
+	temp.Add(temp, new(big.Int).SetUint64(timeSpan-1))
+	newDiff := new(big.Int).Div(temp, new(big.Int).SetUint64(timeSpan))
+
+	// Ensure difficulty is at least 1
+	if newDiff.Sign() == 0 {
+		return big.NewInt(1)
+	}
+
+	return newDiff
 }
 
-func calcDifficultyFrontier(time uint64, parent *types.Header) *big.Int {
-        return new(big.Int).Set(parent.Difficulty)
+// mul128 multiplies two 64-bit numbers and returns low and high 64-bit parts
+func mul128(a, b uint64) (low, high uint64) {
+	// Use big integer for multiplication
+	temp := new(big.Int).Mul(new(big.Int).SetUint64(a), new(big.Int).SetUint64(b))
+	low = temp.Uint64()
+	high = temp.Rsh(temp, 64).Uint64()
+	return
 }
 
-var (
-        calcDifficultyEip5133        = makeDifficultyCalculator(big.NewInt(0))
-        calcDifficultyEip4345        = makeDifficultyCalculator(big.NewInt(0))
-        calcDifficultyEip3554        = makeDifficultyCalculator(big.NewInt(0))
-        calcDifficultyConstantinople = makeDifficultyCalculator(big.NewInt(0))
-        calcDifficultyByzantium      = makeDifficultyCalculator(big.NewInt(0))
-)
+// addWithCarry adds two numbers with a carry flag
+func addWithCarry(a, b uint64, carry bool) bool {
+	sum := a + b
+	if carry {
+		sum++
+	}
+	return sum < a || (carry && sum == a)
+}
+
+// DifficultyToTarget converts a difficulty value to a target hash
+func DifficultyToTarget(difficulty *big.Int) *big.Int {
+	if difficulty.Sign() == 0 {
+		return new(big.Int).Set(MaxUint256)
+	}
+	return new(big.Int).Div(MaxUint256, difficulty)
+}
+
+// TargetToDifficulty converts a target hash to a difficulty value
+func TargetToDifficulty(target *big.Int) *big.Int {
+	if target.Sign() == 0 {
+		return new(big.Int).Set(MaxUint256)
+	}
+	return new(big.Int).Div(MaxUint256, target)
+}
+
+// Hex returns the hexadecimal representation of a difficulty value
+func DifficultyHex(diff *big.Int) string {
+	if diff.Sign() == 0 {
+		return "0x0"
+	}
+	return "0x" + diff.Text(16)
+}
+
+// ParseDifficulty parses a hexadecimal string to a difficulty big.Int
+func ParseDifficulty(hexStr string) (*big.Int, error) {
+	if len(hexStr) >= 2 && hexStr[:2] == "0x" {
+		hexStr = hexStr[2:]
+	}
+	if hexStr == "" {
+		return big.NewInt(0), nil
+	}
+	diff := new(big.Int)
+	_, ok := diff.SetString(hexStr, 16)
+	if !ok {
+		return nil, fmt.Errorf("invalid difficulty hex string: %s", hexStr)
+	}
+	return diff, nil
+}
