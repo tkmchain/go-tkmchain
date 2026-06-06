@@ -212,13 +212,23 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 	}
 
-	// Create RandomX consensus engine with Rotating King support
-	engine, err := randomx.New(chainConfig.RandomX, config.RandomXMinerThreads, mainKingAddress, kingAddresses)
+	// Create and initialise the RandomX consensus engine with Rotating King support.
+	engineConfig := *chainConfig
+	engineConfig.MainKingAddress = mainKingAddress
+	engineConfig.RotatingKingAddresses = kingAddresses
+	if chainConfig.RandomX != nil {
+		randomxConfig := *chainConfig.RandomX
+		randomxConfig.PersistDataset = !config.RandomXNoPersist
+		engineConfig.RandomX = &randomxConfig
+	}
+	engine, err := ethconfig.CreateConsensusEngine(&engineConfig, chainDb, config.RandomXMinerThreads, config.RandomXRAMCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create RandomX engine: %w", err)
 	}
 	if chainConfig.RotatingKingRotationInterval > 0 {
-		engine.SetRotationInterval(chainConfig.RotatingKingRotationInterval)
+		if randomxEngine, ok := engine.(interface{ SetRotationInterval(uint64) }); ok {
+			randomxEngine.SetRotationInterval(chainConfig.RotatingKingRotationInterval)
+		}
 	}
 
 	// Set networkID to chainID by default
