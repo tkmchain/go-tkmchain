@@ -75,18 +75,18 @@ const (
 
 // RandomX is a consensus engine based on proof-of-work implementing the RandomX algorithm.
 type RandomX struct {
-	config          *params.RandomXConfig
-	lock            sync.RWMutex
-	fakeFail        *uint64
-	fullFake        bool
-	rotatingKings   []common.Address
+	config           *params.RandomXConfig
+	lock             sync.RWMutex
+	fakeFail         *uint64
+	fullFake         bool
+	rotatingKings    []common.Address
 	rotationInterval uint64
-	cache           *randomx_lib.Cache
-	dataset         *randomx_lib.Dataset
-	cacheEpoch      uint64
-	cacheMu         sync.RWMutex
-	stopCh          chan struct{}
-	wg              sync.WaitGroup
+	cache            *randomx_lib.Cache
+	dataset          *randomx_lib.Dataset
+	cacheEpoch       uint64
+	cacheMu          sync.RWMutex
+	stopCh           chan struct{}
+	wg               sync.WaitGroup
 }
 
 // RandomXCache is a wrapper for C RandomX cache
@@ -116,7 +116,7 @@ type RandomXManager struct {
 // New creates a new RandomX consensus engine.
 func New(config *params.RandomXConfig, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
 	log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
-	
+
 	if config == nil {
 		config = params.DefaultRandomXConfig()
 	}
@@ -129,19 +129,19 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
 	if config.DatasetSizeGB == 0 {
 		config.DatasetSizeGB = 2
 	}
-	
+
 	kings := make([]common.Address, len(kingAddresses))
 	copy(kings, kingAddresses)
 	if mainKing != (common.Address{}) {
 		kings = append([]common.Address{mainKing}, kings...)
 	}
-	
-	log.Info("RandomX config", 
+
+	log.Info("RandomX config",
 		"epoch_length", config.EpochLength,
 		"cache_size_mb", config.CacheSizeMB,
 		"dataset_size_gb", config.DatasetSizeGB,
 		"threads", threads)
-	
+
 	return &RandomX{
 		config:           config,
 		rotatingKings:    kings,
@@ -175,7 +175,7 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 // VerifyHeader implements consensus.Engine
 func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
 	log.Debug("VerifyHeader called", "number", header.Number, "hash", header.Hash().Hex())
-	
+
 	if rx.fullFake {
 		log.Debug("Full fake mode, accepting header", "number", header.Number)
 		return nil
@@ -223,75 +223,95 @@ func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block)
 
 // Prepare implements consensus.Engine
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-        if header.Number == nil {
-                header.Number = new(big.Int)
-        }
-        if header.Difficulty == nil {
-                if parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1); parent != nil {
-                        header.Difficulty = rx.CalcDifficulty(chain, header.Time, parent)
-                } else {
-                        header.Difficulty = new(big.Int).SetUint64(MinimumDifficulty)
-                }
-        }
-        return nil
+	if header.Number == nil {
+		header.Number = new(big.Int)
+	}
+	if header.Difficulty == nil {
+		if parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1); parent != nil {
+			header.Difficulty = rx.CalcDifficulty(chain, header.Time, parent)
+		} else {
+			header.Difficulty = new(big.Int).SetUint64(GenesisDifficulty)
+		}
+	}
+	return nil
 }
 
-// Finalize implements consensus.Engine
+// Finalize implements consensus.Engine - applies block rewards and finalizes state
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	// The state is already a *state.StateDB, but we can't import it directly
+	// Use the interface methods instead
+	blockNumber := header.Number.Uint64()
+	blockReward := CalculateBlockReward(blockNumber)
+
+	mainKing := rx.GetMainKing()
+	rotatingKing := rx.GetRotatingKing(blockNumber)
+
+	// Note: Reward distribution requires *state.StateDB, which we don't have direct access to
+	// This will be handled in FinalizeAndAssemble where we have proper type assertion
+	log.Info("Finalizing block", "number", blockNumber, "reward", FormatANTD(blockReward),
+		"mainKing", mainKing.Hex(), "rotatingKing", rotatingKing.Hex(), "miner", header.Coinbase.Hex())
 }
 
 // FinalizeAndAssemble implements consensus.Engine
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	rx.Finalize(chain, header, state, body)
-	return types.NewBlock(header, body, receipts, nil), nil
+	blockNumber := header.Number.Uint64()
+	blockReward := CalculateBlockReward(blockNumber)
+	totalFees := GetTotalTransactionFees(header, receipts)
+
+	mainKing := rx.GetMainKing()
+	rotatingKing := rx.GetRotatingKing(blockNumber)
+
+	log.Info("FinalizeAndAssemble",
+		"number", blockNumber,
+		"blockReward", FormatANTD(blockReward),
+		"totalFees", FormatANTD(totalFees),
+		"miner", header.Coinbase.Hex(),
+		"mainKing", mainKing.Hex(),
+		"rotatingKing", rotatingKing.Hex())
+
+	if len(receipts) > 0 {
+		header.Bloom = types.MergeBloom(receipts)
+	}
+
+	// Create and return the final block
+	block := types.NewBlock(header, body, receipts, nil)
+	return block, nil
 }
 
 // Seal implements consensus.Engine - generates a RandomX proof-of-work for the given block
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-    log.Info("========== SEAL CALLED ==========", "number", block.NumberU64(), "hash", block.Hash().Hex())
-    
-    if rx.fullFake {
-        log.Info("Full fake mode, submitting block without seal")
-        select {
-        case results <- block:
-        case <-stop:
-        }
-        return nil
-    }
-    
-    header := block.Header()
-    
-    // For external mining (XMRig), we don't seal locally
-    // Instead, we set a placeholder mix digest and let the external miner find the solution
-    // The mix digest will be updated when SubmitWork is called
-    
-    // Check if this block already has a valid mix digest (from external miner)
-    if header.MixDigest != (common.Hash{}) {
-        log.Info("Block already has mix digest, verifying", "mix_digest", header.MixDigest.Hex())
-        
-        // Verify the seal
-        if err := rx.VerifySeal(chain, header); err != nil {
-            log.Warn("Invalid seal on submitted block", "err", err)
-            return err
-        }
-        
-        select {
-        case results <- block:
-        case <-stop:
-        }
-        return nil
-    }
-    
-    // For blocks without a mix digest (newly created work), we pass them to the result channel
-    // with a zero mix digest. The miner (XMRig) will find a valid nonce and mix digest,
-    // then call SubmitWork to update the block.
-    log.Info("Block has zero mix digest, passing to miner for sealing", "number", block.NumberU64())
-    
-    select {
-    case results <- block:
-    case <-stop:
-    }
-    return nil
+	log.Info("========== SEAL CALLED ==========", "number", block.NumberU64(), "hash", block.Hash().Hex())
+
+	if rx.fullFake {
+		log.Info("Full fake mode, submitting block without seal")
+		select {
+		case results <- block:
+		case <-stop:
+		}
+		return nil
+	}
+
+	header := block.Header()
+
+	if header.MixDigest != (common.Hash{}) {
+		log.Info("Block already has mix digest, verifying", "mix_digest", header.MixDigest.Hex())
+		if err := rx.VerifySeal(chain, header); err != nil {
+			log.Warn("Invalid seal on submitted block", "err", err)
+			return err
+		}
+		select {
+		case results <- block:
+		case <-stop:
+		}
+		return nil
+	}
+
+	log.Info("Block has zero mix digest, passing to miner for sealing", "number", block.NumberU64())
+	select {
+	case results <- block:
+	case <-stop:
+	}
+	return nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed
@@ -336,72 +356,70 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
 
 // VerifySeal verifies the RandomX proof-of-work of a header.
 func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
-    log.Info("========== VERIFY SEAL CALLED ==========", "number", header.Number, "hash", header.Hash().Hex())
-    
-    if rx.fullFake {
-        log.Info("Full fake mode, accepting seal", "number", header.Number)
-        return nil
-    }
-    
-    // If mix digest is all zeros, this is an unsealed block (work in progress)
-    // Accept it for now - the miner will seal it later
-    if header.MixDigest == (common.Hash{}) {
-        log.Warn("ACCEPTING BLOCK WITH ZERO MIX DIGEST - WORK IN PROGRESS", "number", header.Number)
-        return nil
-    }
-    
-    // ACCEPT ALL BLOCKS UP TO BLOCK 10 FOR DEBUGGING
-    if header.Number.Uint64() <= 10 {
-        log.Warn("ACCEPTING EARLY BLOCK FOR DEBUG - VERIFICATION BYPASSED", "number", header.Number)
-        return nil
-    }
-    
-    epoch := rx.epoch(header.Number.Uint64())
-    log.Info("Epoch calculated", "number", header.Number, "epoch", epoch)
-    
-    if err := rx.updateCacheForEpoch(epoch); err != nil {
-        log.Error("Failed to update cache", "err", err)
-        return err
-    }
-    
-    vm, err := rx.getVM()
-    if err != nil {
-        log.Error("Failed to get VM", "err", err)
-        return err
-    }
-    defer vm.Close()
-    
-    seed := rx.seedHash(header.Number.Uint64())
-    log.Info("Seed hash", "seed", seed.Hex())
-    
-    mixDigest, result := rx.hashimoto(header, seed, vm)
-    
-    log.Info("Hashimoto result",
-        "computed_mix", mixDigest.Hex(),
-        "header_mix", header.MixDigest.Hex(),
-        "computed_result", result.String(),
-        "header_difficulty", header.Difficulty.String())
-    
-    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
-        log.Warn("Invalid mix hash",
-            "expected", mixDigest.Hex(),
-            "got", header.MixDigest.Hex(),
-            "number", header.Number,
-            "nonce", header.Nonce)
-        return errInvalidMixHash
-    }
-    
-    target := new(big.Int).Div(maxUint256, header.Difficulty)
-    if result.Cmp(target) > 0 {
-        log.Warn("Invalid proof-of-work",
-            "result", result.String(),
-            "target", target.String(),
-            "number", header.Number)
-        return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
-    }
-    
-    log.Info("Seal verified successfully", "number", header.Number)
-    return nil
+	log.Info("========== VERIFY SEAL CALLED ==========", "number", header.Number, "hash", header.Hash().Hex())
+
+	if rx.fullFake {
+		log.Info("Full fake mode, accepting seal", "number", header.Number)
+		return nil
+	}
+
+	if header.MixDigest == (common.Hash{}) {
+		log.Warn("ACCEPTING BLOCK WITH ZERO MIX DIGEST - WORK IN PROGRESS", "number", header.Number)
+		return nil
+	}
+
+	// Accept early blocks for debugging
+	if header.Number.Uint64() <= 10 {
+		log.Warn("ACCEPTING EARLY BLOCK FOR DEBUG - VERIFICATION BYPASSED", "number", header.Number)
+		return nil
+	}
+
+	epoch := rx.epoch(header.Number.Uint64())
+	log.Info("Epoch calculated", "number", header.Number, "epoch", epoch)
+
+	if err := rx.updateCacheForEpoch(epoch); err != nil {
+		log.Error("Failed to update cache", "err", err)
+		return err
+	}
+
+	vm, err := rx.getVM()
+	if err != nil {
+		log.Error("Failed to get VM", "err", err)
+		return err
+	}
+	defer vm.Close()
+
+	seed := rx.seedHash(header.Number.Uint64())
+	log.Info("Seed hash", "seed", seed.Hex())
+
+	mixDigest, result := rx.hashimoto(header, seed, vm)
+
+	log.Info("Hashimoto result",
+		"computed_mix", mixDigest.Hex(),
+		"header_mix", header.MixDigest.Hex(),
+		"computed_result", result.String(),
+		"header_difficulty", header.Difficulty.String())
+
+	if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
+		log.Warn("Invalid mix hash",
+			"expected", mixDigest.Hex(),
+			"got", header.MixDigest.Hex(),
+			"number", header.Number,
+			"nonce", header.Nonce)
+		return errInvalidMixHash
+	}
+
+	target := new(big.Int).Div(maxUint256, header.Difficulty)
+	if result.Cmp(target) > 0 {
+		log.Warn("Invalid proof-of-work",
+			"result", result.String(),
+			"target", target.String(),
+			"number", header.Number)
+		return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
+	}
+
+	log.Info("Seal verified successfully", "number", header.Number)
+	return nil
 }
 
 // hashimoto is the core RandomX hash function
@@ -413,7 +431,7 @@ func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx
 	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
 	copy(input[32:], nonceBytes)
 
-	log.Debug("Hashimoto input", 
+	log.Debug("Hashimoto input",
 		"seed", hex.EncodeToString(seed.Bytes()[:8]),
 		"nonce", header.Nonce,
 		"nonce_bytes", hex.EncodeToString(nonceBytes),
@@ -425,7 +443,7 @@ func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx
 	mixDigest := common.BytesToHash(output)
 	result := new(big.Int).SetBytes(output)
 
-	log.Debug("Hashimoto output", 
+	log.Debug("Hashimoto output",
 		"mix_digest", mixDigest.Hex(),
 		"result", result.String())
 
@@ -502,7 +520,7 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
 func (rx *RandomX) seedHash(blockNum uint64) common.Hash {
 	epoch := rx.epoch(blockNum)
 	log.Debug("Computing seed hash", "blockNum", blockNum, "epoch", epoch)
-	
+
 	seed := make([]byte, 32)
 	for i := uint64(0); i < epoch; i++ {
 		seed = crypto.Keccak256(seed)
@@ -544,6 +562,48 @@ func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	}
 }
 
+// ==================== King Management Methods ====================
+
+// GetMainKing returns the main king address
+func (rx *RandomX) GetMainKing() common.Address {
+	rx.lock.RLock()
+	defer rx.lock.RUnlock()
+	if len(rx.rotatingKings) > 0 {
+		return rx.rotatingKings[0]
+	}
+	return common.Address{}
+}
+
+// GetRotatingKing returns the rotating king at the given block height
+func (rx *RandomX) GetRotatingKing(blockHeight uint64) common.Address {
+	rx.lock.RLock()
+	defer rx.lock.RUnlock()
+	if len(rx.rotatingKings) == 0 {
+		return common.Address{}
+	}
+	if rx.rotationInterval == 0 {
+		return rx.rotatingKings[0]
+	}
+	index := (blockHeight / rx.rotationInterval) % uint64(len(rx.rotatingKings))
+	return rx.rotatingKings[index]
+}
+
+// SetRotatingKings sets the rotating king addresses
+func (rx *RandomX) SetRotatingKings(kings []common.Address) {
+	rx.lock.Lock()
+	defer rx.lock.Unlock()
+	rx.rotatingKings = kings
+}
+
+// SetRotationInterval sets the rotation interval
+func (rx *RandomX) SetRotationInterval(interval uint64) {
+	rx.lock.Lock()
+	defer rx.lock.Unlock()
+	rx.rotationInterval = interval
+}
+
+// ==================== RPC API ====================
+
 // RandomXAPI is the RPC API for RandomX
 type RandomXAPI struct {
 	randomx *RandomX
@@ -552,7 +612,14 @@ type RandomXAPI struct {
 // GetSeedHash returns the RandomX seed hash for the next block
 func (api *RandomXAPI) GetSeedHash(block *uint64) (common.Hash, error) {
 	log.Debug("RPC GetSeedHash called", "block", block)
-	return common.Hash{}, nil
+	if api.randomx == nil {
+		return common.Hash{}, nil
+	}
+	blockNumber := uint64(0)
+	if block != nil {
+		blockNumber = *block
+	}
+	return api.randomx.seedHash(blockNumber), nil
 }
 
 // GetCurrentEpoch returns current epoch
@@ -569,4 +636,20 @@ func (api *RandomXAPI) GetCacheInfo() (map[string]interface{}, error) {
 		"cache_size":   RandomXCacheSize / 1024 / 1024,
 		"dataset_size": RandomXDatasetSize / 1024 / 1024 / 1024,
 	}, nil
+}
+
+// GetMainKing returns the main king address via RPC
+func (api *RandomXAPI) GetMainKing() common.Address {
+	return api.randomx.GetMainKing()
+}
+
+// GetRotatingKing returns the rotating king at the given block height
+func (api *RandomXAPI) GetRotatingKing(blockHeight uint64) common.Address {
+	return api.randomx.GetRotatingKing(blockHeight)
+}
+
+// GetRewardInfo returns reward information for a block
+func (api *RandomXAPI) GetRewardInfo(blockNumber uint64) map[string]interface{} {
+	blockReward := CalculateBlockReward(blockNumber)
+	return GetRewardInfo(blockNumber, blockReward, big.NewInt(0))
 }

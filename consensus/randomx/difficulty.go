@@ -13,9 +13,9 @@ import (
 // RandomX difficulty constants
 const (
 //	TargetBlockTimeSeconds uint64 = 120 // Target block time (2 minutes)
-	MinimumDifficulty      uint64 = 3   // Minimum difficulty (genesis)
+	GenesisDifficulty      uint64 = 3   // Genesis block difficulty
+	InitialDifficulty      uint64 = 50  // Starting difficulty for block 1
 	MaxAdjustmentPercent   uint64 = 25  // Maximum difficulty change per block (25%)
-	LinearIncreaseBlocks   uint64 = 100 // Number of blocks for linear progression
 )
 
 // CalcDifficulty calculates the difficulty for the next block.
@@ -28,31 +28,22 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 		"nextHeight", nextHeight,
 		"parent_diff", parent.Difficulty.String())
 
-	// Genesis block (block 0) - minimum difficulty
+	// Genesis block (block 0) - use genesis difficulty
 	if currentHeight == 0 {
-		diff := new(big.Int).SetUint64(MinimumDifficulty)
+		diff := new(big.Int).SetUint64(GenesisDifficulty)
 		log.Info("Genesis difficulty", "difficulty", diff)
 		return diff
 	}
 
-	// Blocks 1-99: Linear progression to reach reasonable difficulty by block 100
-	if currentHeight < LinearIncreaseBlocks {
-		// Target difficulty at block 100 = 50
-		targetMaxDiff := uint64(50)
-		diff := MinimumDifficulty + (currentHeight * (targetMaxDiff - MinimumDifficulty) / LinearIncreaseBlocks)
-		if diff < MinimumDifficulty {
-			diff = MinimumDifficulty
-		}
-		result := new(big.Int).SetUint64(diff)
-		log.Info("Linear difficulty progression",
-			"height", nextHeight,
-			"difficulty", result,
-			"phase", "early_blocks")
-		return result
+	// Block 1 (parent is genesis) - use initial difficulty
+	// This ensures block 1 difficulty is not 3
+	if currentHeight == 1 {
+		diff := new(big.Int).SetUint64(InitialDifficulty)
+		log.Info("Block 1 difficulty", "difficulty", diff, "parent_difficulty", parent.Difficulty.String())
+		return diff
 	}
 
-	// For blocks >= 100, use simple adjustment based on parent block time
-	// This avoids complex array operations that could cause issues
+	// For blocks >= 2, calculate based on actual block time
 	parentTime := parent.Time
 	var actualTime uint64
 	if time > parentTime {
@@ -96,7 +87,7 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 		if parentDiff > decrease {
 			newDiffVal = parentDiff - decrease
 		} else {
-			newDiffVal = MinimumDifficulty
+			newDiffVal = GenesisDifficulty
 		}
 		log.Info("Decreasing difficulty", "decrease", decrease, "new", newDiffVal)
 	} else {
@@ -104,9 +95,9 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 		log.Info("Difficulty unchanged", "new", newDiffVal)
 	}
 
-	// Ensure minimum difficulty
-	if newDiffVal < MinimumDifficulty {
-		newDiffVal = MinimumDifficulty
+	// Ensure minimum difficulty (can't go below genesis)
+	if newDiffVal < GenesisDifficulty {
+		newDiffVal = GenesisDifficulty
 	}
 
 	newDiff := new(big.Int).SetUint64(newDiffVal)
