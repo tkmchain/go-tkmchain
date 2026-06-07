@@ -4,6 +4,7 @@ package randomx
 
 import (
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -19,16 +20,22 @@ const (
 )
 
 // CalcDifficulty calculates the difficulty for the next block.
-func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header, getHeader func(number uint64) *types.Header) *big.Int {
+func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.Header, getHeader func(number uint64) *types.Header) *big.Int {
 	currentHeight := parent.Number.Uint64()
 	nextHeight := currentHeight + 1
+
+	// Get current timestamp - if blockTime is 0, use current system time
+	currentTimestamp := blockTime
+	if currentTimestamp == 0 {
+		currentTimestamp = uint64(time.Now().Unix())
+	}
 
 	log.Info("========== DIFFICULTY CALC ==========",
 		"currentHeight", currentHeight,
 		"nextHeight", nextHeight,
 		"parent_diff", parent.Difficulty.String())
 
-	// Genesis block (block 0) - use genesis difficulty
+	// Genesis block (block 0)
 	if currentHeight == 0 {
 		diff := new(big.Int).SetUint64(GenesisDifficulty)
 		log.Info("Genesis difficulty", "difficulty", diff)
@@ -36,20 +43,29 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 	}
 
 	// Block 1 (parent is genesis) - use initial difficulty
-	// This ensures block 1 difficulty is not 3
 	if currentHeight == 1 {
 		diff := new(big.Int).SetUint64(InitialDifficulty)
 		log.Info("Block 1 difficulty", "difficulty", diff, "parent_difficulty", parent.Difficulty.String())
 		return diff
 	}
 
-	// For blocks >= 2, calculate based on actual block time
+	// Calculate actual time since parent block
 	parentTime := parent.Time
 	var actualTime uint64
-	if time > parentTime {
-		actualTime = time - parentTime
+	
+	if currentTimestamp > parentTime {
+		actualTime = currentTimestamp - parentTime
 	} else {
+		// If current timestamp is less than parent time, use default
 		actualTime = TargetBlockTimeSeconds
+		log.Warn("Current time older than parent time, using default", 
+			"currentTimestamp", currentTimestamp, 
+			"parentTime", parentTime)
+	}
+
+	// Ensure actualTime is not zero to avoid division issues
+	if actualTime == 0 {
+		actualTime = 1
 	}
 
 	parentDiff := parent.Difficulty.Uint64()
@@ -57,45 +73,60 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 
 	log.Info("Difficulty adjustment data",
 		"parent_time", parentTime,
-		"current_time", time,
+		"current_timestamp", currentTimestamp,
 		"actual_time", actualTime,
 		"target_time", TargetBlockTimeSeconds,
 		"parent_diff", parentDiff)
 
+	// Calculate difficulty adjustment based on actual block time
 	if actualTime < TargetBlockTimeSeconds {
-		// Too fast, increase difficulty
-		increase := parentDiff * (TargetBlockTimeSeconds - actualTime) / TargetBlockTimeSeconds
-		if increase < 1 {
-			increase = 1
-		}
+		// Blocks are too fast → increase difficulty
+		// Calculate proportional increase
+		ratio := float64(TargetBlockTimeSeconds) / float64(actualTime)
+		increase := uint64(float64(parentDiff) * (ratio - 1.0))
+		
+		// Limit to MaxAdjustmentPercent
 		maxIncrease := parentDiff * MaxAdjustmentPercent / 100
 		if increase > maxIncrease {
 			increase = maxIncrease
 		}
-		newDiffVal = parentDiff + increase
-		log.Info("Increasing difficulty", "increase", increase, "new", newDiffVal)
-	} else if actualTime > TargetBlockTimeSeconds {
-		// Too slow, decrease difficulty
-		decrease := parentDiff * (actualTime - TargetBlockTimeSeconds) / TargetBlockTimeSeconds
-		if decrease < 1 {
-			decrease = 1
+		if increase < 1 {
+			increase = 1
 		}
+		newDiffVal = parentDiff + increase
+		log.Info("Increasing difficulty", 
+			"ratio", ratio, 
+			"increase", increase, 
+			"new", newDiffVal)
+	} else if actualTime > TargetBlockTimeSeconds {
+		// Blocks are too slow → decrease difficulty
+		ratio := float64(actualTime) / float64(TargetBlockTimeSeconds)
+		decrease := uint64(float64(parentDiff) * (ratio - 1.0))
+		
+		// Limit to MaxAdjustmentPercent
 		maxDecrease := parentDiff * MaxAdjustmentPercent / 100
 		if decrease > maxDecrease {
 			decrease = maxDecrease
+		}
+		if decrease < 1 {
+			decrease = 1
 		}
 		if parentDiff > decrease {
 			newDiffVal = parentDiff - decrease
 		} else {
 			newDiffVal = GenesisDifficulty
 		}
-		log.Info("Decreasing difficulty", "decrease", decrease, "new", newDiffVal)
+		log.Info("Decreasing difficulty", 
+			"ratio", ratio, 
+			"decrease", decrease, 
+			"new", newDiffVal)
 	} else {
+		// Perfect timing, keep same difficulty
 		newDiffVal = parentDiff
 		log.Info("Difficulty unchanged", "new", newDiffVal)
 	}
 
-	// Ensure minimum difficulty (can't go below genesis)
+	// Ensure minimum difficulty
 	if newDiffVal < GenesisDifficulty {
 		newDiffVal = GenesisDifficulty
 	}
