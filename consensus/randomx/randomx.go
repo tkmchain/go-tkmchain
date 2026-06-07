@@ -37,11 +37,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
+	randomx_lib "github.com/ethereum/go-ethereum/internal/go-randomx"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	randomx_lib "github.com/ethereum/go-ethereum/internal/go-randomx"
 )
 
 // RandomX proof-of-work protocol constants.
@@ -57,7 +57,7 @@ var (
 
 const (
 	RandomXEpochLength         = 2048
-	RandomXCacheSize           = 256 * 1024 * 1024 // 256MB
+	RandomXCacheSize           = 256 * 1024 * 1024      // 256MB
 	RandomXDatasetSize         = 2 * 1024 * 1024 * 1024 // 2GB
 	MaxConcurrentVerifications = 32
 	shutdownTimeout            = 10 * time.Second
@@ -174,11 +174,22 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 
 // VerifyHeader implements consensus.Engine
 func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
+	return rx.verifyHeader(chain, header, nil)
+}
+
+// verifyHeader checks whether a header conforms to the RandomX consensus rules.
+// The caller may optionally pass preceding batch headers in ascending order so
+// that header sync can verify a downloaded chain segment before its parents have
+// been inserted into the local chain database.
+func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	log.Debug("VerifyHeader called", "number", header.Number, "hash", header.Hash().Hex())
 
 	if rx.fullFake {
 		log.Debug("Full fake mode, accepting header", "number", header.Number)
 		return nil
+	}
+	if header.Number == nil {
+		return consensus.ErrInvalidNumber
 	}
 	if rx.fakeFail != nil && header.Number.Uint64() == *rx.fakeFail {
 		return consensus.ErrInvalidNumber
@@ -186,12 +197,16 @@ func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 	if header.Number.Sign() == 0 {
 		return nil
 	}
-	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
-	if parent == nil {
-		return consensus.ErrUnknownAncestor
+
+	number := header.Number.Uint64()
+	var parent *types.Header
+	if len(parents) > 0 {
+		parent = parents[len(parents)-1]
+	} else {
+		parent = chain.GetHeader(header.ParentHash, number-1)
 	}
-	if parent.Number.Uint64()+1 != header.Number.Uint64() {
-		return consensus.ErrInvalidNumber
+	if parent == nil || parent.Number.Uint64()+1 != number || parent.Hash() != header.ParentHash {
+		return consensus.ErrUnknownAncestor
 	}
 	return rx.VerifySeal(chain, header)
 }
@@ -202,11 +217,12 @@ func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
 	go func() {
-		for _, header := range headers {
+		for i, header := range headers {
+			err := rx.verifyHeader(chain, header, headers[:i])
 			select {
 			case <-abort:
 				return
-			case results <- rx.VerifyHeader(chain, header):
+			case results <- err:
 			}
 		}
 	}()
@@ -254,7 +270,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 
 	// Create and return the final block
 	block := types.NewBlock(header, body, receipts, nil)
-	
+
 	return block, nil
 }
 
