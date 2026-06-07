@@ -131,7 +131,7 @@ func (miner *Miner) SetEtherbase(addr common.Address) {
         miner.worker.setEtherbase(addr)
 }
 
-// ========== NEW METHODS FOR XMRig ==========
+// ========== METHODS FOR XMRig ==========
 
 // GetWork returns the current mining work for external miners (XMRig).
 // Returns: [headerHash, seedHash, target, blockHeight]
@@ -141,82 +141,81 @@ func (miner *Miner) GetWork() ([4]string, error) {
         if block == nil || state == nil {
                 return [4]string{}, errors.New("no pending work available")
         }
-        
+
         header := block.Header()
-        
+
         // Calculate the seed hash for the next block's epoch
         seedHash := RandomXSeedHash(miner.eth.BlockChain().Config(), header.Number.Uint64()+1)
-        
+
         // Target is the difficulty threshold
         target := header.Difficulty
-        
+
         // Block height for the next block
         height := header.Number.Uint64() + 1
-        
+
         result := [4]string{
                 header.Hash().Hex(),           // Header hash (for block verification)
                 seedHash.Hex(),                 // Seed hash (for RandomX calculation)
-                hexutil.EncodeBig(target),         // Target difficulty
+                hexutil.EncodeBig(target),      // Target difficulty
                 hexutil.EncodeUint64(height),   // Block height
         }
-        
-        log.Debug("GetWork for XMRig", 
+
+        log.Debug("GetWork for XMRig",
                 "height", height,
                 "headerHash", result[0][:16],
                 "seedHash", result[1][:16],
                 "target", result[2][:16])
-        
+
         return result, nil
 }
 
 // SubmitWork submits a proof-of-work solution from an external miner (XMRig).
 // Parameters: nonce, headerHash, mixDigest
 func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
-        log.Info("SubmitWork from XMRig", 
+        log.Info("SubmitWork from XMRig",
                 "nonce", nonce,
                 "headerHash", hash.Hex()[:16],
                 "mixDigest", digest.Hex()[:16])
-        
+
         // Get the current pending block to build a full header
         block, state := miner.worker.pending()
         if block == nil || state == nil {
                 log.Error("No pending work available for submission")
                 return false
         }
-        
+
         header := block.Header()
-        
+
         // Create a new header with the submitted nonce and mix digest
-        newHeader := &types.Header{
-                ParentHash:  header.ParentHash,
-                UncleHash:   header.UncleHash,
-                Coinbase:    header.Coinbase,
-                Root:        header.Root,
-                TxHash:      header.TxHash,
-                ReceiptHash: header.ReceiptHash,
-                Bloom:       header.Bloom,
-                Difficulty:  header.Difficulty,
-                Number:      header.Number,
-                GasLimit:    header.GasLimit,
-                GasUsed:     header.GasUsed,
-                Time:        header.Time,
-                Extra:       header.Extra,
-                MixDigest:   digest,
-                Nonce:       nonce,
-        }
-        
-        // Verify the seal using the consensus engine
+        newHeader := types.CopyHeader(header)
+        newHeader.MixDigest = digest
+        newHeader.Nonce = nonce
+
+        // Create a new block with the sealed header using NewBlock (not NewBlockWithHeader)
+        // NewBlock expects (header, body, receipts, trie)
+        sealedBlock := types.NewBlock(newHeader, block.Body(), nil, nil)
+
+        // Verify the header using the consensus engine's VerifyHeader method
+        // (VerifySeal is part of VerifyHeader for RandomX)
         if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
                 log.Warn("Invalid proof-of-work submitted", "err", err)
                 return false
         }
-        
-        log.Info("Valid proof-of-work submitted", "nonce", nonce, "headerHash", hash.Hex()[:16])
-        
-        // Optionally, trigger block submission to the blockchain
-        // This would typically be handled by the miner's result channel
-        
-        return true
+
+        log.Info("Valid proof-of-work submitted, submitting block to result channel",
+                "nonce", nonce,
+                "blockNumber", sealedBlock.NumberU64(),
+                "mixDigest", digest.Hex()[:16])
+
+        // Send the sealed block to the worker's result channel
+        select {
+        case miner.worker.resultCh <- sealedBlock:
+                log.Info("Block submitted to result channel successfully")
+                return true
+        case <-time.After(5 * time.Second):
+                log.Warn("Timeout submitting block to result channel")
+                return false
+        }
 }
 
 // RandomXSeedHash calculates the RandomX seed hash for a given block height.
@@ -224,12 +223,12 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 func RandomXSeedHash(config *params.ChainConfig, blockNumber uint64) common.Hash {
         epochLength := uint64(2048)
         epoch := blockNumber / epochLength
-        
+
         // For epoch 0, seed hash is all zeros
         if epoch == 0 {
                 return common.Hash{}
         }
-        
+
         // Calculate seed hash by hashing the previous seed repeatedly
         seed := make([]byte, 32)
         for i := uint64(0); i < epoch; i++ {

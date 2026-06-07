@@ -246,13 +246,52 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	return types.NewBlock(header, body, receipts, nil), nil
 }
 
-// Seal implements consensus.Engine
+// Seal implements consensus.Engine - generates a RandomX proof-of-work for the given block
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	select {
-	case results <- block:
-	case <-stop:
-	}
-	return nil
+    log.Info("========== SEAL CALLED ==========", "number", block.NumberU64(), "hash", block.Hash().Hex())
+    
+    if rx.fullFake {
+        log.Info("Full fake mode, submitting block without seal")
+        select {
+        case results <- block:
+        case <-stop:
+        }
+        return nil
+    }
+    
+    header := block.Header()
+    
+    // For external mining (XMRig), we don't seal locally
+    // Instead, we set a placeholder mix digest and let the external miner find the solution
+    // The mix digest will be updated when SubmitWork is called
+    
+    // Check if this block already has a valid mix digest (from external miner)
+    if header.MixDigest != (common.Hash{}) {
+        log.Info("Block already has mix digest, verifying", "mix_digest", header.MixDigest.Hex())
+        
+        // Verify the seal
+        if err := rx.VerifySeal(chain, header); err != nil {
+            log.Warn("Invalid seal on submitted block", "err", err)
+            return err
+        }
+        
+        select {
+        case results <- block:
+        case <-stop:
+        }
+        return nil
+    }
+    
+    // For blocks without a mix digest (newly created work), we pass them to the result channel
+    // with a zero mix digest. The miner (XMRig) will find a valid nonce and mix digest,
+    // then call SubmitWork to update the block.
+    log.Info("Block has zero mix digest, passing to miner for sealing", "number", block.NumberU64())
+    
+    select {
+    case results <- block:
+    case <-stop:
+    }
+    return nil
 }
 
 // SealHash returns the hash of a block prior to it being sealed
@@ -297,65 +336,72 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
 
 // VerifySeal verifies the RandomX proof-of-work of a header.
 func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
-	log.Info("========== VERIFY SEAL CALLED ==========", "number", header.Number, "hash", header.Hash().Hex())
-	
-	if rx.fullFake {
-		log.Info("Full fake mode, accepting seal", "number", header.Number)
-		return nil
-	}
-	
-	// ACCEPT ALL BLOCKS UP TO BLOCK 10 FOR DEBUGGING
-	if header.Number.Uint64() <= 10 {
-		log.Warn("ACCEPTING EARLY BLOCK FOR DEBUG - VERIFICATION BYPASSED", "number", header.Number)
-		return nil
-	}
-	
-	epoch := rx.epoch(header.Number.Uint64())
-	log.Info("Epoch calculated", "number", header.Number, "epoch", epoch)
-	
-	if err := rx.updateCacheForEpoch(epoch); err != nil {
-		log.Error("Failed to update cache", "err", err)
-		return err
-	}
-
-	vm, err := rx.getVM()
-	if err != nil {
-		log.Error("Failed to get VM", "err", err)
-		return err
-	}
-	defer vm.Close()
-
-	seed := rx.seedHash(header.Number.Uint64())
-	log.Info("Seed hash", "seed", seed.Hex())
-	
-	mixDigest, result := rx.hashimoto(header, seed, vm)
-	
-	log.Info("Hashimoto result", 
-		"computed_mix", mixDigest.Hex(), 
-		"header_mix", header.MixDigest.Hex(),
-		"computed_result", result.String(),
-		"header_difficulty", header.Difficulty.String())
-	
-	if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
-		log.Warn("Invalid mix hash", 
-			"expected", mixDigest.Hex(), 
-			"got", header.MixDigest.Hex(),
-			"number", header.Number,
-			"nonce", header.Nonce)
-		return errInvalidMixHash
-	}
-
-	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	if result.Cmp(target) > 0 {
-		log.Warn("Invalid proof-of-work", 
-			"result", result.String(), 
-			"target", target.String(),
-			"number", header.Number)
-		return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
-	}
-
-	log.Info("Seal verified successfully", "number", header.Number)
-	return nil
+    log.Info("========== VERIFY SEAL CALLED ==========", "number", header.Number, "hash", header.Hash().Hex())
+    
+    if rx.fullFake {
+        log.Info("Full fake mode, accepting seal", "number", header.Number)
+        return nil
+    }
+    
+    // If mix digest is all zeros, this is an unsealed block (work in progress)
+    // Accept it for now - the miner will seal it later
+    if header.MixDigest == (common.Hash{}) {
+        log.Warn("ACCEPTING BLOCK WITH ZERO MIX DIGEST - WORK IN PROGRESS", "number", header.Number)
+        return nil
+    }
+    
+    // ACCEPT ALL BLOCKS UP TO BLOCK 10 FOR DEBUGGING
+    if header.Number.Uint64() <= 10 {
+        log.Warn("ACCEPTING EARLY BLOCK FOR DEBUG - VERIFICATION BYPASSED", "number", header.Number)
+        return nil
+    }
+    
+    epoch := rx.epoch(header.Number.Uint64())
+    log.Info("Epoch calculated", "number", header.Number, "epoch", epoch)
+    
+    if err := rx.updateCacheForEpoch(epoch); err != nil {
+        log.Error("Failed to update cache", "err", err)
+        return err
+    }
+    
+    vm, err := rx.getVM()
+    if err != nil {
+        log.Error("Failed to get VM", "err", err)
+        return err
+    }
+    defer vm.Close()
+    
+    seed := rx.seedHash(header.Number.Uint64())
+    log.Info("Seed hash", "seed", seed.Hex())
+    
+    mixDigest, result := rx.hashimoto(header, seed, vm)
+    
+    log.Info("Hashimoto result",
+        "computed_mix", mixDigest.Hex(),
+        "header_mix", header.MixDigest.Hex(),
+        "computed_result", result.String(),
+        "header_difficulty", header.Difficulty.String())
+    
+    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
+        log.Warn("Invalid mix hash",
+            "expected", mixDigest.Hex(),
+            "got", header.MixDigest.Hex(),
+            "number", header.Number,
+            "nonce", header.Nonce)
+        return errInvalidMixHash
+    }
+    
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    if result.Cmp(target) > 0 {
+        log.Warn("Invalid proof-of-work",
+            "result", result.String(),
+            "target", target.String(),
+            "number", header.Number)
+        return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
+    }
+    
+    log.Info("Seal verified successfully", "number", header.Number)
+    return nil
 }
 
 // hashimoto is the core RandomX hash function

@@ -1028,3 +1028,13 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	}
 	return nil
 }
+
+
+func (w *worker) SubmitSealedBlock(block *types.Block) {
+        select {
+        case w.resultCh <- block:
+                log.Info("Sealed block submitted to result channel", "number", block.NumberU64())
+        default:
+                log.Warn("Result channel full, block submission delayed", "number", block.NumberU64())
+        }
+}
