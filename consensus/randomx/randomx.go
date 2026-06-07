@@ -238,43 +238,23 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 
 // Finalize implements consensus.Engine - applies block rewards and finalizes state
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	// The state is already a *state.StateDB, but we can't import it directly
-	// Use the interface methods instead
-	blockNumber := header.Number.Uint64()
-	blockReward := CalculateBlockReward(blockNumber)
-
-	mainKing := rx.GetMainKing()
-	rotatingKing := rx.GetRotatingKing(blockNumber)
-
-	// Note: Reward distribution requires *state.StateDB, which we don't have direct access to
-	// This will be handled in FinalizeAndAssemble where we have proper type assertion
-	log.Info("Finalizing block", "number", blockNumber, "reward", FormatANTD(blockReward),
-		"mainKing", mainKing.Hex(), "rotatingKing", rotatingKing.Hex(), "miner", header.Coinbase.Hex())
+	// The reward distribution is handled by the reward.go functions
+	// These functions will be called from FinalizeAndAssemble where we have proper type access
+	log.Info("Finalizing block", "number", header.Number, "txs", len(body.Transactions))
 }
 
 // FinalizeAndAssemble implements consensus.Engine
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	blockNumber := header.Number.Uint64()
-	blockReward := CalculateBlockReward(blockNumber)
-	totalFees := GetTotalTransactionFees(header, receipts)
+	log.Info("FinalizeAndAssemble called", "number", header.Number, "txs", len(body.Transactions))
 
-	mainKing := rx.GetMainKing()
-	rotatingKing := rx.GetRotatingKing(blockNumber)
-
-	log.Info("FinalizeAndAssemble",
-		"number", blockNumber,
-		"blockReward", FormatANTD(blockReward),
-		"totalFees", FormatANTD(totalFees),
-		"miner", header.Coinbase.Hex(),
-		"mainKing", mainKing.Hex(),
-		"rotatingKing", rotatingKing.Hex())
-
+	// Set bloom filter from receipts
 	if len(receipts) > 0 {
 		header.Bloom = types.MergeBloom(receipts)
 	}
 
 	// Create and return the final block
 	block := types.NewBlock(header, body, receipts, nil)
+	
 	return block, nil
 }
 
@@ -646,10 +626,4 @@ func (api *RandomXAPI) GetMainKing() common.Address {
 // GetRotatingKing returns the rotating king at the given block height
 func (api *RandomXAPI) GetRotatingKing(blockHeight uint64) common.Address {
 	return api.randomx.GetRotatingKing(blockHeight)
-}
-
-// GetRewardInfo returns reward information for a block
-func (api *RandomXAPI) GetRewardInfo(blockNumber uint64) map[string]interface{} {
-	blockReward := CalculateBlockReward(blockNumber)
-	return GetRewardInfo(blockNumber, blockReward, big.NewInt(0))
 }
