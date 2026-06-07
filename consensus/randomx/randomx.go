@@ -223,17 +223,17 @@ func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block)
 
 // Prepare implements consensus.Engine
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	if header.Number == nil {
-		header.Number = new(big.Int)
-	}
-	if header.Difficulty == nil {
-		if parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1); parent != nil {
-			header.Difficulty = rx.CalcDifficulty(chain, header.Time, parent)
-		} else {
-			header.Difficulty = new(big.Int).SetUint64(MinimumDifficultyValue)
-		}
-	}
-	return nil
+        if header.Number == nil {
+                header.Number = new(big.Int)
+        }
+        if header.Difficulty == nil {
+                if parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1); parent != nil {
+                        header.Difficulty = rx.CalcDifficulty(chain, header.Time, parent)
+                } else {
+                        header.Difficulty = new(big.Int).SetUint64(MinimumDifficulty)
+                }
+        }
+        return nil
 }
 
 // Finalize implements consensus.Engine

@@ -12,9 +12,10 @@ import (
 
 // RandomX difficulty constants
 const (
-//	TargetBlockTimeSeconds = 120
-	MinimumDifficultyValue = 3
-	MaxAdjustmentPercent   = 10
+//	TargetBlockTimeSeconds uint64 = 120 // Target block time (2 minutes)
+	MinimumDifficulty      uint64 = 3   // Minimum difficulty (genesis)
+	MaxAdjustmentPercent   uint64 = 25  // Maximum difficulty change per block (25%)
+	LinearIncreaseBlocks   uint64 = 100 // Number of blocks for linear progression
 )
 
 // CalcDifficulty calculates the difficulty for the next block.
@@ -27,55 +28,67 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 		"nextHeight", nextHeight,
 		"parent_diff", parent.Difficulty.String())
 
-	// Genesis block
+	// Genesis block (block 0) - minimum difficulty
 	if currentHeight == 0 {
-		diff := new(big.Int).SetUint64(MinimumDifficultyValue)
+		diff := new(big.Int).SetUint64(MinimumDifficulty)
 		log.Info("Genesis difficulty", "difficulty", diff)
 		return diff
 	}
 
-	// Calculate actual time since parent block
+	// Blocks 1-99: Linear progression to reach reasonable difficulty by block 100
+	if currentHeight < LinearIncreaseBlocks {
+		// Target difficulty at block 100 = 50
+		targetMaxDiff := uint64(50)
+		diff := MinimumDifficulty + (currentHeight * (targetMaxDiff - MinimumDifficulty) / LinearIncreaseBlocks)
+		if diff < MinimumDifficulty {
+			diff = MinimumDifficulty
+		}
+		result := new(big.Int).SetUint64(diff)
+		log.Info("Linear difficulty progression",
+			"height", nextHeight,
+			"difficulty", result,
+			"phase", "early_blocks")
+		return result
+	}
+
+	// For blocks >= 100, use simple adjustment based on parent block time
+	// This avoids complex array operations that could cause issues
 	parentTime := parent.Time
 	var actualTime uint64
 	if time > parentTime {
 		actualTime = time - parentTime
 	} else {
-		actualTime = uint64(TargetBlockTimeSeconds)  // Convert to uint64
+		actualTime = TargetBlockTimeSeconds
 	}
 
-	targetTime := uint64(TargetBlockTimeSeconds)  // Convert to uint64
 	parentDiff := parent.Difficulty.Uint64()
+	var newDiffVal uint64
 
 	log.Info("Difficulty adjustment data",
 		"parent_time", parentTime,
 		"current_time", time,
 		"actual_time", actualTime,
-		"target_time", targetTime,
+		"target_time", TargetBlockTimeSeconds,
 		"parent_diff", parentDiff)
 
-	var newDiffVal uint64
-
-	if actualTime < targetTime {
-		// Blocks too fast → increase difficulty
-		// Use a smaller increase to avoid dramatic jumps
-		increase := parentDiff * (targetTime - actualTime) / (targetTime * 2)
+	if actualTime < TargetBlockTimeSeconds {
+		// Too fast, increase difficulty
+		increase := parentDiff * (TargetBlockTimeSeconds - actualTime) / TargetBlockTimeSeconds
 		if increase < 1 {
 			increase = 1
 		}
-		// Limit to 10% max increase
 		maxIncrease := parentDiff * MaxAdjustmentPercent / 100
 		if increase > maxIncrease {
 			increase = maxIncrease
 		}
 		newDiffVal = parentDiff + increase
 		log.Info("Increasing difficulty", "increase", increase, "new", newDiffVal)
-	} else if actualTime > targetTime {
-		// Blocks too slow → decrease difficulty
-		decrease := parentDiff * (actualTime - targetTime) / (targetTime * 2)
+	} else if actualTime > TargetBlockTimeSeconds {
+		// Too slow, decrease difficulty
+		decrease := parentDiff * (actualTime - TargetBlockTimeSeconds) / TargetBlockTimeSeconds
 		if decrease < 1 {
 			decrease = 1
 		}
-		// Limit to 10% max decrease
 		maxDecrease := parentDiff * MaxAdjustmentPercent / 100
 		if decrease > maxDecrease {
 			decrease = maxDecrease
@@ -83,7 +96,7 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 		if parentDiff > decrease {
 			newDiffVal = parentDiff - decrease
 		} else {
-			newDiffVal = MinimumDifficultyValue
+			newDiffVal = MinimumDifficulty
 		}
 		log.Info("Decreasing difficulty", "decrease", decrease, "new", newDiffVal)
 	} else {
@@ -92,13 +105,19 @@ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Heade
 	}
 
 	// Ensure minimum difficulty
-	if newDiffVal < MinimumDifficultyValue {
-		newDiffVal = MinimumDifficultyValue
+	if newDiffVal < MinimumDifficulty {
+		newDiffVal = MinimumDifficulty
 	}
 
 	newDiff := new(big.Int).SetUint64(newDiffVal)
 
-	log.Info("Difficulty calculated", "height", nextHeight, "new_diff", newDiff)
+	log.Info("Difficulty calculated",
+		"height", nextHeight,
+		"actual_time", actualTime,
+		"target_time", TargetBlockTimeSeconds,
+		"parent_diff", parentDiff,
+		"new_diff", newDiff)
+
 	return newDiff
 }
 
