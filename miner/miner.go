@@ -150,6 +150,19 @@ func (miner *Miner) GetWork() ([4]string, error) {
 	seedHash := RandomXSeedHash(miner.eth.BlockChain().Config(), header.Number.Uint64())
 	sealHash := miner.engine.SealHash(header)
 
+	miner.worker.pendingMu.RLock()
+	task, exist := miner.worker.pendingTasks[sealHash]
+	miner.worker.pendingMu.RUnlock()
+	if !exist || task.block == nil {
+		return [4]string{}, errors.New("pending work is not ready")
+	}
+	if task.block.Hash() != block.Hash() {
+		return [4]string{}, errors.New("pending work changed")
+	}
+	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
+		return [4]string{}, errors.New("invalid pending work difficulty")
+	}
+
 	// Target is the proof-of-work threshold derived from the block difficulty.
 	target := new(big.Int).Div(new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)), header.Difficulty)
 
