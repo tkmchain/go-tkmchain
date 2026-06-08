@@ -36,11 +36,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
+	randomx_lib "github.com/ethereum/go-ethereum/internal/go-randomx"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	randomx_lib "github.com/ethereum/go-ethereum/internal/go-randomx"
 )
 
 // RandomX proof-of-work protocol constants.
@@ -285,11 +285,38 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 		return nil
 	}
 
-	select {
-	case results <- block:
-	case <-stop:
+	epoch := rx.epoch(header.Number.Uint64())
+	if err := rx.updateCacheForEpoch(epoch); err != nil {
+		return err
 	}
-	return nil
+	vm, err := rx.getVM()
+	if err != nil {
+		return err
+	}
+	defer vm.Close()
+
+	sealHeader := types.CopyHeader(header)
+	seed := rx.seedHash(sealHeader.Number.Uint64())
+	target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
+	for nonce := sealHeader.Nonce.Uint64(); ; nonce++ {
+		select {
+		case <-stop:
+			return nil
+		default:
+		}
+		sealHeader.Nonce = types.EncodeNonce(nonce)
+		mixDigest, result := rx.hashimoto(sealHeader, seed, vm)
+		if result.Cmp(target) > 0 {
+			continue
+		}
+		sealHeader.MixDigest = mixDigest
+		sealedBlock := block.WithSeal(sealHeader)
+		select {
+		case results <- sealedBlock:
+		case <-stop:
+		}
+		return nil
+	}
 }
 
 // SealHash returns the hash of a block prior to it being sealed
@@ -340,8 +367,8 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 
 	// Reject ANY block with zero mix digest - NO EXCEPTIONS
 	if header.MixDigest == (common.Hash{}) {
-		log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST - INVALID PROOF OF WORK", 
-			"number", header.Number, 
+		log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST - INVALID PROOF OF WORK",
+			"number", header.Number,
 			"hash", header.Hash().Hex())
 		return errInvalidMixHash
 	}
@@ -380,7 +407,8 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 // hashimoto is the core RandomX hash function
 func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
 	input := make([]byte, 40)
-	copy(input[:32], seed.Bytes())
+	sealHash := rx.SealHash(header)
+	copy(input[:32], sealHash.Bytes())
 
 	nonceBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
