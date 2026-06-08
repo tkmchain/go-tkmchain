@@ -245,10 +245,8 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 	return nil
 }
 
-// Finalize implements consensus.Engine - applies block rewards and finalizes state
+// Finalize implements consensus.Engine
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	// Note: vm.StateDB is an interface, we don't need to cast to *state.StateDB
-	// The reward distribution is handled by the reward.go functions
 	log.Info("Finalizing block", "number", header.Number, "txs", len(body.Transactions))
 }
 
@@ -256,12 +254,10 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	log.Info("FinalizeAndAssemble called", "number", header.Number, "txs", len(body.Transactions))
 
-	// Set bloom filter from receipts
 	if len(receipts) > 0 {
 		header.Bloom = types.MergeBloom(receipts)
 	}
 
-	// Create and return the final block
 	block := types.NewBlock(header, body, receipts, nil)
 	return block, nil
 }
@@ -337,21 +333,16 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
 }
 
 // VerifySeal verifies the RandomX proof-of-work of a header.
-// PRODUCTION VERSION - Full RandomX verification
 func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
 	if rx.fullFake {
 		return nil
 	}
 
-	// Accept early blocks for initial chain bootstrap (first 10 blocks only)
-	if header.Number.Uint64() <= 10 {
-		log.Warn("ACCEPTING EARLY BLOCK - VERIFICATION BYPASSED", "number", header.Number)
-		return nil
-	}
-
-	// Verify that mix digest is not zero for production blocks
+	// Reject ANY block with zero mix digest - NO EXCEPTIONS
 	if header.MixDigest == (common.Hash{}) {
-		log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST", "number", header.Number)
+		log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST - INVALID PROOF OF WORK", 
+			"number", header.Number, 
+			"hash", header.Hash().Hex())
 		return errInvalidMixHash
 	}
 
@@ -382,6 +373,7 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		return fmt.Errorf("invalid proof-of-work: result %s > target %s", result.String(), target.String())
 	}
 
+	log.Debug("Seal verified successfully", "number", header.Number)
 	return nil
 }
 
