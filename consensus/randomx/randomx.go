@@ -23,7 +23,6 @@ package randomx
 */
 import "C"
 import (
-        "encoding/binary"
 	"bytes"
 	"fmt"
 	"math/big"
@@ -405,7 +404,7 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 }
 
 // hashimoto is the core RandomX hash function
-/*func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
+func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
 	input := make([]byte, 40)
 	sealHash := rx.SealHash(header)
 	copy(input[:32], sealHash.Bytes())
@@ -423,24 +422,6 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	result := new(big.Int).SetBytes(output)
 
 	return mixDigest, result
-}*/
-func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *randomx_lib.VM) (common.Hash, *big.Int) {
-    input := make([]byte, 40)
-    // Use header.Hash() for the RandomX blob, NOT SealHash
-    headerHash := header.Hash()
-    copy(input[:32], headerHash.Bytes())
-
-    nonceBytes := make([]byte, 8)
-    binary.LittleEndian.PutUint64(nonceBytes, header.Nonce.Uint64())
-    copy(input[32:], nonceBytes)
-
-    output := make([]byte, 32)
-    vm.CalculateHash(input, output)
-
-    mixDigest := common.BytesToHash(output)
-    result := new(big.Int).SetBytes(output)
-
-    return mixDigest, result
 }
 
 // getVM returns a RandomX VM for hash calculations
