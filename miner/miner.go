@@ -150,6 +150,11 @@ func (miner *Miner) GetWork() ([4]string, error) {
 	seedHash := RandomXSeedHash(miner.eth.BlockChain().Config(), header.Number.Uint64())
 	sealHash := miner.engine.SealHash(header)
 
+    log.Info("GetWork sending",
+        "height", header.Number,
+        "sealHash", sealHash.Hex(),
+        "headerHash", header.Hash().Hex(),
+        "difficulty", header.Difficulty)
 	miner.worker.pendingMu.RLock()
 	task, exist := miner.worker.pendingTasks[sealHash]
 	miner.worker.pendingMu.RUnlock()
