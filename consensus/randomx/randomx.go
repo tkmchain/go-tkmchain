@@ -20,6 +20,7 @@ import (
     "fmt"
     "math/big"
     "sync"
+    "sync/atomic"
     "time"
     "unsafe"
 
@@ -37,58 +38,47 @@ import (
 
 // Constants
 var (
-    maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
-    GenesisDifficulty = big.NewInt(3) // Adjust if needed for your chain
+    maxUint256        = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
+    GenesisDifficulty = big.NewInt(3)
 )
 
 var (
     errInvalidMixHash = fmt.Errorf("invalid mix hash")
     errNoCache        = fmt.Errorf("randomx cache not initialized")
+    errEngineClosed   = fmt.Errorf("randomx engine is closed")
 )
 
 const (
     RandomXEpochLength = 2048
 )
 
-// RandomX flags - Use JIT + HARD_AES for best performance
 const (
-    RANDOMX_FLAG_DEFAULT  = 0
     RANDOMX_FLAG_JIT      = 2
     RANDOMX_FLAG_HARD_AES = 4
-    RANDOMX_FLAG_FULL_MEM = 1
 )
 
-// Cache, Dataset, VM wrappers
-type Cache struct {
-    ptr *C.randomx_cache
-}
+// CGO Wrappers
+type Cache struct{ ptr *C.randomx_cache }
+type Dataset struct{ ptr *C.randomx_dataset }
+type VM struct{ ptr *C.randomx_vm }
 
-type Dataset struct {
-    ptr *C.randomx_dataset
-}
-
-type VM struct {
-    ptr *C.randomx_vm
-}
-
-// NewCache creates a RandomX cache
 func NewCache(flags int) *Cache {
-    cache := C.randomx_alloc_cache(C.randomx_flags(flags))
-    if cache == nil {
+    c := C.randomx_alloc_cache(C.randomx_flags(flags))
+    if c == nil {
         return nil
     }
-    return &Cache{ptr: cache}
+    return &Cache{ptr: c}
 }
 
 func (c *Cache) Init(seed []byte) {
     if c == nil || c.ptr == nil {
         return
     }
-    var seedPtr unsafe.Pointer
+    var p unsafe.Pointer
     if len(seed) > 0 {
-        seedPtr = unsafe.Pointer(&seed[0])
+        p = unsafe.Pointer(&seed[0])
     }
-    C.randomx_init_cache(c.ptr, seedPtr, C.size_t(len(seed)))
+    C.randomx_init_cache(c.ptr, p, C.size_t(len(seed)))
 }
 
 func (c *Cache) Close() {
@@ -98,13 +88,12 @@ func (c *Cache) Close() {
     }
 }
 
-// NewDataset creates a RandomX dataset
 func NewDataset(flags int) *Dataset {
-    dataset := C.randomx_alloc_dataset(C.randomx_flags(flags))
-    if dataset == nil {
+    d := C.randomx_alloc_dataset(C.randomx_flags(flags))
+    if d == nil {
         return nil
     }
-    return &Dataset{ptr: dataset}
+    return &Dataset{ptr: d}
 }
 
 func (d *Dataset) InitDataset(cache *Cache, start, count uint64) {
@@ -121,7 +110,6 @@ func (d *Dataset) Close() {
     }
 }
 
-// NewVM creates a RandomX virtual machine
 func NewVM(flags int, cache *Cache, dataset *Dataset) *VM {
     var cCache *C.randomx_cache
     var cDataset *C.randomx_dataset
@@ -131,7 +119,6 @@ func NewVM(flags int, cache *Cache, dataset *Dataset) *VM {
     if dataset != nil {
         cDataset = dataset.ptr
     }
-
     vm := C.randomx_create_vm(C.randomx_flags(flags), cCache, cDataset)
     if vm == nil {
         return nil
@@ -141,14 +128,13 @@ func NewVM(flags int, cache *Cache, dataset *Dataset) *VM {
 
 func (vm *VM) CalculateHash(input, output []byte) {
     if vm == nil || vm.ptr == nil {
-        log.Error("CalculateHash called with nil VM")
         return
     }
-    var inputPtr unsafe.Pointer
+    var inPtr unsafe.Pointer
     if len(input) > 0 {
-        inputPtr = unsafe.Pointer(&input[0])
+        inPtr = unsafe.Pointer(&input[0])
     }
-    C.randomx_calculate_hash(vm.ptr, inputPtr, C.size_t(len(input)), unsafe.Pointer(&output[0]))
+    C.randomx_calculate_hash(vm.ptr, inPtr, C.size_t(len(input)), unsafe.Pointer(&output[0]))
 }
 
 func (vm *VM) Close() {
@@ -158,10 +144,9 @@ func (vm *VM) Close() {
     }
 }
 
-// RandomX consensus engine
+// RandomX Engine
 type RandomX struct {
     config           *params.RandomXConfig
-    lock             sync.RWMutex
     fullFake         bool
     rotatingKings    []common.Address
     rotationInterval uint64
@@ -170,19 +155,19 @@ type RandomX struct {
     dataset    *Dataset
     cacheEpoch uint64
     cacheMu    sync.RWMutex
+    lock       sync.RWMutex // for king management
 
     stopCh chan struct{}
+    closed int32
 }
 
-// New creates a new RandomX consensus engine with proper initialization
+// New creates a new RandomX consensus engine
 func New(config *params.RandomXConfig, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
     log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
 
     if config == nil {
         config = params.DefaultRandomXConfig()
     }
-
-    // Apply defaults
     if config.EpochLength == 0 {
         config.EpochLength = RandomXEpochLength
     }
@@ -200,20 +185,15 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
         stopCh:           make(chan struct{}),
     }
 
-    // Initialize RandomX for epoch 0 immediately
+    // Initialize cache/dataset immediately
     if err := rx.updateCacheForEpoch(0); err != nil {
-        log.Error("Failed to initialize RandomX cache at startup", "err", err)
-        return nil, err
+        return nil, fmt.Errorf("failed to initialize RandomX: %w", err)
     }
 
-    log.Info("RandomX engine initialized successfully",
-        "epoch_length", config.EpochLength,
-        "threads", threads)
-
+    log.Info("✅ RandomX engine initialized successfully")
     return rx, nil
 }
 
-// NewFaker creates a RandomX engine that accepts all seals (for testing)
 func NewFaker() *RandomX {
     log.Warn("Creating RandomX faker (accepts all seals)")
     engine, _ := New(params.DefaultRandomXConfig(), 1, common.Address{}, nil)
@@ -221,9 +201,37 @@ func NewFaker() *RandomX {
     return engine
 }
 
-// ==================== Core Methods ====================
+func (rx *RandomX) isClosed() bool {
+    return atomic.LoadInt32(&rx.closed) == 1
+}
+
+func (rx *RandomX) Close() error {
+    atomic.StoreInt32(&rx.closed, 1)
+    close(rx.stopCh)
+    time.Sleep(400 * time.Millisecond) // grace period for goroutines
+
+    rx.cacheMu.Lock()
+    if rx.cache != nil {
+        rx.cache.Close()
+        rx.cache = nil
+    }
+    if rx.dataset != nil {
+        rx.dataset.Close()
+        rx.dataset = nil
+    }
+    rx.cacheMu.Unlock()
+
+    log.Info("RandomX resources released")
+    return nil
+}
+
+// =================================== Core Functions ===================================
 
 func (rx *RandomX) getVM() (*VM, error) {
+    if rx.isClosed() {
+        return nil, errEngineClosed
+    }
+
     rx.cacheMu.RLock()
     defer rx.cacheMu.RUnlock()
 
@@ -234,22 +242,21 @@ func (rx *RandomX) getVM() (*VM, error) {
     flags := RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES
 
     if rx.dataset != nil {
-        vm := NewVM(flags, nil, rx.dataset)
-        if vm == nil {
-            return nil, fmt.Errorf("failed to create VM with full dataset")
+        if vm := NewVM(flags, nil, rx.dataset); vm != nil {
+            return vm, nil
         }
+    }
+    if vm := NewVM(flags, rx.cache, nil); vm != nil {
         return vm, nil
     }
-
-    // Light mode
-    vm := NewVM(flags, rx.cache, nil)
-    if vm == nil {
-        return nil, fmt.Errorf("failed to create VM with cache")
-    }
-    return vm, nil
+    return nil, fmt.Errorf("failed to create RandomX VM")
 }
 
 func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
+    if rx.isClosed() {
+        return errEngineClosed
+    }
+
     rx.cacheMu.Lock()
     defer rx.cacheMu.Unlock()
 
@@ -260,11 +267,8 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
     seed := rx.seedHash(epoch * rx.config.EpochLength)
     seedBytes := seed.Bytes()
 
-    log.Info("�� Initializing RandomX for new epoch",
-        "epoch", epoch,
-        "seed", seed.Hex()[:16]+"...")
+    log.Info("�� Initializing RandomX", "epoch", epoch, "seed", seed.Hex()[:16]+"...")
 
-    // Cleanup old resources
     if rx.cache != nil {
         rx.cache.Close()
         rx.cache = nil
@@ -274,30 +278,25 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
         rx.dataset = nil
     }
 
-    // Create cache
     rx.cache = NewCache(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES)
     if rx.cache == nil {
-        return fmt.Errorf("failed to allocate RandomX cache (out of memory?)")
+        return fmt.Errorf("failed to allocate RandomX cache")
     }
     rx.cache.Init(seedBytes)
 
-    // Try to allocate full dataset (much faster)
-    rx.dataset = NewDataset(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES)
-    if rx.dataset != nil {
-        log.Info("�� Allocating full RandomX dataset (~2GB+). This may take 30-90 seconds...")
-        start := time.Now()
-        rx.dataset.InitDataset(rx.cache, 0, 0) // full dataset
-        log.Info("✅ Full dataset initialized", "duration", time.Since(start))
+    if ds := NewDataset(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES); ds != nil {
+        log.Info("�� Initializing full RandomX dataset...")
+        ds.InitDataset(rx.cache, 0, 0)
+        rx.dataset = ds
+        log.Info("✅ Full dataset ready")
     } else {
-        log.Warn("⚠️ Could not allocate full dataset. Falling back to light mode (slower)")
+        log.Warn("⚠️ Falling back to light mode (cache only)")
     }
 
     rx.cacheEpoch = epoch
-    log.Info("✅ RandomX ready", "epoch", epoch, "mode", map[bool]string{true: "full", false: "light"}[rx.dataset != nil])
     return nil
 }
 
-// hashimoto - core hashing function
 func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *VM) (common.Hash, *big.Int) {
     input := make([]byte, 40)
     sealHash := rx.SealHash(header)
@@ -305,173 +304,24 @@ func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *VM) (co
     copy(input[32:], header.Nonce[:])
 
     output := make([]byte, 32)
-
-    if vm == nil || vm.ptr == nil {
-        log.Error("VM is nil in hashimoto!")
-        return common.Hash{}, new(big.Int)
+    if vm != nil {
+        vm.CalculateHash(input, output)
     }
-
-    vm.CalculateHash(input, output)
 
     mixDigest := common.BytesToHash(output)
     result := new(big.Int).SetBytes(output)
 
-    log.Debug("RandomX hash",
-        "sealHash", sealHash.Hex()[:16],
-        "nonce", header.Nonce.Uint64(),
-        "mixDigest", mixDigest.Hex(),
-        "isZero", mixDigest == (common.Hash{}))
-
     return mixDigest, result
 }
 
-// ==================== Consensus Engine Interface ====================
+// =================================== Consensus Engine Methods ===================================
 
 func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
     return header.Coinbase, nil
 }
 
-func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
-    return rx.verifyHeader(chain, header, nil)
-}
-
-func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
-    if rx.fullFake {
-        return nil
-    }
-    if header.Number == nil {
-        return consensus.ErrInvalidNumber
-    }
-    if header.Number.Sign() == 0 {
-        return nil
-    }
-
-    // Parent check
-    number := header.Number.Uint64()
-    var parent *types.Header
-    if len(parents) > 0 {
-        parent = parents[len(parents)-1]
-    } else {
-        parent = chain.GetHeader(header.ParentHash, number-1)
-    }
-    if parent == nil || parent.Number.Uint64()+1 != number || parent.Hash() != header.ParentHash {
-        return consensus.ErrUnknownAncestor
-    }
-
-    return rx.VerifySeal(chain, header)
-}
-
-func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
-    if rx.fullFake {
-        return nil
-    }
-
-    // Genesis
-    if header.Number.Uint64() == 0 {
-        if header.MixDigest != (common.Hash{}) {
-            return errInvalidMixHash
-        }
-        return nil
-    }
-
-    // Bootstrap phase (blocks 1-20)
-    if header.Number.Uint64() <= 20 {
-        log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", header.Number, "mix", header.MixDigest.Hex()[:16])
-        return nil
-    }
-
-    // Reject zero mix digest after bootstrap
-    if header.MixDigest == (common.Hash{}) {
-        log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST", "number", header.Number)
-        return errInvalidMixHash
-    }
-
-    // Full verification
-    epoch := rx.epoch(header.Number.Uint64())
-    if err := rx.updateCacheForEpoch(epoch); err != nil {
-        return err
-    }
-
-    vm, err := rx.getVM()
-    if err != nil {
-        log.Error("Failed to get VM for verification", "err", err)
-        return err
-    }
-    defer vm.Close()
-
-    seed := rx.seedHash(header.Number.Uint64())
-    mixDigest, result := rx.hashimoto(header, seed, vm)
-
-    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
-        return errInvalidMixHash
-    }
-
-    target := new(big.Int).Div(maxUint256, header.Difficulty)
-    if result.Cmp(target) > 0 {
-        return fmt.Errorf("invalid proof-of-work")
-    }
-
-    return nil
-}
-
-func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-    if rx.fullFake {
-        select { case results <- block: default: }
-        return nil
-    }
-
-    header := block.Header()
-
-    if header.MixDigest != (common.Hash{}) {
-        if err := rx.VerifySeal(chain, header); err != nil {
-            return err
-        }
-        select { case results <- block: default: }
-        return nil
-    }
-
-    // Initialize cache/dataset
-    epoch := rx.epoch(header.Number.Uint64())
-    if err := rx.updateCacheForEpoch(epoch); err != nil {
-        return err
-    }
-
-    vm, err := rx.getVM()
-    if err != nil {
-        return fmt.Errorf("failed to get RandomX VM: %w", err)
-    }
-    defer vm.Close()
-
-    sealHeader := types.CopyHeader(header)
-    seed := rx.seedHash(sealHeader.Number.Uint64())
-    target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
-
-    for nonce := sealHeader.Nonce.Uint64(); ; nonce++ {
-        select {
-        case <-stop:
-            return nil
-        default:
-        }
-
-        sealHeader.Nonce = types.EncodeNonce(nonce)
-        mixDigest, result := rx.hashimoto(sealHeader, seed, vm)
-
-        if result.Cmp(target) <= 0 {
-            sealHeader.MixDigest = mixDigest
-            sealedBlock := block.WithSeal(sealHeader)
-            select {
-            case results <- sealedBlock:
-            case <-stop:
-            }
-            return nil
-        }
-    }
-}
-
-// SealHash returns the hash of a block prior to it being sealed
 func (rx *RandomX) SealHash(header *types.Header) common.Hash {
     hasher := keccak.NewLegacyKeccak256()
-
     enc := []interface{}{
         header.ParentHash,
         header.UncleHash,
@@ -502,10 +352,121 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
     }
 
     rlp.Encode(hasher, enc)
-
     var hash common.Hash
     hasher.Sum(hash[:0])
     return hash
+}
+
+// Full Seal implementation
+func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+    if rx.fullFake || rx.isClosed() {
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    header := block.Header()
+
+    // Already sealed case
+    if header.MixDigest != (common.Hash{}) {
+        if err := rx.VerifySeal(chain, header); err != nil {
+            return err
+        }
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    // Initialize cache/dataset
+    epoch := rx.epoch(header.Number.Uint64())
+    if err := rx.updateCacheForEpoch(epoch); err != nil {
+        return err
+    }
+
+    vm, err := rx.getVM()
+    if err != nil {
+        return fmt.Errorf("failed to get RandomX VM: %w", err)
+    }
+    defer vm.Close()
+
+    sealHeader := types.CopyHeader(header)
+    seed := rx.seedHash(sealHeader.Number.Uint64())
+    target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
+
+    for nonce := sealHeader.Nonce.Uint64(); ; nonce++ {
+        select {
+        case <-stop:
+            return nil
+        case <-rx.stopCh:
+            return nil
+        default:
+        }
+
+        sealHeader.Nonce = types.EncodeNonce(nonce)
+        mixDigest, result := rx.hashimoto(sealHeader, seed, vm)
+
+        if result.Cmp(target) <= 0 {
+            sealHeader.MixDigest = mixDigest
+            sealedBlock := block.WithSeal(sealHeader)
+            select {
+            case results <- sealedBlock:
+            case <-stop:
+            }
+            return nil
+        }
+    }
+}
+
+func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
+    if rx.fullFake || rx.isClosed() {
+        return nil
+    }
+
+    num := header.Number.Uint64()
+
+    if num == 0 {
+        if header.MixDigest != (common.Hash{}) {
+            return errInvalidMixHash
+        }
+        return nil
+    }
+
+    if num <= 20 {
+        log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", num)
+        return nil
+    }
+
+    if header.MixDigest == (common.Hash{}) {
+        log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST", "number", num)
+        return errInvalidMixHash
+    }
+
+    if err := rx.updateCacheForEpoch(rx.epoch(num)); err != nil {
+        return err
+    }
+
+    vm, err := rx.getVM()
+    if err != nil {
+        return err
+    }
+    defer vm.Close()
+
+    mixDigest, result := rx.hashimoto(header, rx.seedHash(num), vm)
+
+    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
+        return errInvalidMixHash
+    }
+
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    if result.Cmp(target) > 0 {
+        return fmt.Errorf("invalid proof-of-work")
+    }
+
+    return nil
 }
 
 // Helper methods
@@ -543,7 +504,6 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-    // No-op or custom logic
 }
 
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
@@ -553,11 +513,32 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
     return types.NewBlock(header, body, receipts, nil), nil
 }
 
-func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
-    if len(block.Uncles()) > 0 {
+func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
+    return rx.verifyHeader(chain, header, nil)
+}
+
+func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
+    if rx.fullFake {
+        return nil
+    }
+    if header.Number == nil {
+        return consensus.ErrInvalidNumber
+    }
+    if header.Number.Sign() == 0 {
+        return nil
+    }
+
+    number := header.Number.Uint64()
+    var parent *types.Header
+    if len(parents) > 0 {
+        parent = parents[len(parents)-1]
+    } else {
+        parent = chain.GetHeader(header.ParentHash, number-1)
+    }
+    if parent == nil || parent.Number.Uint64()+1 != number || parent.Hash() != header.ParentHash {
         return consensus.ErrUnknownAncestor
     }
-    return nil
+    return rx.VerifySeal(chain, header)
 }
 
 func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) (chan<- struct{}, <-chan error) {
@@ -576,64 +557,14 @@ func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
     return abort, results
 }
 
-func (rx *RandomX) Close() error {
-    close(rx.stopCh)
-    // Cleanup resources
-    rx.cacheMu.Lock()
-    if rx.cache != nil {
-        rx.cache.Close()
+func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
+    if len(block.Uncles()) > 0 {
+        return consensus.ErrUnknownAncestor
     }
-    if rx.dataset != nil {
-        rx.dataset.Close()
-    }
-    rx.cacheMu.Unlock()
     return nil
 }
 
-// RPC APIs
-func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-    return []rpc.API{{
-        Namespace: "randomx",
-        Version:   "1.0",
-        Service:   &RandomXAPI{randomx: rx},
-        Public:    true,
-    }}
-}
-
-// King management and RPC API (unchanged from your version)
-type RandomXAPI struct{ randomx *RandomX }
-
-func (api *RandomXAPI) GetSeedHash(block *uint64) (common.Hash, error) {
-    if api.randomx == nil {
-        return common.Hash{}, nil
-    }
-    bn := uint64(0)
-    if block != nil {
-        bn = *block
-    }
-    return api.randomx.seedHash(bn), nil
-}
-
-func (api *RandomXAPI) GetCurrentEpoch(blockNumber uint64) uint64 {
-    return blockNumber / RandomXEpochLength
-}
-
-func (api *RandomXAPI) GetCacheInfo() (map[string]interface{}, error) {
-    return map[string]interface{}{
-        "cache_size_mb": 256,
-        "dataset_size_gb": 2,
-    }, nil
-}
-
-func (api *RandomXAPI) GetMainKing() common.Address {
-    return api.randomx.GetMainKing()
-}
-
-func (api *RandomXAPI) GetRotatingKing(blockHeight uint64) common.Address {
-    return api.randomx.GetRotatingKing(blockHeight)
-}
-
-// King methods
+// King Management
 func (rx *RandomX) GetMainKing() common.Address {
     rx.lock.RLock()
     defer rx.lock.RUnlock()
@@ -663,4 +594,32 @@ func (rx *RandomX) SetRotationInterval(interval uint64) {
     rx.lock.Lock()
     defer rx.lock.Unlock()
     rx.rotationInterval = interval
+}
+
+// RPC API
+type RandomXAPI struct {
+    randomx *RandomX
+}
+
+func (api *RandomXAPI) GetSeedHash(block *uint64) (common.Hash, error) {
+    bn := uint64(0)
+    if block != nil {
+        bn = *block
+    }
+    return api.randomx.seedHash(bn), nil
+}
+
+func (api *RandomXAPI) GetCurrentEpoch(blockNumber uint64) uint64 {
+    return blockNumber / RandomXEpochLength
+}
+
+func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
+    return []rpc.API{
+        {
+            Namespace: "randomx",
+            Version:   "1.0",
+            Service:   &RandomXAPI{randomx: rx},
+            Public:    true,
+        },
+    }
 }
