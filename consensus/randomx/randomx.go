@@ -455,20 +455,21 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		}
 	}
 
-	// Only genesis may have a zero mix digest. From block 1 onward,
-	// require miners to submit a real digest even during bootstrap.
+	// For blocks 1-20 (initial chain bootstrap), accept the seal before
+	// enforcing the mix digest. These startup blocks can be produced before an
+	// external miner has submitted a RandomX digest, and accepting them lets the
+	// chain start so miners can connect.
+	if header.Number.Uint64() >= 1 && header.Number.Uint64() <= 20 {
+		log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", header.Number, "mix_digest", header.MixDigest.Hex()[:16])
+		return nil
+	}
+
+	// Only genesis and bootstrap blocks may have a zero mix digest.
 	if header.MixDigest == (common.Hash{}) {
 		log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST - INVALID PROOF OF WORK",
 			"number", header.Number,
 			"hash", header.Hash().Hex())
 		return errInvalidMixHash
-	}
-
-	// For blocks 1-20 (initial chain bootstrap), accept any non-zero mix digest
-	// This allows the chain to start and miners to connect
-	if header.Number.Uint64() >= 1 && header.Number.Uint64() <= 20 {
-		log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", header.Number, "mix_digest", header.MixDigest.Hex()[:16])
-		return nil
 	}
 
 	// Full RandomX verification for blocks 21 and above
