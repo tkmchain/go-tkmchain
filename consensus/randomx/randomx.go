@@ -161,14 +161,15 @@ return &VM{ptr: vm}
 
 // CalculateHash computes RandomX hash
 func (vm *VM) CalculateHash(input, output []byte) {
-if vm == nil || vm.ptr == nil {
-return
-}
-var inputPtr unsafe.Pointer
-if len(input) > 0 {
-inputPtr = unsafe.Pointer(&input[0])
-}
-C.randomx_calculate_hash(vm.ptr, inputPtr, C.size_t(len(input)), unsafe.Pointer(&output[0]))
+    if vm == nil || vm.ptr == nil {
+        log.Error("CalculateHash called with nil VM")
+        return
+    }
+    var inputPtr unsafe.Pointer
+    if len(input) > 0 {
+        inputPtr = unsafe.Pointer(&input[0])
+    }
+    C.randomx_calculate_hash(vm.ptr, inputPtr, C.size_t(len(input)), unsafe.Pointer(&output[0]))
 }
 
 // Close destroys the VM
@@ -513,18 +514,34 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 
 // hashimoto is the core RandomX hash function
 func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *VM) (common.Hash, *big.Int) {
-input := make([]byte, 40)
-sealHash := rx.SealHash(header)
-copy(input[:32], sealHash.Bytes())
-copy(input[32:], header.Nonce[:])
+    input := make([]byte, 40)
+    sealHash := rx.SealHash(header)
+    copy(input[:32], sealHash.Bytes())
+    copy(input[32:], header.Nonce[:])
 
-output := make([]byte, 32)
-vm.CalculateHash(input, output)
+    output := make([]byte, 32)
+    
+    log.Info("RandomX CalculateHash input",
+        "sealHash", sealHash.Hex(),
+        "nonce", header.Nonce.Uint64(),
+        "inputLen", len(input))
 
-mixDigest := common.BytesToHash(output)
-result := new(big.Int).SetBytes(output)
+    if vm == nil || vm.ptr == nil {
+        log.Error("VM is nil in hashimoto!")
+        return common.Hash{}, new(big.Int)
+    }
 
-return mixDigest, result
+    vm.CalculateHash(input, output)
+
+    mixDigest := common.BytesToHash(output)
+    result := new(big.Int).SetBytes(output)
+
+    log.Info("RandomX hash result",
+        "mixDigest", mixDigest.Hex(),
+        "result", result.String(),
+        "isZero", mixDigest == (common.Hash{}))
+
+    return mixDigest, result
 }
 
 // getVM returns a RandomX VM for hash calculations
@@ -545,49 +562,41 @@ return NewVM(RANDOMX_FLAG_DEFAULT, rx.cache, nil), nil
 
 // updateCacheForEpoch updates the RandomX cache for the given epoch
 func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
-rx.cacheMu.Lock()
-defer rx.cacheMu.Unlock()
+    rx.cacheMu.Lock()
+    defer rx.cacheMu.Unlock()
 
-if rx.cacheEpoch == epoch && rx.cache != nil {
-return nil
-}
+    if rx.cacheEpoch == epoch && rx.cache != nil {
+        return nil
+    }
 
-seed := rx.seedHash(epoch * rx.config.EpochLength)
-seedBytes := seed.Bytes()
+    seed := rx.seedHash(epoch * rx.config.EpochLength)
+    seedBytes := seed.Bytes()
 
-log.Info("Initializing RandomX for new epoch", "epoch", epoch, "seed", seed.Hex())
+    log.Info("Initializing RandomX", "epoch", epoch, "seed", seed.Hex()[:16]+"...")
 
-if rx.cache != nil {
-rx.cache.Close()
-rx.cache = nil
-}
-if rx.dataset != nil {
-rx.dataset.Close()
-rx.dataset = nil
-}
+    // Clean old
+    if rx.cache != nil { rx.cache.Close(); rx.cache = nil }
+    if rx.dataset != nil { rx.dataset.Close(); rx.dataset = nil }
 
-startTime := time.Now()
+    // Cache
+    rx.cache = NewCache(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES)
+    if rx.cache == nil {
+        return fmt.Errorf("failed to alloc cache")
+    }
+    rx.cache.Init(seedBytes)
 
-// Create cache
-rx.cache = NewCache(RANDOMX_FLAG_DEFAULT)
-if rx.cache == nil {
-return fmt.Errorf("failed to create RandomX cache")
-}
-rx.cache.Init(seedBytes)
-log.Info("RandomX cache created", "epoch", epoch, "duration", time.Since(startTime))
+    // Prefer full dataset if possible (much faster verification)
+    rx.dataset = NewDataset(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES)
+    if rx.dataset != nil {
+        log.Info("Initializing full dataset (this may take time)...")
+        rx.dataset.InitDataset(rx.cache, 0, 0) // 0,0 = full
+        log.Info("Dataset ready")
+    } else {
+        log.Warn("Falling back to light mode (cache only)")
+    }
 
-// Try to create dataset for full mode
-startTime = time.Now()
-rx.dataset = NewDataset(RANDOMX_FLAG_DEFAULT)
-if rx.dataset == nil {
-log.Warn("Failed to create dataset, falling back to light mode")
-} else {
-rx.dataset.InitDataset(rx.cache, 0, 0)
-log.Info("RandomX dataset created (FULL MODE)", "epoch", epoch, "duration", time.Since(startTime))
-}
-
-rx.cacheEpoch = epoch
-return nil
+    rx.cacheEpoch = epoch
+    return nil
 }
 
 // seedHash computes the seed hash for a given block number.
