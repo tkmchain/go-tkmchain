@@ -50,7 +50,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/event"
+//	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/shutdowncheck"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -411,7 +411,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
 	// Initialize miner
-	eth.miner = miner.New(eth, chainConfig, new(event.TypeMux), eth.engine, config.Miner.Recommit, config.Miner.GasFloor, config.Miner.GasCeil, nil)
+	eth.miner = miner.New(eth.blockchain, eth.engine, &miner.MinerConfig{
+		Etherbase: config.Miner.Etherbase,
+		GasLimit: config.Miner.GasLimit,
+		GasPrice: config.Miner.GasPrice,
+		Threads: config.RandomXMinerThreads,
+	})
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	// Setup API backend

@@ -160,3 +160,33 @@ randomx-check:
 	else \
 		echo "❌ RandomX is not ready. Run 'make randomx' to build."; \
 	fi
+
+# Add to your existing Makefile
+
+#? randomx-miner: Build standalone RandomX mining daemon
+randomx-miner:
+	@echo "Building RandomX standalone mining daemon..."
+	@if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
+                echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
+                echo "Please run 'make randomx' first"; \
+                exit 1; \
+        fi
+	@mkdir -p $(GOBIN)
+	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
+                go build -tags "randomx,cgo" -o $(GOBIN)/randomx-miner ./cmd/randomx-miner
+@echo "✅ Built: $(GOBIN)/randomx-miner"
+
+#? run-solo: Run standalone solo miner
+run-solo: randomx-miner
+        @export LD_LIBRARY_PATH=$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH; \
+        export SOLO_MINE=true; \
+        export COINBASE=$(or $(COINBASE),0x79eb43064b826570FFa9c329c5685208E5257703); \
+        export THREADS=$(or $(THREADS),2); \
+        $(GOBIN)/randomx-miner
+
+#? run-pool: Run pool mode for external miners
+run-pool: randomx-miner
+        @export LD_LIBRARY_PATH=$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH; \
+        export SOLO_MINE=false; \
+        export RPC_PORT=$(or $(RPC_PORT),8545); \
+        $(GOBIN)/randomx-miner

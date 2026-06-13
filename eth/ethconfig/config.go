@@ -18,225 +18,245 @@
 package ethconfig
 
 import (
-	"time"
+        "time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/randomx"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/history"
-	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
-	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
-	"github.com/ethereum/go-ethereum/eth/gasprice"
-	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/miner"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
+        "github.com/ethereum/go-ethereum/common"
+        "github.com/ethereum/go-ethereum/consensus"
+        "github.com/ethereum/go-ethereum/consensus/randomx"
+        "github.com/ethereum/go-ethereum/core"
+        "github.com/ethereum/go-ethereum/core/history"
+        "github.com/ethereum/go-ethereum/core/txpool/blobpool"
+        "github.com/ethereum/go-ethereum/core/txpool/legacypool"
+        "github.com/ethereum/go-ethereum/eth/gasprice"
+        "github.com/ethereum/go-ethereum/ethdb"
+        "github.com/ethereum/go-ethereum/log"
+        "github.com/ethereum/go-ethereum/miner"
+        "github.com/ethereum/go-ethereum/params"
+        "github.com/ethereum/go-ethereum/triedb"
+        "github.com/ethereum/go-ethereum/triedb/pathdb"
 )
 
 // FullNodeGPO contains default gasprice oracle settings for full node.
 var FullNodeGPO = gasprice.Config{
-	Blocks:           20,
-	Percentile:       60,
-	MaxHeaderHistory: 1024,
-	MaxBlockHistory:  1024,
-	MaxPrice:         gasprice.DefaultMaxPrice,
-	IgnorePrice:      gasprice.DefaultIgnorePrice,
+        Blocks:           20,
+        Percentile:       60,
+        MaxHeaderHistory: 1024,
+        MaxBlockHistory:  1024,
+        MaxPrice:         gasprice.DefaultMaxPrice,
+        IgnorePrice:      gasprice.DefaultIgnorePrice,
 }
 
 // Defaults contains default settings for RandomX-based networks.
 var Defaults = Config{
-	HistoryMode:             history.KeepAll,
-	SyncMode:                SnapSync,
-	NetworkId:               0, // enable auto configuration of networkID == chainID
-	TxLookupLimit:           2350000,
-	TransactionHistory:      2350000,
-	LogHistory:              2350000,
-	StateHistory:            pathdb.Defaults.StateHistory,
-	TrienodeHistory:         pathdb.Defaults.TrienodeHistory,
-	NodeFullValueCheckpoint: pathdb.Defaults.FullValueCheckpoint,
-	BinTrieGroupDepth:       triedb.DefaultBinTrieGroupDepth,
-	DatabaseCache:           2048,
-	TrieCleanCache:          614,
-	TrieDirtyCache:          1024,
-	SnapshotCache:           409,
-	TrieTimeout:             60 * time.Minute,
-	FilterLogCacheSize:      32,
-	LogQueryLimit:           1000,
-	Miner:                   miner.DefaultConfig,
-	TxPool:                  legacypool.DefaultConfig,
-	BlobPool:                blobpool.DefaultConfig,
-	RPCGasCap:               50000000,
-	RPCEVMTimeout:           5 * time.Second,
-	GPO:                     FullNodeGPO,
-	RPCTxFeeCap:             1, // 1 ether
-	TxSyncDefaultTimeout:    20 * time.Second,
-	TxSyncMaxTimeout:        1 * time.Minute,
-	SlowBlockThreshold:      -1, // Disabled by default; set via --debug.logslowblock flag
-	RangeLimit:              0,
+        HistoryMode:             history.KeepAll,
+        SyncMode:                SnapSync,
+        NetworkId:               0, // enable auto configuration of networkID == chainID
+        TxLookupLimit:           2350000,
+        TransactionHistory:      2350000,
+        LogHistory:              2350000,
+        StateHistory:            pathdb.Defaults.StateHistory,
+        TrienodeHistory:         pathdb.Defaults.TrienodeHistory,
+        NodeFullValueCheckpoint: pathdb.Defaults.FullValueCheckpoint,
+        BinTrieGroupDepth:       triedb.DefaultBinTrieGroupDepth,
+        DatabaseCache:           2048,
+        TrieCleanCache:          614,
+        TrieDirtyCache:          1024,
+        SnapshotCache:           409,
+        TrieTimeout:             60 * time.Minute,
+        FilterLogCacheSize:      32,
+        LogQueryLimit:           1000,
+        Miner:                   miner.DefaultConfig,
+        TxPool:                  legacypool.DefaultConfig,
+        BlobPool:                blobpool.DefaultConfig,
+        RPCGasCap:               50000000,
+        RPCEVMTimeout:           5 * time.Second,
+        GPO:                     FullNodeGPO,
+        RPCTxFeeCap:             1, // 1 ether
+        TxSyncDefaultTimeout:    20 * time.Second,
+        TxSyncMaxTimeout:        1 * time.Minute,
+        SlowBlockThreshold:      -1, // Disabled by default; set via --debug.logslowblock flag
+        RangeLimit:              0,
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
 
 // Config contains configuration options for TKM protocol.
 type Config struct {
-	// The genesis block, which is inserted if the database is empty.
-	// If nil, the configured RandomX genesis block is used.
-	Genesis *core.Genesis `toml:",omitempty"`
+        // The genesis block, which is inserted if the database is empty.
+        // If nil, the configured RandomX genesis block is used.
+        Genesis *core.Genesis `toml:",omitempty"`
 
-	// Network ID separates blockchains on the peer-to-peer networking level. When left
-	// zero, the chain ID is used as network ID.
-	NetworkId uint64
-	SyncMode  SyncMode
+        // Network ID separates blockchains on the peer-to-peer networking level. When left
+        // zero, the chain ID is used as network ID.
+        NetworkId uint64
+        SyncMode  SyncMode
 
-	// HistoryMode configures chain history retention.
-	HistoryMode history.HistoryMode
+        // HistoryMode configures chain history retention.
+        HistoryMode history.HistoryMode
 
-	// This can be set to list of enrtree:// URLs which will be queried for
-	// nodes to connect to.
-	EthDiscoveryURLs  []string
-	SnapDiscoveryURLs []string
+        // This can be set to list of enrtree:// URLs which will be queried for
+        // nodes to connect to.
+        EthDiscoveryURLs  []string
+        SnapDiscoveryURLs []string
 
-	// State options.
-	NoPruning  bool // Whether to disable pruning and flush everything to disk
-	NoPrefetch bool // Whether to disable prefetching and only load state on demand
+        // State options.
+        NoPruning  bool // Whether to disable pruning and flush everything to disk
+        NoPrefetch bool // Whether to disable prefetching and only load state on demand
 
-	// Deprecated: use 'TransactionHistory' instead.
-	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+        // Deprecated: use 'TransactionHistory' instead.
+        TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
 
-	TransactionHistory   uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
-	LogHistory           uint64 `toml:",omitempty"` // The maximum number of blocks from head where a log search index is maintained.
-	LogNoHistory         bool   `toml:",omitempty"` // No log search index is maintained.
-	LogExportCheckpoints string // export log index checkpoints to file
-	StateHistory         uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
-	TrienodeHistory      int64  `toml:",omitempty"` // Number of blocks from the chain head for which trienode histories are retained
+        TransactionHistory   uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+        LogHistory           uint64 `toml:",omitempty"` // The maximum number of blocks from head where a log search index is maintained.
+        LogNoHistory         bool   `toml:",omitempty"` // No log search index is maintained.
+        LogExportCheckpoints string // export log index checkpoints to file
+        StateHistory         uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
+        TrienodeHistory      int64  `toml:",omitempty"` // Number of blocks from the chain head for which trienode histories are retained
 
-	// The frequency of full-value encoding. For example, a value of 16 means
-	// that, on average, for a given trie node across its 16 consecutive historical
-	// versions, only one version is stored in full format, while the others
-	// are stored in diff mode for storage compression.
-	NodeFullValueCheckpoint uint32 `toml:",omitempty"`
+        // The frequency of full-value encoding. For example, a value of 16 means
+        // that, on average, for a given trie node across its 16 consecutive historical
+        // versions, only one version is stored in full format, while the others
+        // are stored in diff mode for storage compression.
+        NodeFullValueCheckpoint uint32 `toml:",omitempty"`
 
-	// State scheme represents the scheme used to store ethereum states and trie
-	// nodes on top. It can be 'hash', 'path', or none which means use the scheme
-	// consistent with persistent state.
-	StateScheme string `toml:",omitempty"`
+        // State scheme represents the scheme used to store ethereum states and trie
+        // nodes on top. It can be 'hash', 'path', or none which means use the scheme
+        // consistent with persistent state.
+        StateScheme string `toml:",omitempty"`
 
-	// BinTrieGroupDepth is the number of levels per serialized group in binary trie.
-	// Valid values are 1-8, with 8 being the default (byte-aligned groups).
-	// Lower values create smaller groups with more nodes.
-	BinTrieGroupDepth int `toml:",omitempty"`
+        // BinTrieGroupDepth is the number of levels per serialized group in binary trie.
+        // Valid values are 1-8, with 8 being the default (byte-aligned groups).
+        // Lower values create smaller groups with more nodes.
+        BinTrieGroupDepth int `toml:",omitempty"`
 
-	// RequiredBlocks is a set of block number -> hash mappings which must be in the
-	// canonical chain of all remote peers. Setting the option makes geth verify the
-	// presence of these blocks for every new peer connection.
-	RequiredBlocks map[uint64]common.Hash `toml:"-"`
+        // RequiredBlocks is a set of block number -> hash mappings which must be in the
+        // canonical chain of all remote peers. Setting the option makes geth verify the
+        // presence of these blocks for every new peer connection.
+        RequiredBlocks map[uint64]common.Hash `toml:"-"`
 
-	// SlowBlockThreshold is the block execution time threshold beyond which
-	// detailed statistics are logged. Negative means disabled (default), zero
-	// logs all blocks, positive filters by execution time.
-	SlowBlockThreshold time.Duration `toml:",omitempty"`
+        // SlowBlockThreshold is the block execution time threshold beyond which
+        // detailed statistics are logged. Negative means disabled (default), zero
+        // logs all blocks, positive filters by execution time.
+        SlowBlockThreshold time.Duration `toml:",omitempty"`
 
-	// Database options
-	SkipBcVersionCheck bool `toml:"-"`
-	DatabaseHandles    int  `toml:"-"`
-	DatabaseCache      int
-	DatabaseFreezer    string
-	DatabaseEra        string
+        // Database options
+        SkipBcVersionCheck bool `toml:"-"`
+        DatabaseHandles    int  `toml:"-"`
+        DatabaseCache      int
+        DatabaseFreezer    string
+        DatabaseEra        string
 
-	TrieCleanCache int
-	TrieDirtyCache int
-	TrieTimeout    time.Duration
-	SnapshotCache  int
-	Preimages      bool
+        TrieCleanCache int
+        TrieDirtyCache int
+        TrieTimeout    time.Duration
+        SnapshotCache  int
+        Preimages      bool
 
-	// This is the number of blocks for which logs will be cached in the filter system.
-	FilterLogCacheSize int
+        // This is the number of blocks for which logs will be cached in the filter system.
+        FilterLogCacheSize int
 
-	// This is the maximum number of addresses or topics allowed in filter criteria
-	// for eth_getLogs.
-	LogQueryLimit int
+        // This is the maximum number of addresses or topics allowed in filter criteria
+        // for eth_getLogs.
+        LogQueryLimit int
 
-	// Mining options
-	Miner miner.Config
+        // Mining options
+        Miner miner.Config
 
-	// Transaction pool options
-	TxPool   legacypool.Config
-	BlobPool blobpool.Config
+        // Transaction pool options
+        TxPool   legacypool.Config
+        BlobPool blobpool.Config
 
-	// Gas Price Oracle options
-	GPO gasprice.Config
+        // Gas Price Oracle options
+        GPO gasprice.Config
 
-	// Enables tracking of SHA3 preimages in the VM
-	EnablePreimageRecording bool
+        // Enables tracking of SHA3 preimages in the VM
+        EnablePreimageRecording bool
 
-	// Enables collection of witness trie access statistics
-	EnableWitnessStats bool
+        // Enables collection of witness trie access statistics
+        EnableWitnessStats bool
 
-	// Generate execution witnesses and self-check against them (testing purpose)
-	StatelessSelfValidation bool
+        // Generate execution witnesses and self-check against them (testing purpose)
+        StatelessSelfValidation bool
 
-	// Enables tracking of state size
-	EnableStateSizeTracking bool
+        // Enables tracking of state size
+        EnableStateSizeTracking bool
 
-	// Enables VM tracing
-	VMTrace           string
-	VMTraceJsonConfig string
+        // Enables VM tracing
+        VMTrace           string
+        VMTraceJsonConfig string
 
-	// RPCGasCap is the global gas cap for eth-call variants.
-	RPCGasCap uint64
+        // RPCGasCap is the global gas cap for eth-call variants.
+        RPCGasCap uint64
 
-	// RPCEVMTimeout is the global timeout for eth-call.
-	RPCEVMTimeout time.Duration
+        // RPCEVMTimeout is the global timeout for eth-call.
+        RPCEVMTimeout time.Duration
 
-	// RPCTxFeeCap is the global transaction fee (price * gas limit) cap for
-	// send-transaction variants. The unit is ether.
-	RPCTxFeeCap float64
+        // RPCTxFeeCap is the global transaction fee (price * gas limit) cap for
+        // send-transaction variants. The unit is ether.
+        RPCTxFeeCap float64
 
-	// OverrideOsaka (TODO: remove after the fork)
-	OverrideOsaka *uint64 `toml:",omitempty"`
+        // OverrideOsaka (TODO: remove after the fork)
+        OverrideOsaka *uint64 `toml:",omitempty"`
 
-	// OverrideBPO1 (TODO: remove after the fork)
-	OverrideBPO1 *uint64 `toml:",omitempty"`
+        // OverrideBPO1 (TODO: remove after the fork)
+        OverrideBPO1 *uint64 `toml:",omitempty"`
 
-	// OverrideBPO2 (TODO: remove after the fork)
-	OverrideBPO2 *uint64 `toml:",omitempty"`
+        // OverrideBPO2 (TODO: remove after the fork)
+        OverrideBPO2 *uint64 `toml:",omitempty"`
 
-	// OverrideUBT (TODO: remove after the fork)
-	OverrideUBT *uint64 `toml:",omitempty"`
+        // OverrideUBT (TODO: remove after the fork)
+        OverrideUBT *uint64 `toml:",omitempty"`
 
-	// Rotating King configuration
-	MainKingAddress common.Address   `toml:",omitempty"`
-	KingAddresses   []common.Address `toml:",omitempty"`
+        // Rotating King configuration
+        MainKingAddress common.Address   `toml:",omitempty"`
+        KingAddresses   []common.Address `toml:",omitempty"`
 
-	// RandomX mining threads configuration
-	RandomXMinerThreads int `toml:",omitempty"`
+        // RandomX mining threads configuration
+        RandomXMinerThreads int `toml:",omitempty"`
 
-	// EIP-7966: eth_sendRawTransactionSync timeouts
-	TxSyncDefaultTimeout time.Duration `toml:",omitempty"`
-	TxSyncMaxTimeout     time.Duration `toml:",omitempty"`
+        // EIP-7966: eth_sendRawTransactionSync timeouts
+        TxSyncDefaultTimeout time.Duration `toml:",omitempty"`
+        TxSyncMaxTimeout     time.Duration `toml:",omitempty"`
 
-	// RangeLimit restricts the maximum range (end - start) for range queries.
-	RangeLimit uint64 `toml:",omitempty"`
+        // RangeLimit restricts the maximum range (end - start) for range queries.
+        RangeLimit uint64 `toml:",omitempty"`
 
-	// RandomX RAM cache configuration
-	RandomXRAMCache  bool `toml:",omitempty"`
-	RandomXNoPersist bool `toml:",omitempty"`
+        // RandomX RAM cache configuration
+        RandomXRAMCache  bool `toml:",omitempty"`
+        RandomXNoPersist bool `toml:",omitempty"`
 }
 
+// CreateConsensusEngine creates the appropriate consensus engine based on config
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, threads int, useRAMCache bool) (consensus.Engine, error) {
-	if config.RandomX == nil {
-		config.RandomX = params.DefaultRandomXConfig()
-	}
+        if config.RandomX == nil {
+                log.Info("RandomX config not found, using default")
+                config.RandomX = params.DefaultRandomXConfig()
+        }
 
-	// Override with CLI flags
-	config.RandomX.UseRAMCache = useRAMCache
+        // Convert params.RandomXConfig to randomx.Config
+        randomxConfig := &randomx.Config{
+                Enabled:     true,
+                EpochLength: config.RandomX.EpochLength,
+                CacheSize:   config.RandomX.CacheSizeMB,
+                DatasetSize: config.RandomX.DatasetSizeGB,
+                MinMemory:   config.RandomX.MinMemory,
+        }
 
-	engine, err := randomx.New(config.RandomX, threads, config.MainKingAddress, config.RotatingKingAddresses)
-	if err != nil {
-		return nil, err
-	}
+        if randomxConfig.EpochLength == 0 {
+                randomxConfig.EpochLength = 2048
+        }
 
-	return engine, nil
+        log.Info("Creating RandomX consensus engine",
+                "threads", threads,
+                "epoch_length", randomxConfig.EpochLength,
+                "cache_size_mb", randomxConfig.CacheSize,
+                "dataset_size_gb", randomxConfig.DatasetSize,
+                "use_ram_cache", useRAMCache)
+
+        engine, err := randomx.New(randomxConfig, threads, config.MainKingAddress, config.RotatingKingAddresses)
+        if err != nil {
+                return nil, err
+        }
+
+        return engine, nil
 }
