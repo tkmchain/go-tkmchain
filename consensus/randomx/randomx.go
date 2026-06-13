@@ -17,7 +17,6 @@ import "C"
 
 import (
     "bytes"
-//    "context"
     "fmt"
     "math/big"
     "sync"
@@ -47,7 +46,6 @@ var (
     errInvalidMixHash = fmt.Errorf("invalid mix hash")
     errNoCache        = fmt.Errorf("randomx cache not initialized")
     errEngineClosed   = fmt.Errorf("randomx engine is closed")
-    errInvalidNonce   = fmt.Errorf("invalid nonce")
 )
 
 const (
@@ -146,7 +144,7 @@ func (vm *VM) Close() {
     }
 }
 
-// RandomX Engine - Enhanced for solo mining
+// RandomX Engine
 type RandomX struct {
     config           *params.RandomXConfig
     fullFake         bool
@@ -159,28 +157,17 @@ type RandomX struct {
     cacheMu    sync.RWMutex
     lock       sync.RWMutex
 
-    stopCh   chan struct{}
-    closed   int32
-    workCh   chan *SealWork // Channel for mining work
-    resultCh chan *types.Block
+    stopCh chan struct{}
+    closed int32
     
-    // Mining statistics
-    hashrate    uint64
-    hashrateMu  sync.RWMutex
-    sharesFound uint64
-}
-
-// SealWork represents work for the miner
-type SealWork struct {
-    Block      *types.Block
-    Results    chan<- *types.Block
-    Stop       <-chan struct{}
-    StartNonce uint64
+    // Mining stats
+    hashrate uint64
+    hrMu     sync.RWMutex
 }
 
 // New creates a new RandomX consensus engine
 func New(config *params.RandomXConfig, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
-    log.Info("========== INITIALIZING RANDOMX CONSENSUS FOR SOLO MINING ==========")
+    log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
 
     if config == nil {
         config = params.DefaultRandomXConfig()
@@ -200,8 +187,6 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
         rotatingKings:    kings,
         rotationInterval: 100,
         stopCh:           make(chan struct{}),
-        workCh:           make(chan *SealWork, 10),
-        resultCh:         make(chan *types.Block, 10),
     }
 
     // Initialize cache/dataset immediately
@@ -209,12 +194,7 @@ func New(config *params.RandomXConfig, threads int, mainKing common.Address, kin
         return nil, fmt.Errorf("failed to initialize RandomX: %w", err)
     }
 
-    // Start mining workers
-    for i := 0; i < threads; i++ {
-        go rx.miningWorker(i)
-    }
-
-    log.Info("✅ RandomX engine initialized successfully for solo mining", "threads", threads)
+    log.Info("✅ RandomX engine initialized successfully")
     return rx, nil
 }
 
@@ -232,7 +212,7 @@ func (rx *RandomX) isClosed() bool {
 func (rx *RandomX) Close() error {
     atomic.StoreInt32(&rx.closed, 1)
     close(rx.stopCh)
-    time.Sleep(500 * time.Millisecond)
+    time.Sleep(400 * time.Millisecond)
 
     rx.cacheMu.Lock()
     if rx.cache != nil {
@@ -249,221 +229,8 @@ func (rx *RandomX) Close() error {
     return nil
 }
 
-// miningWorker - Main mining goroutine
-func (rx *RandomX) miningWorker(workerID int) {
-    log.Info("�� RandomX mining worker started", "worker", workerID)
-    
-    for {
-        select {
-        case <-rx.stopCh:
-            log.Info("RandomX mining worker stopping", "worker", workerID)
-            return
-        case work := <-rx.workCh:
-            rx.mineBlock(work, workerID)
-        }
-    }
-}
+// =================================== Core Functions ===================================
 
-// mineBlock - Mine a single block
-func (rx *RandomX) mineBlock(work *SealWork, workerID int) {
-    header := work.Block.Header()
-    
-    // Update cache/dataset for this epoch
-    epoch := rx.epoch(header.Number.Uint64())
-    if err := rx.updateCacheForEpoch(epoch); err != nil {
-        log.Error("Failed to update cache for mining", "error", err, "worker", workerID)
-        return
-    }
-
-    vm, err := rx.getVM()
-    if err != nil {
-        log.Error("Failed to get RandomX VM", "error", err, "worker", workerID)
-        return
-    }
-    defer vm.Close()
-
-    sealHeader := types.CopyHeader(header)
-    seed := rx.seedHash(sealHeader.Number.Uint64())
-    target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
-    
-    startNonce := work.StartNonce
-    nonce := startNonce
-    startTime := time.Now()
-    hashesChecked := uint64(0)
-    
-    log.Info("⛏️  Mining started", 
-        "worker", workerID, 
-        "block", header.Number.Uint64(), 
-        "difficulty", header.Difficulty,
-        "target", target,
-        "startNonce", startNonce)
-
-    for {
-        select {
-        case <-work.Stop:
-            log.Debug("Mining stopped", "worker", workerID, "nonce", nonce)
-            return
-        case <-rx.stopCh:
-            return
-        default:
-        }
-
-        // Update nonce
-        sealHeader.Nonce = types.EncodeNonce(nonce)
-        
-        // Calculate hash
-        mixDigest, result := rx.hashimoto(sealHeader, seed, vm)
-        hashesChecked++
-        
-        // Update hashrate every 1000 hashes
-        if hashesChecked%1000 == 0 {
-            elapsed := time.Since(startTime).Seconds()
-            if elapsed > 0 {
-                currentHashrate := uint64(float64(hashesChecked) / elapsed)
-                rx.updateHashrate(currentHashrate)
-            }
-        }
-
-        // Check if we found a valid nonce
-        if result.Cmp(target) <= 0 {
-            sealHeader.MixDigest = mixDigest
-            sealedBlock := work.Block.WithSeal(sealHeader)
-            
-            // Log success
-            elapsed := time.Since(startTime)
-            log.Info("�� BLOCK FOUND! ��", 
-                "worker", workerID,
-                "block", header.Number.Uint64(),
-                "nonce", nonce,
-                "hash", sealedBlock.Hash().Hex(),
-                "elapsed", elapsed,
-                "hashrate", fmt.Sprintf("%.2f KH/s", float64(hashesChecked)/elapsed.Seconds()/1000))
-            
-            atomic.AddUint64(&rx.sharesFound, 1)
-            
-            // Send the sealed block
-            select {
-            case work.Results <- sealedBlock:
-                log.Info("✅ Block submitted to results channel", "block", sealedBlock.NumberU64())
-            case <-work.Stop:
-                log.Warn("Block found but mining stopped", "block", sealedBlock.NumberU64())
-            }
-            return
-        }
-
-        // Check for nonce overflow
-        if nonce == ^uint64(0) {
-            log.Warn("Nonce overflow, restarting", "worker", workerID)
-            nonce = 0
-        } else {
-            nonce++
-        }
-    }
-}
-
-// Seal implements consensus.Engine - Main entry point for mining
-func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-    if rx.fullFake || rx.isClosed() {
-        select {
-        case results <- block:
-        default:
-        }
-        return nil
-    }
-
-    header := block.Header()
-    
-    // Check if already sealed
-    if header.MixDigest != (common.Hash{}) {
-        if err := rx.VerifySeal(chain, header); err != nil {
-            return err
-        }
-        select {
-        case results <- block:
-        default:
-        }
-        return nil
-    }
-
-    log.Info("�� Received new block to seal", "number", header.Number.Uint64(), "difficulty", header.Difficulty)
-    
-    // Create mining work
-    work := &SealWork{
-        Block:      block,
-        Results:    results,
-        Stop:       stop,
-        StartNonce: 0,
-    }
-    
-    // Send work to mining workers (non-blocking)
-    select {
-    case rx.workCh <- work:
-        return nil
-    case <-stop:
-        return nil
-    case <-rx.stopCh:
-        return nil
-    default:
-        // If work channel is full, mine synchronously
-        log.Warn("Work queue full, mining synchronously")
-        rx.mineBlock(work, -1)
-        return nil
-    }
-}
-
-// VerifySeal verifies the seal of a given header
-func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
-    if rx.fullFake || rx.isClosed() {
-        return nil
-    }
-
-    num := header.Number.Uint64()
-
-    if num == 0 {
-        if header.MixDigest != (common.Hash{}) {
-            return errInvalidMixHash
-        }
-        return nil
-    }
-
-    if num <= 20 {
-        log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", num)
-        return nil
-    }
-
-    if header.MixDigest == (common.Hash{}) {
-        log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST", "number", num)
-        return errInvalidMixHash
-    }
-
-    if err := rx.updateCacheForEpoch(rx.epoch(num)); err != nil {
-        return err
-    }
-
-    vm, err := rx.getVM()
-    if err != nil {
-        return err
-    }
-    defer vm.Close()
-
-    mixDigest, result := rx.hashimoto(header, rx.seedHash(num), vm)
-
-    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
-        log.Error("Mix digest mismatch", "expected", header.MixDigest.Hex(), "got", mixDigest.Hex())
-        return errInvalidMixHash
-    }
-
-    target := new(big.Int).Div(maxUint256, header.Difficulty)
-    if result.Cmp(target) > 0 {
-        log.Error("Invalid proof-of-work", "result", result, "target", target)
-        return fmt.Errorf("invalid proof-of-work")
-    }
-
-    log.Debug("Seal verified successfully", "number", num, "nonce", header.Nonce.Uint64())
-    return nil
-}
-
-// Helper methods
 func (rx *RandomX) getVM() (*VM, error) {
     if rx.isClosed() {
         return nil, errEngineClosed
@@ -504,7 +271,7 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
     seed := rx.seedHash(epoch * rx.config.EpochLength)
     seedBytes := seed.Bytes()
 
-    log.Info("�� Initializing RandomX for epoch", "epoch", epoch, "seed", seed.Hex()[:16]+"...")
+    log.Info("�� Initializing RandomX", "epoch", epoch, "seed", seed.Hex()[:16]+"...")
 
     if rx.cache != nil {
         rx.cache.Close()
@@ -521,14 +288,13 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
     }
     rx.cache.Init(seedBytes)
 
-    // Try to allocate dataset for better performance
     if ds := NewDataset(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES); ds != nil {
-        log.Info("�� Initializing full RandomX dataset (this may take a few minutes)...")
+        log.Info("�� Initializing full RandomX dataset...")
         ds.InitDataset(rx.cache, 0, 0)
         rx.dataset = ds
-        log.Info("✅ Full dataset ready for fast mining")
+        log.Info("✅ Full dataset ready")
     } else {
-        log.Warn("⚠️ Falling back to light mode (cache only) - mining will be slower")
+        log.Warn("⚠️ Falling back to light mode (cache only)")
     }
 
     rx.cacheEpoch = epoch
@@ -550,24 +316,6 @@ func (rx *RandomX) hashimoto(header *types.Header, seed common.Hash, vm *VM) (co
     result := new(big.Int).SetBytes(output)
 
     return mixDigest, result
-}
-
-func (rx *RandomX) updateHashrate(hashrate uint64) {
-    rx.hashrateMu.Lock()
-    defer rx.hashrateMu.Unlock()
-    rx.hashrate = hashrate
-}
-
-// Hashrate returns the current mining hashrate
-func (rx *RandomX) Hashrate() float64 {
-    rx.hashrateMu.RLock()
-    defer rx.hashrateMu.RUnlock()
-    return float64(rx.hashrate)
-}
-
-// GetSharesFound returns the number of blocks found
-func (rx *RandomX) GetSharesFound() uint64 {
-    return atomic.LoadUint64(&rx.sharesFound)
 }
 
 // =================================== Consensus Engine Methods ===================================
@@ -613,6 +361,187 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
     return hash
 }
 
+// Full Seal implementation - FIXED for solo mining
+func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+    if rx.fullFake || rx.isClosed() {
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    header := block.Header()
+
+    // Already sealed case
+    if header.MixDigest != (common.Hash{}) {
+        if err := rx.VerifySeal(chain, header); err != nil {
+            return err
+        }
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    // Initialize cache/dataset for this epoch
+    epoch := rx.epoch(header.Number.Uint64())
+    if err := rx.updateCacheForEpoch(epoch); err != nil {
+        return fmt.Errorf("failed to update cache: %w", err)
+    }
+
+    vm, err := rx.getVM()
+    if err != nil {
+        return fmt.Errorf("failed to get RandomX VM: %w", err)
+    }
+    defer vm.Close()
+
+    sealHeader := types.CopyHeader(header)
+    seed := rx.seedHash(sealHeader.Number.Uint64())
+    target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
+    
+    log.Info("⛏️  Starting RandomX mining", 
+        "block", sealHeader.Number.Uint64(),
+        "difficulty", sealHeader.Difficulty,
+        "target", target,
+        "seed", seed.Hex()[:16])
+
+    // Start from a random nonce to avoid collisions between miners
+    startNonce := uint64(time.Now().UnixNano())
+    nonce := startNonce
+    attempts := uint64(0)
+    startTime := time.Now()
+
+    for {
+        select {
+        case <-stop:
+            log.Debug("Mining stopped", "attempts", attempts)
+            return nil
+        case <-rx.stopCh:
+            return nil
+        default:
+        }
+
+        // Update nonce
+        sealHeader.Nonce = types.EncodeNonce(nonce)
+        
+        // Calculate RandomX hash
+        mixDigest, result := rx.hashimoto(sealHeader, seed, vm)
+        attempts++
+        
+        // Update hashrate every 1000 attempts
+        if attempts%1000 == 0 {
+            elapsed := time.Since(startTime).Seconds()
+            if elapsed > 0 {
+                hr := float64(attempts) / elapsed
+                rx.hrMu.Lock()
+                rx.hashrate = uint64(hr)
+                rx.hrMu.Unlock()
+                
+                log.Debug("Mining progress", 
+                    "attempts", attempts,
+                    "hashrate", fmt.Sprintf("%.2f H/s", hr),
+                    "current_nonce", nonce)
+            }
+        }
+
+        // Check if we found a valid nonce
+        if result.Cmp(target) <= 0 {
+            sealHeader.MixDigest = mixDigest
+            sealedBlock := block.WithSeal(sealHeader)
+            
+            elapsed := time.Since(startTime)
+            log.Info("�� BLOCK MINED SUCCESSFULLY ��", 
+                "block", sealHeader.Number.Uint64(),
+                "nonce", nonce,
+                "attempts", attempts,
+                "elapsed", elapsed,
+                "hashrate", fmt.Sprintf("%.2f H/s", float64(attempts)/elapsed.Seconds()),
+                "mix_digest", mixDigest.Hex(),
+                "block_hash", sealedBlock.Hash().Hex())
+            
+            select {
+            case results <- sealedBlock:
+                log.Info("✅ Block submitted to consensus", "block", sealedBlock.NumberU64())
+            case <-stop:
+                log.Warn("Block found but mining stopped")
+            }
+            return nil
+        }
+
+        // Increment nonce, wrap around if needed
+        nonce++
+        if nonce == 0 {
+            nonce = 1
+        }
+        
+        // Log every million attempts for long-running searches
+        if attempts > 0 && attempts%1000000 == 0 {
+            log.Info("Still mining...", 
+                "block", sealHeader.Number.Uint64(),
+                "attempts", attempts,
+                "hashrate", fmt.Sprintf("%.2f H/s", float64(attempts)/time.Since(startTime).Seconds()))
+        }
+    }
+}
+
+func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.Header) error {
+    if rx.fullFake || rx.isClosed() {
+        return nil
+    }
+
+    num := header.Number.Uint64()
+
+    if num == 0 {
+        if header.MixDigest != (common.Hash{}) {
+            return errInvalidMixHash
+        }
+        return nil
+    }
+
+    if num <= 20 {
+        log.Info("ACCEPTING EARLY BLOCK FOR BOOTSTRAP", "number", num)
+        return nil
+    }
+
+    if header.MixDigest == (common.Hash{}) {
+        log.Error("REJECTING BLOCK WITH ZERO MIX DIGEST", "number", num)
+        return errInvalidMixHash
+    }
+
+    if err := rx.updateCacheForEpoch(rx.epoch(num)); err != nil {
+        return err
+    }
+
+    vm, err := rx.getVM()
+    if err != nil {
+        return err
+    }
+    defer vm.Close()
+
+    mixDigest, result := rx.hashimoto(header, rx.seedHash(num), vm)
+
+    if !bytes.Equal(mixDigest.Bytes(), header.MixDigest.Bytes()) {
+        log.Error("Mix digest mismatch", 
+            "expected", header.MixDigest.Hex(), 
+            "got", mixDigest.Hex())
+        return errInvalidMixHash
+    }
+
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+    if result.Cmp(target) > 0 {
+        log.Error("Invalid proof-of-work", 
+            "result", result,
+            "target", target)
+        return fmt.Errorf("invalid proof-of-work")
+    }
+
+    log.Debug("Seal verified", "number", num, "nonce", header.Nonce.Uint64())
+    return nil
+}
+
+// Helper methods
 func (rx *RandomX) epoch(blockNum uint64) uint64 {
     return blockNum / rx.config.EpochLength
 }
@@ -647,7 +576,7 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-    // No changes needed for RandomX
+    // Empty implementation
 }
 
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
@@ -740,7 +669,7 @@ func (rx *RandomX) SetRotationInterval(interval uint64) {
     rx.rotationInterval = interval
 }
 
-// RPC API for monitoring
+// RPC API
 type RandomXAPI struct {
     randomx *RandomX
 }
@@ -758,11 +687,9 @@ func (api *RandomXAPI) GetCurrentEpoch(blockNumber uint64) uint64 {
 }
 
 func (api *RandomXAPI) GetHashrate() float64 {
-    return api.randomx.Hashrate()
-}
-
-func (api *RandomXAPI) GetSharesFound() uint64 {
-    return api.randomx.GetSharesFound()
+    api.randomx.hrMu.RLock()
+    defer api.randomx.hrMu.RUnlock()
+    return float64(api.randomx.hashrate)
 }
 
 func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
@@ -773,24 +700,33 @@ func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
             Service:   &RandomXAPI{randomx: rx},
             Public:    true,
         },
-        {
-            Namespace: "miner",
-            Version:   "1.0",
-            Service:   &MinerAPI{randomx: rx},
-            Public:    true,
-        },
     }
 }
 
-// MinerAPI for controlling mining
-type MinerAPI struct {
-    randomx *RandomX
-}
-
-func (api *MinerAPI) GetHashrate() float64 {
-    return api.randomx.Hashrate()
-}
-
-func (api *MinerAPI) GetSharesFound() uint64 {
-    return api.randomx.GetSharesFound()
+// CalculateNextDifficulty - Difficulty adjustment algorithm
+func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64) *types.Header) *big.Int {
+    // Simple difficulty adjustment for testing
+    if parent == nil {
+        return GenesisDifficulty
+    }
+    
+    // For low difficulty, just return parent difficulty
+    // This ensures we can mine blocks quickly for testing
+    if parent.Difficulty.Cmp(big.NewInt(100)) < 0 {
+        return parent.Difficulty
+    }
+    
+    // Otherwise, adjust based on time
+    expectedTime := uint64(15) // 15 seconds per block
+    parentTime := parent.Time
+    
+    if parentTime > expectedTime {
+        // Decrease difficulty if blocks are taking too long
+        return new(big.Int).Div(parent.Difficulty, big.NewInt(2))
+    } else if parentTime < expectedTime/2 {
+        // Increase difficulty if blocks are too fast
+        return new(big.Int).Mul(parent.Difficulty, big.NewInt(2))
+    }
+    
+    return parent.Difficulty
 }

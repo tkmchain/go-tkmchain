@@ -176,9 +176,9 @@ func decreaseDifficulty(parentDiff *big.Int, actualTime uint64) *big.Int {
 }
 
 // CalculateNextDifficulty is the main exported function used by the engine
-func CalculateNextDifficulty(parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
+/*func CalculateNextDifficulty(parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
     return CalcDifficulty(nil, 0, parent, getHeader)
-}
+}*/
 
 // GetDifficultyInfo returns debug information
 func GetDifficultyInfo(parent *types.Header, getHeader func(uint64) *types.Header) map[string]interface{} {
