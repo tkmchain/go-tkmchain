@@ -26,7 +26,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
+        "github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -411,12 +411,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
 	// Initialize miner
-	eth.miner = miner.New(eth.blockchain, eth.engine, &miner.MinerConfig{
+	/*eth.miner = miner.New(eth.blockchain, eth.engine, &miner.MinerConfig{
 		Etherbase: config.Miner.Etherbase,
 		GasLimit: config.Miner.GasLimit,
 		GasPrice: config.Miner.GasPrice,
 		Threads: config.RandomXMinerThreads,
-	})
+	})*/
+	        eth.miner = miner.New(eth, chainConfig, new(event.TypeMux), eth.engine, config.Miner.Recommit, config.Miner.GasFloor, config.Miner.GasCeil, nil)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	// Setup API backend
@@ -632,31 +633,49 @@ func (s *Ethereum) waitForMiningReady() {
 	}
 }
 
-func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
-	localHead := s.blockchain.CurrentBlock()
-	if localHead == nil {
-		return false, "no local head", 0, 0
-	}
-	localHeight := localHead.Number.Uint64()
-	if s.handler == nil || s.handler.peers.len() == 0 {
-		return false, "waiting for peer", localHeight, localHeight
-	}
-	highest := localHeight
-	for _, peer := range s.handler.peers.all() {
-		_, td := peer.Head()
-		if td == nil || !td.IsUint64() {
-			continue
-		}
-		if height := td.Uint64(); height > highest {
-			highest = height
-		}
-	}
-	if highest > localHeight {
-		return false, "syncing before mining", localHeight, highest
-	}
-	return true, "", localHeight, highest
-}
 
+func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
+        localHead := s.blockchain.CurrentBlock()
+        if localHead == nil {
+                return false, "no local head", 0, 0
+        }
+        localHeight := localHead.Number.Uint64()
+        
+        // Need at least one peer to mine
+        if s.handler == nil || s.handler.peers.len() == 0 {
+                return false, "waiting for peer", localHeight, localHeight
+        }
+        
+        // Get the highest peer height
+        highest := localHeight
+        for _, peer := range s.handler.peers.all() {
+                _, td := peer.Head()
+                if td == nil || !td.IsUint64() {
+                        continue
+                }
+                if height := td.Uint64(); height > highest {
+                        highest = height
+                }
+        }
+        
+        // If we're behind peers, we need to sync first
+        // But if we're at block 0 or very early, we should start mining
+        if highest > localHeight {
+                // If we're at genesis (block 0), start mining immediately
+                if localHeight == 0 {
+                        log.Info("At genesis block with peers - starting mining to create first blocks")
+                        return true, "genesis - need to mine", localHeight, highest
+                }
+                // If we're behind by more than 100 blocks, sync first
+                if highest-localHeight > 100 {
+                        return false, "syncing before mining", localHeight, highest
+                }
+                // Close enough - start mining
+                log.Info("Close to peer height, starting mining", "local", localHeight, "peer", highest)
+        }
+        
+        return true, "", localHeight, highest
+}
 func (s *Ethereum) startMiningLocked(pool bool) error {
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {

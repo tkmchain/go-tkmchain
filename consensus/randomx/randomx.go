@@ -658,7 +658,50 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 }
 
 func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-    return GenesisDifficulty
+        if parent == nil {
+                return GenesisDifficulty
+        }
+        
+        // Get parent timestamp
+        parentTime := parent.Time
+        
+        // Calculate time difference
+        var diff uint64
+        if time > parentTime {
+                diff = time - parentTime
+        } else {
+                diff = parentTime - time
+        }
+        
+        // Target block time (120 seconds from your reward.go)
+        targetTime := uint64(120)
+        
+        // Get current difficulty
+        currentDiff := new(big.Int).Set(parent.Difficulty)
+        
+        // Minimum difficulty
+        minDiff := big.NewInt(3)
+        
+        // Adjust difficulty based on block time
+        if diff < targetTime/2 {
+                // Block came too fast - increase difficulty
+                newDiff := new(big.Int).Mul(currentDiff, big.NewInt(3))
+                newDiff.Div(newDiff, big.NewInt(2))
+                if newDiff.Cmp(minDiff) < 0 {
+                        return minDiff
+                }
+                return newDiff
+        } else if diff > targetTime*3/2 {
+                // Block took too long - decrease difficulty
+                newDiff := new(big.Int).Mul(currentDiff, big.NewInt(2))
+                newDiff.Div(newDiff, big.NewInt(3))
+                if newDiff.Cmp(minDiff) < 0 {
+                        return minDiff
+                }
+                return newDiff
+        }
+        
+        return currentDiff
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {}
