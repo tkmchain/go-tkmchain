@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-//	"github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -145,11 +145,11 @@ func (miner *Miner) GetWork() ([4]string, error) {
 	seedHash := RandomXSeedHash(miner.eth.BlockChain().Config(), header.Number.Uint64())
 	sealHash := miner.engine.SealHash(header)
 
-    log.Info("GetWork sending",
-        "height", header.Number,
-        "sealHash", sealHash.Hex(),
-        "headerHash", header.Hash().Hex(),
-        "difficulty", header.Difficulty)
+	log.Info("GetWork sending",
+		"height", header.Number,
+		"sealHash", sealHash.Hex(),
+		"headerHash", header.Hash().Hex(),
+		"difficulty", header.Difficulty)
 	miner.worker.pendingMu.RLock()
 	task, exist := miner.worker.pendingTasks[sealHash]
 	miner.worker.pendingMu.RUnlock()
@@ -189,58 +189,57 @@ func (miner *Miner) GetWork() ([4]string, error) {
 // Parameters: nonce, headerHash, mixDigest
 
 func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
-        log.Info("SubmitWork from XMRig",
-                "nonce", nonce,
-                "headerHash", hash.Hex()[:16],
-                "mixDigest", digest.Hex()[:16])
+	log.Info("SubmitWork from XMRig",
+		"nonce", nonce,
+		"headerHash", hash.Hex()[:16],
+		"mixDigest", digest.Hex()[:16])
 
-        miner.worker.pendingMu.RLock()
-        task, exist := miner.worker.pendingTasks[hash]
-        miner.worker.pendingMu.RUnlock()
-        if !exist {
-                log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
-                return false
-        }
+	miner.worker.pendingMu.RLock()
+	task, exist := miner.worker.pendingTasks[hash]
+	miner.worker.pendingMu.RUnlock()
+	if !exist {
+		log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
+		return false
+	}
 
-        header := task.block.Header()
-        log.Info("Pending work header", 
-                "number", header.Number,
-                "difficulty", header.Difficulty,
-                "sealHash", miner.engine.SealHash(header).Hex()[:16])
+	header := task.block.Header()
+	log.Info("Pending work header",
+		"number", header.Number,
+		"difficulty", header.Difficulty,
+		"sealHash", miner.engine.SealHash(header).Hex()[:16])
 
-        // Create a new header with the submitted nonce and mix digest.
-        newHeader := types.CopyHeader(header)
-        newHeader.MixDigest = digest
-        newHeader.Nonce = nonce
-        
-        log.Info("New header created", 
-                "number", newHeader.Number,
-                "difficulty", newHeader.Difficulty,
-                "nonce", newHeader.Nonce,
-                "mixDigest", newHeader.MixDigest.Hex()[:16])
+	newHeader := types.CopyHeader(header)
+	newHeader.MixDigest = digest
+	newHeader.Nonce = nonce
+	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
+		// RandomX miners hash sealHash || nonce where the nonce is commonly placed
+		// in little-endian byte order. RPC block nonces are decoded as raw bytes,
+		// so retry with the submitted nonce bytes reversed before rejecting a share.
+		for i := 0; i < len(nonce); i++ {
+			newHeader.Nonce[i] = nonce[len(nonce)-1-i]
+		}
+		if retryErr := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr != nil {
+			log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)
+			return false
+		}
+	}
 
-        sealedBlock := task.block.WithSeal(newHeader)
+	sealedBlock := task.block.WithSeal(newHeader)
+	log.Info("Valid proof-of-work submitted, submitting block to result channel",
+		"nonce", newHeader.Nonce,
+		"blockNumber", sealedBlock.NumberU64(),
+		"mixDigest", digest.Hex()[:16])
 
-        // Verify the header using the consensus engine's VerifyHeader method
-        if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
-                log.Warn("Invalid proof-of-work submitted", "err", err)
-                return false
-        }
-
-        log.Info("Valid proof-of-work submitted, submitting block to result channel",
-                "nonce", nonce,
-                "blockNumber", sealedBlock.NumberU64(),
-                "mixDigest", digest.Hex()[:16])
-
-        select {
-        case miner.worker.resultCh <- sealedBlock:
-                log.Info("Block submitted to result channel successfully")
-                return true
-        case <-time.After(5 * time.Second):
-                log.Warn("Timeout submitting block to result channel")
-                return false
-        }
+	select {
+	case miner.worker.resultCh <- sealedBlock:
+		log.Info("Block submitted to result channel successfully")
+		return true
+	case <-time.After(5 * time.Second):
+		log.Warn("Timeout submitting block to result channel")
+		return false
+	}
 }
+
 // RandomXSeedHash calculates the RandomX seed hash for a given block height.
 // For epoch 0, seed hash is all zeros. For later epochs, it's Keccak256(previous seed).
 /*func RandomXSeedHash(config *params.ChainConfig, blockNumber uint64) common.Hash {
@@ -262,12 +261,12 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 // StartExternal begins work generation for external miners without local sealing.
 // StartExternal begins work generation for external miners without local sealing.
 func (miner *Miner) StartExternal(coinbase common.Address) {
-        miner.SetEtherbase(coinbase)
-        miner.worker.setExternalOnly(true)
-        miner.worker.start()
-        // Force initial work generation after a short delay
-        go func() {
-                time.Sleep(500 * time.Millisecond)
-                miner.worker.generateWorkForExternal()
-        }()
+	miner.SetEtherbase(coinbase)
+	miner.worker.setExternalOnly(true)
+	miner.worker.start()
+	// Force initial work generation after a short delay
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		miner.worker.generateWorkForExternal()
+	}()
 }
