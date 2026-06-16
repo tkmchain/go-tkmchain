@@ -641,9 +641,9 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
         }
         localHeight := localHead.Number.Uint64()
         
-        // Need at least one peer to mine
+        // Allow solo mining when no peers are connected.
         if s.handler == nil || s.handler.peers.len() == 0 {
-                return false, "waiting for peer", localHeight, localHeight
+                return true, "solo mining", localHeight, localHeight
         }
         
         // Get the highest peer height
