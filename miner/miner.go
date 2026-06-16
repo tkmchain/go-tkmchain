@@ -74,11 +74,6 @@ func (miner *Miner) Start(coinbase common.Address) {
 }
 
 // StartExternal begins work generation for external miners without local sealing.
-func (miner *Miner) StartExternal(coinbase common.Address) {
-	miner.SetEtherbase(coinbase)
-	miner.worker.setExternalOnly(true)
-	miner.worker.start()
-}
 
 // Stop terminates the RandomX mining process.
 func (miner *Miner) Stop() {
@@ -192,52 +187,60 @@ func (miner *Miner) GetWork() ([4]string, error) {
 
 // SubmitWork submits a proof-of-work solution from an external miner (XMRig).
 // Parameters: nonce, headerHash, mixDigest
+
 func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
-	log.Info("SubmitWork from XMRig",
-		"nonce", nonce,
-		"headerHash", hash.Hex()[:16],
-		"mixDigest", digest.Hex()[:16])
+        log.Info("SubmitWork from XMRig",
+                "nonce", nonce,
+                "headerHash", hash.Hex()[:16],
+                "mixDigest", digest.Hex()[:16])
 
-	miner.worker.pendingMu.RLock()
-	task, exist := miner.worker.pendingTasks[hash]
-	miner.worker.pendingMu.RUnlock()
-	if !exist {
-		log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
-		return false
-	}
+        miner.worker.pendingMu.RLock()
+        task, exist := miner.worker.pendingTasks[hash]
+        miner.worker.pendingMu.RUnlock()
+        if !exist {
+                log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
+                return false
+        }
 
-	header := task.block.Header()
+        header := task.block.Header()
+        log.Info("Pending work header", 
+                "number", header.Number,
+                "difficulty", header.Difficulty,
+                "sealHash", miner.engine.SealHash(header).Hex()[:16])
 
-	// Create a new header with the submitted nonce and mix digest.
-	newHeader := types.CopyHeader(header)
-	newHeader.MixDigest = digest
-	newHeader.Nonce = nonce
+        // Create a new header with the submitted nonce and mix digest.
+        newHeader := types.CopyHeader(header)
+        newHeader.MixDigest = digest
+        newHeader.Nonce = nonce
+        
+        log.Info("New header created", 
+                "number", newHeader.Number,
+                "difficulty", newHeader.Difficulty,
+                "nonce", newHeader.Nonce,
+                "mixDigest", newHeader.MixDigest.Hex()[:16])
 
-	sealedBlock := task.block.WithSeal(newHeader)
+        sealedBlock := task.block.WithSeal(newHeader)
 
-	// Verify the header using the consensus engine's VerifyHeader method
-	// (VerifySeal is part of VerifyHeader for RandomX)
-	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
-		log.Warn("Invalid proof-of-work submitted", "err", err)
-		return false
-	}
+        // Verify the header using the consensus engine's VerifyHeader method
+        if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
+                log.Warn("Invalid proof-of-work submitted", "err", err)
+                return false
+        }
 
-	log.Info("Valid proof-of-work submitted, submitting block to result channel",
-		"nonce", nonce,
-		"blockNumber", sealedBlock.NumberU64(),
-		"mixDigest", digest.Hex()[:16])
+        log.Info("Valid proof-of-work submitted, submitting block to result channel",
+                "nonce", nonce,
+                "blockNumber", sealedBlock.NumberU64(),
+                "mixDigest", digest.Hex()[:16])
 
-	// Send the sealed block to the worker's result channel
-	select {
-	case miner.worker.resultCh <- sealedBlock:
-		log.Info("Block submitted to result channel successfully")
-		return true
-	case <-time.After(5 * time.Second):
-		log.Warn("Timeout submitting block to result channel")
-		return false
-	}
+        select {
+        case miner.worker.resultCh <- sealedBlock:
+                log.Info("Block submitted to result channel successfully")
+                return true
+        case <-time.After(5 * time.Second):
+                log.Warn("Timeout submitting block to result channel")
+                return false
+        }
 }
-
 // RandomXSeedHash calculates the RandomX seed hash for a given block height.
 // For epoch 0, seed hash is all zeros. For later epochs, it's Keccak256(previous seed).
 /*func RandomXSeedHash(config *params.ChainConfig, blockNumber uint64) common.Hash {
@@ -256,3 +259,15 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	}
 	return common.BytesToHash(seed)
 }*/
+// StartExternal begins work generation for external miners without local sealing.
+// StartExternal begins work generation for external miners without local sealing.
+func (miner *Miner) StartExternal(coinbase common.Address) {
+        miner.SetEtherbase(coinbase)
+        miner.worker.setExternalOnly(true)
+        miner.worker.start()
+        // Force initial work generation after a short delay
+        go func() {
+                time.Sleep(500 * time.Millisecond)
+                miner.worker.generateWorkForExternal()
+        }()
+}

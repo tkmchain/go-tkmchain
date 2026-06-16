@@ -599,7 +599,7 @@ func (w *worker) resultLoop() {
 			task, exist := w.pendingTasks[sealhash]
 			w.pendingMu.RUnlock()
 			if !exist {
-				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash, "hash", hash)
+				log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", hash)
 				continue
 			}
 			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
@@ -1037,4 +1037,10 @@ func (w *worker) SubmitSealedBlock(block *types.Block) {
         default:
                 log.Warn("Result channel full, block submission delayed", "number", block.NumberU64())
         }
+}
+
+// Force work generation for external miners
+func (w *worker) generateWorkForExternal() {
+    log.Info("Generating work for external miners")
+    w.commitNewWork(nil, false, time.Now().Unix())
 }
