@@ -380,102 +380,9 @@ func (rx *RandomX) GetWork() ([]string, error) {
     return []string{work.HeaderHash, work.SeedHash, work.Target}, nil
 }
 
-func (rx *RandomX) generateWork() (*Work, error) {
-    header := &types.Header{
-        Number:     big.NewInt(1),
-        Difficulty: GenesisDifficulty,
-        Time:       uint64(time.Now().Unix()),
-    }
 
-    sealHash := rx.SealHash(header)
-    seedHash := rx.seedHash(rx.epoch(1))
-    target := new(big.Int).Div(maxUint256, GenesisDifficulty)
-
-    if seedHash == (common.Hash{}) {
-        seedHash = crypto.Keccak256Hash([]byte("randomx_genesis_seed"))
-    }
-
-    return &Work{
-        HeaderHash:  hex.EncodeToString(sealHash.Bytes()),
-        SeedHash:    hex.EncodeToString(seedHash.Bytes()),
-        Target:      fmt.Sprintf("%064x", target),
-        Difficulty:  GenesisDifficulty.String(),
-        BlockNumber: 1,
-        Height:      1,
-    }, nil
-}
 
 // SubmitWork validates and submits work from external miners
-// SubmitWork validates and submits work from external miners
-// SubmitWork validates and submits work from external miners
-func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHex string) (bool, error) {
-    if rx.isClosed() {
-        return false, errEngineClosed
-    }
-
-    log.Info("�� SubmitWork called", 
-        "nonce", nonceHex,
-        "headerHash", headerHashHex,
-        "mixDigest", mixDigestHex)
-
-    nonceBytes, err := hex.DecodeString(nonceHex)
-    if err != nil || len(nonceBytes) != 8 {
-        log.Error("Invalid nonce", "nonce", nonceHex, "error", err)
-        atomic.AddUint64(&rx.sharesInvalid, 1)
-        return false, errInvalidWork
-    }
-    nonce := binary.BigEndian.Uint64(nonceBytes)
-    log.Info("✅ Decoded nonce", "nonce", nonce)
-
-    mixDigestBytes, err := hex.DecodeString(mixDigestHex)
-    if err != nil || len(mixDigestBytes) != 32 {
-        log.Error("Invalid mix digest", "mix", mixDigestHex, "error", err)
-        atomic.AddUint64(&rx.sharesInvalid, 1)
-        return false, errInvalidWork
-    }
-
-    if rx.chain == nil {
-        log.Error("No chain context")
-        atomic.AddUint64(&rx.sharesInvalid, 1)
-        return false, errors.New("no chain context")
-    }
-
-    currentHeader := rx.chain.CurrentHeader()
-    if currentHeader == nil {
-        log.Error("No current header")
-        atomic.AddUint64(&rx.sharesInvalid, 1)
-        return false, errors.New("no current header")
-    }
-
-    log.Info("Current header", "height", currentHeader.Number, "hash", currentHeader.Hash().Hex())
-
-    // Create new header for next block
-    newHeader := &types.Header{
-        ParentHash:  currentHeader.Hash(),
-        Number:      new(big.Int).Add(currentHeader.Number, big.NewInt(1)),
-        Difficulty:  currentHeader.Difficulty,
-        Time:        uint64(time.Now().Unix()),
-        Coinbase:    currentHeader.Coinbase,
-        Extra:       currentHeader.Extra,
-        GasLimit:    currentHeader.GasLimit,
-        Nonce:       types.EncodeNonce(nonce),
-        MixDigest:   common.BytesToHash(mixDigestBytes),
-    }
-
-    log.Info("Created new header", "block", newHeader.Number, "difficulty", newHeader.Difficulty)
-
-    // Verify the seal
-    if err := rx.VerifySeal(rx.chain, newHeader); err != nil {
-        log.Warn("Invalid proof-of-work submitted", "err", err)
-        atomic.AddUint64(&rx.sharesInvalid, 1)
-        return false, err
-    }
-
-    atomic.AddUint64(&rx.sharesValid, 1)
-    log.Info("✅✅✅ VALID WORK SUBMITTED! ✅✅✅", "nonce", nonce, "block", newHeader.Number.Uint64())
-    
-    return true, nil
-}
 func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
     return header.Coinbase, nil
 }
@@ -607,22 +514,6 @@ func (rx *RandomX) epoch(blockNum uint64) uint64 {
     return blockNum / rx.config.EpochLength
 }
 
-func (rx *RandomX) seedHash(epoch uint64) common.Hash {
-    if epoch == 0 {
-        return crypto.Keccak256Hash([]byte("randomx_epoch_0_genesis"))
-    }
-
-    seed := make([]byte, 32)
-    for i := uint64(0); i < epoch; i++ {
-        if i == 0 {
-            seed = crypto.Keccak256([]byte("randomx_epoch_0_genesis"))
-        } else {
-            seed = crypto.Keccak256(seed)
-        }
-    }
-    return common.BytesToHash(seed)
-}
-
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
     if header.Number == nil {
         header.Number = new(big.Int)
@@ -651,51 +542,249 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
     return nil
 }
 
-func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-        if parent == nil {
-                return GenesisDifficulty
-        }
-        
-        // Get parent timestamp
-        parentTime := parent.Time
-        
-        // Calculate time difference
-        var diff uint64
-        if time > parentTime {
-                diff = time - parentTime
+// SubmitWork validates and submits work from external miners
+func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHex string) (bool, error) {
+    if rx.isClosed() {
+        return false, errEngineClosed
+    }
+
+    log.Info("SubmitWork received", "nonce", nonceHex[:16], "header_hash", headerHashHex[:16])
+
+    // Decode nonce (8 bytes)
+    nonceBytes, err := hex.DecodeString(nonceHex)
+    if err != nil || len(nonceBytes) != 8 {
+        atomic.AddUint64(&rx.sharesInvalid, 1)
+        return false, fmt.Errorf("invalid nonce: %v", err)
+    }
+    nonce := binary.BigEndian.Uint64(nonceBytes)
+
+    // Decode mix digest (32 bytes)
+    mixDigestBytes, err := hex.DecodeString(mixDigestHex)
+    if err != nil || len(mixDigestBytes) != 32 {
+        atomic.AddUint64(&rx.sharesInvalid, 1)
+        return false, fmt.Errorf("invalid mix digest: %v", err)
+    }
+
+    // Get the current work to know the block number and difficulty
+    rx.workMu.RLock()
+    currentWork := rx.currentWork
+    rx.workMu.RUnlock()
+
+    if currentWork == nil {
+        atomic.AddUint64(&rx.sharesInvalid, 1)
+        return false, errors.New("no current work available")
+    }
+
+    // Parse the block number from the work
+    var blockNum uint64
+    if currentWork.BlockNumber > 0 {
+        blockNum = currentWork.BlockNumber
+    } else if currentWork.Height > 0 {
+        blockNum = currentWork.Height
+    } else {
+        // Fallback: use current chain height + 1
+        if rx.chain != nil && rx.chain.CurrentHeader() != nil {
+            blockNum = rx.chain.CurrentHeader().Number.Uint64() + 1
         } else {
-                diff = parentTime - time
+            blockNum = 1
         }
-        
-        // Target block time (120 seconds from your reward.go)
-        targetTime := uint64(120)
-        
-        // Get current difficulty
-        currentDiff := new(big.Int).Set(parent.Difficulty)
-        
-        // Minimum difficulty
-        minDiff := big.NewInt(3)
-        
-        // Adjust difficulty based on block time
-        if diff < targetTime/2 {
-                // Block came too fast - increase difficulty
-                newDiff := new(big.Int).Mul(currentDiff, big.NewInt(3))
-                newDiff.Div(newDiff, big.NewInt(2))
-                if newDiff.Cmp(minDiff) < 0 {
-                        return minDiff
+    }
+
+    // Create a header for this block
+    // Use the provided header hash to get the actual header from the chain
+    headerHashBytes, err := hex.DecodeString(headerHashHex)
+    if err != nil || len(headerHashBytes) != 32 {
+        atomic.AddUint64(&rx.sharesInvalid, 1)
+        return false, fmt.Errorf("invalid header hash: %v", err)
+    }
+    headerHash := common.BytesToHash(headerHashBytes)
+
+    // Try to get the header from chain by hash
+    var header *types.Header
+    if rx.chain != nil {
+        header = rx.chain.GetHeaderByHash(headerHash)
+    }
+
+    // If not found, create a new header for this block
+    if header == nil {
+        // Parse difficulty from work
+        difficulty := GenesisDifficulty
+        if currentWork.Difficulty != "" {
+            if d, ok := new(big.Int).SetString(currentWork.Difficulty, 10); ok && d.Sign() > 0 {
+                difficulty = d
+            }
+        } else if currentWork.Target != "" {
+            // Convert target to difficulty
+            targetBytes, err := hex.DecodeString(currentWork.Target)
+            if err == nil && len(targetBytes) == 32 {
+                target := new(big.Int).SetBytes(targetBytes)
+                if target.Sign() > 0 {
+                    difficulty = new(big.Int).Div(maxUint256, target)
                 }
-                return newDiff
-        } else if diff > targetTime*3/2 {
-                // Block took too long - decrease difficulty
-                newDiff := new(big.Int).Mul(currentDiff, big.NewInt(2))
-                newDiff.Div(newDiff, big.NewInt(3))
-                if newDiff.Cmp(minDiff) < 0 {
-                        return minDiff
-                }
-                return newDiff
+            }
         }
-        
-        return currentDiff
+
+        // Get parent header for proper block building
+        var parentHeader *types.Header
+        if rx.chain != nil {
+            parentHash := rx.chain.CurrentHeader().Hash()
+            parentHeader = rx.chain.GetHeaderByHash(parentHash)
+        }
+
+        // Build the header
+        header = &types.Header{
+            ParentHash:  parentHeader.Hash(),
+            Number:      big.NewInt(int64(blockNum)),
+            Difficulty:  difficulty,
+            Time:        uint64(time.Now().Unix()),
+            Coinbase:    common.Address{}, // Will be set by chain
+            Extra:       []byte("randomx_mined"),
+            GasLimit:    0,
+            GasUsed:     0,
+            Nonce:       types.EncodeNonce(nonce),
+            MixDigest:   common.BytesToHash(mixDigestBytes),
+        }
+
+        // Set parent hash properly
+        if parentHeader != nil {
+            header.ParentHash = parentHeader.Hash()
+        }
+    }
+
+    // Verify the seal
+    if err := rx.VerifySeal(rx.chain, header); err != nil {
+        log.Warn("Invalid proof-of-work submitted", "err", err)
+        atomic.AddUint64(&rx.sharesInvalid, 1)
+        return false, err
+    }
+
+    atomic.AddUint64(&rx.sharesValid, 1)
+    log.Info("✅ Valid work submitted!", 
+        "nonce", nonce, 
+        "block", header.Number.Uint64(),
+        "difficulty", header.Difficulty)
+
+    return true, nil
+}
+
+// Generate work with correct block numbers and difficulty
+func (rx *RandomX) generateWork() (*Work, error) {
+    var header *types.Header
+    var blockNum uint64 = 1
+
+    if rx.chain != nil {
+        currentHeader := rx.chain.CurrentHeader()
+        if currentHeader != nil {
+            blockNum = currentHeader.Number.Uint64() + 1
+            
+            // Use actual header with correct difficulty
+            header = &types.Header{
+                ParentHash:  currentHeader.Hash(),
+                Number:      big.NewInt(int64(blockNum)),
+                Difficulty:  rx.CalcDifficulty(rx.chain, uint64(time.Now().Unix()), currentHeader),
+                Time:        uint64(time.Now().Unix()),
+                Coinbase:    currentHeader.Coinbase,
+                Extra:       currentHeader.Extra,
+                GasLimit:    currentHeader.GasLimit,
+                GasUsed:     0,
+            }
+        }
+    }
+
+    if header == nil {
+        header = &types.Header{
+            Number:     big.NewInt(int64(blockNum)),
+            Difficulty: GenesisDifficulty,
+            Time:       uint64(time.Now().Unix()),
+        }
+    }
+
+    // Calculate seal hash
+    sealHash := rx.SealHash(header)
+    
+    // Get seed for this epoch
+    epoch := rx.epoch(blockNum)
+    seedHash := rx.seedHash(epoch)
+    
+    if seedHash == (common.Hash{}) {
+        seedHash = crypto.Keccak256Hash([]byte("randomx_genesis_seed"))
+    }
+
+    // Calculate target from difficulty
+    target := new(big.Int).Div(maxUint256, header.Difficulty)
+
+    return &Work{
+        HeaderHash:  hex.EncodeToString(sealHash.Bytes()),
+        SeedHash:    hex.EncodeToString(seedHash.Bytes()),
+        Target:      fmt.Sprintf("%064x", target),
+        Difficulty:  header.Difficulty.String(),
+        BlockNumber: blockNum,
+        Height:      blockNum,
+    }, nil
+}
+
+// Fix seed hash generation to follow RandomX spec
+func (rx *RandomX) seedHash(epoch uint64) common.Hash {
+    if epoch == 0 {
+        return crypto.Keccak256Hash([]byte("randomx_epoch_0_genesis"))
+    }
+
+    seed := make([]byte, 32)
+    copy(seed, []byte("randomx_seed_initializer"))
+    
+    for i := uint64(0); i < epoch; i++ {
+        seed = crypto.Keccak256(seed)
+    }
+    return common.BytesToHash(seed)
+}
+
+// Fix difficulty calculation
+func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
+    if parent == nil {
+        return GenesisDifficulty
+    }
+
+    // Get parent timestamp
+    parentTime := parent.Time
+
+    // Calculate time difference
+    var diff uint64
+    if time > parentTime {
+        diff = time - parentTime
+    } else {
+        diff = parentTime - time
+    }
+
+    // Target block time (120 seconds as per your reward.go)
+    targetTime := uint64(120)
+
+    // Get current difficulty
+    currentDiff := new(big.Int).Set(parent.Difficulty)
+
+    // Minimum difficulty
+    minDiff := big.NewInt(3)
+
+    // Adjust difficulty based on block time
+    // Use more gradual adjustments for stability
+    if diff < targetTime/2 {
+        // Block came too fast - increase difficulty
+        newDiff := new(big.Int).Mul(currentDiff, big.NewInt(105))
+        newDiff.Div(newDiff, big.NewInt(100))
+        if newDiff.Cmp(minDiff) < 0 {
+            return minDiff
+        }
+        return newDiff
+    } else if diff > targetTime*3/2 {
+        // Block took too long - decrease difficulty
+        newDiff := new(big.Int).Mul(currentDiff, big.NewInt(95))
+        newDiff.Div(newDiff, big.NewInt(100))
+        if newDiff.Cmp(minDiff) < 0 {
+            return minDiff
+        }
+        return newDiff
+    }
+
+    return currentDiff
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {}
@@ -855,12 +944,66 @@ func (api *MinerAPI) GetHashrate() float64 {
     return api.randomx.Hashrate()
 }
 
-// CalculateNextDifficulty for difficulty.go
+// CalculateNextDifficulty calculates the difficulty for the next block
+// This should match the difficulty calculation in your consensus engine
 func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64) *types.Header) *big.Int {
     if parent == nil {
         return GenesisDifficulty
     }
-    return GenesisDifficulty
+
+    // Get parent timestamp
+    parentTime := parent.Time
+
+    // Current time (simulate block time)
+    currentTime := uint64(time.Now().Unix())
+
+    // Calculate time difference since parent block
+    var diff uint64
+    if currentTime > parentTime {
+        diff = currentTime - parentTime
+    } else {
+        diff = parentTime - currentTime
+    }
+
+    // Target block time (120 seconds from your reward.go)
+    targetTime := uint64(120)
+
+    // Get current difficulty
+    currentDiff := new(big.Int).Set(parent.Difficulty)
+
+    // Minimum difficulty
+    minDiff := big.NewInt(3)
+
+    // Maximum difficulty to prevent extreme adjustments
+    maxDiff := new(big.Int).Mul(minDiff, big.NewInt(1000000))
+
+    // Adjust difficulty based on block time
+    // Use the same algorithm as RandomX.CalcDifficulty
+    if diff < targetTime/2 {
+        // Block came too fast - increase difficulty
+        newDiff := new(big.Int).Mul(currentDiff, big.NewInt(105))
+        newDiff.Div(newDiff, big.NewInt(100))
+        
+        // Cap maximum difficulty
+        if newDiff.Cmp(maxDiff) > 0 {
+            return maxDiff
+        }
+        if newDiff.Cmp(minDiff) < 0 {
+            return minDiff
+        }
+        return newDiff
+    } else if diff > targetTime*3/2 {
+        // Block took too long - decrease difficulty
+        newDiff := new(big.Int).Mul(currentDiff, big.NewInt(95))
+        newDiff.Div(newDiff, big.NewInt(100))
+        
+        if newDiff.Cmp(minDiff) < 0 {
+            return minDiff
+        }
+        return newDiff
+    }
+
+    return currentDiff
 }
 
 // Hash computes RandomX hash directly

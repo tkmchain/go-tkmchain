@@ -51,6 +51,7 @@ type Miner struct {
 	eth      Backend
 	engine   consensus.Engine
 	exitCh   chan struct{}
+	stratum  *StratumServer
 }
 
 // New creates a new RandomX miner with the given configuration.
@@ -77,11 +78,19 @@ func (miner *Miner) Start(coinbase common.Address) {
 
 // Stop terminates the RandomX mining process.
 func (miner *Miner) Stop() {
+	if miner.stratum != nil {
+		miner.stratum.Stop()
+		miner.stratum = nil
+	}
 	miner.worker.stop()
 }
 
 // Close shuts down the miner and releases resources.
 func (miner *Miner) Close() {
+	if miner.stratum != nil {
+		miner.stratum.Stop()
+		miner.stratum = nil
+	}
 	miner.worker.close()
 	close(miner.exitCh)
 }
@@ -212,13 +221,32 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	newHeader.MixDigest = digest
 	newHeader.Nonce = nonce
 	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
-		// RandomX miners hash sealHash || nonce where the nonce is commonly placed
-		// in little-endian byte order. RPC block nonces are decoded as raw bytes,
-		// so retry with the submitted nonce bytes reversed before rejecting a share.
+		// RandomX miners hash sealHash || nonce, but external miner RPC clients do
+		// not all agree on byte order for nonce and result hash fields. RPC block
+		// nonces are decoded as raw bytes, so try the common byte-order variants
+		// before rejecting an otherwise valid share.
+		var reversedNonce types.BlockNonce
 		for i := 0; i < len(nonce); i++ {
-			newHeader.Nonce[i] = nonce[len(nonce)-1-i]
+			reversedNonce[i] = nonce[len(nonce)-1-i]
 		}
-		if retryErr := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr != nil {
+		reversedDigest := reverseHashBytes(digest)
+
+		var retryErr error
+		for _, attempt := range []struct {
+			nonce  types.BlockNonce
+			digest common.Hash
+		}{
+			{nonce: reversedNonce, digest: digest},
+			{nonce: nonce, digest: reversedDigest},
+			{nonce: reversedNonce, digest: reversedDigest},
+		} {
+			newHeader.Nonce = attempt.nonce
+			newHeader.MixDigest = attempt.digest
+			if retryErr = miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr == nil {
+				break
+			}
+		}
+		if retryErr != nil {
 			log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)
 			return false
 		}
@@ -238,6 +266,14 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		log.Warn("Timeout submitting block to result channel")
 		return false
 	}
+}
+
+func reverseHashBytes(hash common.Hash) common.Hash {
+	var reversed common.Hash
+	for i := 0; i < len(hash); i++ {
+		reversed[i] = hash[len(hash)-1-i]
+	}
+	return reversed
 }
 
 // RandomXSeedHash calculates the RandomX seed hash for a given block height.
@@ -264,6 +300,9 @@ func (miner *Miner) StartExternal(coinbase common.Address) {
 	miner.SetEtherbase(coinbase)
 	miner.worker.setExternalOnly(true)
 	miner.worker.start()
+	if err := miner.StartStratum("127.0.0.1:3333"); err != nil {
+		log.Warn("Failed to start RandomX stratum server", "err", err)
+	}
 	// Force initial work generation after a short delay
 	go func() {
 		time.Sleep(500 * time.Millisecond)
