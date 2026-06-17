@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm evm all test lint fmt clean devtools help randomx randomx-clean randomx-install randomx-check
+.PHONY: gtkm evm all test lint fmt clean devtools help randomx randomx-clean randomx-install randomx-check run-solo run-pool
 
 GOBIN = ./build/bin
 GO ?= latest
@@ -49,7 +49,7 @@ evm: randomx
 #? all: Build all packages and executables.
 all: randomx
 	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
-		$(GORUN)  build/ci.go install
+		$(GORUN) build/ci.go install
 
 #? test: Run the tests.
 test: all
@@ -84,13 +84,12 @@ help: Makefile
 	@echo '  make [target]'
 	@echo ''
 	@echo 'Targets:'
-	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
+	@sed -n 's/^#?//p' $< | column -t -s ':' | sort | sed -e 's/^/ /'
 
 #? randomx: Clone and build tevador/RandomX static library.
 randomx:
 	@set -e; \
 	echo "=== Building RandomX $(RANDOMX_VERSION) ==="; \
-	\
 	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
 	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
 		echo "Cloning RandomX into $$SOURCE_DIR..."; \
@@ -100,17 +99,13 @@ randomx:
 	else \
 		echo "RandomX already cloned at $$SOURCE_DIR"; \
 	fi; \
-	\
 	echo "Creating build directory..."; \
 	mkdir -p "$(RANDOMX_BUILD_DIR)"; \
 	cd "$(RANDOMX_BUILD_DIR)"; \
-	\
 	echo "Running CMake..."; \
 	cmake "$$SOURCE_DIR" -DARCH=native -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
-	\
 	echo "Building RandomX..."; \
 	make -j$$(nproc); \
-	\
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR)/$(RANDOMX_LIB_STATIC)"; \
 		echo ""; \
@@ -161,32 +156,32 @@ randomx-check:
 		echo "❌ RandomX is not ready. Run 'make randomx' to build."; \
 	fi
 
-# Add to your existing Makefile
-
 #? randomx-miner: Build standalone RandomX mining daemon
 randomx-miner:
 	@echo "Building RandomX standalone mining daemon..."
 	@if [ ! -f "$(RANDOMX_LIB_PATH)" ]; then \
-                echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
-                echo "Please run 'make randomx' first"; \
-                exit 1; \
-        fi
+		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_PATH)"; \
+		echo "Please run 'make randomx' first"; \
+		exit 1; \
+	fi
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" \
-                go build -tags "randomx,cgo" -o $(GOBIN)/randomx-miner ./cmd/randomx-miner
-@echo "✅ Built: $(GOBIN)/randomx-miner"
+		go build -tags "randomx,cgo" -o $(GOBIN)/randomx-miner ./cmd/randomx-miner
+	@echo "✅ Built: $(GOBIN)/randomx-miner"
 
 #? run-solo: Run standalone solo miner
 run-solo: randomx-miner
-        @export LD_LIBRARY_PATH=$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH; \
-        export SOLO_MINE=true; \
-        export COINBASE=$(or $(COINBASE),0x79eb43064b826570FFa9c329c5685208E5257703); \
-        export THREADS=$(or $(THREADS),2); \
-        $(GOBIN)/randomx-miner
+	@echo "Starting standalone solo miner..."
+	@LD_LIBRARY_PATH="$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH" \
+	SOLO_MINE=true \
+	COINBASE="$(or $(COINBASE),0x79eb43064b826570FFa9c329c5685208E5257703)" \
+	THREADS="$(or $(THREADS),2)" \
+	$(GOBIN)/randomx-miner
 
 #? run-pool: Run pool mode for external miners
 run-pool: randomx-miner
-        @export LD_LIBRARY_PATH=$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH; \
-        export SOLO_MINE=false; \
-        export RPC_PORT=$(or $(RPC_PORT),8545); \
-        $(GOBIN)/randomx-miner
+	@echo "Starting pool mode..."
+	@LD_LIBRARY_PATH="$(RANDOMX_BUILD_DIR):$$LD_LIBRARY_PATH" \
+	SOLO_MINE=false \
+	RPC_PORT="$(or $(RPC_PORT),8545)" \
+	$(GOBIN)/randomx-miner
