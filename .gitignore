@@ -21,6 +21,7 @@
 /build/_workspace/
 /build/cache/
 /build/bin/
+/build/dist/
 /gtkm*.zip
 
 # used by the build/ci.go archive + upload tool
