@@ -49,6 +49,8 @@ var (
 const (
     RandomXEpochLength = 2048
     TargetBlockTime    = 120 // seconds
+    // Difficulty adjustment window for smoothing
+    DifficultyWindow = 10
 )
 
 const (
@@ -183,6 +185,10 @@ type RandomX struct {
     workMu        sync.RWMutex
 
     chain consensus.ChainHeaderReader
+
+    // Difficulty smoothing
+    blockTimes []uint64
+    diffMu     sync.RWMutex
 }
 
 func DefaultConfig() *Config {
@@ -216,6 +222,7 @@ func New(config *Config, threads int, mainKing common.Address, kingAddresses []c
         rotatingKings:    kings,
         rotationInterval: 100,
         stopCh:           make(chan struct{}),
+        blockTimes:       make([]uint64, 0, DifficultyWindow),
     }
 
     if err := rx.updateCacheForEpoch(0); err != nil {
@@ -587,8 +594,7 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
     }
 }
 
-// CRITICAL FIX: Prepare sets the difficulty for the block BEFORE mining
-// This is where difficulty should be calculated!
+// Prepare sets the difficulty for the block BEFORE mining
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
     if header.Number == nil {
         header.Number = new(big.Int)
@@ -625,66 +631,108 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
     return nil
 }
 
-// CalcDifficulty now uses exponential growth for fast blocks
+// CalcDifficulty calculates difficulty with moderate adjustment (Monero-style)
 func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
     if parent == nil {
         return GenesisDifficulty
     }
 
+    // Calculate time since last block
     parentTime := parent.Time
-    var diff uint64
+    var blockTime uint64
     if time > parentTime {
-        diff = time - parentTime
+        blockTime = time - parentTime
     } else {
-        diff = parentTime - time
+        blockTime = parentTime - time
+    }
+
+    // Store block time for smoothing
+    rx.diffMu.Lock()
+    rx.blockTimes = append(rx.blockTimes, blockTime)
+    if len(rx.blockTimes) > DifficultyWindow {
+        rx.blockTimes = rx.blockTimes[1:]
+    }
+    rx.diffMu.Unlock()
+
+    // Calculate average block time from recent blocks
+    rx.diffMu.RLock()
+    avgBlockTime := uint64(0)
+    if len(rx.blockTimes) > 0 {
+        sum := uint64(0)
+        for _, t := range rx.blockTimes {
+            sum += t
+        }
+        avgBlockTime = sum / uint64(len(rx.blockTimes))
+    } else {
+        avgBlockTime = blockTime
+    }
+    rx.diffMu.RUnlock()
+
+    // Use average for difficulty calculation
+    diff := avgBlockTime
+    if diff == 0 {
+        diff = 1
     }
 
     targetTime := uint64(TargetBlockTime)
     currentDiff := new(big.Int).Set(parent.Difficulty)
-    minDiff := MinDifficulty
 
-    // Since blocks are mining in milliseconds (0-2 seconds), we need aggressive difficulty increase
-    // Target is 120 seconds, so difficulty should increase exponentially
-
-    // Calculate ratio: targetTime / actualTime
-    // If actualTime is 0.05s, ratio = 120/0.05 = 2400 -> difficulty increases by 2400x!
-    if diff > 0 {
-        // Use integer math: multiply by targetTime, divide by actual diff
-        // This gives a multiplier based on how fast blocks are being mined
-        ratio := new(big.Int).SetUint64(targetTime)
-        ratio.Mul(ratio, big.NewInt(100)) // Scale for precision
-        ratio.Div(ratio, new(big.Int).SetUint64(diff))
-        
-        // Apply the ratio with cap to prevent overflow
-        // Max increase: 100x per block (if ratio > 100, cap it)
-        if ratio.Cmp(big.NewInt(10000)) > 0 {
-            ratio = big.NewInt(10000)
-        }
-        
-        // Minimum increase: 1x (no change)
-        if ratio.Cmp(big.NewInt(100)) < 0 {
-            ratio = big.NewInt(100)
-        }
-        
-        // Apply the ratio: newDiff = currentDiff * ratio / 100
-        newDiff := new(big.Int).Mul(currentDiff, ratio)
-        newDiff.Div(newDiff, big.NewInt(100))
-        
-        if newDiff.Cmp(minDiff) < 0 {
-            return minDiff
-        }
-        
-        log.Info("�� Difficulty adjustment",
-            "old", currentDiff,
-            "new", newDiff,
-            "ratio", fmt.Sprintf("%.2f", float64(ratio.Int64())/100),
-            "block_time_ms", diff*1000)
-        
-        return newDiff
+    // Calculate ratio: targetTime / actualTime (capped for stability)
+    ratio := float64(targetTime) / float64(diff)
+    
+    // Moderate adjustment: cap ratio between 0.5 and 2.0
+    // This prevents extreme difficulty swings
+    if ratio > 2.0 {
+        ratio = 2.0
+    } else if ratio < 0.5 {
+        ratio = 0.5
     }
 
-    log.Info("⚠️ Block time too small, using current difficulty", "difficulty", currentDiff)
-    return currentDiff
+    // Apply ratio with moderate adjustment (Monero uses 1/2 difficulty window)
+    // Using 8% adjustment per block (similar to Monero's 0.08 factor)
+    adjustment := ratio
+    if adjustment > 1.0 {
+        // Increase difficulty gradually
+        adjustment = 1.0 + (adjustment-1.0)*0.08
+    } else {
+        // Decrease difficulty gradually
+        adjustment = 1.0 - (1.0-adjustment)*0.08
+    }
+
+    // Apply adjustment
+    newDiff := new(big.Int).Set(currentDiff)
+    if adjustment > 1.0 {
+        // Increase difficulty
+        multiplier := new(big.Int).SetInt64(int64(adjustment * 1000000))
+        newDiff.Mul(newDiff, multiplier)
+        newDiff.Div(newDiff, big.NewInt(1000000))
+    } else {
+        // Decrease difficulty
+        divisor := new(big.Int).SetInt64(int64(1000000 / adjustment))
+        newDiff.Mul(newDiff, big.NewInt(1000000))
+        newDiff.Div(newDiff, divisor)
+    }
+
+    // Ensure difficulty doesn't drop below minimum
+    if newDiff.Cmp(MinDifficulty) < 0 {
+        return MinDifficulty
+    }
+
+    // Ensure difficulty doesn't increase too rapidly (max 4x per block)
+    maxIncrease := new(big.Int).Mul(currentDiff, big.NewInt(4))
+    if newDiff.Cmp(maxIncrease) > 0 {
+        newDiff.Set(maxIncrease)
+    }
+
+    log.Info("�� Difficulty adjustment (moderate)",
+        "block_time_s", diff,
+        "avg_block_time_s", avgBlockTime,
+        "ratio", fmt.Sprintf("%.2f", ratio),
+        "adjustment", fmt.Sprintf("%.2f", adjustment),
+        "old", currentDiff,
+        "new", newDiff)
+
+    return newDiff
 }
 
 func (rx *RandomX) seedHash(epoch uint64) common.Hash {
