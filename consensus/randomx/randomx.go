@@ -202,6 +202,22 @@ type RandomX struct {
 	chain consensus.ChainHeaderReader
 }
 
+// NewFaker creates a fake RandomX engine for testing purposes
+func NewFaker() *RandomX {
+	// Create a minimal config for testing
+	config := DefaultConfig()
+	
+	// Use a fake cache for testing
+	fakeRx := &RandomX{
+		config:           config,
+		fullFake:         true,
+		rotatingKings:    []common.Address{common.Address{}},
+		rotationInterval: 100,
+		stopCh:           make(chan struct{}),
+	}
+	
+	return fakeRx
+}
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:     true,
