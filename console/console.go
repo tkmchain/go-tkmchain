@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -331,6 +332,7 @@ func (c *Console) Welcome() {
 // Evaluate executes code and pretty prints the result to the specified output
 // stream.
 func (c *Console) Evaluate(statement string) {
+	statement = expandConsoleCommand(statement)
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(c.printer, "[native] error: %v\n", r)
@@ -340,6 +342,39 @@ func (c *Console) Evaluate(statement string) {
 
 	// Avoid exiting Interactive when jsre was interrupted by SIGINT.
 	c.clearSignalReceived()
+}
+
+func expandConsoleCommand(statement string) string {
+	command := strings.TrimSpace(statement)
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[0] != "rk" {
+		return statement
+	}
+	switch fields[1] {
+	case "list":
+		if len(fields) == 2 {
+			return "rk.list()"
+		}
+	case "status":
+		if len(fields) == 2 {
+			return "rk.stats()"
+		}
+		if len(fields) == 3 {
+			return "rk.status(" + consoleCommandArg(fields[2]) + ")"
+		}
+	case "add":
+		if len(fields) == 3 {
+			return "rk.add(" + consoleCommandArg(fields[2]) + ")"
+		}
+	}
+	return statement
+}
+
+func consoleCommandArg(arg string) string {
+	if strings.HasPrefix(arg, "0x") || strings.HasPrefix(arg, "0X") {
+		return strconv.Quote(arg)
+	}
+	return arg
 }
 
 // interruptHandler runs in its own goroutine and waits for signals.

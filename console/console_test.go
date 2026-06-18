@@ -215,6 +215,24 @@ func TestTkmShowCheckpoints(t *testing.T) {
 	}
 }
 
+func TestExpandRotatingKingConsoleCommand(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "rk list", want: "rk.list()"},
+		{input: "rk status", want: "rk.stats()"},
+		{input: "rk status 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182", want: "rk.status(\"0x8605cdbbdb6d264aa742e77020dcbc58fcdce182\")"},
+		{input: "rk add 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182", want: "rk.add(\"0x8605cdbbdb6d264aa742e77020dcbc58fcdce182\")"},
+		{input: "2 + 2", want: "2 + 2"},
+	}
+	for _, test := range tests {
+		if got := expandConsoleCommand(test.input); got != test.want {
+			t.Fatalf("expandConsoleCommand(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
 // Tests that the console can be used in interactive mode.
 func TestInteractive(t *testing.T) {
 	// Create a tester and run an interactive console in the background

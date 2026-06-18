@@ -50,6 +50,11 @@ web3._extend({
 			name: 'status',
 			call: 'rk_status',
 			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'stats',
+			call: 'rk_getKingStats',
+			params: 0
 		})
 	]
 });
