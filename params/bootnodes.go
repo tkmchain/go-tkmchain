@@ -22,9 +22,8 @@ import "github.com/ethereum/go-ethereum/common"
 // the main RandomX network.
 var MainnetBootnodes = []string{
 	// Ethereum Foundation Go Bootnodes
-        "enode://7c88351b493274c5abf111c0d67b84ba59b6a2cc1982904d65dd8273cc648b17d8dcf8f73882676406ad2f7a6d9e8c3ad9777ce843edf6c3f1fb73ea415dd1bf@40.82.130.91:3000",
-	"enode://e322856c93c1b8a395b90ee5bf8a689125bbac465d176950f97c8f14812785b388dc17edd86d91786fbdcdf07050b4fc380bb2fbd1dd5815b4d77d6c60793902@129.151.164.202:3000",
-        "enode://d010a0f2427442d22e7687186c1c56032949824b1b9d9f81fe5a9180e8bec786298528b5cfb0b64210ae1cc29d6afae09e5f80c64f42fcb96f59b12c5996c2c5@192.168.113.221:3000",
+        "enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@129.151.164.202:3000",
+        "enode://551fa0a4ed4d8539e3c85181d4d73d0a4617164abc60f782ad77639db6e6d63a650c534993b0e968c8c4cc21a91984f24b2a762117d062e1e1514a4a1be6ab60@102.90.96.171:3000",
 }
 
 // TestnetBootnodes are bootstrap nodes for RandomX test networks.
@@ -46,6 +45,7 @@ var (
 )
 
 var V5Bootnodes = []string{
+        "enr:-J24QNptZgMENguLj2GqIz5grYg6PG43Gp6zAJG3tg2kyEwvaboCh085uKL799yLWxt6ouU2en0YarV-MHH9ZqMgMnWGAZ7ZjOpRg2V0aMfGhBMEcTCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQIsNudmq1LwSr_BKYkbDZLU1h3_a4z0lpEP1wRr58pmr4N0Y3CCC7iDdWRwggu4",
 	"enr:-KO4QA-YD4j8Po5DdSDRJpfCfJmDo0eM-SwreDC6lKQi4KZ-JN0NTVyihf-g706wtLQ6up7EDWJlUXndqEiC3VR_EH2GAZ5BUnWUg2V0aMfGhJa7DLOAgmlkgnY0gmlwhIGXpMqJc2VjcDI1NmsxoQLjIoVsk8G4o5W5DuW_imiRJbusRl0XaVD5fI8UgSeFs4RzbmFwwIN0Y3CCC7iDdWRwggu4",
         "enr:-KO4QKaE8k2YQewzHbQbVoBxCTzTf0_VTBndEaahyw25y2GqdYcHBEn_h9mHtxBx2udDPQhxk6tVzUYiu_ZlxgAQMSmGAZ5BXkANg2V0aMfGhJa7DLOAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPQEKDyQnRC0i52hxhsHFYDKUmCSxudn4H-WpGA6L7HhoRzbmFwwIN0Y3CCC7iDdWRwggu4",
 }

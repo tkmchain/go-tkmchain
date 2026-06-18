@@ -9,6 +9,7 @@
         run-solo run-pool \
         cross cross-windows cross-darwin cross-linux cross-all \
         cross-windows-all cross-darwin-all cross-linux-all cross-all-all \
+        cross-linux-amd64 cross-linux-386 cross-linux-arm64 cross-linux-arm \
         clean-cross dist
 
 GOBIN = ./build/bin
@@ -42,6 +43,8 @@ MINGW32_CC = i686-w64-mingw32-gcc-posix
 MINGW32_CXX = i686-w64-mingw32-g++-posix
 AARCH64_CC = aarch64-linux-gnu-gcc
 AARCH64_CXX = aarch64-linux-gnu-g++
+ARM_CC = arm-linux-gnueabihf-gcc
+ARM_CXX = arm-linux-gnueabihf-g++
 
 # Library paths per platform
 RANDOMX_LIB_STATIC = librandomx.a
@@ -54,14 +57,28 @@ RANDOMX_LIB_LINUX = $(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)
 CROSS_OUTPUT_DIR = ./build/dist
 CROSS_WINDOWS_EXT = .exe
 
-# Static linking flags for Windows - simplified
+# Static linking flags for Windows
 WIN_STATIC_LDFLAGS = -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic
 
-# List of all commands to build
-CMDS = gtkm clef devp2p abigen bootnode evm rlpdump
+# List of all commands to build (skip bootnode if not exists)
+CMDS = gtkm clef devp2p abigen evm rlpdump
+# bootnode is optional - add if exists
+ifneq ($(wildcard ./cmd/bootnode),)
+CMDS += bootnode
+endif
 
 # Check if 32-bit mingw is available
 HAS_MINGW32 := $(shell command -v i686-w64-mingw32-g++-posix 2>/dev/null || echo "")
+HAS_MINGW32 := $(if $(HAS_MINGW32),1,0)
+
+# Check if ARM compilers are available
+HAS_ARM := $(shell command -v arm-linux-gnueabihf-gcc 2>/dev/null || echo "")
+HAS_ARM64 := $(shell command -v aarch64-linux-gnu-gcc 2>/dev/null || echo "")
+HAS_ARM64 := $(if $(HAS_ARM64),1,0)
+
+# Check if 32-bit Linux headers are available
+HAS_32BIT_LIBS := $(shell dpkg -l libc6-dev-i386 2>/dev/null | grep -c "^ii" || echo "0")
+HAS_32BIT_LIBS := $(if $(filter 0, $(HAS_32BIT_LIBS)),0,1)
 
 #? all: Build all executables with RandomX support.
 all: $(CMDS)
@@ -110,9 +127,13 @@ abigen: randomx
 bootnode: randomx
 	@echo "Building bootnode..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
-		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/bootnode ./cmd/bootnode
-	@echo "✅ Built: $(GOBIN)/bootnode"
+	@if [ -d "./cmd/bootnode" ]; then \
+		CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+			go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/bootnode ./cmd/bootnode; \
+		echo "✅ Built: $(GOBIN)/bootnode"; \
+	else \
+		echo "⚠️ bootnode directory not found, skipping..."; \
+	fi
 
 #? evm: Build evm (EVM debugger).
 evm: randomx
@@ -250,7 +271,7 @@ randomx-windows:
 #? randomx-windows-386: Build RandomX for Windows 32-bit (skip if not available).
 randomx-windows-386:
 	@set -e; \
-	if [ -z "$(HAS_MINGW32)" ]; then \
+	if [ "$(HAS_MINGW32)" -eq 0 ]; then \
 		echo "⚠️  i686-w64-mingw32-g++-posix not found. Skipping Windows 32-bit build."; \
 		echo "   To install: sudo apt-get install gcc-mingw-w64-i686"; \
 		exit 0; \
@@ -335,6 +356,11 @@ randomx-darwin:
 #? randomx-linux: Build RandomX for Linux ARM64 (cross-compile from x86_64).
 randomx-linux:
 	@set -e; \
+	if [ "$(HAS_ARM64)" -eq 0 ]; then \
+		echo "⚠️  aarch64-linux-gnu-g++ not found. Skipping ARM64 build."; \
+		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu"; \
+		exit 0; \
+	fi; \
 	echo "=== Building RandomX for Linux ARM64 ==="; \
 	echo "Requires: sudo apt-get install gcc-aarch64-linux-gnu"; \
 	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
@@ -350,11 +376,6 @@ randomx-linux:
 	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX)"; \
 	cd "$(RANDOMX_BUILD_DIR_LINUX)"; \
 	echo "Using compiler: $(AARCH64_CC)"; \
-	if ! command -v $(AARCH64_CC) >/dev/null 2>&1; then \
-		echo "ERROR: $(AARCH64_CC) not found!"; \
-		echo "Please install: sudo apt-get install gcc-aarch64-linux-gnu"; \
-		exit 1; \
-	fi; \
 	echo "Running CMake for Linux ARM64..."; \
 	cmake "$$SOURCE_DIR" \
 		-DCMAKE_C_COMPILER=$(AARCH64_CC) \
@@ -372,8 +393,47 @@ randomx-linux:
 		exit 1; \
 	fi
 
+#? randomx-linux-arm: Build RandomX for Linux ARM (32-bit) (cross-compile from x86_64).
+randomx-linux-arm:
+	@set -e; \
+	if [ -z "$(HAS_ARM)" ]; then \
+		echo "⚠️  arm-linux-gnueabihf-g++ not found. Skipping ARM build."; \
+		echo "   To install: sudo apt-get install gcc-arm-linux-gnueabihf"; \
+		exit 0; \
+	fi; \
+	echo "=== Building RandomX for Linux ARM (32-bit) ==="; \
+	echo "Requires: sudo apt-get install gcc-arm-linux-gnueabihf"; \
+	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
+	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
+		echo "Cloning RandomX into $$SOURCE_DIR..."; \
+		rm -rf "$$SOURCE_DIR"; \
+		mkdir -p "$$(dirname $$SOURCE_DIR)"; \
+		git clone --depth 1 --branch $(RANDOMX_VERSION) $(RANDOMX_REPO) "$$SOURCE_DIR"; \
+	else \
+		echo "RandomX already cloned at $$SOURCE_DIR"; \
+	fi; \
+	echo "Creating build directory..."; \
+	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX)/arm"; \
+	cd "$(RANDOMX_BUILD_DIR_LINUX)/arm"; \
+	echo "Using compiler: $(ARM_CC)"; \
+	echo "Running CMake for Linux ARM..."; \
+	cmake "$$SOURCE_DIR" \
+		-DCMAKE_C_COMPILER=$(ARM_CC) \
+		-DCMAKE_CXX_COMPILER=$(ARM_CXX) \
+		-DCMAKE_SYSTEM_NAME=Linux \
+		-DCMAKE_SYSTEM_PROCESSOR=arm \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF; \
+	echo "Building RandomX for Linux ARM..."; \
+	make -j$$(nproc); \
+	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
+		echo "✓ RandomX Linux ARM library built: $(RANDOMX_BUILD_DIR_LINUX)/arm/$(RANDOMX_LIB_STATIC)"; \
+	else \
+		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for Linux ARM"; \
+		exit 1; \
+	fi
 #? randomx-all: Build RandomX for all platforms.
-randomx-all: randomx-host randomx-windows randomx-linux
+randomx-all: randomx-host randomx-windows randomx-linux randomx-linux-arm
 	@echo "✅ All RandomX builds complete."
 	@echo "Note: macOS build requires OSXCross or native macOS."
 
@@ -434,8 +494,14 @@ run-pool: randomx-miner
 # CROSS-COMPILATION TARGETS (All Tools)
 # ====================================================
 
-# Define the list of tools for cross-compilation
-CROSS_CMDS = gtkm clef devp2p abigen bootnode evm rlpdump
+# Define the list of tools for cross-compilation (skip bootnode)
+CROSS_CMDS = gtkm clef devp2p abigen evm rlpdump
+# Add bootnode if it exists
+ifneq ($(wildcard ./cmd/bootnode),)
+CROSS_CMDS += bootnode
+endif
+
+# ----- WINDOWS -----
 
 #? cross-windows: Build Windows 64-bit executable (gtkm only).
 cross-windows: randomx-windows
@@ -460,7 +526,7 @@ cross-windows-all: randomx-windows randomx-windows-386
 			GOOS=windows GOARCH=amd64 CC=$(MINGW64_CC) CXX=$(MINGW64_CXX) \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/windows/$$cmd-windows-amd64$(CROSS_WINDOWS_EXT) ./cmd/$$cmd; \
 	done
-	@if [ -n "$(HAS_MINGW32)" ]; then \
+	@if [ "$(HAS_MINGW32)" -eq 1 ]; then \
 		for cmd in $(CROSS_CMDS); do \
 			echo "Building $$cmd for Windows 32-bit..."; \
 			CGO_ENABLED=1 \
@@ -476,20 +542,7 @@ cross-windows-all: randomx-windows randomx-windows-386
 	@echo "�� Windows executables:"
 	@ls -la $(CROSS_OUTPUT_DIR)/windows/
 
-#? cross-windows-386: Build Windows 32-bit executable (gtkm only) - skipped if not available.
-cross-windows-386: randomx-windows-386
-	@echo "Building gtkm for Windows 32-bit..."
-	@if [ -n "$(HAS_MINGW32)" ]; then \
-		mkdir -p $(CROSS_OUTPUT_DIR)/windows; \
-		CGO_ENABLED=1 \
-			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_WINDOWS)/386 -lrandomx -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic" \
-			GOOS=windows GOARCH=386 CC=$(MINGW32_CC) CXX=$(MINGW32_CXX) \
-			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/windows/gtkm-windows-386$(CROSS_WINDOWS_EXT) ./cmd/gtkm; \
-		echo "✅ Windows 32-bit build complete: $(CROSS_OUTPUT_DIR)/windows/"; \
-	else \
-		echo "⚠️  Skipping Windows 32-bit build (install gcc-mingw-w64-i686 to enable)"; \
-	fi
+# ----- macOS (Darwin) -----
 
 #? cross-darwin: Build macOS executable (gtkm only).
 cross-darwin: randomx-darwin
@@ -537,57 +590,101 @@ cross-darwin-all: randomx-darwin
 		echo "⚠️ RandomX macOS library not found. Skipping macOS builds."; \
 	fi
 
-#? cross-linux: Build Linux executable (gtkm only).
-cross-linux: randomx-linux
-	@echo "Building gtkm for Linux..."
-	@mkdir -p $(CROSS_OUTPUT_DIR)/linux
-	CGO_ENABLED=1 \
-		CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-		CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
-		GOOS=linux GOARCH=amd64 \
-		go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/gtkm-linux-amd64 ./cmd/gtkm
-	CGO_ENABLED=1 \
-		CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-		CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
-		GOOS=linux GOARCH=386 \
-		go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/gtkm-linux-386 ./cmd/gtkm
-	@if [ -f "$(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)" ]; then \
-		CGO_ENABLED=1 \
-			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX) -lrandomx -lstdc++ -lm" \
-			GOOS=linux GOARCH=arm64 CC=$(AARCH64_CC) CXX=$(AARCH64_CXX) \
-			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/gtkm-linux-arm64 ./cmd/gtkm; \
-	fi
-	@echo "✅ Linux build complete: $(CROSS_OUTPUT_DIR)/linux/"
+# ----- LINUX (All Architectures) -----
 
-#? cross-linux-all: Build all Linux executables.
-cross-linux-all: randomx-linux
-	@echo "Building ALL Linux executables..."
-	@mkdir -p $(CROSS_OUTPUT_DIR)/linux
+#? cross-linux-amd64: Build Linux x86_64 (64-bit) executables.
+cross-linux-amd64: randomx
+	@echo "Building Linux x86_64 (64-bit) executables..."
+	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/amd64
 	@for cmd in $(CROSS_CMDS); do \
-		echo "Building $$cmd for Linux amd64..."; \
+		echo "Building $$cmd for Linux x86_64..."; \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
 			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
 			GOOS=linux GOARCH=amd64 \
-			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/$$cmd-linux-amd64 ./cmd/$$cmd; \
-		echo "Building $$cmd for Linux 386..."; \
-		CGO_ENABLED=1 \
-			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
-			GOOS=linux GOARCH=386 \
-			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/$$cmd-linux-386 ./cmd/$$cmd; \
-		if [ -f "$(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)" ]; then \
-			echo "Building $$cmd for Linux arm64..."; \
+			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/amd64/$$cmd-linux-x86_64 ./cmd/$$cmd; \
+	done
+	@echo "✅ Linux x86_64 builds complete: $(CROSS_OUTPUT_DIR)/linux/amd64/"
+	@ls -la $(CROSS_OUTPUT_DIR)/linux/amd64/
+
+#? cross-linux-386: Build Linux x86_32 (32-bit) executables.
+cross-linux-386: randomx
+	@echo "Building Linux x86_32 (32-bit) executables..."
+	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/386
+	@if [ "$(HAS_32BIT_LIBS)" -eq 0 ]; then \
+		echo "⚠️  32-bit Linux libraries not found. Skipping x86_32 builds."; \
+		echo "   To install: sudo apt-get install gcc-multilib libc6-dev-i386"; \
+		exit 0; \
+	else \
+		for cmd in $(CROSS_CMDS); do \
+			echo "Building $$cmd for Linux x86_32..."; \
+			CGO_ENABLED=1 \
+				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+				GOOS=linux GOARCH=386 \
+				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/386/$$cmd-linux-x86_32 ./cmd/$$cmd; \
+		done; \
+		echo "✅ Linux x86_32 builds complete: $(CROSS_OUTPUT_DIR)/linux/386/"; \
+		ls -la $(CROSS_OUTPUT_DIR)/linux/386/; \
+	fi
+
+#? cross-linux-arm64: Build Linux ARM64 (aarch64) executables.
+cross-linux-arm64: randomx-linux
+	@echo "Building Linux ARM64 (aarch64) executables..."
+	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/arm64
+	@if [ "$(HAS_ARM64)" -eq 1 ]; then \
+		for cmd in $(CROSS_CMDS); do \
+			echo "Building $$cmd for Linux ARM64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
 				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX) -lrandomx -lstdc++ -lm" \
 				GOOS=linux GOARCH=arm64 CC=$(AARCH64_CC) CXX=$(AARCH64_CXX) \
-				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/$$cmd-linux-arm64 ./cmd/$$cmd; \
-		fi; \
-	done
-	@echo "✅ All Linux builds complete: $(CROSS_OUTPUT_DIR)/linux/"
-	@ls -la $(CROSS_OUTPUT_DIR)/linux/
+				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm64/$$cmd-linux-arm64 ./cmd/$$cmd; \
+		done; \
+		echo "✅ Linux ARM64 builds complete: $(CROSS_OUTPUT_DIR)/linux/arm64/"; \
+		ls -la $(CROSS_OUTPUT_DIR)/linux/arm64/; \
+	else \
+		echo "⚠️ ARM64 compiler not found. Skipping ARM64 builds."; \
+		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu"; \
+	fi
+
+#? cross-linux-arm: Build Linux ARM (32-bit) executables.
+cross-linux-arm: randomx-linux
+	@echo "Building Linux ARM (32-bit) executables..."
+	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/arm
+	@if [ -n "$(HAS_ARM)" ]; then \
+		for cmd in $(CROSS_CMDS); do \
+			echo "Building $$cmd for Linux ARM..."; \
+			CGO_ENABLED=1 \
+				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX) -lrandomx -lstdc++ -lm" \
+				GOOS=linux GOARCH=arm CC=$(ARM_CC) CXX=$(ARM_CXX) \
+				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm/$$cmd-linux-arm ./cmd/$$cmd; \
+		done; \
+		echo "✅ Linux ARM builds complete: $(CROSS_OUTPUT_DIR)/linux/arm/"; \
+		ls -la $(CROSS_OUTPUT_DIR)/linux/arm/; \
+	else \
+		echo "⚠️ ARM compiler not found. Skipping ARM builds."; \
+		echo "   To install: sudo apt-get install gcc-arm-linux-gnueabihf"; \
+	fi
+
+#? cross-linux: Build gtkm for all Linux architectures.
+cross-linux: cross-linux-amd64 cross-linux-386 cross-linux-arm64 cross-linux-arm
+	@echo "=== Linux builds complete ==="
+
+#? cross-linux-all: Build ALL tools for all Linux architectures.
+cross-linux-all: cross-linux-amd64 cross-linux-386 cross-linux-arm64 cross-linux-arm
+	@echo "=== All Linux builds complete ==="
+	@echo "Output directory: $(CROSS_OUTPUT_DIR)/linux/"
+	@echo ""
+	@echo "Linux x86_64 (64-bit):   $(CROSS_OUTPUT_DIR)/linux/amd64/"
+	@echo "Linux x86_32 (32-bit):   $(CROSS_OUTPUT_DIR)/linux/386/  (if libs installed)"
+	@echo "Linux ARM64 (aarch64):   $(CROSS_OUTPUT_DIR)/linux/arm64/"
+	@echo "Linux ARM (32-bit):      $(CROSS_OUTPUT_DIR)/linux/arm/"
+	@echo ""
+	@ls -la $(CROSS_OUTPUT_DIR)/linux/*/ 2>/dev/null || echo "No builds found."
+
+# ----- ALL PLATFORMS -----
 
 #? cross-all: Build gtkm only for all platforms.
 cross-all: randomx-all cross-windows cross-darwin cross-linux
