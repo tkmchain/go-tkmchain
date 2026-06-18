@@ -319,6 +319,16 @@ func (dl *diffLayer) journal(w io.Writer) error {
 //
 // The supplied root must be a valid trie hash value.
 func (db *Database) Journal(root common.Hash) error {
+	// Run the journaling under the database lock. This prevents a concurrent
+	// commit from changing the persistent root after the journal head has been
+	// selected but before the journal metadata is written.
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Short circuit if the database is in read only mode.
+	if db.readOnly {
+		return errDatabaseReadOnly
+	}
 	// Retrieve the head layer to journal from.
 	l := db.tree.get(root)
 	if l == nil {
@@ -337,14 +347,6 @@ func (db *Database) Journal(root common.Hash) error {
 	}
 	start := time.Now()
 
-	// Run the journaling
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	// Short circuit if the database is in read only mode.
-	if db.readOnly {
-		return errDatabaseReadOnly
-	}
 	// Forcibly sync the ancient store before persisting the in-memory layers.
 	// This prevents an edge case where the in-memory layers are persisted
 	// but the ancient store is not properly closed, resulting in recent writes
