@@ -23,7 +23,7 @@ import "github.com/ethereum/go-ethereum/common"
 var MainnetBootnodes = []string{
 	// Ethereum Foundation Go Bootnodes
         "enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@129.151.164.202:3000",
-        "enode://551fa0a4ed4d8539e3c85181d4d73d0a4617164abc60f782ad77639db6e6d63a650c534993b0e968c8c4cc21a91984f24b2a762117d062e1e1514a4a1be6ab60@102.90.96.171:3000",
+        "enode://11533a81e1c318f91ba257bc6e4dec8476b7f70f4534280ce8a4107ba0d31e4613d285d2fa5712aa39741c41ee9f7eaecc759a4b3aea6825c50c8dae9174cb45@129.151.164.223:3000",
 }
 
 // TestnetBootnodes are bootstrap nodes for RandomX test networks.
@@ -45,7 +45,7 @@ var (
 )
 
 var V5Bootnodes = []string{
-        "enr:-J24QNptZgMENguLj2GqIz5grYg6PG43Gp6zAJG3tg2kyEwvaboCh085uKL799yLWxt6ouU2en0YarV-MHH9ZqMgMnWGAZ7ZjOpRg2V0aMfGhBMEcTCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQIsNudmq1LwSr_BKYkbDZLU1h3_a4z0lpEP1wRr58pmr4N0Y3CCC7iDdWRwggu4",
+//        "enr:-J24QNptZgMENguLj2GqIz5grYg6PG43Gp6zAJG3tg2kyEwvaboCh085uKL799yLWxt6ouU2en0YarV-MHH9ZqMgMnWGAZ7ZjOpRg2V0aMfGhBMEcTCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQIsNudmq1LwSr_BKYkbDZLU1h3_a4z0lpEP1wRr58pmr4N0Y3CCC7iDdWRwggu4",
 	"enr:-KO4QA-YD4j8Po5DdSDRJpfCfJmDo0eM-SwreDC6lKQi4KZ-JN0NTVyihf-g706wtLQ6up7EDWJlUXndqEiC3VR_EH2GAZ5BUnWUg2V0aMfGhJa7DLOAgmlkgnY0gmlwhIGXpMqJc2VjcDI1NmsxoQLjIoVsk8G4o5W5DuW_imiRJbusRl0XaVD5fI8UgSeFs4RzbmFwwIN0Y3CCC7iDdWRwggu4",
         "enr:-KO4QKaE8k2YQewzHbQbVoBxCTzTf0_VTBndEaahyw25y2GqdYcHBEn_h9mHtxBx2udDPQhxk6tVzUYiu_ZlxgAQMSmGAZ5BXkANg2V0aMfGhJa7DLOAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPQEKDyQnRC0i52hxhsHFYDKUmCSxudn4H-WpGA6L7HhoRzbmFwwIN0Y3CCC7iDdWRwggu4",
 }
