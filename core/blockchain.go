@@ -2611,6 +2611,18 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 			return errInvalidNewChain
 		}
 	}
+	if params.CheckpointValidationEnabled {
+		for _, header := range oldChain {
+			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint == header.Hash() {
+				return fmt.Errorf("checkpoint reorg at block %d: checkpoint hash %s is permanent", header.Number.Uint64(), checkpoint)
+			}
+		}
+		for _, header := range newChain {
+			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint != header.Hash() {
+				return fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", header.Number.Uint64(), header.Hash(), checkpoint)
+			}
+		}
+	}
 	// Ensure the user sees large reorgs
 	if len(oldChain) > 0 && len(newChain) > 0 {
 		logFn := log.Info
