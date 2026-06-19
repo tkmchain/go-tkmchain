@@ -27,7 +27,7 @@ import (
 )
 
 func (h *handler) chainSyncLoop() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	for {
