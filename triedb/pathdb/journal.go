@@ -161,19 +161,7 @@ func loadGenerator(db ethdb.KeyValueReader, hash nodeHasher) (*journalGenerator,
 // loadLayers loads a pre-existing state layer backed by a key-value store.
 func (db *Database) loadLayers() layer {
 	// Retrieve the root node of persistent state.
-	var (
-		root common.Hash
-		err  error
-	)
-	if db.isUBT {
-		root = rawdb.ReadSnapshotRoot(db.diskdb)
-		if root == (common.Hash{}) {
-			root = types.EmptyBinaryHash
-		}
-	} else {
-		blob := rawdb.ReadAccountTrieNode(db.diskdb, nil)
-		root, err = db.hasher(blob)
-	}
+	root, err := db.persistentRoot()
 	if err != nil {
 		log.Crit("Failed to compute node hash", "err", err)
 	}
@@ -190,6 +178,19 @@ func (db *Database) loadLayers() layer {
 	}
 	// Return single layer with persistent state.
 	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, nil, newBuffer(db.config.WriteBufferSize, nil, nil, 0), nil)
+}
+
+// persistentRoot resolves the root of the state currently persisted in the
+// backing key-value store.
+func (db *Database) persistentRoot() (common.Hash, error) {
+	if db.isUBT {
+		root := rawdb.ReadSnapshotRoot(db.diskdb)
+		if root == (common.Hash{}) {
+			root = types.EmptyBinaryHash
+		}
+		return root, nil
+	}
+	return db.hasher(rawdb.ReadAccountTrieNode(db.diskdb, nil))
 }
 
 // loadDiskLayer reads the binary blob from the layer journal, reconstructing
@@ -390,7 +391,7 @@ func (db *Database) Journal(root common.Hash) error {
 	}
 	// Secondly write out the state root in disk, ensure all layers
 	// on top are continuous with disk.
-	diskRoot, err := db.hasher(rawdb.ReadAccountTrieNode(db.diskdb, nil))
+	diskRoot, err := db.persistentRoot()
 	if err != nil {
 		return err
 	}
