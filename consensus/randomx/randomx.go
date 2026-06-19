@@ -9,7 +9,6 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-tkmchain library. If not, see <http://www.gnu.org/licenses/>.
 
-
 //go:build cgo && randomx
 // +build cgo,randomx
 
@@ -46,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 )
 
@@ -206,7 +206,7 @@ type RandomX struct {
 func NewFaker() *RandomX {
 	// Create a minimal config for testing
 	config := DefaultConfig()
-	
+
 	// Use a fake cache for testing
 	fakeRx := &RandomX{
 		config:           config,
@@ -215,7 +215,7 @@ func NewFaker() *RandomX {
 		rotationInterval: 100,
 		stopCh:           make(chan struct{}),
 	}
-	
+
 	return fakeRx
 }
 func DefaultConfig() *Config {
@@ -625,6 +625,15 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 	if header.Number == nil {
 		header.Number = new(big.Int)
 	}
+	if header.UncleHash == (common.Hash{}) {
+		header.UncleHash = types.EmptyUncleHash
+	}
+	if header.TxHash == (common.Hash{}) {
+		header.TxHash = types.EmptyTxsHash
+	}
+	if header.ReceiptHash == (common.Hash{}) {
+		header.ReceiptHash = types.EmptyReceiptsHash
+	}
 
 	if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
 		if header.Number.Uint64() == 0 {
@@ -802,8 +811,9 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	if len(receipts) > 0 {
 		header.Bloom = types.MergeBloom(receipts)
 	}
+	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
-	return types.NewBlock(header, body, receipts, nil), nil
+	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
 }
 
 // distributeRewardsToState distributes rewards using vm.StateDB interface

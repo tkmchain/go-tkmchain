@@ -220,6 +220,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	newHeader := types.CopyHeader(header)
 	newHeader.MixDigest = digest
 	newHeader.Nonce = nonce
+	prepareSealedHeader(newHeader, task.block)
 	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
 		// RandomX miners hash sealHash || nonce, but external miner RPC clients do
 		// not all agree on byte order for nonce and result hash fields. RPC block
@@ -242,6 +243,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		} {
 			newHeader.Nonce = attempt.nonce
 			newHeader.MixDigest = attempt.digest
+			prepareSealedHeader(newHeader, task.block)
 			if retryErr = miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr == nil {
 				break
 			}
@@ -266,6 +268,23 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		log.Warn("Timeout submitting block to result channel")
 		return false
 	}
+}
+
+func prepareSealedHeader(header *types.Header, block *types.Block) {
+	if header.TxHash == (common.Hash{}) {
+		header.TxHash = block.TxHash()
+	}
+	if header.ReceiptHash == (common.Hash{}) {
+		header.ReceiptHash = block.ReceiptHash()
+	}
+	if header.UncleHash == (common.Hash{}) {
+		header.UncleHash = block.UncleHash()
+	}
+	if header.Root == (common.Hash{}) {
+		header.Root = block.Root()
+	}
+	header.GasUsed = block.GasUsed()
+	header.Bloom = block.Bloom()
 }
 
 func reverseHashBytes(hash common.Hash) common.Hash {
