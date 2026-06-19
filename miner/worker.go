@@ -188,6 +188,9 @@ type worker struct {
 
 	pendingMu    sync.RWMutex
 	pendingTasks map[common.Hash]*task
+	persistMu    sync.Mutex
+	sealMu       sync.Mutex
+	sealStopCh   chan struct{}
 
 	snapshotMu    sync.RWMutex // The lock used to protect the block snapshot and state snapshot
 	snapshotBlock *types.Block
@@ -317,6 +320,8 @@ func (w *worker) start() {
 // stop sets the running status as 0.
 func (w *worker) stop() {
 	atomic.StoreInt32(&w.running, 0)
+	w.interruptSealing()
+	w.drainSealedBlocks()
 }
 
 // isRunning returns an indicator whether worker is running or not.
@@ -327,6 +332,7 @@ func (w *worker) isRunning() bool {
 // close terminates all background threads maintained by the worker.
 // Note the worker does not support being closed multiple times.
 func (w *worker) close() {
+	w.stop()
 	close(w.exitCh)
 }
 
@@ -527,21 +533,19 @@ func (w *worker) mainLoop() {
 	}
 }
 
+func (w *worker) interruptSealing() {
+	w.sealMu.Lock()
+	defer w.sealMu.Unlock()
+	if w.sealStopCh != nil {
+		close(w.sealStopCh)
+		w.sealStopCh = nil
+	}
+}
+
 // taskLoop is a standalone goroutine to fetch sealing task from the generator and
 // push them to consensus engine.
 func (w *worker) taskLoop() {
-	var (
-		stopCh chan struct{}
-		prev   common.Hash
-	)
-
-	// interrupt aborts the in-flight sealing task.
-	interrupt := func() {
-		if stopCh != nil {
-			close(stopCh)
-			stopCh = nil
-		}
-	}
+	var prev common.Hash
 	for {
 		select {
 		case task := <-w.taskCh:
@@ -554,8 +558,12 @@ func (w *worker) taskLoop() {
 				continue
 			}
 			// Interrupt previous sealing operation
-			interrupt()
-			stopCh, prev = make(chan struct{}), sealHash
+			w.interruptSealing()
+			stopCh := make(chan struct{})
+			w.sealMu.Lock()
+			w.sealStopCh = stopCh
+			w.sealMu.Unlock()
+			prev = sealHash
 
 			if w.skipSealHook != nil && w.skipSealHook(task) {
 				continue
@@ -571,7 +579,7 @@ func (w *worker) taskLoop() {
 				log.Warn("Block sealing failed", "err", err)
 			}
 		case <-w.exitCh:
-			interrupt()
+			w.interruptSealing()
 			return
 		}
 	}
@@ -583,72 +591,96 @@ func (w *worker) resultLoop() {
 	for {
 		select {
 		case block := <-w.resultCh:
-			// Short circuit when receiving empty result.
-			if block == nil {
-				continue
-			}
-			// Short circuit when receiving duplicate result caused by resubmitting.
-			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
-				continue
-			}
-			var (
-				sealhash = w.engine.SealHash(block.Header())
-				hash     = block.Hash()
-			)
-			w.pendingMu.RLock()
-			task, exist := w.pendingTasks[sealhash]
-			w.pendingMu.RUnlock()
-			if !exist {
-				log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", hash)
-				continue
-			}
-			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
-			var (
-				receipts = make([]*types.Receipt, len(task.receipts))
-				logs     []*types.Log
-			)
-			for i, receipt := range task.receipts {
-				receipts[i] = new(types.Receipt)
-				*receipts[i] = *receipt
-				// Update the block hash in all logs since it is now available and not when the
-				// receipt/log of individual transactions were created.
-				for _, log := range receipt.Logs {
-					log.BlockHash = hash
-				}
-				logs = append(logs, receipt.Logs...)
-			}
-			// Commit block and state to database.
-			_, err := w.chain.InsertChain(types.Blocks{block})
-			if err != nil {
-				log.Error("Failed writing block to chain", "err", err)
-				continue
-			}
-			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
-				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
-
-			// ========== CRITICAL FIX FOR RANDOMX ==========
-			// Force state commit to disk after block insertion.
-			// For path‑based scheme this may already have been done,
-			// but calling Commit again with the root is safe (ignores "disk layer").
-			if triedb := w.chain.TrieDB(); triedb != nil {
-				if err := triedb.Commit(block.Root(), true); err != nil && !strings.Contains(err.Error(), "disk layer") {
-					log.Error("Failed to commit state after mining", "err", err)
-				} else if err == nil {
-					log.Debug("State committed after mining", "block", block.NumberU64(), "root", block.Root())
-				}
-			}
-			// =============================================
-
-			// Broadcast the block and announce chain insertion event
-			_ = logs
-
-			// Insert the block into the set of pending ones to resultLoop for confirmations
-			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
-
+			w.persistSealedBlock(block)
 		case <-w.exitCh:
+			for {
+				select {
+				case block := <-w.resultCh:
+					w.persistSealedBlock(block)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (w *worker) drainSealedBlocks() {
+	for {
+		select {
+		case block := <-w.resultCh:
+			w.persistSealedBlock(block)
+		default:
+			w.persistMu.Lock()
+			w.persistMu.Unlock()
 			return
 		}
 	}
+}
+
+func (w *worker) persistSealedBlock(block *types.Block) {
+	w.persistMu.Lock()
+	defer w.persistMu.Unlock()
+
+	// Short circuit when receiving empty result.
+	if block == nil {
+		return
+	}
+	// Short circuit when receiving duplicate result caused by resubmitting.
+	if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+		return
+	}
+	var (
+		sealhash = w.engine.SealHash(block.Header())
+		hash     = block.Hash()
+	)
+	w.pendingMu.RLock()
+	task, exist := w.pendingTasks[sealhash]
+	w.pendingMu.RUnlock()
+	if !exist {
+		log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", hash)
+		return
+	}
+	// Different block could share same sealhash, deep copy here to prevent write-write conflict.
+	var (
+		receipts = make([]*types.Receipt, len(task.receipts))
+		logs     []*types.Log
+	)
+	for i, receipt := range task.receipts {
+		receipts[i] = new(types.Receipt)
+		*receipts[i] = *receipt
+		// Update the block hash in all logs since it is now available and not when the
+		// receipt/log of individual transactions were created.
+		for _, log := range receipt.Logs {
+			log.BlockHash = hash
+		}
+		logs = append(logs, receipt.Logs...)
+	}
+	// Commit block and state to database.
+	_, err := w.chain.InsertChain(types.Blocks{block})
+	if err != nil {
+		log.Error("Failed writing block to chain", "err", err)
+		return
+	}
+	log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
+		"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
+
+	// Force state commit to disk after block insertion.
+	// For path-based scheme this may already have been done,
+	// but calling Commit again with the root is safe (ignores "disk layer").
+	if triedb := w.chain.TrieDB(); triedb != nil {
+		if err := triedb.Commit(block.Root(), true); err != nil && !strings.Contains(err.Error(), "disk layer") {
+			log.Error("Failed to commit state after mining", "err", err)
+		} else if err == nil {
+			log.Debug("State committed after mining", "block", block.NumberU64(), "root", block.Root())
+		}
+	}
+
+	// Broadcast the block and announce chain insertion event
+	_ = logs
+
+	// Insert the block into the set of pending ones to resultLoop for confirmations
+	w.unconfirmed.Insert(block.NumberU64(), block.Hash())
 }
 
 // makeCurrent creates a new environment for the current cycle.
@@ -1029,18 +1061,17 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	return nil
 }
 
-
 func (w *worker) SubmitSealedBlock(block *types.Block) {
-        select {
-        case w.resultCh <- block:
-                log.Info("Sealed block submitted to result channel", "number", block.NumberU64())
-        default:
-                log.Warn("Result channel full, block submission delayed", "number", block.NumberU64())
-        }
+	select {
+	case w.resultCh <- block:
+		log.Info("Sealed block submitted to result channel", "number", block.NumberU64())
+	default:
+		log.Warn("Result channel full, block submission delayed", "number", block.NumberU64())
+	}
 }
 
 // Force work generation for external miners
 func (w *worker) generateWorkForExternal() {
-    log.Info("Generating work for external miners")
-    w.commitNewWork(nil, false, time.Now().Unix())
+	log.Info("Generating work for external miners")
+	w.commitNewWork(nil, false, time.Now().Unix())
 }
