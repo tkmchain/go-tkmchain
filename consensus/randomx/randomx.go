@@ -680,6 +680,14 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 	currentDiff := new(big.Int).Set(parent.Difficulty)
 	minDiff := MinDifficulty
 
+	if diff > targetTime*10 {
+		log.Info("Long gap since parent block, keeping current difficulty",
+			"difficulty", currentDiff,
+			"block_time", diff,
+			"target_time", targetTime)
+		return currentDiff
+	}
+
 	if diff > 0 {
 		// Calculate ratio: (targetTime * 100) / diff
 		ratio := new(big.Int).SetUint64(targetTime)

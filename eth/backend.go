@@ -645,14 +645,19 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 	}
 
 	highest := localHeight
+	checked := false
 	for _, peer := range s.handler.peers.all() {
-		_, td := peer.Head()
-		if td == nil || !td.IsUint64() {
+		rangeUpdate := peer.BlockRange()
+		if rangeUpdate == nil {
 			continue
 		}
-		if height := td.Uint64(); height > highest {
-			highest = height
+		checked = true
+		if rangeUpdate.LatestBlock > highest {
+			highest = rangeUpdate.LatestBlock
 		}
+	}
+	if !checked {
+		return false, "waiting for peer head check", localHeight, highest
 	}
 
 	if highest > localHeight {
