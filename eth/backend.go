@@ -766,6 +766,13 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 }
 
 func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) bool {
+	s.lock.Lock()
+	s.removeUnderfundedRotatingKingsLocked()
+	if s.isRotatingKingRegisteredLocked(address) {
+		s.lock.Unlock()
+		return false
+	}
+	s.lock.Unlock()
 	if err := s.ensureRotatingKingEligible(address); err != nil {
 		log.Warn("Ignoring ineligible rotating king update", "address", address.Hex(), "err", err)
 		return false
@@ -776,6 +783,9 @@ func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) bo
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if s.isRotatingKingRegisteredLocked(address) {
+		return false
+	}
 	return s.recordRotatingKingLocked(address, unlock, s.unlockHeightForTime(unlock))
 }
 
@@ -812,6 +822,13 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 	s.addRotatingKingAddressLocked(address)
 	s.persistRotatingKingLocksLocked()
 	return true
+}
+
+func (s *Ethereum) isRotatingKingRegisteredLocked(address common.Address) bool {
+	if _, ok := s.rkLocks[address]; ok {
+		return true
+	}
+	return indexOfRotatingKing(s.kingAddresses, address) >= 0
 }
 
 func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {
@@ -884,7 +901,7 @@ func (s *Ethereum) loadRotatingKingLocks() {
 func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 	head := s.blockchain.CurrentBlock()
 	if head == nil {
-		return false
+		return s.removeUnderfundedRotatingKingsLocked()
 	}
 	currentHeight := head.Number.Uint64()
 	changed := false
@@ -895,6 +912,40 @@ func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 		}
 	}
 	if changed {
+		s.persistRotatingKingLocksLocked()
+	}
+	if s.removeUnderfundedRotatingKingsLocked() {
+		changed = true
+	}
+	return changed
+}
+
+func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
+	if s.blockchain == nil {
+		return false
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return false
+	}
+	statedb, err := s.blockchain.StateAt(head)
+	if err != nil {
+		log.Warn("Failed to check rotating king balances", "err", err)
+		return false
+	}
+	changed := false
+	filtered := s.kingAddresses[:0]
+	for _, address := range s.kingAddresses {
+		if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
+			delete(s.rkLocks, address)
+			changed = true
+			log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
+			continue
+		}
+		filtered = append(filtered, address)
+	}
+	if changed {
+		s.kingAddresses = filtered
 		s.persistRotatingKingLocksLocked()
 	}
 	return changed

@@ -69,6 +69,12 @@ func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
 	if _, ok := eth.rkLocks[eligible]; !ok {
 		t.Fatalf("eligible address missing lock entry")
 	}
+	if _, err := api.Add(eligible); err == nil {
+		t.Fatalf("Add(%s) succeeded for already registered address", eligible.Hex())
+	}
+	if len(eth.kingAddresses) != 1 || eth.kingAddresses[0] != eligible {
+		t.Fatalf("duplicate registration changed rotating king schedule: %v", eth.kingAddresses)
+	}
 }
 
 func TestNoteRotatingKingRejectsIneligibleUpdate(t *testing.T) {
@@ -83,6 +89,28 @@ func TestNoteRotatingKingRejectsIneligibleUpdate(t *testing.T) {
 	}
 	if len(eth.rkLocks) != 0 {
 		t.Fatalf("ineligible update created rotating king locks: %v", eth.rkLocks)
+	}
+}
+
+func TestListRemovesUnderfundedRotatingKings(t *testing.T) {
+	funded := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	api, eth := newTestKingAPI(t, types.GenesisAlloc{
+		funded:      {Balance: rkRequiredStake},
+		underfunded: {Balance: new(big.Int).Sub(rkRequiredStake, big.NewInt(1))},
+	})
+	eth.kingAddresses = []common.Address{funded, underfunded}
+	eth.rkLocks[underfunded] = rkLockInfo{UnlockHeight: 100}
+
+	list := api.List()
+	if len(list) != 1 || list[0].Address != funded {
+		t.Fatalf("rotating king list = %+v, want only %s", list, funded.Hex())
+	}
+	if _, ok := eth.rkLocks[underfunded]; ok {
+		t.Fatalf("underfunded rotating king lock was not removed")
+	}
+	if len(eth.kingAddresses) != 1 || eth.kingAddresses[0] != funded {
+		t.Fatalf("rotating king schedule = %v, want [%v]", eth.kingAddresses, funded)
 	}
 }
 

@@ -243,11 +243,22 @@ func (api *KingAPI) AddCheckpoint(number hexutil.Uint64, hash common.Hash) (bool
 
 // Add registers an address as rotating king if stake requirement is met.
 func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
+	api.e.lock.Lock()
+	api.e.removeUnderfundedRotatingKingsLocked()
+	if api.e.isRotatingKingRegisteredLocked(address) {
+		api.e.lock.Unlock()
+		return RKStatus{}, fmt.Errorf("rotating king address already registered: %s", address.Hex())
+	}
+	api.e.lock.Unlock()
 	if err := api.e.ensureRotatingKingEligible(address); err != nil {
 		return RKStatus{}, err
 	}
 	unlock := time.Now().UTC().Add(rkLockPeriod)
 	api.e.lock.Lock()
+	if api.e.isRotatingKingRegisteredLocked(address) {
+		api.e.lock.Unlock()
+		return RKStatus{}, fmt.Errorf("rotating king address already registered: %s", address.Hex())
+	}
 	api.e.recordRotatingKingLocked(address, unlock, api.e.unlockHeightForTime(unlock))
 	status := api.statusLocked(address)
 	api.e.lock.Unlock()
