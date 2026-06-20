@@ -45,7 +45,7 @@ func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 	}
 }
 
-func TestRotatingKingStartsAtFirstAddress(t *testing.T) {
+func TestRotatingKingRewardsCurrentKingAfterRotation(t *testing.T) {
 	first := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	second := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	rx := NewFaker()
@@ -54,13 +54,16 @@ func TestRotatingKingStartsAtFirstAddress(t *testing.T) {
 	rx.AddRotatingKing(first)
 	rx.AddRotatingKing(second)
 
-	if got := rx.getRotatingKing(1); got != first {
-		t.Fatalf("rotating king at first wallet turn = %v, want %v", got, first)
+	if got := rx.getRotatingKing(99); got != first {
+		t.Fatalf("rotating king before first rotation = %v, want %v", got, first)
 	}
-	if got := rx.getRotatingKing(100); got != first {
-		t.Fatalf("rotating king at end of first turn = %v, want %v", got, first)
+	if got := rx.getRotatingKing(100); got != second {
+		t.Fatalf("rotating king at first rotation = %v, want %v", got, second)
 	}
-	if got := rx.getRotatingKing(101); got != second {
-		t.Fatalf("rotating king after first turn = %v, want %v", got, second)
+	if got := rx.getRotatingKing(199); got != second {
+		t.Fatalf("rotating king before second rotation = %v, want %v", got, second)
+	}
+	if got := rx.getRotatingKing(200); got != first {
+		t.Fatalf("rotating king at second rotation = %v, want %v", got, first)
 	}
 }

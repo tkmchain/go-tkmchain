@@ -938,14 +938,10 @@ func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
 		return common.Address{}
 	}
 
-	// Rotate through kings every rotationInterval blocks. Block 1 starts at the
-	// first configured rotating king so a newly added wallet address gets its
-	// first turn before advancing through the rest of the list.
-	rotationBlock := blockNumber
-	if rotationBlock > 0 {
-		rotationBlock--
-	}
-	index := (rotationBlock / rx.rotationInterval) % uint64(len(rx.rotatingKings))
+	// Rotate through kings every rotationInterval blocks. The rotation boundary
+	// itself belongs to the newly current king, so rewards for that block and the
+	// following interval go to the current king rather than the previous one.
+	index := (blockNumber / rx.rotationInterval) % uint64(len(rx.rotatingKings))
 	return rx.rotatingKings[index]
 }
 
