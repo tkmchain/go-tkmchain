@@ -588,6 +588,14 @@ func (p *Peer) SendRotatingKingUpdate(msg RotatingKingUpdatePacket) error {
 	return p2p.Send(p.rw, RotatingKingUpdateMsg, &msg)
 }
 
+// SendCheckpointUpdate sends an immutable checkpoint announcement to the peer.
+func (p *Peer) SendCheckpointUpdate(msg CheckpointUpdatePacket) error {
+	if p.version < ETH69 {
+		return nil
+	}
+	return p2p.Send(p.rw, CheckpointUpdateMsg, &msg)
+}
+
 // knownCache is a cache for known hashes.
 type knownCache struct {
 	hashes mapset.Set[common.Hash]

@@ -18,7 +18,9 @@ package params
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -31,6 +33,8 @@ type Checkpoint struct {
 
 // Checkpoints holds all hardcoded checkpoints for a given network.
 type Checkpoints struct {
+	lock sync.RWMutex
+
 	// Map from block number to block hash
 	Points map[uint64]common.Hash
 }
@@ -49,11 +53,11 @@ func initRandomXCheckpoints() *Checkpoints {
 	}
 	// Real checkpoint: block 0 (genesis) must match the actual genesis hash.
 	cp.Points[0] = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
-        cp.Points[1] = common.HexToHash("0x7dc591631adf306577218868d080ff4724fb46953a26a594f72ccb23e09bd7bd")
-        cp.Points[2] = common.HexToHash("0x537934c4f8d992a8627afd5368b0e627d858e1623093add7620c1d66e547bb18")
-        cp.Points[3] = common.HexToHash("0x71d1f30a50636ed6501ea2ce2a9516ee3f637df8f5dca480179e585f31049c64")
-        cp.Points[4] = common.HexToHash("0x9ab25c0e53c87cd99e1e7049cbaad23fa3bc4d16334ee411ae4150057a28c983")
-        cp.Points[10] = common.HexToHash("0xa3db81782609a6da237d32a248c039d6cfb5223b5f5532b547c841e2814a882c")
+	cp.Points[1] = common.HexToHash("0x7dc591631adf306577218868d080ff4724fb46953a26a594f72ccb23e09bd7bd")
+	cp.Points[2] = common.HexToHash("0x537934c4f8d992a8627afd5368b0e627d858e1623093add7620c1d66e547bb18")
+	cp.Points[3] = common.HexToHash("0x71d1f30a50636ed6501ea2ce2a9516ee3f637df8f5dca480179e585f31049c64")
+	cp.Points[4] = common.HexToHash("0x9ab25c0e53c87cd99e1e7049cbaad23fa3bc4d16334ee411ae4150057a28c983")
+	cp.Points[10] = common.HexToHash("0xa3db81782609a6da237d32a248c039d6cfb5223b5f5532b547c841e2814a882c")
 	// Add more checkpoints at strategic heights
 	// cp.Points[1000] = common.HexToHash("0x...")
 	// cp.Points[2000] = common.HexToHash("0x...")
@@ -67,8 +71,31 @@ func SetCheckpointValidation(enabled bool) {
 	CheckpointValidationEnabled = enabled
 }
 
+// AddCheckpoint adds an immutable checkpoint. Existing checkpoints cannot be changed.
+func (c *Checkpoints) AddCheckpoint(number uint64, hash common.Hash) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if existing, ok := c.Points[number]; ok {
+		if existing == hash {
+			return nil
+		}
+		return fmt.Errorf("checkpoint already set at block %d: have %s, want %s", number, existing, hash)
+	}
+	c.Points[number] = hash
+	return nil
+}
+
+// AddCheckpoint adds a globally configured immutable checkpoint.
+func AddCheckpoint(number uint64, hash common.Hash) error {
+	return RandomXCheckpoints.AddCheckpoint(number, hash)
+}
+
 // GetCheckpoint returns the hardcoded block hash for a given height, if any.
 func (c *Checkpoints) GetCheckpoint(number uint64) (common.Hash, bool) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	hash, ok := c.Points[number]
 	return hash, ok
 }
@@ -81,6 +108,9 @@ func GetCheckpoint(number uint64) (common.Hash, bool) {
 
 // All returns all checkpoints sorted by block number.
 func (c *Checkpoints) All() []Checkpoint {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
 	checkpoints := make([]Checkpoint, 0, len(c.Points))
 	for number, hash := range c.Points {
 		checkpoints = append(checkpoints, Checkpoint{Number: number, Hash: hash})

@@ -92,6 +92,12 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return nil
 
+	case *eth.CheckpointUpdatePacket:
+		if h.checkpointUpdate != nil {
+			h.checkpointUpdate(packet.Number, packet.Hash, peer.ID())
+		}
+		return nil
+
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
 	}

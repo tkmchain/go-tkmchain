@@ -43,7 +43,7 @@ var ProtocolVersions = []uint{ETH70, ETH69}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH69: 19, ETH70: 19}
+var protocolLengths = map[uint]uint64{ETH69: 20, ETH70: 20}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -67,6 +67,7 @@ const (
 	ReceiptsMsg                   = 0x10
 	BlockRangeUpdateMsg           = 0x11
 	RotatingKingUpdateMsg         = 0x12
+	CheckpointUpdateMsg           = 0x13
 )
 
 var (
@@ -295,6 +296,12 @@ type RotatingKingUpdatePacket struct {
 	UnlockTime uint64
 }
 
+// CheckpointUpdatePacket announces a newly accepted immutable checkpoint.
+type CheckpointUpdatePacket struct {
+	Number uint64
+	Hash   common.Hash
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -336,3 +343,6 @@ func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }
 
 func (*RotatingKingUpdatePacket) Name() string { return "RotatingKingUpdate" }
 func (*RotatingKingUpdatePacket) Kind() byte   { return RotatingKingUpdateMsg }
+
+func (*CheckpointUpdatePacket) Name() string { return "CheckpointUpdate" }
+func (*CheckpointUpdatePacket) Kind() byte   { return CheckpointUpdateMsg }

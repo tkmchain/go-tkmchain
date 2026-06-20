@@ -110,6 +110,7 @@ type handlerConfig struct {
 	BloomCache         uint64                 // Megabytes to alloc for snap sync bloom
 	RequiredBlocks     map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 	RotatingKingUpdate func(common.Address, time.Time, string)
+	CheckpointUpdate   func(uint64, common.Hash, string)
 }
 
 type downloaderBlockChain struct {
@@ -168,6 +169,7 @@ type handler struct {
 
 	requiredBlocks     map[uint64]common.Hash
 	rotatingKingUpdate func(common.Address, time.Time, string)
+	checkpointUpdate   func(uint64, common.Hash, string)
 
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
@@ -190,6 +192,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		txBroadcastKey:     newBroadcastChoiceKey(),
 		requiredBlocks:     config.RequiredBlocks,
 		rotatingKingUpdate: config.RotatingKingUpdate,
+		checkpointUpdate:   config.CheckpointUpdate,
 		quitSync:           make(chan struct{}),
 		handlerDoneCh:      make(chan struct{}),
 		handlerStartCh:     make(chan struct{}),

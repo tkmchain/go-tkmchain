@@ -403,6 +403,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		BloomCache:         uint64(cacheLimit),
 		RequiredBlocks:     config.RequiredBlocks,
 		RotatingKingUpdate: eth.noteRotatingKingFromPeer,
+		CheckpointUpdate:   eth.noteCheckpointFromPeer,
 	}); err != nil {
 		return nil, err
 	}
@@ -497,6 +498,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		},
 		{
 			Namespace: "king",
+			Service:   NewKingAPI(s),
+		},
+		{
+			Namespace: "mainking",
 			Service:   NewKingAPI(s),
 		},
 		{

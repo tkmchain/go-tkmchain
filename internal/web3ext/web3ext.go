@@ -18,18 +18,19 @@
 package web3ext
 
 var Modules = map[string]string{
-	"admin":   AdminJs,
-	"clique":  CliqueJs,
-	"debug":   DebugJs,
-	"eth":     EthJs,
-	"tkm":     EthJs,
-	"miner":   MinerJs,
-	"net":     NetJs,
-	"rpc":     RpcJs,
-	"rk":      RkJs,
-	"randomx": RandomXJs,
-	"txpool":  TxpoolJs,
-	"dev":     DevJs,
+	"admin":    AdminJs,
+	"clique":   CliqueJs,
+	"debug":    DebugJs,
+	"eth":      EthJs,
+	"tkm":      EthJs,
+	"miner":    MinerJs,
+	"net":      NetJs,
+	"rpc":      RpcJs,
+	"rk":       RkJs,
+	"mainking": MainKingJs,
+	"randomx":  RandomXJs,
+	"txpool":   TxpoolJs,
+	"dev":      DevJs,
 }
 
 const RkJs = `
@@ -55,6 +56,19 @@ web3._extend({
 			name: 'stats',
 			call: 'rk_getKingStats',
 			params: 0
+		})
+	]
+});
+`
+
+const MainKingJs = `
+web3._extend({
+	property: 'mainking',
+	methods: [
+		new web3._extend.Method({
+			name: 'addCheckpoint',
+			call: 'mainking_addCheckpoint',
+			params: 2
 		})
 	]
 });

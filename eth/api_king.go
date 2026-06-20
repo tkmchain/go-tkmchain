@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
@@ -231,6 +232,15 @@ func (api *KingAPI) GetKingStats(_ *interface{}) KingStats {
 	}
 }
 
+// AddCheckpoint adds an immutable checkpoint after the main king node verifies the local block hash.
+func (api *KingAPI) AddCheckpoint(number hexutil.Uint64, hash common.Hash) (bool, error) {
+	if err := api.e.addCheckpoint(uint64(number), hash); err != nil {
+		return false, err
+	}
+	api.e.broadcastCheckpoint(uint64(number), hash)
+	return true, nil
+}
+
 // Add registers an address as rotating king if stake requirement is met.
 func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	if err := api.e.ensureRotatingKingEligible(address); err != nil {
@@ -390,6 +400,70 @@ func (s *Ethereum) broadcastRotatingKingExcept(address common.Address, unlock ti
 		}
 		if err := peer.SendRotatingKingUpdate(msg); err != nil {
 			log.Debug("Failed to announce rotating king", "peer", peer.ID(), "address", address.Hex(), "err", err)
+		}
+	}
+}
+
+func (s *Ethereum) addCheckpoint(number uint64, hash common.Hash) error {
+	mainKing := s.GetMainKingAddress()
+	if mainKing == (common.Address{}) {
+		return fmt.Errorf("main king address is not configured")
+	}
+	if s.config.Miner.Etherbase != mainKing {
+		return fmt.Errorf("checkpoint can only be added by the main king wallet %s", mainKing.Hex())
+	}
+	block := s.blockchain.GetBlockByNumber(number)
+	if block == nil {
+		return fmt.Errorf("block %d is not available locally", number)
+	}
+	if block.Hash() != hash {
+		return fmt.Errorf("checkpoint hash mismatch at block %d: have %s, want %s", number, hash, block.Hash())
+	}
+	return params.AddCheckpoint(number, hash)
+}
+
+func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, peerID string) {
+	block := s.blockchain.GetBlockByNumber(number)
+	if block == nil {
+		log.Warn("Ignoring checkpoint for unavailable block", "number", number, "hash", hash, "peer", peerID)
+		return
+	}
+	if block.Hash() != hash {
+		log.Warn("Ignoring checkpoint with mismatched local block hash", "number", number, "announced", hash, "local", block.Hash(), "peer", peerID)
+		return
+	}
+	if existing, ok := params.GetCheckpoint(number); ok {
+		if existing != hash {
+			log.Warn("Ignoring conflicting checkpoint", "number", number, "hash", hash, "existing", existing, "peer", peerID)
+		}
+		return
+	}
+	if err := params.AddCheckpoint(number, hash); err != nil {
+		log.Warn("Ignoring conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
+		return
+	}
+	s.broadcastCheckpointExcept(number, hash, peerID)
+}
+
+func (s *Ethereum) broadcastCheckpoint(number uint64, hash common.Hash) {
+	s.broadcastCheckpointExcept(number, hash, "")
+}
+
+func (s *Ethereum) broadcastCheckpointExcept(number uint64, hash common.Hash, skip string) {
+	if s.handler == nil {
+		return
+	}
+	peers := s.handler.peers.all()
+	if len(peers) == 0 {
+		return
+	}
+	msg := ethproto.CheckpointUpdatePacket{Number: number, Hash: hash}
+	for _, peer := range peers {
+		if skip != "" && peer.ID() == skip {
+			continue
+		}
+		if err := peer.SendCheckpointUpdate(msg); err != nil {
+			log.Debug("Failed to announce checkpoint", "peer", peer.ID(), "number", number, "hash", hash, "err", err)
 		}
 	}
 }
