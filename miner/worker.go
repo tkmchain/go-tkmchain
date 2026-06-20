@@ -191,6 +191,7 @@ type worker struct {
 	persistMu    sync.Mutex
 	sealMu       sync.Mutex
 	sealStopCh   chan struct{}
+	wg           sync.WaitGroup
 
 	snapshotMu    sync.RWMutex // The lock used to protect the block snapshot and state snapshot
 	snapshotBlock *types.Block
@@ -248,15 +249,21 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend,
 		recommit = minRecommitInterval
 	}
 
-	go worker.mainLoop()
-	go worker.newWorkLoop(recommit)
-	go worker.resultLoop()
-	go worker.taskLoop()
+	worker.wg.Add(4)
+	go worker.run(worker.mainLoop)
+	go worker.run(func() { worker.newWorkLoop(recommit) })
+	go worker.run(worker.resultLoop)
+	go worker.run(worker.taskLoop)
 
 	// Submit first work to initialize pending state.
 	worker.startCh <- struct{}{}
 
 	return worker
+}
+
+func (w *worker) run(fn func()) {
+	defer w.wg.Done()
+	fn()
 }
 
 // setEtherbase sets the etherbase used to initialize the block coinbase field.
@@ -334,6 +341,8 @@ func (w *worker) isRunning() bool {
 func (w *worker) close() {
 	w.stop()
 	close(w.exitCh)
+	w.wg.Wait()
+	w.drainSealedBlocks()
 }
 
 // newWorkLoop is a standalone goroutine to submit new mining work upon received events.
@@ -353,7 +362,11 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			atomic.StoreInt32(interrupt, s)
 		}
 		interrupt = new(int32)
-		w.newWorkCh <- &newWorkReq{interrupt: interrupt, noempty: noempty, timestamp: timestamp}
+		select {
+		case w.newWorkCh <- &newWorkReq{interrupt: interrupt, noempty: noempty, timestamp: timestamp}:
+		case <-w.exitCh:
+			return
+		}
 		timer.Reset(recommit)
 		atomic.StoreInt32(&w.newTxs, 0)
 	}
