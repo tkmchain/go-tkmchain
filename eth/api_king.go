@@ -358,6 +358,10 @@ func (s *Ethereum) totalRotatingKingReward(address common.Address) *big.Int {
 }
 
 func (s *Ethereum) broadcastRotatingKing(address common.Address, unlock time.Time) {
+        s.broadcastRotatingKingExcept(address, unlock, "")
+}
+
+func (s *Ethereum) broadcastRotatingKingExcept(address common.Address, unlock time.Time, skip string) {
         if s.handler == nil {
                 return
         }
@@ -370,6 +374,9 @@ func (s *Ethereum) broadcastRotatingKing(address common.Address, unlock time.Tim
                 UnlockTime: uint64(unlock.Unix()),
         }
         for _, peer := range peers {
+                if skip != "" && peer.ID() == skip {
+                        continue
+                }
                 if err := peer.SendRotatingKingUpdate(msg); err != nil {
                         log.Debug("Failed to announce rotating king", "peer", peer.ID(), "address", address.Hex(), "err", err)
                 }

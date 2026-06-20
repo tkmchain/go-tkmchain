@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -41,5 +42,25 @@ func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 
 	if err := rx.VerifySeal(nil, header); err != errInvalidMixHash {
 		t.Fatalf("unexpected seal error: have %v, want %v", err, errInvalidMixHash)
+	}
+}
+
+func TestRotatingKingStartsAtFirstAddress(t *testing.T) {
+	first := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	second := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	rx := NewFaker()
+	rx.rotatingKings = nil
+	rx.SetRotationInterval(100)
+	rx.AddRotatingKing(first)
+	rx.AddRotatingKing(second)
+
+	if got := rx.getRotatingKing(1); got != first {
+		t.Fatalf("rotating king at first wallet turn = %v, want %v", got, first)
+	}
+	if got := rx.getRotatingKing(100); got != first {
+		t.Fatalf("rotating king at end of first turn = %v, want %v", got, first)
+	}
+	if got := rx.getRotatingKing(101); got != second {
+		t.Fatalf("rotating king after first turn = %v, want %v", got, second)
 	}
 }

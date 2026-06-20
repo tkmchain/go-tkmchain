@@ -900,14 +900,52 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 	log.Info("========================================")
 }
 
+// SetRotationInterval updates how many blocks each rotating king receives rewards for.
+func (rx *RandomX) SetRotationInterval(interval uint64) {
+	if interval == 0 {
+		return
+	}
+	rx.lock.Lock()
+	defer rx.lock.Unlock()
+	rx.rotationInterval = interval
+}
+
+// AddRotatingKing registers an address in the rotating king list if it is not present.
+func (rx *RandomX) AddRotatingKing(address common.Address) {
+	rx.AddRotatingKingAt(address, 0)
+}
+
+// AddRotatingKingAt registers an address in the rotating king list if it is not present.
+func (rx *RandomX) AddRotatingKingAt(address common.Address, _ uint64) {
+	if address == (common.Address{}) {
+		return
+	}
+	rx.lock.Lock()
+	defer rx.lock.Unlock()
+	for _, existing := range rx.rotatingKings {
+		if existing == address {
+			return
+		}
+	}
+	rx.rotatingKings = append(rx.rotatingKings, address)
+}
+
 // getRotatingKing returns the rotating king for a given block
 func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
-	if len(rx.rotatingKings) == 0 {
+	rx.lock.RLock()
+	defer rx.lock.RUnlock()
+	if len(rx.rotatingKings) == 0 || rx.rotationInterval == 0 {
 		return common.Address{}
 	}
 
-	// Rotate through kings every rotationInterval blocks
-	index := (blockNumber / rx.rotationInterval) % uint64(len(rx.rotatingKings))
+	// Rotate through kings every rotationInterval blocks. Block 1 starts at the
+	// first configured rotating king so a newly added wallet address gets its
+	// first turn before advancing through the rest of the list.
+	rotationBlock := blockNumber
+	if rotationBlock > 0 {
+		rotationBlock--
+	}
+	index := (rotationBlock / rx.rotationInterval) % uint64(len(rx.rotatingKings))
 	return rx.rotatingKings[index]
 }
 

@@ -88,7 +88,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 
 	case *eth.RotatingKingUpdatePacket:
 		if h.rotatingKingUpdate != nil {
-			h.rotatingKingUpdate(packet.Address, time.Unix(int64(packet.UnlockTime), 0).UTC())
+			h.rotatingKingUpdate(packet.Address, time.Unix(int64(packet.UnlockTime), 0).UTC(), peer.ID())
 		}
 		return nil
 

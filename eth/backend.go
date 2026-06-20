@@ -402,7 +402,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Sync:               config.SyncMode,
 		BloomCache:         uint64(cacheLimit),
 		RequiredBlocks:     config.RequiredBlocks,
-		RotatingKingUpdate: eth.noteRotatingKing,
+		RotatingKingUpdate: eth.noteRotatingKingFromPeer,
 	}); err != nil {
 		return nil, err
 	}
@@ -760,10 +760,10 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	return info
 }
 
-func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
+func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) bool {
 	if err := s.ensureRotatingKingEligible(address); err != nil {
 		log.Warn("Ignoring ineligible rotating king update", "address", address.Hex(), "err", err)
-		return
+		return false
 	}
 	minimumUnlock := time.Now().UTC().Add(rkLockPeriod)
 	if unlock.Before(minimumUnlock) {
@@ -771,12 +771,18 @@ func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) {
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.recordRotatingKingLocked(address, unlock, s.unlockHeightForTime(unlock))
+	return s.recordRotatingKingLocked(address, unlock, s.unlockHeightForTime(unlock))
 }
 
-func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.Time, unlockHeight uint64) {
+func (s *Ethereum) noteRotatingKingFromPeer(address common.Address, unlock time.Time, peerID string) {
+	if s.noteRotatingKing(address, unlock) {
+		s.broadcastRotatingKingExcept(address, unlock, peerID)
+	}
+}
+
+func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.Time, unlockHeight uint64) bool {
 	if address == (common.Address{}) {
-		return
+		return false
 	}
 	activationHeight := uint64(0)
 	if indexOfRotatingKing(s.kingAddresses, address) < 0 {
@@ -794,12 +800,13 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 			info.ActivationHeight = current.ActivationHeight
 		}
 		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight {
-			return
+			return false
 		}
 	}
 	s.rkLocks[address] = info
 	s.addRotatingKingAddressLocked(address)
 	s.persistRotatingKingLocksLocked()
+	return true
 }
 
 func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {

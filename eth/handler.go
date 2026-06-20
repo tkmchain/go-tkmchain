@@ -109,7 +109,7 @@ type handlerConfig struct {
 	Sync               ethconfig.SyncMode     // Whether to snap or full sync
 	BloomCache         uint64                 // Megabytes to alloc for snap sync bloom
 	RequiredBlocks     map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
-	RotatingKingUpdate func(common.Address, time.Time)
+	RotatingKingUpdate func(common.Address, time.Time, string)
 }
 
 type downloaderBlockChain struct {
@@ -167,7 +167,7 @@ type handler struct {
 	blockRange *blockRangeState
 
 	requiredBlocks     map[uint64]common.Hash
-	rotatingKingUpdate func(common.Address, time.Time)
+	rotatingKingUpdate func(common.Address, time.Time, string)
 
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
