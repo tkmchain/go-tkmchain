@@ -716,7 +716,7 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 			newDiff.Set(MaxDifficulty)
 		}
 
-		log.Info("�� Difficulty adjustment (2x cap)",
+		log.Info("Difficulty adjustment (2x cap)",
 			"old", currentDiff,
 			"new", newDiff,
 			"ratio", fmt.Sprintf("%.2f", float64(ratio.Int64())/100),
@@ -777,14 +777,14 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	log.Info("�� Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+	log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
 	// Calculate block reward
 	blockReward := CalculateBlockReward(header.Number.Uint64())
 	totalFees := big.NewInt(0)
 	totalReward := CalculateTotalReward(blockReward, totalFees)
 
-	log.Info("�� Finalize - Block reward",
+	log.Info("Finalize - Block reward",
 		"block", header.Number.Uint64(),
 		"reward", FormatANTD(blockReward),
 		"total", FormatANTD(totalReward))
@@ -797,7 +797,7 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 
 // FinalizeAndAssemble implements consensus.Engine
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	log.Info("�� FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+	log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
 	// Calculate block reward
 	blockReward := CalculateBlockReward(header.Number.Uint64())
@@ -852,7 +852,7 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 
 	// Log distribution
 	log.Info("========================================")
-	log.Info("�� REWARD DISTRIBUTION")
+	log.Info("REWARD DISTRIBUTION")
 	log.Info("========================================")
 	log.Info("Block", "number", blockNumber, "totalReward", FormatANTD(totalRewardBig))
 
@@ -894,7 +894,7 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 	}
 
 	log.Info("========================================")
-	log.Info("�� REWARD DISTRIBUTION COMPLETE",
+	log.Info("REWARD DISTRIBUTION COMPLETE",
 		"block", blockNumber,
 		"totalReward", FormatANTD(totalReward))
 	log.Info("========================================")
