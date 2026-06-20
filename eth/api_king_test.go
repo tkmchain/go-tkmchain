@@ -39,9 +39,9 @@ func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
 	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	emptyBalance := common.HexToAddress("0x0000000000000000000000000000000000000003")
 	api, eth := newTestKingAPI(t, types.GenesisAlloc{
-		(common.Address{}): {Balance: new(big.Int).Set(rkRequiredStake)},
-		eligible:           {Balance: new(big.Int).Set(rkRequiredStake)},
-		underfunded:        {Balance: new(big.Int).Sub(rkRequiredStake, big.NewInt(1))},
+		(common.Address{}): {Balance: new(big.Int).Add(rkRequiredStake, rkRegistrationFee)},
+		eligible:           {Balance: new(big.Int).Add(rkRequiredStake, rkRegistrationFee)},
+		underfunded:        {Balance: new(big.Int).Sub(new(big.Int).Add(rkRequiredStake, rkRegistrationFee), big.NewInt(1))},
 	})
 
 	for _, address := range []common.Address{common.Address{}, underfunded, emptyBalance} {
@@ -74,7 +74,7 @@ func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
 func TestNoteRotatingKingRejectsIneligibleUpdate(t *testing.T) {
 	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	_, eth := newTestKingAPI(t, types.GenesisAlloc{
-		underfunded: {Balance: new(big.Int).Sub(rkRequiredStake, big.NewInt(1))},
+		underfunded: {Balance: new(big.Int).Sub(new(big.Int).Add(rkRequiredStake, rkRegistrationFee), big.NewInt(1))},
 	})
 
 	eth.noteRotatingKing(underfunded, time.Now().UTC().Add(rkLockPeriod))

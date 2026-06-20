@@ -876,6 +876,25 @@ func (s *Ethereum) loadRotatingKingLocks() {
 	}
 }
 
+func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return false
+	}
+	currentHeight := head.Number.Uint64()
+	changed := false
+	for address, info := range s.rkLocks {
+		if info.UnlockHeight != 0 && currentHeight >= info.UnlockHeight {
+			delete(s.rkLocks, address)
+			changed = true
+		}
+	}
+	if changed {
+		s.persistRotatingKingLocksLocked()
+	}
+	return changed
+}
+
 func (s *Ethereum) persistRotatingKingLocksLocked() {
 	locks := make([]rawdb.RotatingKingLock, 0, len(s.rkLocks))
 	for address, info := range s.rkLocks {
