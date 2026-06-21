@@ -1,4 +1,4 @@
-```markdown
+
 # Go Tkmchain
 
 Golang execution layer implementation of the Tkmchain protocol with **RandomX PoW** and **Rotating Kings (RK)** governance.
@@ -15,14 +15,14 @@ Automated builds are available for stable releases and the unstable master branc
 
 ---
 
-## ��️ Rotating Kings (RK) Governance
+## otating Kings (RK) Governance
 
 Tkmchain features a unique **Rotating Kings** governance system with a 10/40/50 reward split:
 
 | Role | Share | Description |
 |------|-------|-------------|
-| �� **Main King** | 10% | Permanent king, network leadership |
-| �� **Rotating King** | 40% | Rotates every 100 blocks, decentralized governance |
+|    **Main King** | 10% | Permanent king, network leadership |
+|    **Rotating King** | 40% | Rotates every 100 blocks, decentralized governance |
 | ⛏️ **Miner** | 50% | Secures the network via RandomX mining |
 
 ### Reward Distribution
