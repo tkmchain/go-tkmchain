@@ -95,7 +95,8 @@ type Ethereum struct {
 	dropper *dropper
 
 	// DB interfaces
-	chainDb ethdb.Database // Block chain database
+	chainDb      ethdb.Database // Block chain database
+	checkpointDb ethdb.Database // Immutable checkpoint database
 
 	engine         consensus.Engine
 	accountManager *accounts.Manager
@@ -160,6 +161,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	chainDb, err := stack.OpenDatabaseWithOptions("chaindata", dbOptions)
 	if err != nil {
+		return nil, err
+	}
+	checkpointDb, err := stack.OpenDatabaseWithOptions("checkpoints", node.DatabaseOptions{
+		Cache:            16,
+		Handles:          config.DatabaseHandles,
+		MetricsNamespace: "eth/db/checkpoints/",
+		ReadOnly:         false,
+	})
+	if err != nil {
+		chainDb.Close()
 		return nil, err
 	}
 
@@ -241,6 +252,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth := &Ethereum{
 		config:          config,
 		chainDb:         chainDb,
+		checkpointDb:    checkpointDb,
 		accountManager:  stack.AccountManager(),
 		engine:          engine,
 		networkID:       networkID,
@@ -251,6 +263,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		mainKingAddress: mainKingAddress,
 		kingAddresses:   kingAddresses,
 		rkLocks:         make(map[common.Address]rkLockInfo),
+	}
+	if err := eth.loadCheckpoints(); err != nil {
+		checkpointDb.Close()
+		chainDb.Close()
+		return nil, err
 	}
 	eth.loadRotatingKingLocks()
 
@@ -540,6 +557,8 @@ func (s *Ethereum) Engine() consensus.Engine { return s.engine }
 
 // ChainDb returns the chain database
 func (s *Ethereum) ChainDb() ethdb.Database { return s.chainDb }
+
+func (s *Ethereum) CheckpointDb() ethdb.Database { return s.checkpointDb }
 
 // IsListening returns whether the node is listening
 func (s *Ethereum) IsListening() bool { return true }
@@ -1263,6 +1282,7 @@ func (s *Ethereum) Stop() error {
 
 	s.shutdownTracker.Stop()
 	s.chainDb.Close()
+	s.checkpointDb.Close()
 
 	log.Info("Tkmchain backend stopped")
 	return nil

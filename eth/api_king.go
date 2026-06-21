@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -415,6 +416,33 @@ func (s *Ethereum) broadcastRotatingKingExcept(address common.Address, unlock ti
 	}
 }
 
+func (s *Ethereum) storeCheckpoint(number uint64, hash common.Hash) error {
+	if s.checkpointDb == nil {
+		return fmt.Errorf("checkpoint database is not available")
+	}
+	if err := rawdb.WriteCheckpoint(s.checkpointDb, number, hash); err != nil {
+		return err
+	}
+	return params.AddCheckpoint(number, hash)
+}
+
+func (s *Ethereum) loadCheckpoints() error {
+	if s.checkpointDb == nil {
+		return fmt.Errorf("checkpoint database is not available")
+	}
+	for _, checkpoint := range params.AllCheckpoints() {
+		if err := rawdb.WriteCheckpoint(s.checkpointDb, checkpoint.Number, checkpoint.Hash); err != nil {
+			return err
+		}
+	}
+	for _, checkpoint := range rawdb.ReadCheckpoints(s.checkpointDb) {
+		if err := params.AddCheckpoint(checkpoint.Number, checkpoint.Hash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Ethereum) addCheckpoint(number uint64, hash common.Hash) error {
 	mainKing := s.GetMainKingAddress()
 	if mainKing == (common.Address{}) {
@@ -430,7 +458,7 @@ func (s *Ethereum) addCheckpoint(number uint64, hash common.Hash) error {
 	if block.Hash() != hash {
 		return fmt.Errorf("checkpoint hash mismatch at block %d: have %s, want %s", number, hash, block.Hash())
 	}
-	return params.AddCheckpoint(number, hash)
+	return s.storeCheckpoint(number, hash)
 }
 
 func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, peerID string) {
@@ -449,7 +477,7 @@ func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, peerI
 		}
 		return
 	}
-	if err := params.AddCheckpoint(number, hash); err != nil {
+	if err := s.storeCheckpoint(number, hash); err != nil {
 		log.Warn("Ignoring conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
 		return
 	}
