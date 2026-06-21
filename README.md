@@ -11,11 +11,11 @@ https://pkg.go.dev/badge/github.com/ethereum/go-ethereum
 [![Twitter](https://img.shields.io/twitter/follow/go_ethereum)](https://x.com/go_ethereum)
 
 Automated builds are available for stable releases and the unstable master branch. Binary
-archives are published at https://gtkm.tkmchain.tech/downloads/.
+archives are published at https://gtkm.tkmchain.site/downloads/.
 
 ## Building the source
 
-For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.tech/docs/getting-started/installing-gtkm).
+For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.site/docs/getting-started/installing-gtkm).
 
 Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
@@ -30,6 +30,16 @@ or, to build the full suite of utilities:
 make all
 ```
 
+Install mingw
+
+```shell
+sudo apt-get install gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+
+make cross-windows      
+
+make cross-windows-all
+```
+
 ## Executables
 
 The go-ethereum project comes with several wrappers/executables found in the `cmd`
@@ -37,17 +47,17 @@ directory.
 
 |  Command   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | :--------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`gtkm`** | Our main Tkmchain CLI client. It is the entry point into the Tkmchain network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It can be used by other processes as a gateway into the Tkmchain network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `gtkm --help` and the [CLI page](https://gtkm.tkmchain.tech/docs/fundamentals/command-line-options) for command line options. |
+| **`gtkm`** | Our main Tkmchain CLI client. It is the entry point into the Tkmchain network (main-, test- or private net), capable of running as a full node (default), archive node (retaining all historical state) or a light node (retrieving data live). It can be used by other processes as a gateway into the Tkmchain network via JSON RPC endpoints exposed on top of HTTP, WebSocket and/or IPC transports. `gtkm --help` and the [CLI page](https://gtkm.tkmchain.site/docs/fundamentals/command-line-options) for command line options. |
 |   `clef`   | Stand-alone signing tool, which can be used as a backend signer for `gtkm`.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 |  `devp2p`  | Utilities to interact with nodes on the networking layer, without running a full blockchain.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|  `abigen`  | Source code generator to convert Tkmchain contract definitions into easy-to-use, compile-time type-safe Go packages. It operates on plain [Tkmchain contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://gtkm.tkmchain.tech/docs/developers/dapp-developer/native-bindings) page for details.                                  |
+|  `abigen`  | Source code generator to convert Tkmchain contract definitions into easy-to-use, compile-time type-safe Go packages. It operates on plain [Tkmchain contract ABIs](https://docs.soliditylang.org/en/develop/abi-spec.html) with expanded functionality if the contract bytecode is also available. However, it also accepts Solidity source files, making development much more streamlined. Please see our [Native DApps](https://gtkm.tkmchain.site/docs/developers/dapp-developer/native-bindings) page for details.                                  |
 |   `evm`    | Developer utility version of the EVM (Tkmchain Virtual Machine) that is capable of running bytecode snippets within a configurable environment and execution mode. Its purpose is to allow isolated, fine-grained debugging of EVM opcodes (e.g. `evm --code 60ff60ff --debug run`).                                                                                                                                                                                                                                               |
 | `rlpdump`  | Developer utility tool to convert binary RLP ([Recursive Length Prefix](https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp)) dumps (data encoding used by the Tkmchain protocol both network as well as consensus wise) to user-friendlier hierarchical representation (e.g. `rlpdump --hex CE0183FFFFFFC4C304050583616263`).                                                                                                                                                                                |
 
 ## Running `gtkm`
 
 Going through all the possible command line flags is out of scope here (please consult our
-[CLI Wiki page](https://gtkm.tkmchain.tech/docs/fundamentals/command-line-options)),
+[CLI Wiki page](https://gtkm.tkmchain.site/docs/fundamentals/command-line-options)),
 but we've enumerated a few common parameter combos to get you up to speed quickly
 on how you can run your own `gtkm` instance.
 
@@ -82,10 +92,10 @@ This command will:
  * Start `gtkm` in snap sync mode (default, can be changed with the `--syncmode` flag),
    causing it to download more data in exchange for avoiding processing the entire history
    of the Tkmchain network, which is very CPU intensive.
- * Start the built-in interactive [JavaScript console](https://gtkm.tkmchain.tech/docs/interacting-with-gtkm/javascript-console),
+ * Start the built-in interactive [JavaScript console](https://gtkm.tkmchain.site/docs/interacting-with-gtkm/javascript-console),
    (via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
    (note: the `web3` version bundled within `gtkm` is very old, and not up to date with official docs),
-   as well as `gtkm`'s own [management APIs](https://gtkm.tkmchain.tech/docs/interacting-with-gtkm/rpc).
+   as well as `gtkm`'s own [management APIs](https://gtkm.tkmchain.site/docs/interacting-with-gtkm/rpc).
    This tool is optional and if you leave it out you can always attach it to an already running
    `gtkm` instance with `gtkm attach`.
 
@@ -164,7 +174,7 @@ accessible from the outside.
 As a developer, sooner rather than later you'll want to start interacting with `gtkm` and the
 Tkmchain network via your own programs and not manually through the console. To aid
 this, `gtkm` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.org/en/developers/docs/apis/json-rpc/)
-and [`gtkm` specific APIs](https://gtkm.tkmchain.tech/docs/interacting-with-gtkm/rpc)).
+and [`gtkm` specific APIs](https://gtkm.tkmchain.site/docs/interacting-with-gtkm/rpc)).
 These can be exposed via HTTP, WebSockets and IPC (UNIX sockets on UNIX based
 platforms, and named pipes on Windows).
 
@@ -209,9 +219,9 @@ to easily set up a network of gtkm nodes without also setting up a corresponding
 
 There are three different solutions depending on your use case:
 
-  * If you are looking for a simple way to test smart contracts from go in your CI, you can use the [Simulated Backend](https://gtkm.tkmchain.tech/docs/developers/dapp-developer/native-bindings#blockchain-simulator).
-  * If you want a convenient single node environment for testing, you can use our [Dev Mode](https://gtkm.tkmchain.tech/docs/developers/dapp-developer/dev-mode).
-  * If you are looking for a multiple node test network, you can set one up quite easily with [Kurtosis](https://gtkm.tkmchain.tech/docs/fundamentals/kurtosis).
+  * If you are looking for a simple way to test smart contracts from go in your CI, you can use the [Simulated Backend](https://gtkm.tkmchain.site/docs/developers/dapp-developer/native-bindings#blockchain-simulator).
+  * If you want a convenient single node environment for testing, you can use our [Dev Mode](https://gtkm.tkmchain.site/docs/developers/dapp-developer/dev-mode).
+  * If you are looking for a multiple node test network, you can set one up quite easily with [Kurtosis](https://gtkm.tkmchain.site/docs/fundamentals/kurtosis).
 
 ## Contribution
 
@@ -235,15 +245,15 @@ Please make sure your contributions adhere to our coding guidelines:
  * Commit messages should be prefixed with the package(s) they modify.
    * E.g. "eth, rpc: make trace configs optional"
 
-Please see the [Developers' Guide](https://gtkm.tkmchain.tech/docs/developers/gtkm-developer/dev-guide)
+Please see the [Developers' Guide](https://gtkm.tkmchain.site/docs/developers/gtkm-developer/dev-guide)
 for more details on configuring your environment, managing project dependencies, and
 testing procedures.
 
-### Contributing to gtkm.tkmchain.tech
+### Contributing to gtkm.tkmchain.site
 
-For contributions to the [go-ethereum website](https://gtkm.tkmchain.tech), please checkout and raise pull requests against the `website` branch.
+For contributions to the [go-ethereum website](https://gtkm.tkmchain.site), please checkout and raise pull requests against the `website` branch.
 For more detailed instructions please see the `website` branch [README](https://github.com/ethereum/go-ethereum/tree/website#readme) or the 
-[contributing](https://gtkm.tkmchain.tech/docs/developers/gtkm-developer/contributing) page of the website.
+[contributing](https://gtkm.tkmchain.site/docs/developers/gtkm-developer/contributing) page of the website.
 
 ## License
 

@@ -3,9 +3,9 @@ InstallDir "$InstDir"
 OutFile "${OUTPUTFILE}" # set through command line arguments
 
 # Links for "Add/Remove Programs"
-!define HELPURL "https://github.com/ethereum/go-ethereum/issues"
-!define UPDATEURL "https://github.com/ethereum/go-ethereum/releases"
-!define ABOUTURL "https://github.com/ethereum/go-ethereum#ethereum-go"
+!define HELPURL "https://github.com/ethereum/go-tkmchain/issues"
+!define UPDATEURL "https://github.com/ethereum/go-tkmchain/releases"
+!define ABOUTURL "https://github.com/ethereum/go-tkmchain#tkmchain-go"
 !define /date NOW "%Y%m%d"
 
 PageEx license
@@ -13,29 +13,29 @@ PageEx license
 PageExEnd
 
 # Install geth binary
-Section "Geth" GETH_IDX
+Section "Gtkm" GETH_IDX
   SetOutPath $INSTDIR
   file {{.Geth}}
 
   # Create start menu launcher
   createDirectory "$SMPROGRAMS\${APPNAME}"
-  createShortCut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\geth.exe"
-  createShortCut "$SMPROGRAMS\${APPNAME}\Attach.lnk" "$INSTDIR\geth.exe" "attach"
+  createShortCut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\gtkm.exe"
+  createShortCut "$SMPROGRAMS\${APPNAME}\Attach.lnk" "$INSTDIR\gtkm.exe" "attach"
   createShortCut "$SMPROGRAMS\${APPNAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
   # Firewall - remove rules (if exists)
-  SimpleFC::AdvRemoveRule "Geth incoming peers (TCP:3000)"
-  SimpleFC::AdvRemoveRule "Geth outgoing peers (TCP:3000)"
-  SimpleFC::AdvRemoveRule "Geth UDP discovery (UDP:3000)"
+  SimpleFC::AdvRemoveRule "Gtkm incoming peers (TCP:3000)"
+  SimpleFC::AdvRemoveRule "Gtkm outgoing peers (TCP:3000)"
+  SimpleFC::AdvRemoveRule "Gtkm UDP discovery (UDP:3000)"
 
   # Firewall - add rules
-  SimpleFC::AdvAddRule "Geth incoming peers (TCP:3000)" ""  6 1 1 2147483647 1 "$INSTDIR\geth.exe" "" "" "Ethereum" 3000 "" "" ""
-  SimpleFC::AdvAddRule "Geth outgoing peers (TCP:3000)" ""  6 2 1 2147483647 1 "$INSTDIR\geth.exe" "" "" "Ethereum" "" 3000 "" ""
-  SimpleFC::AdvAddRule "Geth UDP discovery (UDP:3000)" "" 17 2 1 2147483647 1 "$INSTDIR\geth.exe" "" "" "Ethereum" "" 3000 "" ""
+  SimpleFC::AdvAddRule "Gtkm incoming peers (TCP:3000)" ""  6 1 1 2147483647 1 "$INSTDIR\gtkm.exe" "" "" "Tkmchain" 3000 "" "" ""
+  SimpleFC::AdvAddRule "Gtkm outgoing peers (TCP:3000)" ""  6 2 1 2147483647 1 "$INSTDIR\gtkm.exe" "" "" "Tkmchain" "" 3000 "" ""
+  SimpleFC::AdvAddRule "Gtkm UDP discovery (UDP:3000)" "" 17 2 1 2147483647 1 "$INSTDIR\gtkm.exe" "" "" "Tkmchain" "" 3000 "" ""
 
   # Set default IPC endpoint (https://github.com/ethereum/EIPs/issues/147)
-  ${EnvVarUpdate} $0 "ETHEREUM_SOCKET" "R" "HKLM" "\\.\pipe\geth.ipc"
-  ${EnvVarUpdate} $0 "ETHEREUM_SOCKET" "A" "HKLM" "\\.\pipe\geth.ipc"
+  ${EnvVarUpdate} $0 "ETHEREUM_SOCKET" "R" "HKLM" "\\.\pipe\gtkm.ipc"
+  ${EnvVarUpdate} $0 "ETHEREUM_SOCKET" "A" "HKLM" "\\.\pipe\gtkm.ipc"
 
   # Add instdir to PATH
   Push "$INSTDIR"
