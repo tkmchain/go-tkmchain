@@ -982,6 +982,12 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	if w.config.DAOForkSupport && w.config.DAOForkBlock != nil && w.config.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(env.state)
 	}
+	if w.config.IsPrague(header.Number, header.Time) || w.config.IsUBT(header.Number, header.Time) {
+		blockContext := core.NewEVMBlockContext(header, w.chain, &header.Coinbase)
+		evm := vm.NewEVM(blockContext, env.state, w.config, *w.chain.GetVMConfig())
+		core.ProcessParentBlockHash(header.ParentHash, evm)
+		evm.Release()
+	}
 	// Accumulate the uncles for the current block
 	uncles := make([]*types.Header, 0, 2)
 	commitUncles := func(blocks map[common.Hash]*types.Block) {
@@ -1033,6 +1039,27 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	w.commit(uncles, w.fullTaskHook, true, tstart)
 }
 
+func (w *worker) collectRequests(statedb *state.StateDB, receipts []*types.Receipt) ([][]byte, error) {
+	requests := [][]byte{}
+	var logs []*types.Log
+	for _, receipt := range receipts {
+		logs = append(logs, receipt.Logs...)
+	}
+	if err := core.ParseDepositLogs(&requests, logs, w.config); err != nil {
+		return nil, err
+	}
+	blockContext := core.NewEVMBlockContext(w.current.header, w.chain, &w.current.header.Coinbase)
+	evm := vm.NewEVM(blockContext, statedb, w.config, *w.chain.GetVMConfig())
+	defer evm.Release()
+	if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
+		return nil, err
+	}
+	if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
+		return nil, err
+	}
+	return requests, nil
+}
+
 // commit runs any post-transaction state modifications, assembles the final block
 // and commits new work if consensus engine is running.
 func (w *worker) commit(uncles []*types.Header, interval func(), update bool, start time.Time) error {
@@ -1044,6 +1071,14 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	}
 	s := w.current.state.Copy()
 	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
+	if w.config.IsPrague(w.current.header.Number, w.current.header.Time) {
+		requests, err := w.collectRequests(s, receipts)
+		if err != nil {
+			return err
+		}
+		reqHash := types.CalcRequestsHash(requests)
+		w.current.header.RequestsHash = &reqHash
+	}
 	w.engine.Finalize(w.chain, w.current.header, s, body)
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
 	block := types.NewBlock(w.current.header, body, w.current.receipts, trie.NewStackTrie(nil))
