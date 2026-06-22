@@ -57,7 +57,7 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	if header.BaseFee != nil {
 		baseFee = new(big.Int).Set(header.BaseFee)
 	}
-	if header.ExcessBlobGas != nil {
+	if header.ExcessBlobGas != nil && eip4844.MaxBlobsPerBlock(chain.Config(), header.Time) > 0 {
 		blobBaseFee = eip4844.CalcBlobFee(chain.Config(), header)
 	}
 	if header.Difficulty.Sign() == 0 {
