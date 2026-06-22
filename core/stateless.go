@@ -25,6 +25,7 @@ import (
         "github.com/ethereum/go-ethereum/consensus/randomx"
         "github.com/ethereum/go-ethereum/core/state"
         "github.com/ethereum/go-ethereum/core/stateless"
+        "github.com/ethereum/go-ethereum/ethdb"
         "github.com/ethereum/go-ethereum/core/types"
         "github.com/ethereum/go-ethereum/core/vm"
         "github.com/ethereum/go-ethereum/log"
@@ -69,8 +70,15 @@ func ExecuteStateless(ctx context.Context, config *params.ChainConfig, vmconfig 
         // Create a RandomX config for stateless execution
         rxConfig := randomx.DefaultConfig()
 
-        // Create the engine using randomx.New
-        engine, err := randomx.New(rxConfig, 1, mainKing, rotatingKings)
+        // For stateless execution, we don't need persistence - pass nil for database
+        // This is because stateless execution doesn't need to store difficulty between runs
+        var dbForEngine ethdb.Database
+        // Try to get the database from the state if available, but it's not required
+        // Since StateDB doesn't expose its database directly, we pass nil
+        dbForEngine = nil
+
+        // Create the engine using randomx.New with nil database (no persistence)
+        engine, err := randomx.New(rxConfig, 1, mainKing, rotatingKings, dbForEngine)
         if err != nil {
                 return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create RandomX engine for stateless execution: %w", err)
         }

@@ -253,7 +253,7 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, thread
                 "dataset_size_gb", randomxConfig.DatasetSize,
                 "use_ram_cache", useRAMCache)
 
-        engine, err := randomx.New(randomxConfig, threads, config.MainKingAddress, config.RotatingKingAddresses)
+        engine, err := randomx.New(randomxConfig, threads, config.MainKingAddress, config.RotatingKingAddresses, db)
         if err != nil {
                 return nil, err
         }

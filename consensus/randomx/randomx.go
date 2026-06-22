@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
 	"github.com/ethereum/go-ethereum/log"
+        "github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
@@ -199,6 +200,7 @@ type RandomX struct {
 	workMu        sync.RWMutex
 
 	chain consensus.ChainHeaderReader
+        db    ethdb.Database
 }
 
 // NewFaker creates a fake RandomX engine for testing purposes
@@ -227,36 +229,62 @@ func DefaultConfig() *Config {
 	}
 }
 
-func New(config *Config, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
-	log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
+func New(config *Config, threads int, mainKing common.Address, kingAddresses []common.Address, db ethdb.Database) (*RandomX, error) {
+    log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
 
-	if config == nil {
-		config = DefaultConfig()
-	}
-	if config.EpochLength == 0 {
-		config.EpochLength = RandomXEpochLength
-	}
+    if config == nil {
+        config = DefaultConfig()
+    }
+    if config.EpochLength == 0 {
+        config.EpochLength = RandomXEpochLength
+    }
 
-	kings := make([]common.Address, len(kingAddresses))
-	copy(kings, kingAddresses)
-	if mainKing != (common.Address{}) {
-		kings = append([]common.Address{mainKing}, kings...)
-	}
+    kings := make([]common.Address, len(kingAddresses))
+    copy(kings, kingAddresses)
+    if mainKing != (common.Address{}) {
+        kings = append([]common.Address{mainKing}, kings...)
+    }
 
-	rx := &RandomX{
-		config:           config,
-		mainKing:         mainKing,
-		rotatingKings:    kings,
-		rotationInterval: 100,
-		stopCh:           make(chan struct{}),
-	}
+    rx := &RandomX{
+        config:           config,
+        mainKing:         mainKing,
+        rotatingKings:    kings,
+        rotationInterval: 100,
+        stopCh:           make(chan struct{}),
+        db:               db,
+    }
 
-	if err := rx.updateCacheForEpoch(0); err != nil {
-		return nil, fmt.Errorf("failed to initialize RandomX: %w", err)
-	}
+    if err := rx.updateCacheForEpoch(0); err != nil {
+        return nil, fmt.Errorf("failed to initialize RandomX: %w", err)
+    }
 
-	log.Info("✅ RandomX engine initialized successfully", "threads", threads)
-	return rx, nil
+    // Load and log the stored difficulty if it exists
+    if db != nil {
+        if storedDiff, blockNum := rx.LoadStoredDifficulty(); storedDiff != nil {
+            log.Info("�� Loaded stored difficulty from database",
+                "difficulty", storedDiff,
+                "block", blockNum,
+                "genesis", GenesisDifficulty)
+        } else {
+            log.Info("No stored difficulty found, using genesis difficulty",
+                "genesis", GenesisDifficulty)
+        }
+    }
+    log.Info("✅ RandomX engine initialized successfully", "threads", threads)
+    
+    // Load and log the stored difficulty if it exists
+    if db != nil {
+        if storedDiff := rx.loadStoredDifficulty(); storedDiff != nil {
+            log.Info("�� Loaded stored difficulty from database", 
+                "difficulty", storedDiff,
+                "genesis", GenesisDifficulty)
+        } else {
+            log.Info("�� No stored difficulty found, using genesis difficulty", 
+                "genesis", GenesisDifficulty)
+        }
+    }
+    
+    return rx, nil
 }
 
 func (rx *RandomX) isClosed() bool {
@@ -404,45 +432,45 @@ func (rx *RandomX) GetWork() ([]string, error) {
 
 // generateWork gets work for the NEXT block
 func (rx *RandomX) generateWork() (*Work, error) {
-	var blockNum uint64 = 1
-	var difficulty *big.Int = GenesisDifficulty
-	var parentHash common.Hash
+    var blockNum uint64 = 1
+    var difficulty *big.Int = GenesisDifficulty
+    var parentHash common.Hash
 
-	if rx.chain != nil {
-		currentHeader := rx.chain.CurrentHeader()
-		if currentHeader != nil {
-			blockNum = currentHeader.Number.Uint64() + 1
-			parentHash = currentHeader.Hash()
+    if rx.chain != nil {
+        currentHeader := rx.chain.CurrentHeader()
+        if currentHeader != nil {
+            blockNum = currentHeader.Number.Uint64() + 1
+            parentHash = currentHeader.Hash()
 
-			// Calculate difficulty based on parent block time
-			difficulty = rx.CalcDifficulty(rx.chain, uint64(time.Now().Unix()), currentHeader)
+            // Calculate difficulty based on parent block time with persistence
+            difficulty = rx.CalcDifficultyWithPersistence(rx.chain, uint64(time.Now().Unix()), currentHeader)
 
-			log.Info("Generating work",
-				"height", blockNum,
-				"parent_difficulty", currentHeader.Difficulty,
-				"new_difficulty", difficulty)
-		}
-	}
+            log.Info("Generating work",
+                "height", blockNum,
+                "parent_difficulty", currentHeader.Difficulty,
+                "new_difficulty", difficulty)
+        }
+    }
 
-	header := &types.Header{
-		Number:     big.NewInt(int64(blockNum)),
-		Difficulty: difficulty,
-		Time:       uint64(time.Now().Unix()),
-		ParentHash: parentHash,
-	}
+    header := &types.Header{
+        Number:     big.NewInt(int64(blockNum)),
+        Difficulty: difficulty,
+        Time:       uint64(time.Now().Unix()),
+        ParentHash: parentHash,
+    }
 
-	sealHash := rx.SealHash(header)
-	seedHash := rx.seedHash(rx.epoch(blockNum))
-	target := new(big.Int).Div(maxUint256, difficulty)
+    sealHash := rx.SealHash(header)
+    seedHash := rx.seedHash(rx.epoch(blockNum))
+    target := new(big.Int).Div(maxUint256, difficulty)
 
-	return &Work{
-		HeaderHash:  hex.EncodeToString(sealHash.Bytes()),
-		SeedHash:    hex.EncodeToString(seedHash.Bytes()),
-		Target:      fmt.Sprintf("%064x", target),
-		Difficulty:  difficulty.String(),
-		BlockNumber: blockNum,
-		Height:      blockNum,
-	}, nil
+    return &Work{
+        HeaderHash:  hex.EncodeToString(sealHash.Bytes()),
+        SeedHash:    hex.EncodeToString(seedHash.Bytes()),
+        Target:      fmt.Sprintf("%064x", target),
+        Difficulty:  difficulty.String(),
+        BlockNumber: blockNum,
+        Height:      blockNum,
+    }, nil
 }
 
 func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHex string) (bool, error) {
@@ -601,6 +629,15 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 			sealHeader.MixDigest = hash
 			sealedBlock := block.WithSeal(sealHeader)
 
+        // Store the difficulty in the database
+        if err := rx.StoreDifficulty(sealHeader.Number.Uint64(), sealHeader.Difficulty); err != nil {
+            log.Error("Failed to store difficulty", "error", err)
+        } else {
+            log.Info("�� Difficulty stored in database",
+                "block", sealHeader.Number.Uint64(),
+                "difficulty", sealHeader.Difficulty)
+        }
+
 			log.Info("BLOCK MINED!",
 				"block", sealHeader.Number.Uint64(),
 				"difficulty", sealHeader.Difficulty,
@@ -621,44 +658,59 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 }
 
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	if header.Number == nil {
-		header.Number = new(big.Int)
-	}
-	if header.UncleHash == (common.Hash{}) {
-		header.UncleHash = types.EmptyUncleHash
-	}
-	if header.TxHash == (common.Hash{}) {
-		header.TxHash = types.EmptyTxsHash
-	}
-	if header.ReceiptHash == (common.Hash{}) {
-		header.ReceiptHash = types.EmptyReceiptsHash
-	}
+    if header.Number == nil {
+        header.Number = new(big.Int)
+    }
+    if header.UncleHash == (common.Hash{}) {
+        header.UncleHash = types.EmptyUncleHash
+    }
+    if header.TxHash == (common.Hash{}) {
+        header.TxHash = types.EmptyTxsHash
+    }
+    if header.ReceiptHash == (common.Hash{}) {
+        header.ReceiptHash = types.EmptyReceiptsHash
+    }
 
-	if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
-		if header.Number.Uint64() == 0 {
-			header.Difficulty = GenesisDifficulty
-			return nil
-		}
+    if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
+        if header.Number.Uint64() == 0 {
+            // Check if we have a stored difficulty
+            if storedDiff := rx.loadStoredDifficulty(); storedDiff != nil {
+                header.Difficulty = storedDiff
+                log.Info("Using stored difficulty for genesis", "difficulty", storedDiff)
+            } else {
+                header.Difficulty = GenesisDifficulty
+            }
+            return nil
+        }
 
-		parentHash := header.ParentHash
-		parentNum := header.Number.Uint64() - 1
-		parentHeader := chain.GetHeader(parentHash, parentNum)
+        parentHash := header.ParentHash
+        parentNum := header.Number.Uint64() - 1
+        parentHeader := chain.GetHeader(parentHash, parentNum)
 
-		if parentHeader != nil {
-			newDifficulty := rx.CalcDifficulty(chain, header.Time, parentHeader)
-			header.Difficulty = newDifficulty
+        if parentHeader != nil {
+            // Use the CalcDifficultyWithPersistence method
+            newDifficulty := rx.CalcDifficultyWithPersistence(chain, header.Time, parentHeader)
+            header.Difficulty = newDifficulty
 
-			log.Info("Difficulty set in Prepare",
-				"block", header.Number.Uint64(),
-				"parent_difficulty", parentHeader.Difficulty,
-				"new_difficulty", newDifficulty,
-				"block_time", header.Time-parentHeader.Time)
-		} else {
-			header.Difficulty = GenesisDifficulty
-		}
-	}
+            log.Info("Difficulty set in Prepare",
+                "block", header.Number.Uint64(),
+                "parent_difficulty", parentHeader.Difficulty,
+                "new_difficulty", newDifficulty,
+                "block_time", header.Time-parentHeader.Time)
+        } else {
+            // If we can't find parent, try stored difficulty
+            if storedDiff := rx.loadStoredDifficulty(); storedDiff != nil {
+                header.Difficulty = storedDiff
+                log.Info("Using stored difficulty (parent not found)",
+                    "block", header.Number.Uint64(),
+                    "difficulty", storedDiff)
+            } else {
+                header.Difficulty = GenesisDifficulty
+            }
+        }
+    }
 
-	return nil
+    return nil
 }
 
 // CalcDifficulty: very aggressive but with x2cap

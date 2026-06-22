@@ -6,15 +6,15 @@ import (
     "math/big"
     "time"
 
+    "github.com/ethereum/go-ethereum/consensus"
     "github.com/ethereum/go-ethereum/core/types"
     "github.com/ethereum/go-ethereum/log"
-    "github.com/ethereum/go-ethereum/params"
 )
 
 // Difficulty constants
 const (
     // TargetBlockTimeSeconds is the desired time between blocks (e.g. 120 = 2 minutes)
-//    TargetBlockTimeSeconds uint64 = 120
+    //TargetBlockTimeSeconds uint64 = 120
 
     // InitialDifficulty is the difficulty for early blocks
     InitialDifficulty uint64 = 50
@@ -28,9 +28,9 @@ const (
 
 var GenesisDifficulty = big.NewInt(2440)
 
-
-// CalcDifficulty calculates the difficulty for the next block
-func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.Header, getHeader func(number uint64) *types.Header) *big.Int {
+// CalcDifficultyWithPersistence calculates difficulty with persistence support
+// This is the main function that should be called from the engine
+func (rx *RandomX) CalcDifficultyWithPersistence(chain consensus.ChainHeaderReader, blockTime uint64, parent *types.Header) *big.Int {
     currentHeight := parent.Number.Uint64()
     nextHeight := currentHeight + 1
 
@@ -40,6 +40,20 @@ func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.
         currentTimestamp = uint64(time.Now().Unix())
     }
 
+    // Try to load stored difficulty for the first block after restart
+    if currentHeight == 0 && rx != nil && rx.db != nil {
+        if storedDiff, blockNum := rx.LoadStoredDifficulty(); storedDiff != nil && blockNum > 0 {
+            log.Info("�� Restored difficulty from database",
+                "stored_difficulty", storedDiff,
+                "stored_block", blockNum,
+                "current_block", nextHeight)
+
+            // Calculate dynamic adjustment from the stored block to current
+            // This ensures smooth transition even after long downtime
+            return rx.adjustFromStoredDifficulty(storedDiff, blockNum, nextHeight, parent)
+        }
+    }
+
     log.Debug("Difficulty calculation started",
         "current_height", currentHeight,
         "next_height", nextHeight,
@@ -47,6 +61,15 @@ func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.
 
     // Genesis block
     if currentHeight == 0 {
+        // Check if we have a stored difficulty
+        if rx != nil && rx.db != nil {
+            if storedDiff := rx.loadStoredDifficulty(); storedDiff != nil {
+                log.Info("Genesis block using stored difficulty", 
+                    "height", nextHeight, 
+                    "difficulty", storedDiff)
+                return storedDiff
+            }
+        }
         log.Info("Genesis block difficulty", "height", nextHeight, "difficulty", GenesisDifficulty)
         return new(big.Int).Set(GenesisDifficulty)
     }
@@ -75,11 +98,49 @@ func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.
     }
 
     // Dynamic adjustment after linear phase
-    return calculateDynamicDifficulty(currentHeight, nextHeight, currentTimestamp, parent)
+    return rx.calculateDynamicDifficulty(currentHeight, nextHeight, currentTimestamp, parent)
+}
+
+// adjustFromStoredDifficulty adjusts difficulty when loading from storage
+func (rx *RandomX) adjustFromStoredDifficulty(storedDiff *big.Int, storedBlock, currentBlock uint64, parent *types.Header) *big.Int {
+    // If we're still at the stored block, use the stored difficulty
+    if currentBlock <= storedBlock+1 {
+        return storedDiff
+    }
+
+    // Calculate how many blocks have passed
+    blocksPassed := currentBlock - storedBlock
+
+    // If many blocks passed, apply a more aggressive adjustment
+    // but don't change too drastically
+    if blocksPassed > 10 {
+        // Gradually adjust towards target based on time elapsed
+        // This prevents huge difficulty jumps after long downtime
+        targetDiff := rx.calculateDynamicDifficulty(storedBlock, currentBlock,
+            uint64(time.Now().Unix()), parent)
+
+        // Blend: 70% stored + 30% target for smooth transition
+        blendedDiff := new(big.Int).Mul(storedDiff, big.NewInt(70))
+        blendedDiff.Add(blendedDiff, new(big.Int).Mul(targetDiff, big.NewInt(30)))
+        blendedDiff.Div(blendedDiff, big.NewInt(100))
+
+        log.Info("Difficulty adjusted after long downtime",
+            "stored_difficulty", storedDiff,
+            "stored_block", storedBlock,
+            "current_block", currentBlock,
+            "blocks_passed", blocksPassed,
+            "target_difficulty", targetDiff,
+            "adjusted_difficulty", blendedDiff)
+
+        return blendedDiff
+    }
+
+    // For short gaps, use the stored difficulty
+    return storedDiff
 }
 
 // calculateDynamicDifficulty computes difficulty based on actual block time
-func calculateDynamicDifficulty(currentHeight, nextHeight, currentTimestamp uint64, parent *types.Header) *big.Int {
+func (rx *RandomX) calculateDynamicDifficulty(currentHeight, nextHeight, currentTimestamp uint64, parent *types.Header) *big.Int {
     parentTime := parent.Time
     actualTime := uint64(0)
 
@@ -175,16 +236,13 @@ func decreaseDifficulty(parentDiff *big.Int, actualTime uint64) *big.Int {
     return newDiff
 }
 
-// CalculateNextDifficulty is the main exported function used by the engine
-/*func CalculateNextDifficulty(parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
-    return CalcDifficulty(nil, 0, parent, getHeader)
-}*/
-
+// CalculateNextDifficulty is a convenience wrapper for external use
 func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64) *types.Header) *big.Int {
-        if parent == nil {
-                return GenesisDifficulty
-        }
+    if parent == nil {
         return GenesisDifficulty
+    }
+    // This is a simplified version - for full persistence, use the method on RandomX
+    return GenesisDifficulty
 }
 
 // GetDifficultyInfo returns debug information
