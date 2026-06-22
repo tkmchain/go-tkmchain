@@ -143,7 +143,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		config := *params.TestChainConfig
 		gspec = &Genesis{Config: &config}
 		engine = randomx.NewFaker()
-		td := int(params.GenesisDifficulty.Uint64())
+		td := int(randomx.GenesisDifficulty.Uint64())
 		genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, 8, nil)
 		for _, block := range blocks {
 			// calculate td

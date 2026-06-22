@@ -536,7 +536,7 @@ func TestReorgLongBlocks(t *testing.T) {
 }
 
 func testReorgLong(t *testing.T, full bool, scheme string) {
-	testReorg(t, []int64{0, 0, -9}, []int64{0, 0, 0, -9}, 393280+params.GenesisDifficulty.Int64(), full, scheme)
+	testReorg(t, []int64{0, 0, -9}, []int64{0, 0, 0, -9}, 393280+randomx.GenesisDifficulty.Int64(), full, scheme)
 }
 
 // Tests that reorganising a short difficult chain after a long easy one
@@ -562,7 +562,7 @@ func testReorgShort(t *testing.T, full bool, scheme string) {
 	for i := 0; i < len(diff); i++ {
 		diff[i] = -9
 	}
-	testReorg(t, easy, diff, 12615120+params.GenesisDifficulty.Int64(), full, scheme)
+	testReorg(t, easy, diff, 12615120+randomx.GenesisDifficulty.Int64(), full, scheme)
 }
 
 func testReorg(t *testing.T, first, second []int64, td int64, full bool, scheme string) {
@@ -1874,7 +1874,7 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 	if mergePoint == 1 {
 		// Set the terminal total difficulty in the config
 		ttd := big.NewInt(int64(len(blocks)))
-		ttd.Mul(ttd, params.GenesisDifficulty)
+		ttd.Mul(ttd, randomx.GenesisDifficulty)
 		gspec.Config.TerminalTotalDifficulty = ttd
 		mergeBlock = len(blocks)
 	}
@@ -2121,7 +2121,7 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 	if mergeHeight == 1 {
 		// TTD is genesis diff + blocks
 		ttd := big.NewInt(1 + int64(len(blocks)))
-		ttd.Mul(ttd, params.GenesisDifficulty)
+		ttd.Mul(ttd, randomx.GenesisDifficulty)
 		genesis.Config.TerminalTotalDifficulty = ttd
 		mergeBlock = uint64(len(blocks))
 	}

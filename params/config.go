@@ -48,7 +48,7 @@ type RandomXConfig struct {
 
 // RandomXChainConfig
 var RandomXChainConfig = &ChainConfig{
-        ChainID:                 big.NewInt(1),
+        ChainID:                 big.NewInt(8979),
         HomesteadBlock:          big.NewInt(0),
         DAOForkBlock:            nil,
         DAOForkSupport:          true,
@@ -64,9 +64,9 @@ var RandomXChainConfig = &ChainConfig{
         ArrowGlacierBlock:       nil,
         GrayGlacierBlock:        nil,
         ShanghaiTime:            newUint64(0),
-        CancunTime:              nil,
-        PragueTime:              nil,
-        OsakaTime:               nil,
+        CancunTime:              newUint64(0),
+        PragueTime:              newUint64(0),
+        OsakaTime:               newUint64(0),
         BPO1Time:                nil,
         BPO2Time:                nil,
         BPO3Time:                nil,
@@ -77,12 +77,15 @@ var RandomXChainConfig = &ChainConfig{
         DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
         MainKingAddress:         common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
         RotatingKingAddresses: []common.Address{
-                common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+                common.HexToAddress("0x216DDd90e17964DEfDFf710Cebd5a366C7c2B785"),
+                common.HexToAddress("0x2277eAa0b45FCF3286F4ac5174e112238B8EC46E"),
         },
         RotatingKingRotationInterval: 100,
         RandomX:                      DefaultRandomXConfig(),
         BlobScheduleConfig: &BlobScheduleConfig{
                 Cancun: DefaultCancunBlobConfig,
+                Prague: DefaultPragueBlobConfig,
+                Osaka:  DefaultOsakaBlobConfig,
         },
 }
 // String implements the stringer interface, returning the consensus engine details.
@@ -238,7 +241,7 @@ var (
 // MainnetChainConfig is the chain parameters for RandomX mainnet.
 // Values are based on your actual genesis.json
 var MainnetChainConfig = &ChainConfig{
-	ChainID:                 big.NewInt(1), // Your genesis chainId is 1
+	ChainID:                 big.NewInt(8979), // Your genesis chainId is 1
 	HomesteadBlock:          big.NewInt(0),
 	DAOForkBlock:            nil,
 	DAOForkSupport:          true,

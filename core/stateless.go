@@ -53,24 +53,6 @@ func ExecuteStateless(ctx context.Context, config *params.ChainConfig, vmconfig 
                 return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create state database: %w", err)
         }
 
-        // Use light mode (cache only) for stateless execution to save memory
-        if config.RandomX == nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("RandomX config missing for stateless execution")
-        }
-
-        // Create light mode RandomX engine using the correct randomx.Config type
-        lightConfig := &randomx.Config{
-                Enabled:     true,
-                EpochLength: config.RandomX.EpochLength,
-                CacheSize:   config.RandomX.CacheSizeMB,
-                DatasetSize: 0, // Disable dataset for light mode
-                MinMemory:   config.RandomX.MinMemory,
-        }
-        
-        if lightConfig.EpochLength == 0 {
-                lightConfig.EpochLength = randomx.RandomXEpochLength
-        }
-
         // Get actual king addresses from chain configuration
         mainKing := config.MainKingAddress
         if mainKing == (common.Address{}) {
@@ -84,7 +66,11 @@ func ExecuteStateless(ctx context.Context, config *params.ChainConfig, vmconfig 
                 rotatingKings = []common.Address{common.Address{}}
         }
 
-        engine, err := randomx.New(lightConfig, 1, mainKing, rotatingKings)
+        // Create a RandomX config for stateless execution
+        rxConfig := randomx.DefaultConfig()
+
+        // Create the engine using randomx.New
+        engine, err := randomx.New(rxConfig, 1, mainKing, rotatingKings)
         if err != nil {
                 return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create RandomX engine for stateless execution: %w", err)
         }

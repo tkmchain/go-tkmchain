@@ -51,8 +51,7 @@ import (
 
 var (
 	maxUint256        = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
-	GenesisDifficulty = big.NewInt(3)
-	MinDifficulty     = big.NewInt(3)
+	MinDifficulty     = big.NewInt(2440)
 	MaxDifficulty     = new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil)
 )
 
@@ -1031,11 +1030,4 @@ func (api *MinerAPI) SubmitWork(nonce, headerHash, mixDigest string) (bool, erro
 
 func (api *MinerAPI) GetHashrate() float64 {
 	return api.randomx.Hashrate()
-}
-
-func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64) *types.Header) *big.Int {
-	if parent == nil {
-		return GenesisDifficulty
-	}
-	return GenesisDifficulty
 }

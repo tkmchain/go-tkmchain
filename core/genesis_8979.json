@@ -1,0 +1,78 @@
+{
+  "config": {
+    "chainId": 8979,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "arrowGlacierBlock": null,
+    "grayGlacierBlock": null,
+    "shanghaiTime": 0,
+    "cancunTime": 0,
+    "pragueTime": 0,
+    "osakaTime": 0,
+    "bpo1Time": null,
+    "bpo2Time": null,
+    "bpo3Time": null,
+    "bpo4Time": null,
+    "bpo5Time": null,
+    "amsterdamTime": null,
+    "ubtTime": null,
+    "depositContractAddress": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
+    "randomx": {
+      "epochLength": 2048,
+      "cacheSizeMB": 256,
+      "datasetSizeGB": 2,
+      "minMemory": 4294967296,
+      "useRAMCache": false,
+      "persistDataset": true
+    },
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      },
+      "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      },
+      "osaka": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      }
+    }
+  },
+  "nonce": 0,
+  "timestamp": 0,
+  "extraData": "0x",
+  "gasLimit": 8000000,
+  "difficulty": 2442,
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "alloc": {
+    "0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2": {
+      "balance": "59000000000000000000000000"
+    },
+    "0x216DDd90e17964DEfDFf710Cebd5a366C7c2B785": {
+      "balance": "500000000000000000000000"
+    },
+    "0x2277eAa0b45FCF3286F4ac5174e112238B8EC46E": {
+      "balance": "500000000000000000000000"
+    }
+  },
+  "number": 0,
+  "gasUsed": 0,
+  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "baseFeePerGas": 1000000000,
+  "blobGasUsed": 0,
+  "excessBlobGas": 0
+}

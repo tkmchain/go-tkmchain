@@ -216,8 +216,8 @@ func TestGenesisCommit(t *testing.T) {
 	}
 
 	// This value should have been set as default in the ToBlock method.
-	if genesisBlock.Difficulty().Cmp(params.GenesisDifficulty) != 0 {
-		t.Errorf("assumption wrong: want: %d, got: %v", params.GenesisDifficulty, genesisBlock.Difficulty())
+	if genesisBlock.Difficulty().Cmp(randomx.GenesisDifficulty) != 0 {
+		t.Errorf("assumption wrong: want: %d, got: %v", randomx.GenesisDifficulty, genesisBlock.Difficulty())
 	}
 }
 

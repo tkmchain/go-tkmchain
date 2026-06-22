@@ -26,8 +26,8 @@ const (
     LinearProgressionBlocks uint64 = 100
 )
 
-// GenesisDifficulty is now a *big.Int (defined in randomx.go)
-//var GenesisDifficulty = big.NewInt(3)
+var GenesisDifficulty = big.NewInt(2440)
+
 
 // CalcDifficulty calculates the difficulty for the next block
 func CalcDifficulty(config *params.ChainConfig, blockTime uint64, parent *types.Header, getHeader func(number uint64) *types.Header) *big.Int {
@@ -179,6 +179,13 @@ func decreaseDifficulty(parentDiff *big.Int, actualTime uint64) *big.Int {
 /*func CalculateNextDifficulty(parent *types.Header, getHeader func(uint64) *types.Header) *big.Int {
     return CalcDifficulty(nil, 0, parent, getHeader)
 }*/
+
+func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64) *types.Header) *big.Int {
+        if parent == nil {
+                return GenesisDifficulty
+        }
+        return GenesisDifficulty
+}
 
 // GetDifficultyInfo returns debug information
 func GetDifficultyInfo(parent *types.Header, getHeader func(uint64) *types.Header) map[string]interface{} {
