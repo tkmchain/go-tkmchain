@@ -51,6 +51,11 @@ var (
 // HistoryFile is the file within the data directory to store input scrollback.
 const HistoryFile = "history"
 
+const (
+	rkRequiredStakeWei   = "50000000000000000000000"
+	rkRegistrationFeeWei = "1000000000000000000"
+)
+
 // DefaultPrompt is the default prompt line prefix to use for user input querying.
 const DefaultPrompt = "> "
 
@@ -364,10 +369,21 @@ func expandConsoleCommand(statement string) string {
 		}
 	case "add":
 		if len(fields) == 3 {
-			return "rk.add(" + consoleCommandArg(fields[2]) + ")"
+			return rotatingKingAddCommand(consoleCommandArg(fields[2]))
 		}
 	}
 	return statement
+}
+
+func rotatingKingAddCommand(address string) string {
+	return "(function(){" +
+		"var address=" + address + ";" +
+		"var balance=new BigNumber(tkm.getBalance(address));" +
+		"var registrationFee=new BigNumber(\"" + rkRegistrationFeeWei + "\");" +
+		"var available=balance.minus(registrationFee);" +
+		"if(available.lt(\"" + rkRequiredStakeWei + "\")){throw new Error(\"insufficient available balance after debiting rotating king registration fee: available \"+available.toString(10)+\" wei, need " + rkRequiredStakeWei + " wei\");}" +
+		"return rk.add(address);" +
+		"})()"
 }
 
 func consoleCommandArg(arg string) string {

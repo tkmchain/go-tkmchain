@@ -223,13 +223,20 @@ func TestExpandRotatingKingConsoleCommand(t *testing.T) {
 		{input: "rk list", want: "rk.list()"},
 		{input: "rk status", want: "rk.stats()"},
 		{input: "rk status 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182", want: "rk.status(\"0x8605cdbbdb6d264aa742e77020dcbc58fcdce182\")"},
-		{input: "rk add 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182", want: "rk.add(\"0x8605cdbbdb6d264aa742e77020dcbc58fcdce182\")"},
+		{input: "rk add 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182", want: rotatingKingAddCommand("\"0x8605cdbbdb6d264aa742e77020dcbc58fcdce182\"")},
 		{input: "2 + 2", want: "2 + 2"},
 	}
 	for _, test := range tests {
 		if got := expandConsoleCommand(test.input); got != test.want {
 			t.Fatalf("expandConsoleCommand(%q) = %q, want %q", test.input, got, test.want)
 		}
+	}
+
+	add := expandConsoleCommand("rk add 0x8605cdbbdb6d264aa742e77020dcbc58fcdce182")
+	feeDebit := strings.Index(add, "var available=balance.minus(registrationFee);")
+	callAdd := strings.Index(add, "return rk.add(address);")
+	if feeDebit == -1 || callAdd == -1 || feeDebit > callAdd {
+		t.Fatalf("rk add command does not debit registration fee before calling rk.add: %s", add)
 	}
 }
 
