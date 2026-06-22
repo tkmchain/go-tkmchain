@@ -235,14 +235,14 @@ func TestNextRotationHeight(t *testing.T) {
 func TestRotatingKingLockedStakeCannotBeSpent(t *testing.T) {
 	candidate := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	spendable := big.NewInt(100)
-	balance := new(big.Int).Add(rkRequiredStake, spendable)
+	balance := new(big.Int).Add(new(big.Int).Add(rkRequiredStake, rkRegistrationFee), spendable)
 	_, eth := newTestKingAPI(t, types.GenesisAlloc{
 		candidate: {Balance: balance},
 	})
 	eth.rkLocks[candidate] = rkLockInfo{UnlockTime: time.Now().UTC().Add(rkLockPeriod), UnlockHeight: 100}
 
 	if err := eth.checkRotatingKingLockedStakeSpend(candidate, spendable); err != nil {
-		t.Fatalf("spending unlocked balance failed: %v", err)
+		t.Fatalf("spending balance above locked stake and debited fee failed: %v", err)
 	}
 	if err := eth.checkRotatingKingLockedStakeSpend(candidate, new(big.Int).Add(spendable, big.NewInt(1))); err == nil {
 		t.Fatalf("spending locked stake succeeded")

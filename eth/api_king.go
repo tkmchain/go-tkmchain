@@ -392,13 +392,14 @@ func (s *Ethereum) checkRotatingKingLockedStakeSpend(address common.Address, txC
 		return err
 	}
 	balance := statedb.GetBalance(address).ToBig()
-	spendable := new(big.Int).Sub(balance, rkRequiredStake)
+	locked := new(big.Int).Add(rkRequiredStake, rkRegistrationFee)
+	spendable := new(big.Int).Sub(balance, locked)
 	if spendable.Sign() < 0 {
 		spendable.SetInt64(0)
 	}
 	if spendable.Cmp(txCost) < 0 {
 		lockInfo := s.rkLocks[address]
-		return fmt.Errorf("insufficient unlocked balance: rotating king stake of %s wei is locked until height %d, spendable %s wei, need %s wei", rkRequiredStake.String(), lockInfo.UnlockHeight, spendable.String(), txCost.String())
+		return fmt.Errorf("insufficient unlocked balance: rotating king stake of %s wei is locked until height %d and registration fee of %s wei is debited, spendable %s wei, need %s wei", rkRequiredStake.String(), lockInfo.UnlockHeight, rkRegistrationFee.String(), spendable.String(), txCost.String())
 	}
 	return nil
 }
