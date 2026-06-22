@@ -86,7 +86,7 @@ type Header struct {
 	BaseFee *big.Int `json:"baseFeePerGas" rlp:"optional"`
 
 	// WithdrawalsHash was added by EIP-4895 and is ignored in legacy headers.
-	WithdrawalsHash *common.Hash `json:"withdrawalsRoot" rlp:"optional"`
+	WithdrawalsHash *common.Hash `json:"withdrawalsRoot" rlp:"optional,nil"`
 
 	// BlobGasUsed was added by EIP-4844 and is ignored in legacy headers.
 	BlobGasUsed *uint64 `json:"blobGasUsed" rlp:"optional"`
@@ -95,13 +95,13 @@ type Header struct {
 	ExcessBlobGas *uint64 `json:"excessBlobGas" rlp:"optional"`
 
 	// ParentBeaconRoot was added by EIP-4788 and is ignored in legacy headers.
-	ParentBeaconRoot *common.Hash `json:"parentBeaconBlockRoot" rlp:"optional"`
+	ParentBeaconRoot *common.Hash `json:"parentBeaconBlockRoot" rlp:"optional,nil"`
 
 	// RequestsHash was added by EIP-7685 and is ignored in legacy headers.
-	RequestsHash *common.Hash `json:"requestsHash" rlp:"optional"`
+	RequestsHash *common.Hash `json:"requestsHash" rlp:"optional,nil"`
 
 	// BlockAccessListHash was added by EIP-7928 and is ignored in legacy headers.
-	BlockAccessListHash *common.Hash `json:"balHash" rlp:"optional"`
+	BlockAccessListHash *common.Hash `json:"balHash" rlp:"optional,nil"`
 
 	// SlotNumber was added by EIP-7843 and is ignored in legacy headers.
 	SlotNumber *uint64 `json:"slotNumber" rlp:"optional"`

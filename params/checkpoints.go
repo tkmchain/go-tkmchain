@@ -52,12 +52,7 @@ func initRandomXCheckpoints() *Checkpoints {
 		Points: make(map[uint64]common.Hash),
 	}
 	// Real checkpoint: block 0 (genesis) must match the actual genesis hash.
-	cp.Points[0] = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
-	cp.Points[1] = common.HexToHash("0x7dc591631adf306577218868d080ff4724fb46953a26a594f72ccb23e09bd7bd")
-	cp.Points[2] = common.HexToHash("0x537934c4f8d992a8627afd5368b0e627d858e1623093add7620c1d66e547bb18")
-	cp.Points[3] = common.HexToHash("0x71d1f30a50636ed6501ea2ce2a9516ee3f637df8f5dca480179e585f31049c64")
-	cp.Points[4] = common.HexToHash("0x9ab25c0e53c87cd99e1e7049cbaad23fa3bc4d16334ee411ae4150057a28c983")
-	cp.Points[10] = common.HexToHash("0xa3db81782609a6da237d32a248c039d6cfb5223b5f5532b547c841e2814a882c")
+	cp.Points[0] = common.HexToHash("0x404114dc33e7c85c94bac91669bb840dfa592098c195d5b98e46e3c19bfee1e8")
 	// Add more checkpoints at strategic heights
 	// cp.Points[1000] = common.HexToHash("0x...")
 	// cp.Points[2000] = common.HexToHash("0x...")

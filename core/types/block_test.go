@@ -373,3 +373,26 @@ func TestRlpDecodeParentHash(t *testing.T) {
 		}
 	}
 }
+
+func TestHeaderRLPDecodeNilOptionalHashes(t *testing.T) {
+	requestsHash := common.HexToHash("0x112233445566778899001122334455667788990011223344556677889900aabb")
+	header := &Header{RequestsHash: &requestsHash}
+
+	rlpData, err := rlp.EncodeToBytes(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Header
+	if err := rlp.DecodeBytes(rlpData, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.WithdrawalsHash != nil {
+		t.Fatalf("withdrawals hash: have %x, want nil", *decoded.WithdrawalsHash)
+	}
+	if decoded.ParentBeaconRoot != nil {
+		t.Fatalf("parent beacon root: have %x, want nil", *decoded.ParentBeaconRoot)
+	}
+	if decoded.RequestsHash == nil || *decoded.RequestsHash != requestsHash {
+		t.Fatalf("requests hash: have %v, want %x", decoded.RequestsHash, requestsHash)
+	}
+}
