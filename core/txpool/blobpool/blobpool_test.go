@@ -61,6 +61,18 @@ var (
 
 const testMaxBlobsPerBlock = 6
 
+func TestCurrentBlobFeeUnsupportedFork(t *testing.T) {
+	excessBlobGas := uint64(1)
+	config := *params.TestChainConfig
+	config.CancunTime = nil
+	config.BlobScheduleConfig = nil
+
+	fee := currentBlobFee(&config, &types.Header{ExcessBlobGas: &excessBlobGas})
+	if want := uint256.NewInt(params.BlobTxMinBlobGasprice); fee.Cmp(want) != 0 {
+		t.Fatalf("fee mismatch: have %v, want %v", fee, want)
+	}
+}
+
 func init() {
 	for i := 0; i < 24; i++ {
 		testBlob := &kzg4844.Blob{byte(i)}

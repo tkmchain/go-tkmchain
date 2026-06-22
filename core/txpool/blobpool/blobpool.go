@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
+        "math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -418,6 +418,13 @@ func (p *BlobPool) FilterType(kind byte) bool {
 	return kind == types.BlobTxType
 }
 
+func currentBlobFee(config *params.ChainConfig, head *types.Header) *uint256.Int {
+	if head.ExcessBlobGas == nil || eip4844.MaxBlobsPerBlock(config, head.Time) == 0 {
+		return uint256.NewInt(params.BlobTxMinBlobGasprice)
+	}
+	return uint256.MustFromBig(eip4844.CalcBlobFee(config, head))
+}
+
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The transaction journal will be loaded
 // from disk and filtered based on the provided starting settings.
@@ -490,11 +497,8 @@ func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reser
 	}
 	var (
 		basefee = uint256.MustFromBig(eip1559.CalcBaseFee(p.chain.Config(), head))
-		blobfee = uint256.NewInt(params.BlobTxMinBlobGasprice)
+		blobfee = currentBlobFee(p.chain.Config(), head)
 	)
-	if head.ExcessBlobGas != nil {
-		blobfee = uint256.MustFromBig(eip4844.CalcBlobFee(p.chain.Config(), head))
-	}
 	p.evict = newPriceHeap(basefee, blobfee, p.index)
 
 	// Guess what was announced. This is needed because we don't want to
@@ -928,11 +932,8 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 	// Reset the price heap for the new set of basefee/blobfee pairs
 	var (
 		basefee = uint256.MustFromBig(eip1559.CalcBaseFee(p.chain.Config(), newHead))
-		blobfee = uint256.MustFromBig(big.NewInt(params.BlobTxMinBlobGasprice))
+		blobfee = currentBlobFee(p.chain.Config(), newHead)
 	)
-	if newHead.ExcessBlobGas != nil {
-		blobfee = uint256.MustFromBig(eip4844.CalcBlobFee(p.chain.Config(), newHead))
-	}
 	p.evict.reinit(basefee, blobfee, false)
 
 	// Announce transactions that became announcable due to fee changes
