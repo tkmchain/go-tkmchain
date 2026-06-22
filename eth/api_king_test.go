@@ -231,3 +231,32 @@ func TestNextRotationHeight(t *testing.T) {
 		})
 	}
 }
+
+func TestRotatingKingLockedStakeCannotBeSpent(t *testing.T) {
+	candidate := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	spendable := big.NewInt(100)
+	balance := new(big.Int).Add(rkRequiredStake, spendable)
+	_, eth := newTestKingAPI(t, types.GenesisAlloc{
+		candidate: {Balance: balance},
+	})
+	eth.rkLocks[candidate] = rkLockInfo{UnlockTime: time.Now().UTC().Add(rkLockPeriod), UnlockHeight: 100}
+
+	if err := eth.checkRotatingKingLockedStakeSpend(candidate, spendable); err != nil {
+		t.Fatalf("spending unlocked balance failed: %v", err)
+	}
+	if err := eth.checkRotatingKingLockedStakeSpend(candidate, new(big.Int).Add(spendable, big.NewInt(1))); err == nil {
+		t.Fatalf("spending locked stake succeeded")
+	}
+}
+
+func TestRotatingKingStakeSpendAllowedAfterUnlock(t *testing.T) {
+	candidate := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	_, eth := newTestKingAPI(t, types.GenesisAlloc{
+		candidate: {Balance: rkRequiredStake},
+	})
+	eth.rkLocks[candidate] = rkLockInfo{UnlockTime: time.Unix(0, 0).UTC(), UnlockHeight: 0}
+
+	if err := eth.checkRotatingKingLockedStakeSpend(candidate, rkRequiredStake); err != nil {
+		t.Fatalf("spending unlocked stake failed: %v", err)
+	}
+}

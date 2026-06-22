@@ -371,6 +371,58 @@ func (s *Ethereum) ensureRotatingKingEligible(address common.Address) error {
 	return nil
 }
 
+func (s *Ethereum) checkRotatingKingLockedStakeSpend(address common.Address, txCost *big.Int) error {
+	if txCost == nil || txCost.Sign() == 0 {
+		return nil
+	}
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if !s.isRotatingKingStakeLocked(address) {
+		return nil
+	}
+	if s.blockchain == nil {
+		return fmt.Errorf("no blockchain available")
+	}
+	header := s.blockchain.CurrentBlock()
+	if header == nil {
+		return fmt.Errorf("no head block available")
+	}
+	statedb, err := s.blockchain.StateAt(header)
+	if err != nil {
+		return err
+	}
+	balance := statedb.GetBalance(address).ToBig()
+	spendable := new(big.Int).Sub(balance, rkRequiredStake)
+	if spendable.Sign() < 0 {
+		spendable.SetInt64(0)
+	}
+	if spendable.Cmp(txCost) < 0 {
+		lockInfo := s.rkLocks[address]
+		return fmt.Errorf("insufficient unlocked balance: rotating king stake of %s wei is locked until height %d, spendable %s wei, need %s wei", rkRequiredStake.String(), lockInfo.UnlockHeight, spendable.String(), txCost.String())
+	}
+	return nil
+}
+
+func (s *Ethereum) isRotatingKingStakeLocked(address common.Address) bool {
+	lockInfo, locked := s.rkLocks[address]
+	if !locked {
+		return false
+	}
+	if s.blockchain == nil {
+		return true
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return true
+	}
+	if lockInfo.UnlockHeight == 0 && lockInfo.UnlockTime.IsZero() {
+		return true
+	}
+	lockedByHeight := lockInfo.UnlockHeight != 0 && head.Number.Uint64() < lockInfo.UnlockHeight
+	lockedByTime := !lockInfo.UnlockTime.IsZero() && head.Time < uint64(lockInfo.UnlockTime.Unix())
+	return lockedByHeight || lockedByTime
+}
+
 func (s *Ethereum) totalRotatingKingReward(address common.Address) *big.Int {
 	total := new(big.Int)
 	head := s.blockchain.CurrentBlock()
