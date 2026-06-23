@@ -587,7 +587,7 @@ func (s *Ethereum) GetKingAddresses() []common.Address {
 	return addresses
 }
 
-// StartMining starts the RandomX miner with the configured settings. If the node has
+// StartMining starts the RandomX solo miner with the configured settings. If the node has
 // no peers yet or is behind a connected peer, mining is deferred until peer sync catches up.
 func (s *Ethereum) StartMining() error {
 	return s.startMining(false)
@@ -609,14 +609,16 @@ func (s *Ethereum) startMining(pool bool) error {
 	if s.miner.Mining() {
 		return nil
 	}
-	if ready, reason, local, highest := s.readyToMine(); !ready {
-		s.miningStartPool = pool
-		if !s.miningStartPending {
-			s.miningStartPending = true
-			go s.waitForMiningReady()
+	if !pool {
+		if ready, reason, local, highest := s.readyToMine(); !ready {
+			s.miningStartPool = pool
+			if !s.miningStartPending {
+				s.miningStartPending = true
+				go s.waitForMiningReady()
+			}
+			log.Info("RandomX solo mining deferred", "reason", reason, "local", local, "peerHeight", highest)
+			return nil
 		}
-		log.Info("RandomX mining deferred", "reason", reason, "local", local, "peerHeight", highest)
-		return nil
 	}
 	return s.startMiningLocked(pool)
 }
@@ -644,7 +646,7 @@ func (s *Ethereum) waitForMiningReady() {
 				s.lock.Unlock()
 				return
 			} else {
-				log.Debug("RandomX mining still deferred", "reason", reason, "local", local, "peerHeight", highest)
+				log.Debug("RandomX solo mining still deferred", "reason", reason, "local", local, "peerHeight", highest)
 			}
 			s.lock.Unlock()
 		case <-s.handler.quitSync:
