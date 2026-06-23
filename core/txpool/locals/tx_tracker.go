@@ -190,7 +190,7 @@ func (tracker *TxTracker) Stop() error {
 func (tracker *TxTracker) loop() {
 	defer tracker.wg.Done()
 
-	if tracker.journal != nil {
+	/*if tracker.journal != nil {
 		tracker.journal.load(func(transactions []*types.Transaction) []error {
 			tracker.TrackAll(transactions)
 			return nil
@@ -202,7 +202,67 @@ func (tracker *TxTracker) loop() {
 			return
 		}
 		defer tracker.journal.close()
-	}
+	}*/
+// If a journal exists, load it. Do not block startup indefinitely on large
+// journals — allow a short synchronous grace period, then continue startup
+// and finish loading in the background if necessary.
+if tracker.journal != nil {
+    // channel to receive the final load error (or nil)
+    done := make(chan error, 1)
+
+    go func() {
+        // perform the load and track transactions as they are decoded
+        err := tracker.journal.load(func(transactions []*types.Transaction) []error {
+            tracker.TrackAll(transactions)
+            return nil
+        })
+        if err != nil {
+            done <- err
+            return
+        }
+        // setup the writer (also may block); propagate errors
+        if err := tracker.journal.setupWriter(); err != nil {
+            done <- err
+            return
+        }
+        done <- nil
+    }()
+
+    // Give a short grace period for small journals to finish synchronously.
+    // If it finishes quickly, proceed normally; otherwise, continue startup
+    // and let the background goroutine finish while we continue with other
+    // initialization.
+    const syncGrace = 500 * time.Millisecond
+    select {
+    case err := <-done:
+        if err != nil {
+            // fatal at startup — log and abort tracker loop startup
+            log.Error("Failed to load local transaction journal", "err", err)
+            return
+        }
+        // loaded and writer set up synchronously — proceed as before
+    case <-time.After(syncGrace):
+        // don't block startup: log and let the background loader finish
+        log.Info("Loading local transaction journal in background")
+        // Monitor background completion and log results when it finishes
+        go func() {
+            if err := <-done; err != nil {
+                log.Warn("Background journal load failed", "err", err)
+            } else {
+                // Informational: journal finished loading in background
+                log.Info("Background journal load completed")
+            }
+        }()
+    }
+
+    // Ensure writer will be closed when the tracker stops; the writer may not
+    // be set yet if loading is still in background, but close() is safe to call.
+    defer func() {
+        if tracker.journal != nil {
+            _ = tracker.journal.close()
+        }
+    }()
+}
 	var (
 		lastJournal = time.Now()
 		timer       = time.NewTimer(10 * time.Second) // Do initial check after 10 seconds, do rechecks more seldom.
