@@ -1335,32 +1335,32 @@ func (bc *BlockChain) stopWithoutSaving() {
 // Stop stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt.
 func (bc *BlockChain) Stop() {
-    // Force save state before stopping
-    head := bc.CurrentBlock()
-    if head != nil && head.Number.Uint64() > 0 {
-        log.Info("Saving blockchain state before shutdown", "block", head.Number, "root", head.Root)
-        
-        // Force commit of current state
-        if err := bc.triedb.Commit(head.Root, true); err != nil {
-            log.Error("Failed to commit state", "err", err)
-        }
-        
-        // Force snapshot journal
-        if bc.snaps != nil {
-            if _, err := bc.snaps.Journal(head.Root); err != nil {
-                log.Error("Failed to journal snapshot", "err", err)
-            }
-        }
-    }
-    
+	// Force save state before stopping
+	head := bc.CurrentBlock()
+	if head != nil && head.Number.Uint64() > 0 {
+		log.Info("Saving blockchain state before shutdown", "block", head.Number, "root", head.Root)
+
+		// Force commit of current state
+		if err := bc.triedb.Commit(head.Root, true); err != nil {
+			log.Error("Failed to commit state", "err", err)
+		}
+
+		// Force snapshot journal
+		if bc.snaps != nil {
+			if _, err := bc.snaps.Journal(head.Root); err != nil {
+				log.Error("Failed to journal snapshot", "err", err)
+			}
+		}
+	}
+
 	bc.stopWithoutSaving()
 
-    // Ensure state is saved after stop
-    if head != nil && head.Number.Uint64() > 0 {
-        if err := bc.triedb.Commit(head.Root, true); err != nil {
-            log.Error("Failed final state commit", "err", err)
-        }
-    }
+	// Ensure state is saved after stop
+	if head != nil && head.Number.Uint64() > 0 {
+		if err := bc.triedb.Commit(head.Root, true); err != nil {
+			log.Error("Failed final state commit", "err", err)
+		}
+	}
 	// Ensure that the entirety of the state snapshot is journaled to disk.
 	var snapBase common.Hash
 	if bc.snaps != nil {
@@ -1720,16 +1720,16 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
-    if err := bc.triedb.Commit(root, true); err != nil {
-        // For path scheme, "disk layer" means the state is already durable – ignore it.
-        if !strings.Contains(err.Error(), "disk layer") {
-            return err
-        }
-        log.Debug("State already on disk (path scheme)", "root", root)
-    }
-    if bc.triedb.Scheme() == rawdb.PathScheme {
-        return nil
-    }
+	if err := bc.triedb.Commit(root, true); err != nil {
+		// For path scheme, "disk layer" means the state is already durable – ignore it.
+		if !strings.Contains(err.Error(), "disk layer") {
+			return err
+		}
+		log.Debug("State already on disk (path scheme)", "root", root)
+	}
+	if bc.triedb.Scheme() == rawdb.PathScheme {
+		return nil
+	}
 	// If we're running an archive node, always flush
 	if bc.cfg.ArchiveMode {
 		return bc.triedb.Commit(root, false)
@@ -2613,8 +2613,11 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 	}
 	if params.CheckpointValidationEnabled {
 		for _, header := range oldChain {
-			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint == header.Hash() {
-				return fmt.Errorf("checkpoint reorg at block %d: checkpoint hash %s is permanent", header.Number.Uint64(), checkpoint)
+			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok {
+				if checkpoint == header.Hash() {
+					return fmt.Errorf("checkpoint reorg at block %d: checkpoint hash %s is permanent", header.Number.Uint64(), checkpoint)
+				}
+				return fmt.Errorf("checkpoint reorg at block %d: configured checkpoint %s is permanent", header.Number.Uint64(), checkpoint)
 			}
 		}
 		for _, header := range newChain {

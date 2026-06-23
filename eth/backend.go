@@ -124,6 +124,7 @@ type Ethereum struct {
 	rkLocks            map[common.Address]rkLockInfo
 	miningStartPending bool
 	miningStartPool    bool
+	miningPool         bool
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -421,6 +422,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		RequiredBlocks:     config.RequiredBlocks,
 		RotatingKingUpdate: eth.noteRotatingKingFromPeer,
 		CheckpointUpdate:   eth.noteCheckpointFromPeer,
+		MiningPeerUpdate:   eth.updateSoloMiningPeers,
 	}); err != nil {
 		return nil, err
 	}
@@ -623,6 +625,37 @@ func (s *Ethereum) startMining(pool bool) error {
 	return s.startMiningLocked(pool)
 }
 
+func (s *Ethereum) updateSoloMiningPeers() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if !s.config.Miner.Enabled || s.miningPool {
+		return
+	}
+	if ready, reason, local, highest := s.readyToMine(); !ready {
+		startWaiter := !s.miningStartPending
+		if s.miner.Mining() {
+			s.miner.Stop()
+			s.miningStartPending = true
+			s.miningStartPool = false
+			log.Info("RandomX solo mining stopped", "reason", reason, "local", local, "peerHeight", highest)
+		}
+		if startWaiter {
+			s.miningStartPending = true
+			s.miningStartPool = false
+			go s.waitForMiningReady()
+		}
+		return
+	}
+	if s.miningStartPending && !s.miner.Mining() {
+		s.miningStartPending = false
+		s.miningStartPool = false
+		if err := s.startMiningLocked(false); err != nil {
+			log.Error("Failed to restart RandomX solo mining", "error", err)
+		}
+	}
+}
+
 func (s *Ethereum) waitForMiningReady() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -718,6 +751,7 @@ func (s *Ethereum) startMiningLocked(pool bool) error {
 	} else {
 		s.miner.Start(s.config.Miner.Etherbase)
 	}
+	s.miningPool = pool
 
 	log.Info("RandomX miner started successfully",
 		"pool", pool,
@@ -736,6 +770,7 @@ func (s *Ethereum) StopMining() error {
 	defer s.lock.Unlock()
 
 	s.miningStartPending = false
+	s.miningPool = false
 	if !s.miner.Mining() {
 		return nil
 	}

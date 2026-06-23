@@ -111,6 +111,7 @@ type handlerConfig struct {
 	RequiredBlocks     map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 	RotatingKingUpdate func(common.Address, time.Time, string)
 	CheckpointUpdate   func(uint64, common.Hash, string)
+	MiningPeerUpdate   func()
 }
 
 type downloaderBlockChain struct {
@@ -193,6 +194,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		requiredBlocks:     config.RequiredBlocks,
 		rotatingKingUpdate: config.RotatingKingUpdate,
 		checkpointUpdate:   config.CheckpointUpdate,
+		miningPeerUpdate:   config.MiningPeerUpdate,
 		quitSync:           make(chan struct{}),
 		handlerDoneCh:      make(chan struct{}),
 		handlerStartCh:     make(chan struct{}),
@@ -308,6 +310,9 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	if err := h.peers.registerPeer(peer, snap); err != nil {
 		peer.Log().Error("Tkmchain peer registration failed", "err", err)
 		return err
+	}
+	if h.miningPeerUpdate != nil {
+		h.miningPeerUpdate()
 	}
 	defer h.unregisterPeer(peer.ID())
 
@@ -443,6 +448,9 @@ func (h *handler) unregisterPeer(id string) {
 
 	if err := h.peers.unregisterPeer(id); err != nil {
 		logger.Error("Tkmchain peer removal failed", "err", err)
+	}
+	if h.miningPeerUpdate != nil {
+		h.miningPeerUpdate()
 	}
 }
 
