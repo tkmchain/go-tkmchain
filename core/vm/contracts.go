@@ -92,6 +92,7 @@ var PrecompiledContractsIstanbul = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x9}): &blake2F{},
 }
 
+
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
 // contracts used in the Berlin release.
 var PrecompiledContractsBerlin = PrecompiledContracts{
@@ -141,6 +142,9 @@ var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+
+        // RotatingKing precompile (custom address 0x...f1)
+        RKPrecompileAddr: &rkPrecompileContract{},
 }
 
 var PrecompiledContractsBLS = PrecompiledContractsPrague
