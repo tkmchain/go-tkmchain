@@ -171,7 +171,7 @@ type handler struct {
 	requiredBlocks     map[uint64]common.Hash
 	rotatingKingUpdate func(common.Address, time.Time, string)
 	checkpointUpdate   func(uint64, common.Hash, string)
-
+        miningPeerUpdate   func()
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
 
