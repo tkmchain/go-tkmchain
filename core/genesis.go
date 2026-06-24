@@ -26,7 +26,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-        "github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -249,7 +248,7 @@ func getGenesisState(db ethdb.Database, blockhash common.Hash) (alloc types.Gene
 	case params.HoodiGenesisHash:
 		genesis = DefaultHoodiGenesisBlock()
 	case params.RandomXGenesisHash:
-		genesis = DefaultGenesisBlock()
+		genesis = DefaultRandomXGenesisBlock()
 	}
 	if genesis != nil {
 		return genesis.Alloc, nil
@@ -515,7 +514,7 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 		head.GasLimit = params.GenesisGasLimit
 	}
 	if g.Difficulty == nil && g.Mixhash == (common.Hash{}) {
-		head.Difficulty = randomx.GenesisDifficulty
+		head.Difficulty = params.GenesisDifficulty
 	}
 	if g.Config != nil && g.Config.IsLondon(common.Big0) {
 		if g.BaseFee != nil {
@@ -634,60 +633,19 @@ func EnableUBTAtGenesis(db ethdb.Database, genesis *Genesis) (bool, error) {
 
 // DefaultGenesisBlock returns the Ethereum main net genesis block.
 func DefaultGenesisBlock() *Genesis {
-        alloc := make(types.GenesisAlloc)
-        
-        // ============================================================
-        // KING ALLOCATIONS
-        // ============================================================
-        // Main King: 59,000,000 ANTD
-        alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(59_000_000), big.NewInt(1e18)),
-        }
-        
-        // Rotating King 1: 500,000 ANTD
-        alloc[common.HexToAddress("0x216DDd90e17964DEfDFf710Cebd5a366C7c2B785")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
-        }
-        
-        // Rotating King 2: 500,000 ANTD
-        alloc[common.HexToAddress("0x2277eAa0b45FCF3286F4ac5174e112238B8EC46E")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
-        }
+	alloc := decodePrealloc(mainnetAllocData)
+	alloc[common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
+	}
 
-        // ============================================================
-        // RANDOMX CHECKPOINT CONTRACT
-        // ============================================================
-        // Pre-deploy the checkpoint contract with its final blockchain anchor set in
-        // genesis. Since isSet is true from block 0 and owner is a non-zero burner,
-        // initialize and setCheckpoint cannot change the checkpoint hash afterwards.
-        alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
-                Code:    common.FromHex(randomXCheckpointCode),
-                Balance: big.NewInt(0),
-                Storage: map[common.Hash]common.Hash{
-                        // Slot 0: owner address (right‑padded to 32 bytes)
-                        common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
-                        // Slot 1: checkpointHash (the permanent blockchain anchor)
-                        common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
-                        // Slot 2: setAtBlock (uint256) – 0 initially
-                        common.BigToHash(big.NewInt(2)): common.Hash{},
-                        // Slot 3: setAtTimestamp (uint256) – 0 initially
-                        common.BigToHash(big.NewInt(3)): common.Hash{},
-                        // Slot 4: isSet (bool) – 1 = true (already finalised)
-                        common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
-                },
-        }
-
-        return &Genesis{
-                Config:     params.RandomXChainConfig,
-                Nonce:      0,
-                Timestamp:  0,
-                ExtraData:  []byte{},
-                GasLimit:   8000000,
-                Difficulty: big.NewInt(2440), // 0x98a
-                Mixhash:    common.Hash{},
-                Coinbase:   common.Address{},
-                Alloc:      alloc,
-        }
+	return &Genesis{
+		Config:     params.MainnetChainConfig,
+		Nonce:      66,
+		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
+		GasLimit:   5000,
+		Difficulty: big.NewInt(17179869184),
+		Alloc:      alloc,
+	}
 }
 
 // DefaultSepoliaGenesisBlock returns the Sepolia network genesis block.
@@ -728,18 +686,8 @@ func DefaultHoodiGenesisBlock() *Genesis {
 }
 
 // DefaultRandomXGenesisBlock returns the default RandomX genesis block.
-// Deprecated: Use DefaultGenesisBlock instead.
 func DefaultRandomXGenesisBlock() *Genesis {
-        return DefaultGenesisBlock()
-}
-
-// DefaultRandomXGenesisBlock returns the default RandomX genesis block.
-/*func DefaultRandomXGenesisBlock() *Genesis {
-        alloc := make(types.GenesisAlloc)
-        
-        // ============================================================
-        // KING ALLOCATIONS
-        // ============================================================
+	alloc := make(types.GenesisAlloc)
         // Main King: 59,000,000 ANTD
         alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
                 Balance: new(big.Int).Mul(big.NewInt(59_000_000), big.NewInt(1e18)),
@@ -755,33 +703,42 @@ func DefaultRandomXGenesisBlock() *Genesis {
                 Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
         }
 
-        // ============================================================
-        // RANDOMX CHECKPOINT CONTRACT
-        // ============================================================
-        alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
-                Code:    common.FromHex(randomXCheckpointCode),
-                Balance: big.NewInt(0),
-                Storage: map[common.Hash]common.Hash{
-                        common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
-                        common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
-                        common.BigToHash(big.NewInt(2)): common.Hash{},
-                        common.BigToHash(big.NewInt(3)): common.Hash{},
-                        common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
-                },
-        }
+	// Pre-deploy the checkpoint contract with its final blockchain anchor set in
+	// genesis. Since isSet is true from block 0 and owner is a non-zero burner,
+	// initialize and setCheckpoint cannot change the checkpoint hash afterwards.
+	alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
+	    Code:    common.FromHex(randomXCheckpointCode),
+	    Balance: big.NewInt(0),
+	    Storage: map[common.Hash]common.Hash{
+	        // Slot 0: owner address (right‑padded to 32 bytes)
+	        common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
 
-        return &Genesis{
-                Config:     params.RandomXChainConfig,
-                Nonce:      0,
-                Timestamp:  0,
-                ExtraData:  []byte{},
-                GasLimit:   8000000,
-                Difficulty: big.NewInt(2440),
-                Mixhash:    common.Hash{},
-                Coinbase:   common.Address{},
-                Alloc:      alloc,
-        }
-}*/
+	        // Slot 1: checkpointHash (the permanent blockchain anchor)
+	        common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
+
+	        // Slot 2: setAtBlock (uint256) – 0 initially
+	        common.BigToHash(big.NewInt(2)): common.Hash{},
+
+	        // Slot 3: setAtTimestamp (uint256) – 0 initially
+	        common.BigToHash(big.NewInt(3)): common.Hash{},
+
+	        // Slot 4: isSet (bool) – 1 = true (already finalised)
+	        common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
+	    },
+	}
+
+	return &Genesis{
+		Config:     params.RandomXChainConfig,
+		Nonce:      0,
+		Timestamp:  0,
+		ExtraData:  []byte{},
+		GasLimit:   8000000,
+		Difficulty: big.NewInt(3),
+		Mixhash:    common.Hash{},
+		Coinbase:   common.Address{},
+		Alloc:      alloc,
+	}
+}
 
 // DeveloperGenesisBlock returns the 'geth --dev' genesis block.
 func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
