@@ -201,6 +201,10 @@ type RandomX struct {
 
 	chain consensus.ChainHeaderReader
         db    ethdb.Database
+
+	blobPool interface {
+		Finalize(header *types.Header)
+	}
 }
 
 // NewFaker creates a fake RandomX engine for testing purposes
@@ -309,6 +313,12 @@ func (rx *RandomX) Close() error {
 
 	log.Info("RandomX resources released")
 	return nil
+}
+
+func (rx *RandomX) SetBlobPool(bp interface {
+	Finalize(header *types.Header)
+}) {
+	rx.blobPool = bp
 }
 
 func (rx *RandomX) GetEpochLength() uint64 {
@@ -843,6 +853,14 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 	// Distribute rewards to all parties
 	if totalReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, totalReward)
+	}
+
+	// ============================================================
+	// NOTIFY BLOBPOOL ABOUT FINALIZATION
+	// ============================================================
+	if rx.blobPool != nil {
+		rx.blobPool.Finalize(header)
+		log.Debug("BlobPool finalized from RandomX", "block", header.Number.Uint64())
 	}
 }
 

@@ -393,6 +393,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
 
+// ============================================================
+// SET BLOBPOOL IN RANDOMX ENGINE
+// ============================================================
+if eth.blobTxPool != nil {
+    if rxEngine, ok := eth.engine.(*randomx.RandomX); ok {
+        // This requires the SetBlobPool method in randomx.RandomX
+        rxEngine.SetBlobPool(eth.blobTxPool)
+        log.Info("BlobPool linked to RandomX engine for finalization")
+    }
+}
 	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, []txpool.SubPool{legacyPool, eth.blobTxPool})
 	if err != nil {
 		return nil, err

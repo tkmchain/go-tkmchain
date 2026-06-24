@@ -394,17 +394,43 @@ func New(config Config, chain BlockChain, hasPendingAuth func(common.Address) bo
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 
+	// ============================================================
+	// CREATE THE LIMBO (for blob finalization)
+	// ============================================================
+	var limbo *limbo
+	if config.Datadir != "" {
+		var err error
+		limbo, err = newLimbo(chain.Config(), config.Datadir)
+		if err != nil {
+			log.Error("Failed to open blob limbo", "err", err)
+			// Continue without limbo - blobs won't be recoverable after reorgs
+		}
+		// No getter needed - RandomX will call Finalize directly
+	}
+
 	// Create the transaction pool with its initial settings
 	return &BlobPool{
 		config:         config,
 		hasPendingAuth: hasPendingAuth,
 		signer:         types.LatestSigner(chain.Config()),
 		chain:          chain,
+		limbo:          limbo,
 		lookup:         newLookup(),
 		index:          make(map[common.Address][]*blobTxMeta),
 		spent:          make(map[common.Address]*uint256.Int),
 		gapped:         make(map[common.Address][]*types.Transaction),
 		gappedSource:   make(map[common.Hash]common.Address),
+	}
+}
+
+// ============================================================
+// ADD Finalize METHOD TO BLOBPOOL
+// ============================================================
+// Finalize notifies the blobpool that a block has been finalized.
+// For RandomX (PoW), this is called whenever a new block is mined.
+func (p *BlobPool) Finalize(header *types.Header) {
+	if p.limbo != nil {
+		p.limbo.finalize(header)
 	}
 }
 
