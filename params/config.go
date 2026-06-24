@@ -124,6 +124,7 @@ type ChainConfig struct {
 	UBTTime       *uint64 `json:"ubtTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
+        Preimages bool `json:"preimages,omitempty"`
 
 	// Rotating King Contract Addresses
 	DepositContractAddress       common.Address   `json:"depositContractAddress,omitempty"`
@@ -259,6 +260,7 @@ var RandomXChainConfig = &ChainConfig{
 	UBTTime:       nil,
 
 	EnableUBTAtGenesis: false,
+        Preimages: true,
 
 	// Rotating King Contract Configuration
 	DepositContractAddress: common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),

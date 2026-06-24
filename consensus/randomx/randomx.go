@@ -856,7 +856,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	}
 
 	// ============================================================
-	// COMMIT STATE TO DISK - THIS IS THE FIX!
+	// COMMIT STATE TO DISK
 	// ============================================================
 	// Commit the state to the database
 	root, err := state.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), false)
