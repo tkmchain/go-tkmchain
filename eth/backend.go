@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+        "os"
 	"runtime"
 	"sync"
 	"time"
@@ -388,9 +389,43 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	legacyPool := legacypool.New(config.TxPool, eth.blockchain)
 
-	if config.BlobPool.Datadir != "" {
+// ============================================================
+// CREATE BLOBPOOL WITH DIRECTORY CREATION
+// ============================================================
+if config.BlobPool.Datadir != "" {
+    // Resolve the path
+    blobDir := stack.ResolvePath(config.BlobPool.Datadir)
+    config.BlobPool.Datadir = blobDir
+    
+    // ============================================================
+    // CREATE THE DIRECTORY IF IT DOESN'T EXIST
+    // ============================================================
+    if err := os.MkdirAll(blobDir, 0755); err != nil {
+        log.Warn("Failed to create blobpool directory, disabling blobpool", 
+            "path", blobDir, 
+            "error", err)
+        // Disable blobpool by setting datadir to empty
+        config.BlobPool.Datadir = ""
+    } else {
+        log.Info("BlobPool directory created/verified", "path", blobDir)
+        
+        // Create the blobpool
+        eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
+        
+        // Link blobpool to RandomX engine
+        if eth.blobTxPool != nil {
+            if rxEngine, ok := eth.engine.(*randomx.RandomX); ok {
+                rxEngine.SetBlobPool(eth.blobTxPool)
+                log.Info("BlobPool linked to RandomX engine for finalization")
+            }
+        }
+    }
+} else {
+    log.Info("BlobPool disabled (datadir empty)")
+}
+	/*if config.BlobPool.Datadir != "" {
 		config.BlobPool.Datadir = stack.ResolvePath(config.BlobPool.Datadir)
-	}
+	}*/
 	eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
 
 // ============================================================
