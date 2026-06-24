@@ -836,102 +836,107 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash {
 func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
-
-func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-    log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
-
-    // Calculate block reward
-    blockReward := CalculateBlockReward(header.Number.Uint64())
-    totalFees := big.NewInt(0)
-    totalReward := CalculateTotalReward(blockReward, totalFees)
-
-    log.Info("Finalize - Block reward",
-        "block", header.Number.Uint64(),
-        "reward", FormatANTD(blockReward),
-        "total", FormatANTD(totalReward))
-
-    // Distribute rewards to all parties
-    if totalReward.Sign() > 0 {
-        rx.distributeRewardsToState(state, header, totalReward)
-    }
-
-    // ============================================================
-    // COMMIT STATE TO DISK
-    // ============================================================
-    // state is vm.StateDB interface, we need to assert it to *state.StateDB
-    /*if statedb, ok := state.(*state.StateDB); ok {
-        // Commit the state to disk
-        root, err := statedb.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), false)
-        if err != nil {
-            log.Error("Failed to commit state in Finalize", "block", header.Number.Uint64(), "error", err)
-        } else {
-            log.Info("State committed in Finalize", "block", header.Number.Uint64(), "root", root.Hex())
-        }
-    } else {
-        log.Warn("State is not *state.StateDB, cannot commit to disk")
-    }*/
-
-    // ============================================================
-    // NOTIFY BLOBPOOL ABOUT FINALIZATION
-    // ============================================================
-    if rx.blobPool != nil {
-        rx.blobPool.Finalize(header)
-        log.Debug("BlobPool finalized from RandomX", "block", header.Number.Uint64())
-    }
-}
-
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-    log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+	log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
-    // Calculate block reward
-    blockReward := CalculateBlockReward(header.Number.Uint64())
-    totalFees := GetTotalTransactionFees(header, receipts)
-    totalReward := CalculateTotalReward(blockReward, totalFees)
+	// Calculate block reward
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	totalFees := GetTotalTransactionFees(header, receipts)
+	totalReward := CalculateTotalReward(blockReward, totalFees)
 
-    log.Info("Block reward calculated",
-        "block", header.Number.Uint64(),
-        "reward", FormatANTD(blockReward),
-        "fees", FormatANTD(totalFees),
-        "total", FormatANTD(totalReward))
+	log.Info("Block reward calculated",
+		"block", header.Number.Uint64(),
+		"reward", FormatANTD(blockReward),
+		"fees", FormatANTD(totalFees),
+		"total", FormatANTD(totalReward))
 
-    // Distribute rewards to all parties
-    if totalReward.Sign() > 0 {
-        rx.distributeRewardsToState(state, header, totalReward)
-    }
+	// Distribute rewards to all parties
+	if totalReward.Sign() > 0 {
+		rx.distributeRewardsToState(state, header, totalReward)
+	}
 
-    // ============================================================
-    // COMMIT STATE TO DISK - THIS IS THE FIX!
-    // ============================================================
-    // Commit the state to the database
-    root, err := state.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), false)
-    if err != nil {
-        log.Error("Failed to commit state", "block", header.Number.Uint64(), "error", err)
-        return nil, err
-    }
-    
-    // Set the root to the committed root
-    header.Root = root
-    
-    log.Info("State committed to disk", 
-        "block", header.Number.Uint64(), 
-        "root", header.Root.Hex())
+	// ============================================================
+	// COMMIT STATE TO DISK - THIS IS THE FIX!
+	// ============================================================
+	// Commit the state to the database
+	root, err := state.Commit(header.Number.Uint64(), chain.Config().IsEIP158(header.Number), false)
+	if err != nil {
+		log.Error("Failed to commit state", "block", header.Number.Uint64(), "error", err)
+		return nil, err
+	}
+	
+	// Set the header root to the committed root
+	header.Root = root
+	
+	log.Info("✅ State committed to disk", 
+		"block", header.Number.Uint64(), 
+		"root", header.Root.Hex())
 
-    // Set bloom and create block
-    if len(receipts) > 0 {
-        header.Bloom = types.MergeBloom(receipts)
-    }
+	// Set bloom and create block
+	if len(receipts) > 0 {
+		header.Bloom = types.MergeBloom(receipts)
+	}
 
-    // ============================================================
-    // NOTIFY BLOBPOOL ABOUT FINALIZATION
-    // ============================================================
-    if rx.blobPool != nil {
-        rx.blobPool.Finalize(header)
-        log.Debug("BlobPool finalized from RandomX", "block", header.Number.Uint64())
-    }
+	// ============================================================
+	// NOTIFY BLOBPOOL ABOUT FINALIZATION
+	// ============================================================
+	if rx.blobPool != nil {
+		rx.blobPool.Finalize(header)
+		log.Debug("BlobPool finalized from RandomX", "block", header.Number.Uint64())
+	}
 
-    return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
+	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
 }
 
+func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, statedb vm.StateDB, body *types.Body) {
+	log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+
+	// Calculate block reward
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	totalFees := big.NewInt(0)
+	totalReward := CalculateTotalReward(blockReward, totalFees)
+
+	log.Info("Finalize - Block reward",
+		"block", header.Number.Uint64(),
+		"reward", FormatANTD(blockReward),
+		"total", FormatANTD(totalReward))
+
+	// Distribute rewards to all parties
+	if totalReward.Sign() > 0 {
+		rx.distributeRewardsToState(statedb, header, totalReward)
+	}
+
+	// ============================================================
+	// COMMIT STATE TO DISK - ALTERNATIVE APPROACH
+	// ============================================================
+	// Since state is vm.StateDB interface, we can't directly call Commit.
+	// But we can try to get the underlying StateDB through reflection.
+	// Actually, the state passed here should be *state.StateDB,
+	// but the interface hides it. Let's use a different approach.
+	
+	// The state is actually a *state.StateDB wrapped in an interface.
+	// We can use a type switch to handle it.
+    if db, ok := statedb.(*state.StateDB); ok {
+        root, err := db.Commit(
+            header.Number.Uint64(),
+            chain.Config().IsEIP158(header.Number),
+            false,
+        )
+        if err != nil {
+            log.Error("Failed to commit state", "error", err)
+        } else {
+            log.Info("State committed", "root", root.Hex())
+        }
+    }
+
+	// ============================================================
+	// NOTIFY BLOBPOOL ABOUT FINALIZATION
+	// ============================================================
+	if rx.blobPool != nil {
+		rx.blobPool.Finalize(header)
+		log.Debug("BlobPool finalized from RandomX", "block", header.Number.Uint64())
+	}
+}
 // distributeRewardsToState distributes rewards using vm.StateDB interface
 func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Header, totalReward *big.Int) {
 	blockNumber := header.Number.Uint64()
