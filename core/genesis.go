@@ -232,21 +232,9 @@ func getGenesisState(db ethdb.Database, blockhash common.Hash) (alloc types.Gene
 		return alloc, nil
 	}
 
-	// Genesis allocation is missing and there are several possibilities:
-	// the node is legacy which doesn't persist the genesis allocation or
-	// the persisted allocation is just lost.
-	// - supported networks(mainnet, testnets), recover with defined allocations
-	// - private network, can't recover
+	// For RandomX chain, we only need to handle our own genesis hash
 	var genesis *Genesis
 	switch blockhash {
-	case params.MainnetGenesisHash:
-		genesis = DefaultGenesisBlock()
-	case params.SepoliaGenesisHash:
-		genesis = DefaultSepoliaGenesisBlock()
-	case params.HoleskyGenesisHash:
-		genesis = DefaultHoleskyGenesisBlock()
-	case params.HoodiGenesisHash:
-		genesis = DefaultHoodiGenesisBlock()
 	case params.RandomXGenesisHash:
 		genesis = DefaultRandomXGenesisBlock()
 	}
@@ -464,14 +452,6 @@ func (g *Genesis) chainConfigOrDefault(ghash common.Hash, stored *params.ChainCo
 	switch {
 	case g != nil:
 		return g.Config
-	case ghash == params.MainnetGenesisHash:
-		return params.MainnetChainConfig
-	case ghash == params.HoleskyGenesisHash:
-		return params.HoleskyChainConfig
-	case ghash == params.SepoliaGenesisHash:
-		return params.SepoliaChainConfig
-	case ghash == params.HoodiGenesisHash:
-		return params.HoodiChainConfig
 	case ghash == params.RandomXGenesisHash:
 		return params.RandomXChainConfig
 	default:
@@ -631,101 +611,68 @@ func EnableUBTAtGenesis(db ethdb.Database, genesis *Genesis) (bool, error) {
 	return false, nil
 }
 
-// DefaultGenesisBlock returns the Ethereum main net genesis block.
+// ============================================================
+// DEFAULT GENESIS BLOCKS - RANDOMX ONLY
+// ============================================================
+
+// DefaultGenesisBlock is deprecated. Use DefaultRandomXGenesisBlock instead.
 func DefaultGenesisBlock() *Genesis {
-	alloc := decodePrealloc(mainnetAllocData)
-	alloc[common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")] = types.Account{
-		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
-	}
-
-	return &Genesis{
-		Config:     params.MainnetChainConfig,
-		Nonce:      66,
-		ExtraData:  hexutil.MustDecode("0x11bbe8db4e347b4e8c937c1c8370e4b5ed33adb3db69cbdb7a38e1e50b1b82fa"),
-		GasLimit:   5000,
-		Difficulty: big.NewInt(17179869184),
-		Alloc:      alloc,
-	}
+	return DefaultRandomXGenesisBlock()
 }
 
-// DefaultSepoliaGenesisBlock returns the Sepolia network genesis block.
+// DefaultSepoliaGenesisBlock is deprecated for RandomX.
 func DefaultSepoliaGenesisBlock() *Genesis {
-	return &Genesis{
-		Config:     params.SepoliaChainConfig,
-		Nonce:      0,
-		ExtraData:  []byte("Sepolia, Athens, Attica, Greece!"),
-		GasLimit:   0x1c9c380,
-		Difficulty: big.NewInt(0x20000),
-		Timestamp:  1633267481,
-		Alloc:      decodePrealloc(sepoliaAllocData),
-	}
+	return DefaultRandomXGenesisBlock()
 }
 
-// DefaultHoleskyGenesisBlock returns the Holesky network genesis block.
+// DefaultHoleskyGenesisBlock is deprecated for RandomX.
 func DefaultHoleskyGenesisBlock() *Genesis {
-	return &Genesis{
-		Config:     params.HoleskyChainConfig,
-		Nonce:      0x1234,
-		GasLimit:   0x17d7840,
-		Difficulty: big.NewInt(0x01),
-		Timestamp:  1695902100,
-		Alloc:      decodePrealloc(holeskyAllocData),
-	}
+	return DefaultRandomXGenesisBlock()
 }
 
-// DefaultHoodiGenesisBlock returns the Hoodi network genesis block.
+// DefaultHoodiGenesisBlock is deprecated for RandomX.
 func DefaultHoodiGenesisBlock() *Genesis {
-	return &Genesis{
-		Config:     params.HoodiChainConfig,
-		Nonce:      0x1234,
-		GasLimit:   0x2255100,
-		Difficulty: big.NewInt(0x01),
-		Timestamp:  1742212800,
-		Alloc:      decodePrealloc(hoodiAllocData),
-	}
+	return DefaultRandomXGenesisBlock()
 }
 
 // DefaultRandomXGenesisBlock returns the default RandomX genesis block.
 func DefaultRandomXGenesisBlock() *Genesis {
 	alloc := make(types.GenesisAlloc)
-        // Main King: 59,000,000 ANTD
-        alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(59_000_000), big.NewInt(1e18)),
-        }
-        
-        // Rotating King 1: 500,000 ANTD
-        alloc[common.HexToAddress("0x216DDd90e17964DEfDFf710Cebd5a366C7c2B785")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
-        }
-        
-        // Rotating King 2: 500,000 ANTD
-        alloc[common.HexToAddress("0x2277eAa0b45FCF3286F4ac5174e112238B8EC46E")] = types.Account{
-                Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
-        }
 
-	// Pre-deploy the checkpoint contract with its final blockchain anchor set in
-	// genesis. Since isSet is true from block 0 and owner is a non-zero burner,
-	// initialize and setCheckpoint cannot change the checkpoint hash afterwards.
-	alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
-	    Code:    common.FromHex(randomXCheckpointCode),
-	    Balance: big.NewInt(0),
-	    Storage: map[common.Hash]common.Hash{
-	        // Slot 0: owner address (right‑padded to 32 bytes)
-	        common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
-
-	        // Slot 1: checkpointHash (the permanent blockchain anchor)
-	        common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
-
-	        // Slot 2: setAtBlock (uint256) – 0 initially
-	        common.BigToHash(big.NewInt(2)): common.Hash{},
-
-	        // Slot 3: setAtTimestamp (uint256) – 0 initially
-	        common.BigToHash(big.NewInt(3)): common.Hash{},
-
-	        // Slot 4: isSet (bool) – 1 = true (already finalised)
-	        common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
-	    },
+	// ============================================================
+	// KING ALLOCATIONS
+	// ============================================================
+	// Main King: 59,000,000 ANTD
+	alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(59_000_000), big.NewInt(1e18)),
 	}
+
+	// Rotating King 1: 500,000 ANTD
+	alloc[common.HexToAddress("0x216DDd90e17964DEfDFf710Cebd5a366C7c2B785")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
+	}
+
+	// Rotating King 2: 500,000 ANTD
+	alloc[common.HexToAddress("0x2277eAa0b45FCF3286F4ac5174e112238B8EC46E")] = types.Account{
+		Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
+	}
+
+	// ============================================================
+	// RANDOMX CHECKPOINT CONTRACT - DISABLED FOR NOW
+	// ============================================================
+	// The checkpoint contract is causing state root mismatches.
+	// Comment it out until the issue is resolved.
+		alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
+			Code:    common.FromHex(randomXCheckpointCode),
+			Balance: big.NewInt(0),
+			Storage: map[common.Hash]common.Hash{
+				common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
+				common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
+				common.BigToHash(big.NewInt(2)): common.Hash{},
+				common.BigToHash(big.NewInt(3)): common.Hash{},
+				common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)), // isSet = 0 (false)
+			},
+		}
 
 	return &Genesis{
 		Config:     params.RandomXChainConfig,

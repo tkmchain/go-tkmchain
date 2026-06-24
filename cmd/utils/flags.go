@@ -1957,116 +1957,107 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	// Override any default configs for hard coded networks.
 	switch {
-	case ctx.Bool(MainnetFlag.Name):
-		cfg.NetworkId = 1
-		cfg.Genesis = core.DefaultGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
-	case ctx.Bool(HoleskyFlag.Name):
-		cfg.NetworkId = 17000
-		cfg.Genesis = core.DefaultHoleskyGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.HoleskyGenesisHash)
-	case ctx.Bool(SepoliaFlag.Name):
-		cfg.NetworkId = 11155111
-		cfg.Genesis = core.DefaultSepoliaGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.SepoliaGenesisHash)
-	case ctx.Bool(HoodiFlag.Name):
-		cfg.NetworkId = 560048
-		cfg.Genesis = core.DefaultHoodiGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.HoodiGenesisHash)
-	case ctx.Bool(DeveloperFlag.Name):
-		cfg.NetworkId = 1337
-		cfg.SyncMode = ethconfig.FullSync
-		cfg.EnablePreimageRecording = true
-		// Create new developer account or reuse existing one
-		var (
-			developer  accounts.Account
-			passphrase string
-			err        error
-		)
-		if path := ctx.Path(PasswordFileFlag.Name); path != "" {
-			if text, err := os.ReadFile(path); err != nil {
-				Fatalf("Failed to read password file: %v", err)
-			} else {
-				if lines := strings.Split(string(text), "\n"); len(lines) > 0 {
-					passphrase = strings.TrimRight(lines[0], "\r") // Sanitise DOS line endings.
-				}
-			}
-		}
-		// Unlock the developer account by local keystore.
-		var ks *keystore.KeyStore
-		if keystores := stack.AccountManager().Backends(keystore.KeyStoreType); len(keystores) > 0 {
-			ks = keystores[0].(*keystore.KeyStore)
-		}
-		if ks == nil {
-			Fatalf("Keystore is not available")
-		}
-
-		// Figure out the dev account address.
-		// setEtherbase has been called above, configuring the miner address from command line flags.
-		if cfg.Miner.PendingFeeRecipient != (common.Address{}) {
-			developer = accounts.Account{Address: cfg.Miner.PendingFeeRecipient}
-		} else if accs := ks.Accounts(); len(accs) > 0 {
-			developer = ks.Accounts()[0]
+case ctx.Bool(DeveloperFlag.Name):
+	cfg.NetworkId = 1337
+	cfg.SyncMode = ethconfig.FullSync
+	cfg.EnablePreimageRecording = true
+	// Create new developer account or reuse existing one
+	var (
+		developer  accounts.Account
+		passphrase string
+		err        error
+	)
+	if path := ctx.Path(PasswordFileFlag.Name); path != "" {
+		if text, err := os.ReadFile(path); err != nil {
+			Fatalf("Failed to read password file: %v", err)
 		} else {
-			developer, err = ks.ImportECDSA(DeveloperKey, passphrase)
-			if err != nil {
-				Fatalf("Failed to import developer account: %v", err)
+			if lines := strings.Split(string(text), "\n"); len(lines) > 0 {
+				passphrase = strings.TrimRight(lines[0], "\r") // Sanitise DOS line endings.
 			}
-		}
-		// Make sure the address is configured as fee recipient, otherwise
-		// the miner will fail to start.
-		cfg.Miner.PendingFeeRecipient = developer.Address
-
-		// try to unlock the first keystore account
-		if len(ks.Accounts()) > 0 {
-			if err := ks.Unlock(developer, passphrase); err != nil {
-				Fatalf("Failed to unlock developer account: %v", err)
-			}
-		}
-		log.Info("Using developer account", "address", developer.Address)
-
-		// configure default developer genesis which will be used unless a
-		// datadir is specified and a chain is preexisting at that location.
-		cfg.Genesis = core.DeveloperGenesisBlock(ctx.Uint64(DeveloperGasLimitFlag.Name), &developer.Address)
-
-		// If a datadir is specified, ensure that any preexisting chain in that location
-		// has a configuration that is compatible with dev mode: it must be merged at genesis.
-		if ctx.IsSet(DataDirFlag.Name) {
-			chaindb := tryMakeReadOnlyDatabase(ctx, stack)
-			if rawdb.ReadCanonicalHash(chaindb, 0) != (common.Hash{}) {
-				// signal fallback to preexisting chain on disk
-				cfg.Genesis = nil
-
-				genesis, err := core.ReadGenesis(chaindb)
-				if err != nil {
-					Fatalf("Could not read genesis from database: %v", err)
-				}
-				if genesis.Difficulty.Cmp(big.NewInt(0)) != 0 {
-					Fatalf("Bad developer-mode genesis configuration: difficulty must be 0")
-				}
-			}
-			chaindb.Close()
-		}
-		if !ctx.IsSet(MinerGasPriceFlag.Name) {
-			cfg.Miner.GasPrice = big.NewInt(1)
-		}
-	case ctx.String(OverrideGenesisFlag.Name) != "":
-		f, err := os.Open(ctx.String(OverrideGenesisFlag.Name))
-		if err != nil {
-			Fatalf("Failed to read genesis file: %v", err)
-		}
-		defer f.Close()
-
-		genesis := new(core.Genesis)
-		if err := json.NewDecoder(f).Decode(genesis); err != nil {
-			Fatalf("Invalid genesis file: %v", err)
-		}
-		cfg.Genesis = genesis
-	default:
-		if ctx.Uint64(NetworkIdFlag.Name) == 1 {
-			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 		}
 	}
+	// Unlock the developer account by local keystore.
+	var ks *keystore.KeyStore
+	if keystores := stack.AccountManager().Backends(keystore.KeyStoreType); len(keystores) > 0 {
+		ks = keystores[0].(*keystore.KeyStore)
+	}
+	if ks == nil {
+		Fatalf("Keystore is not available")
+	}
+
+	// Figure out the dev account address.
+	// setEtherbase has been called above, configuring the miner address from command line flags.
+	if cfg.Miner.PendingFeeRecipient != (common.Address{}) {
+		developer = accounts.Account{Address: cfg.Miner.PendingFeeRecipient}
+	} else if accs := ks.Accounts(); len(accs) > 0 {
+		developer = ks.Accounts()[0]
+	} else {
+		developer, err = ks.ImportECDSA(DeveloperKey, passphrase)
+		if err != nil {
+			Fatalf("Failed to import developer account: %v", err)
+		}
+	}
+	// Make sure the address is configured as fee recipient, otherwise
+	// the miner will fail to start.
+	cfg.Miner.PendingFeeRecipient = developer.Address
+
+	// try to unlock the first keystore account
+	if len(ks.Accounts()) > 0 {
+		if err := ks.Unlock(developer, passphrase); err != nil {
+			Fatalf("Failed to unlock developer account: %v", err)
+		}
+	}
+	log.Info("Using developer account", "address", developer.Address)
+
+	// configure default developer genesis which will be used unless a
+	// datadir is specified and a chain is preexisting at that location.
+	cfg.Genesis = core.DeveloperGenesisBlock(ctx.Uint64(DeveloperGasLimitFlag.Name), &developer.Address)
+
+	// If a datadir is specified, ensure that any preexisting chain in that location
+	// has a configuration that is compatible with dev mode: it must be merged at genesis.
+	if ctx.IsSet(DataDirFlag.Name) {
+		chaindb := tryMakeReadOnlyDatabase(ctx, stack)
+		if rawdb.ReadCanonicalHash(chaindb, 0) != (common.Hash{}) {
+			// signal fallback to preexisting chain on disk
+			cfg.Genesis = nil
+
+			genesis, err := core.ReadGenesis(chaindb)
+			if err != nil {
+				Fatalf("Could not read genesis from database: %v", err)
+			}
+			if genesis.Difficulty.Cmp(big.NewInt(0)) != 0 {
+				Fatalf("Bad developer-mode genesis configuration: difficulty must be 0")
+			}
+		}
+		chaindb.Close()
+	}
+	if !ctx.IsSet(MinerGasPriceFlag.Name) {
+		cfg.Miner.GasPrice = big.NewInt(1)
+	}
+
+case ctx.String(OverrideGenesisFlag.Name) != "":
+	f, err := os.Open(ctx.String(OverrideGenesisFlag.Name))
+	if err != nil {
+		Fatalf("Failed to read genesis file: %v", err)
+	}
+	defer f.Close()
+
+	genesis := new(core.Genesis)
+	if err := json.NewDecoder(f).Decode(genesis); err != nil {
+		Fatalf("Invalid genesis file: %v", err)
+	}
+	cfg.Genesis = genesis
+	// For custom genesis, use RandomX for DNS discovery
+	SetDNSDiscoveryDefaults(cfg, params.RandomXGenesisHash)
+
+default:
+	// ============================================================
+	// RANDOMX NETWORK (DEFAULT)
+	// ============================================================
+	cfg.NetworkId = 8979
+	cfg.Genesis = core.DefaultRandomXGenesisBlock()
+	SetDNSDiscoveryDefaults(cfg, params.RandomXGenesisHash)
+}
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		// Typically it's best to automatically set the network ID to the chainID,
 		// by not passing the --networkid flag at all. Emit a warning when set

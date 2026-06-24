@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 // HistoryMode configures history pruning.
@@ -84,21 +83,31 @@ type PrunePoint struct {
 	BlockHash   common.Hash
 }
 
-// staticPrunePoints contains the pre-defined history pruning cutoff blocks for
-// known networks. For RandomX-only chains, we only need mainnet references.
+// ============================================================
+// STATIC PRUNE POINTS - DISABLED FOR RANDOMX
+// ============================================================
+// RandomX chains don't need history pruning. The static prune points
+// are only relevant for Ethereum mainnet. For RandomX, we keep all history.
+// If you want to enable pruning for your RandomX chain, you can add
+// your own prune points here using params.RandomXGenesisHash.
+
 var staticPrunePoints = map[HistoryMode]map[common.Hash]*PrunePoint{
-	KeepPostMerge: {
-		params.MainnetGenesisHash: {
-			BlockNumber: 15537393,
-			BlockHash:   common.HexToHash("0x55b11b918355b1ef9c5db810302ebad0bf2544255b530cdce90674d5887bb286"),
-		},
-	},
-	KeepPostPrague: {
-		params.MainnetGenesisHash: {
-			BlockNumber: 22431084,
-			BlockHash:   common.HexToHash("0x50c8cab760b2948349c590461b166773c45d8f4858cccf5a43025ab2960152e8"),
-		},
-	},
+	// For RandomX, we don't use pruning. The KeepPostMerge and KeepPostPrague
+	// modes will fall back to KeepAll for RandomX chains.
+	//
+	// To add pruning for RandomX, uncomment and set your own prune blocks:
+	// KeepPostMerge: {
+	// 	params.RandomXGenesisHash: {
+	// 		BlockNumber: 100000, // Your desired prune block
+	// 		BlockHash:   common.HexToHash("0x..."), // Block hash at that height
+	// 	},
+	// },
+	// KeepPostPrague: {
+	// 	params.RandomXGenesisHash: {
+	// 		BlockNumber: 200000, // Your desired prune block
+	// 		BlockHash:   common.HexToHash("0x..."), // Block hash at that height
+	// 	},
+	// },
 }
 
 // HistoryPolicy describes the configured history pruning strategy.
@@ -117,7 +126,7 @@ func NewPolicy(mode HistoryMode, genesisHash common.Hash) (HistoryPolicy, error)
 	case KeepPostMerge, KeepPostPrague:
 		point := staticPrunePoints[mode][genesisHash]
 		if point == nil {
-			// For unknown networks, default to KeepAll
+			// For unknown networks (including RandomX), default to KeepAll
 			return HistoryPolicy{Mode: KeepAll}, nil
 		}
 		return HistoryPolicy{Mode: mode, Target: point}, nil

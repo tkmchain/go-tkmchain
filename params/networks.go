@@ -18,9 +18,7 @@ package params
 
 // NetworkNames are user friendly names to use in the chain spec banner.
 var NetworkNames = map[string]string{
-	MainnetChainConfig.ChainID.String(): "mainnet",
-	TestChainConfig.ChainID.String():    "testnet",
-	SepoliaGenesisHash.String():         "sepolia",
-	HoleskyGenesisHash.String():         "holesky",
-	HoodiGenesisHash.String():           "hoodi",
+	RandomXChainConfig.ChainID.String(): "randomx-mainnet",
+	TestChainConfig.ChainID.String():    "randomx-testnet",
+	RandomXGenesisHash.String():         "randomx",
 }
