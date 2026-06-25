@@ -1717,26 +1717,29 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			return err
 		}
 	}
+	if root != block.Root() {
+		return fmt.Errorf("state root mismatch: computed %x, block %x", root, block.Root())
+	}
 
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
-	if err := bc.triedb.Commit(root, true); err != nil {
+	if err := bc.triedb.Commit(block.Root(), true); err != nil {
 		// For path scheme, "disk layer" means the state is already durable – ignore it.
 		if !strings.Contains(err.Error(), "disk layer") {
 			return err
 		}
-		log.Debug("State already on disk (path scheme)", "root", root)
+		log.Debug("State already on disk (path scheme)", "root", block.Root())
 	}
 	if bc.triedb.Scheme() == rawdb.PathScheme {
 		return nil
 	}
 	// If we're running an archive node, always flush
 	if bc.cfg.ArchiveMode {
-		return bc.triedb.Commit(root, false)
+		return bc.triedb.Commit(block.Root(), false)
 	}
 	// Full but not archive node, do proper garbage collection
-	bc.triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
-	bc.triegc.Push(root, -int64(block.NumberU64()))
+	bc.triedb.Reference(block.Root(), common.Hash{}) // metadata reference to keep trie alive
+	bc.triegc.Push(block.Root(), -int64(block.NumberU64()))
 
 	// Flush limits are not considered for the first TriesInMemory blocks.
 	current := block.NumberU64()

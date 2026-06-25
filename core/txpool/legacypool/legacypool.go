@@ -181,7 +181,7 @@ func (config *Config) sanitize() Config {
 		log.Warn("Sanitizing invalid txpool price limit", "provided", conf.PriceLimit, "updated", DefaultConfig.PriceLimit)
 		conf.PriceLimit = DefaultConfig.PriceLimit
 	}
-	if conf.PriceBump < 1 {
+	if conf.PriceBump < DefaultConfig.PriceBump {
 		log.Warn("Sanitizing invalid txpool price bump", "provided", conf.PriceBump, "updated", DefaultConfig.PriceBump)
 		conf.PriceBump = DefaultConfig.PriceBump
 	}

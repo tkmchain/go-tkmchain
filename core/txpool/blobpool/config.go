@@ -42,9 +42,9 @@ func (config *Config) sanitize() Config {
 		log.Warn("Sanitizing invalid blobpool storage cap", "provided", conf.Datacap, "updated", DefaultConfig.Datacap)
 		conf.Datacap = DefaultConfig.Datacap
 	}
-	if conf.PriceBump < 1 {
-		log.Warn("Sanitizing invalid blobpool price bump", "provided", conf.PriceBump, "updated", DefaultConfig.PriceBump)
-		conf.PriceBump = DefaultConfig.PriceBump
+	if conf.PriceBump < 10 {
+		log.Warn("Sanitizing invalid blobpool price bump", "provided", conf.PriceBump, "updated", 10)
+		conf.PriceBump = 10
 	}
 	return conf
 }
