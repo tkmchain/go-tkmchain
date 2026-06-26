@@ -78,6 +78,10 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+// ExpensiveCategory is used for flags that enable expensive operations
+// such as TVM (Trusted Virtual Machine) and other resource-intensive features
+const ExpensiveCategory = "EXPENSIVE"
+
 // These are all the command line flags we support.
 // If you add to this list, please remember to include the
 // flag in the appropriate command definition.

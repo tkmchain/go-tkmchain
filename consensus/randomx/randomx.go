@@ -45,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
+        "github.com/ethereum/go-ethereum/params"
 )
 
 var (
@@ -1067,6 +1068,17 @@ func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block)
 		return consensus.ErrUnknownAncestor
 	}
 	return nil
+}
+
+func CalcDifficulty(config *params.ChainConfig, currentTime uint64, parent *types.Header, parentHash *common.Hash) *big.Int {
+    // Create a minimal instance for calculation
+    rx := &RandomX{
+        config:           DefaultConfig(),
+        rotatingKings:    []common.Address{common.Address{}},
+        rotationInterval: 100,
+        stopCh:           make(chan struct{}),
+    }
+    return rx.CalcDifficulty(nil, currentTime, parent)
 }
 
 func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {

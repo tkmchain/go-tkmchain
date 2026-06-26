@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
-	//        "github.com/ethereum/go-ethereum/eth"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Force-load the tracer engines to trigger registration
@@ -159,6 +158,25 @@ var (
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
 		utils.LogSlowBlockFlag,
+        &cli.BoolFlag{
+            Name:     "tvm.enable",
+            Usage:    "Enable TVM (Trusted Virtual Machine) for C++ smart contracts",
+            Category: utils.ExpensiveCategory,
+            EnvVars:  []string{"GETH_TVM_ENABLE"},
+        },
+        &cli.StringFlag{
+            Name:     "tvm.dir",
+            Usage:    "Directory for TVM module cache and temporary files",
+            Category: utils.ExpensiveCategory,
+            EnvVars:  []string{"GETH_TVM_DIR"},
+        },
+        &cli.Uint64Flag{
+            Name:     "tvm.gas",
+            Usage:    "Maximum gas for TVM execution (default: 10,000,000)",
+            Category: utils.ExpensiveCategory,
+            EnvVars:  []string{"GETH_TVM_GAS"},
+            Value:    10000000,
+        },
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -284,6 +302,13 @@ func init() {
 				"pool", ctx.Bool(utils.PoolMiningFlag.Name),
 			)
 		}
+    // Log TVM configuration
+    if ctx.Bool("tvm.enable") {
+        log.Info("TVM (Trusted Virtual Machine) enabled",
+            "dir", ctx.String("tvm.dir"),
+            "gasLimit", ctx.Uint64("tvm.gas"),
+        )
+    }
 
 		return nil
 	}
