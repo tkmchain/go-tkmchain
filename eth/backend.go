@@ -498,6 +498,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewRandomXAPI(s),
 		},
 		{
+			Namespace: "tvm",
+			Service:   NewTVMAPI(),
+		},
+		{
 			Namespace: "tkm",
 			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
 		},

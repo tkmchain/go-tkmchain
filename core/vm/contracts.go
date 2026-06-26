@@ -53,6 +53,12 @@ type PrecompiledContract interface {
 	Name() string
 }
 
+// StatefulPrecompiledContract can access the EVM state through a restricted host.
+type StatefulPrecompiledContract interface {
+	PrecompiledContract
+	RunStateful(stateDB StateDB, address common.Address, input []byte, readOnly bool) ([]byte, error)
+}
+
 // PrecompiledContracts contains the precompiled contracts supported at the given fork.
 type PrecompiledContracts map[common.Address]PrecompiledContract
 
@@ -141,6 +147,9 @@ var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+
+	// RotatingKing precompile (custom address 0x...f1)
+	TVMPrecompileAddr: &tvmPrecompileContract{},
 }
 
 var PrecompiledContractsBLS = PrecompiledContractsPrague
@@ -167,6 +176,7 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+	TVMPrecompileAddr:                   &tvmPrecompileContract{},
 
 	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
@@ -262,7 +272,7 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // - the returned bytes,
 // - the remaining gas budget,
 // - any error that occurred
-func RunPrecompiledContract(stateDB StateDB, p PrecompiledContract, address common.Address, input []byte, gas GasBudget, logger *tracing.Hooks, rules params.Rules) (ret []byte, remaining GasBudget, err error) {
+func RunPrecompiledContract(stateDB StateDB, p PrecompiledContract, address common.Address, input []byte, gas GasBudget, logger *tracing.Hooks, rules params.Rules, readOnly bool) (ret []byte, remaining GasBudget, err error) {
 	gasCost := p.RequiredGas(input)
 	prior, ok := gas.Charge(GasCosts{RegularGas: gasCost})
 	if !ok {
@@ -276,6 +286,10 @@ func RunPrecompiledContract(stateDB StateDB, p PrecompiledContract, address comm
 	// fork is activated.
 	if rules.IsAmsterdam {
 		stateDB.Touch(address)
+	}
+	if stateful, ok := p.(StatefulPrecompiledContract); ok {
+		output, err := stateful.RunStateful(stateDB, address, input, readOnly)
+		return output, gas, err
 	}
 	output, err := p.Run(input)
 	return output, gas, err
