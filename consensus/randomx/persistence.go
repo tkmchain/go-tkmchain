@@ -87,9 +87,3 @@ func (rx *RandomX) LoadStoredDifficulty() (*big.Int, uint64) {
     
     return difficulty, blockNumber
 }
-
-// loadStoredDifficulty is a convenience wrapper
-func (rx *RandomX) loadStoredDifficulty() *big.Int {
-    diff, _ := rx.LoadStoredDifficulty()
-    return diff
-}
