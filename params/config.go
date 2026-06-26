@@ -25,6 +25,25 @@ import (
 )
 
 // ============================================================
+// RANDOMX CHAIN CONFIG ALIASES
+// ============================================================
+
+// These aliases are provided for compatibility with tools that expect
+// Ethereum chain configurations. All point to RandomXChainConfig.
+var (
+    // MainnetChainConfig is an alias for RandomXChainConfig
+    MainnetChainConfig = RandomXChainConfig
+    
+    // SepoliaChainConfig is an alias for RandomXChainConfig
+    SepoliaChainConfig = RandomXChainConfig
+    
+    // HoleskyChainConfig is an alias for RandomXChainConfig
+    HoleskyChainConfig = RandomXChainConfig
+    
+    // HoodiChainConfig is an alias for RandomXChainConfig
+    HoodiChainConfig = RandomXChainConfig
+)
+// ============================================================
 // GENESIS HASHES
 // ============================================================
 
