@@ -1389,7 +1389,7 @@ func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64
 	}
 	return GenesisDifficulty
 }
-
+/*
 func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	if parent == nil {
 		return GenesisDifficulty
@@ -1469,6 +1469,94 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 
 	// Update global difficulty
 	GlobalDifficulty.Set(newDiff)
+
+	return newDiff
+}
+*/
+// CalcDifficulty implements consensus.Engine - calculates difficulty for the next block
+func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
+	if parent == nil {
+		return GenesisDifficulty
+	}
+
+	parentTime := parent.Time
+	var blockTime uint64
+	if time > parentTime {
+		blockTime = time - parentTime
+	} else {
+		blockTime = parentTime - time
+	}
+
+	targetTime := uint64(TargetBlockTime)
+	currentDiff := new(big.Int).Set(parent.Difficulty)
+	minDiff := MinDifficulty
+
+	// If block time is 0, keep current difficulty
+	if blockTime == 0 {
+		return currentDiff
+	}
+
+	// If block time is very long, keep current difficulty
+	if blockTime > targetTime*10 {
+		log.Info("Long gap since parent block, keeping current difficulty",
+			"difficulty", currentDiff,
+			"block_time", blockTime,
+			"target_time", targetTime)
+		return currentDiff
+	}
+
+	// Calculate ratio: (targetTime * 100) / blockTime
+	// This gives us a percentage: 100 = 1.0x, 200 = 2.0x, 50 = 0.5x
+	ratio := new(big.Int).SetUint64(targetTime)
+	ratio.Mul(ratio, big.NewInt(100))
+	ratio.Div(ratio, new(big.Int).SetUint64(blockTime))
+
+	// Cap the ratio at 200 (2x increase)
+	if ratio.Cmp(big.NewInt(200)) > 0 {
+		ratio = big.NewInt(200)
+	}
+
+	// Minimum ratio: 50 (0.5x decrease)
+	if ratio.Cmp(big.NewInt(50)) < 0 {
+		ratio = big.NewInt(50)
+	}
+
+	// Apply the ratio: newDiff = currentDiff * ratio / 100
+	newDiff := new(big.Int).Mul(currentDiff, ratio)
+	newDiff.Div(newDiff, big.NewInt(100))
+
+	// Ensure minimum difficulty
+	if newDiff.Cmp(minDiff) < 0 {
+		newDiff.Set(minDiff)
+	}
+
+	// Ensure maximum difficulty
+	if newDiff.Cmp(MaxDifficulty) > 0 {
+		newDiff.Set(MaxDifficulty)
+	}
+
+	// Log the adjustment
+	ratioFloat := float64(ratio.Int64()) / 100.0
+	if newDiff.Cmp(currentDiff) > 0 {
+		log.Info("⬆️ Difficulty INCREASED",
+			"old", currentDiff,
+			"new", newDiff,
+			"ratio", fmt.Sprintf("%.2fx", ratioFloat),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	} else if newDiff.Cmp(currentDiff) < 0 {
+		log.Info("⬇️ Difficulty DECREASED",
+			"old", currentDiff,
+			"new", newDiff,
+			"ratio", fmt.Sprintf("%.2fx", ratioFloat),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	} else {
+		log.Info("➡️ Difficulty unchanged",
+			"current", currentDiff,
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	}
 
 	return newDiff
 }
