@@ -17,112 +17,114 @@
 package core
 
 import (
-        "context"
-        "fmt"
+	"context"
+	"fmt"
 
-        "github.com/ethereum/go-ethereum/common"
-        "github.com/ethereum/go-ethereum/common/lru"
-        "github.com/ethereum/go-ethereum/consensus/randomx"
-        "github.com/ethereum/go-ethereum/core/state"
-        "github.com/ethereum/go-ethereum/core/stateless"
-        "github.com/ethereum/go-ethereum/core/types"
-        "github.com/ethereum/go-ethereum/core/vm"
-        "github.com/ethereum/go-ethereum/log"
-        "github.com/ethereum/go-ethereum/params"
-        "github.com/ethereum/go-ethereum/trie"
-        "github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/lru"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/stateless"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 // ExecuteStateless runs a stateless execution based on a witness, verifies
 // everything it can locally and returns the state root and receipt root, that
 // need the other side to explicitly check.
 func ExecuteStateless(ctx context.Context, config *params.ChainConfig, vmconfig vm.Config, block *types.Block, witness *stateless.Witness) (common.Hash, common.Hash, error) {
-        // Sanity check if the supplied block accidentally contains a set root or
-        // receipt hash.
-        if block.Root() != (common.Hash{}) {
-                log.Error("stateless runner received state root it's expected to calculate (faulty consensus client)", "block", block.Number())
-        }
-        if block.ReceiptHash() != (common.Hash{}) {
-                log.Error("stateless runner received receipt root it's expected to calculate (faulty consensus client)", "block", block.Number())
-        }
+	// Sanity check if the supplied block accidentally contains a set root or
+	// receipt hash.
+	if block.Root() != (common.Hash{}) {
+		log.Error("stateless runner received state root it's expected to calculate (faulty consensus client)", "block", block.Number())
+	}
+	if block.ReceiptHash() != (common.Hash{}) {
+		log.Error("stateless runner received receipt root it's expected to calculate (faulty consensus client)", "block", block.Number())
+	}
 
-        // Create and populate the state database to serve as the stateless backend
-        memdb := witness.MakeHashDB()
-        db, err := state.New(witness.Root(), state.NewDatabase(triedb.NewDatabase(memdb, triedb.HashDefaults), state.NewCodeDB(memdb)))
-        if err != nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create state database: %w", err)
-        }
+	// Create and populate the state database to serve as the stateless backend
+	memdb := witness.MakeHashDB()
+	db, err := state.New(witness.Root(), state.NewDatabase(triedb.NewDatabase(memdb, triedb.HashDefaults), state.NewCodeDB(memdb)))
+	if err != nil {
+		return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create state database: %w", err)
+	}
 
-        // Use light mode (cache only) for stateless execution to save memory
-        if config.RandomX == nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("RandomX config missing for stateless execution")
-        }
+	// Use light mode (cache only) for stateless execution to save memory
+	if config.RandomX == nil {
+		return common.Hash{}, common.Hash{}, fmt.Errorf("RandomX config missing for stateless execution")
+	}
 
-        // Create light mode RandomX engine using the correct randomx.Config type
-        lightConfig := &randomx.Config{
-                Enabled:     true,
-                EpochLength: config.RandomX.EpochLength,
-                CacheSize:   config.RandomX.CacheSizeMB,
-                DatasetSize: 0, // Disable dataset for light mode
-                MinMemory:   config.RandomX.MinMemory,
-        }
-        
-        if lightConfig.EpochLength == 0 {
-                lightConfig.EpochLength = randomx.RandomXEpochLength
-        }
+	// Create light mode RandomX engine using the correct randomx.Config type
+	lightConfig := &randomx.Config{
+		Enabled:     true,
+		EpochLength: config.RandomX.EpochLength,
+		CacheSize:   config.RandomX.CacheSizeMB,
+		DatasetSize: 0, // Disable dataset for light mode
+		MinMemory:   config.RandomX.MinMemory,
+	}
 
-        // Get actual king addresses from chain configuration
-        mainKing := config.MainKingAddress
-        if mainKing == (common.Address{}) {
-                log.Debug("No main king address in config, using zero address for stateless execution")
-                mainKing = common.Address{}
-        }
+	if lightConfig.EpochLength == 0 {
+		lightConfig.EpochLength = randomx.RandomXEpochLength
+	}
 
-        rotatingKings := config.RotatingKingAddresses
-        if len(rotatingKings) == 0 {
-                log.Debug("No rotating king addresses in config, using zero address for stateless execution")
-                rotatingKings = []common.Address{common.Address{}}
-        }
+	// Get actual king addresses from chain configuration
+	mainKing := config.MainKingAddress
+	if mainKing == (common.Address{}) {
+		log.Debug("No main king address in config, using zero address for stateless execution")
+		mainKing = common.Address{}
+	}
 
-        engine, err := randomx.New(lightConfig, 1, mainKing, rotatingKings)
-        if err != nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create RandomX engine for stateless execution: %w", err)
-        }
-        defer engine.Close()
+	rotatingKings := config.RotatingKingAddresses
+	if len(rotatingKings) == 0 {
+		log.Debug("No rotating king addresses in config, using zero address for stateless execution")
+		rotatingKings = []common.Address{common.Address{}}
+	}
 
-        // Create a header chain with the real RandomX engine
-        chain := &HeaderChain{
-                config:      config,
-                chainDb:     memdb,
-                headerCache: lru.NewCache[common.Hash, *types.Header](256),
-                engine:      engine,
-        }
+	// Create the RandomX engine with database for stateless execution
+	// Use memdb as the database for stateless execution
+	engine, err := randomx.New(lightConfig, 1, mainKing, rotatingKings, memdb)
+	if err != nil {
+		return common.Hash{}, common.Hash{}, fmt.Errorf("failed to create RandomX engine for stateless execution: %w", err)
+	}
+	defer engine.Close()
 
-        processor := NewStateProcessor(chain)
-        validator := NewBlockValidator(config, nil)
+	// Create a header chain with the real RandomX engine
+	chain := &HeaderChain{
+		config:      config,
+		chainDb:     memdb,
+		headerCache: lru.NewCache[common.Hash, *types.Header](256),
+		engine:      engine,
+	}
 
-        // Run the stateless blocks processing and self-validate certain fields
-        res, err := processor.Process(ctx, block, db, vmconfig)
-        if err != nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("failed to process block: %w", err)
-        }
+	processor := NewStateProcessor(chain)
+	validator := NewBlockValidator(config, nil)
 
-        if err = validator.ValidateState(block, db, res, true); err != nil {
-                return common.Hash{}, common.Hash{}, fmt.Errorf("failed to validate state: %w", err)
-        }
+	// Run the stateless blocks processing and self-validate certain fields
+	res, err := processor.Process(ctx, block, db, vmconfig)
+	if err != nil {
+		return common.Hash{}, common.Hash{}, fmt.Errorf("failed to process block: %w", err)
+	}
 
-        // Almost everything validated, but receipt and state root needs to be returned
-        receiptRoot := types.DeriveSha(res.Receipts, trie.NewStackTrie(nil))
-        stateRoot := db.IntermediateRoot(config.IsEIP158(block.Number()))
+	if err = validator.ValidateState(block, db, res, true); err != nil {
+		return common.Hash{}, common.Hash{}, fmt.Errorf("failed to validate state: %w", err)
+	}
 
-        log.Debug("Stateless execution completed",
-                "block", block.NumberU64(),
-                "stateRoot", stateRoot.Hex(),
-                "receiptRoot", receiptRoot.Hex(),
-                "txs", len(block.Transactions()),
-                "mainKing", mainKing.Hex(),
-                "rotatingKings", len(rotatingKings),
-        )
+	// Almost everything validated, but receipt and state root needs to be returned
+	receiptRoot := types.DeriveSha(res.Receipts, trie.NewStackTrie(nil))
+	stateRoot := db.IntermediateRoot(config.IsEIP158(block.Number()))
 
-        return stateRoot, receiptRoot, nil
+	log.Debug("Stateless execution completed",
+		"block", block.NumberU64(),
+		"stateRoot", stateRoot.Hex(),
+		"receiptRoot", receiptRoot.Hex(),
+		"txs", len(block.Transactions()),
+		"mainKing", mainKing.Hex(),
+		"rotatingKings", len(rotatingKings),
+	)
+
+	return stateRoot, receiptRoot, nil
 }

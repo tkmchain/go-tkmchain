@@ -30,7 +30,7 @@ var (
 	SepoliaGenesisHash = common.HexToHash("0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9")
 	HoleskyGenesisHash = common.HexToHash("0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4")
 	HoodiGenesisHash   = common.HexToHash("0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b")
-        RandomXGenesisHash = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
+        RandomXGenesisHash = common.HexToHash("0x0deabe89626705d46f7a17357814cf440005ca53bacf94201bcd5b80e4b9cb6f")
 
 )
 
@@ -48,7 +48,7 @@ type RandomXConfig struct {
 
 // RandomXChainConfig
 var RandomXChainConfig = &ChainConfig{
-        ChainID:                 big.NewInt(1),
+        ChainID:                 big.NewInt(8979),
         HomesteadBlock:          big.NewInt(0),
         DAOForkBlock:            nil,
         DAOForkSupport:          true,

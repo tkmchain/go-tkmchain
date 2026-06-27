@@ -689,11 +689,11 @@ func DefaultHoodiGenesisBlock() *Genesis {
 func DefaultRandomXGenesisBlock() *Genesis {
 	alloc := make(types.GenesisAlloc)
 	alloc[common.HexToAddress("0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2")] = types.Account{
-		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
+		Balance: new(big.Int).Mul(big.NewInt(59_500_000), big.NewInt(1e18)),
 	}
-	alloc[common.HexToAddress("0xeF2cf0c1167cd037BbecA3AB5D5D1dD7185979Fe")] = types.Account{
-		Balance: new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18)),
-	}
+       alloc[common.HexToAddress("0xeF2cf0c1167cd037BbecA3AB5D5D1dD7185979Fe")] = types.Account{
+               Balance: new(big.Int).Mul(big.NewInt(500_000), big.NewInt(1e18)),
+       }
 
 	// Pre-deploy the checkpoint contract with its final blockchain anchor set in
 	// genesis. Since isSet is true from block 0 and owner is a non-zero burner,

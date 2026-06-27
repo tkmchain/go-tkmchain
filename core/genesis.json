@@ -1,0 +1,59 @@
+{
+  "config": {
+    "chainId": 8979,
+    "homesteadBlock": 0,
+    "daoForkBlock": null,
+    "daoForkSupport": true,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "arrowGlacierBlock": null,
+    "grayGlacierBlock": null,
+    "shanghaiTime": 0,
+    "cancunTime": null,
+    "pragueTime": null,
+    "osakaTime": null,
+    "bpo1Time": null,
+    "bpo2Time": null,
+    "bpo3Time": null,
+    "bpo4Time": null,
+    "bpo5Time": null,
+    "amsterdamTime": null,
+    "ubtTime": null,
+    "depositContractAddress": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
+    "mainKingAddress": "0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2",
+    "rotatingKingAddresses": [
+      "0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2"
+    ],
+    "rotatingKingRotationInterval": 100,
+    "randomx": {
+      "epochLength": 2048,
+      "cacheSizeMB": 256,
+      "datasetSizeGB": 2,
+      "minMemory": 4294967296,
+      "useRAMCache": false,
+      "persistDataset": true
+    }
+  },
+  "nonce": "0x0",
+  "timestamp": "0x0",
+  "extraData": "0x",
+  "gasLimit": "0x7a1200",
+  "difficulty": "0x1",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "alloc": {
+    "0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2": {
+      "balance": "0x31a17e9eccff6e000000"
+    },
+    "0xeF2cf0c1167cd037BbecA3AB5D5D1dD7185979Fe": {
+      "balance": "0x69e10de76676d0800000"
+    }
+  }
+}

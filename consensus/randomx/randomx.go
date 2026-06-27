@@ -42,18 +42,25 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 var (
 	maxUint256        = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), nil)
-	GenesisDifficulty = big.NewInt(3)
-	MinDifficulty     = big.NewInt(3)
+	GenesisDifficulty = big.NewInt(2440)
+	MinDifficulty     = big.NewInt(2440)
 	MaxDifficulty     = new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil)
+	// GlobalDifficulty stores the current difficulty across the network
+	GlobalDifficulty = new(big.Int).Set(GenesisDifficulty)
+
+	// Checkpoint contract address from genesis
+	CheckpointContractAddress = common.HexToAddress("0x0000000000000000000000000000000000001000")
 )
 
 var (
@@ -200,24 +207,32 @@ type RandomX struct {
 	workMu        sync.RWMutex
 
 	chain consensus.ChainHeaderReader
+	db    ethdb.Database
+
+	// Checkpoint contract protection
+	checkpointContract common.Address
+	checkpointOwner    common.Address
+	checkpointHash     common.Hash
+	checkpointMu       sync.RWMutex
+
+	// Mutex for difficulty operations
+	difficultyMu sync.RWMutex
 }
 
 // NewFaker creates a fake RandomX engine for testing purposes
 func NewFaker() *RandomX {
-	// Create a minimal config for testing
 	config := DefaultConfig()
-
-	// Use a fake cache for testing
 	fakeRx := &RandomX{
-		config:           config,
-		fullFake:         true,
-		rotatingKings:    []common.Address{common.Address{}},
-		rotationInterval: 100,
-		stopCh:           make(chan struct{}),
+		config:             config,
+		fullFake:           true,
+		rotatingKings:      []common.Address{common.Address{}},
+		rotationInterval:   100,
+		stopCh:             make(chan struct{}),
+		checkpointContract: CheckpointContractAddress,
 	}
-
 	return fakeRx
 }
+
 func DefaultConfig() *Config {
 	return &Config{
 		Enabled:     true,
@@ -228,7 +243,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func New(config *Config, threads int, mainKing common.Address, kingAddresses []common.Address) (*RandomX, error) {
+func New(config *Config, threads int, mainKing common.Address, kingAddresses []common.Address, db ethdb.Database) (*RandomX, error) {
 	log.Info("========== INITIALIZING RANDOMX CONSENSUS ==========")
 
 	if config == nil {
@@ -245,19 +260,149 @@ func New(config *Config, threads int, mainKing common.Address, kingAddresses []c
 	}
 
 	rx := &RandomX{
-		config:           config,
-		mainKing:         mainKing,
-		rotatingKings:    kings,
-		rotationInterval: 100,
-		stopCh:           make(chan struct{}),
+		config:             config,
+		mainKing:           mainKing,
+		rotatingKings:      kings,
+		rotationInterval:   100,
+		stopCh:             make(chan struct{}),
+		db:                 db,
+		checkpointContract: CheckpointContractAddress,
 	}
 
 	if err := rx.updateCacheForEpoch(0); err != nil {
 		return nil, fmt.Errorf("failed to initialize RandomX: %w", err)
 	}
 
-	log.Info("✅ RandomX engine initialized successfully", "threads", threads)
+	// Load stored difficulty if available
+	if db != nil {
+		if storedDiff, blockNum := rx.LoadStoredDifficulty(); storedDiff != nil && storedDiff.Cmp(MinDifficulty) >= 0 {
+			GlobalDifficulty.Set(storedDiff)
+			log.Info("✅ Loaded stored difficulty from database",
+				"difficulty", storedDiff,
+				"block", blockNum)
+		} else {
+			log.Info("ℹ️ No stored difficulty found, using genesis difficulty",
+				"genesis", GenesisDifficulty)
+			GlobalDifficulty.Set(GenesisDifficulty)
+			if err := rx.StoreDifficulty(0, GenesisDifficulty); err != nil {
+				log.Warn("Failed to store genesis difficulty", "error", err)
+			}
+		}
+	}
+
+	log.Info("✅ RandomX engine initialized successfully",
+		"threads", threads,
+		"current_difficulty", GlobalDifficulty,
+		"checkpoint_contract", rx.checkpointContract.Hex())
 	return rx, nil
+}
+
+// loadCheckpointFromState loads the checkpoint from the state
+func (rx *RandomX) loadCheckpointFromState() error {
+	if rx.db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	// Try to get the state at the latest block
+	var root common.Hash
+	if rx.chain != nil {
+		// Get the current header to get the state root
+		currentHeader := rx.chain.CurrentHeader()
+		if currentHeader != nil {
+			root = currentHeader.Root
+		}
+	}
+
+	// If no root available, use empty root (genesis)
+	if root == (common.Hash{}) {
+		root = types.EmptyRootHash
+	}
+
+	// Create trie database with default config
+	trieDB := triedb.NewDatabase(rx.db, nil)
+	
+	// Create state database
+	stateDB, err := state.New(root, state.NewDatabase(trieDB, nil))
+	if err != nil {
+		return fmt.Errorf("failed to create state DB: %w", err)
+	}
+
+	// Load the checkpoint contract storage
+	contractAddr := rx.checkpointContract
+
+	// Read slot 0: Owner
+	ownerSlot := common.BigToHash(big.NewInt(0))
+	ownerData := stateDB.GetState(contractAddr, ownerSlot)
+	if ownerData != (common.Hash{}) {
+		// Owner is stored as right-padded 20 bytes
+		ownerBytes := ownerData.Bytes()
+		if len(ownerBytes) >= 20 {
+			ownerAddr := common.BytesToAddress(ownerBytes[12:32])
+			rx.checkpointOwner = ownerAddr
+			log.Info("✅ Loaded checkpoint owner", "address", ownerAddr.Hex())
+		}
+	}
+
+	// Read slot 1: Checkpoint hash
+	hashSlot := common.BigToHash(big.NewInt(1))
+	hashData := stateDB.GetState(contractAddr, hashSlot)
+	if hashData != (common.Hash{}) {
+		rx.checkpointHash = hashData
+		log.Info("✅ Loaded checkpoint hash", "hash", hashData.Hex())
+	} else {
+		log.Info("ℹ️ No checkpoint hash set yet")
+	}
+
+	// Read slot 4: IsSet flag
+	isSetSlot := common.BigToHash(big.NewInt(4))
+	isSetData := stateDB.GetState(contractAddr, isSetSlot)
+	isSet := isSetData != (common.Hash{}) && isSetData.Big().Cmp(big.NewInt(1)) == 0
+
+	// Read slot 2: Set at block
+	setBlockSlot := common.BigToHash(big.NewInt(2))
+	setBlockData := stateDB.GetState(contractAddr, setBlockSlot)
+
+	// Read slot 3: Set at timestamp
+	setTimeSlot := common.BigToHash(big.NewInt(3))
+	setTimeData := stateDB.GetState(contractAddr, setTimeSlot)
+
+	log.Info("�� Checkpoint contract state",
+		"address", contractAddr.Hex(),
+		"is_set", isSet,
+		"set_at_block", setBlockData.Big().Uint64(),
+		"set_at_timestamp", setTimeData.Big().Uint64(),
+		"owner", rx.checkpointOwner.Hex(),
+		"hash", rx.checkpointHash.Hex())
+
+	if rx.checkpointHash != (common.Hash{}) {
+		log.Info("�� Chain is checkpoint protected",
+			"checkpoint_hash", rx.checkpointHash.Hex(),
+			"owner", rx.checkpointOwner.Hex())
+	}
+
+	return nil
+}
+
+// SetCheckpoint sets the checkpoint hash for chain protection
+func (rx *RandomX) SetCheckpoint(hash common.Hash) {
+	rx.checkpointMu.Lock()
+	defer rx.checkpointMu.Unlock()
+	rx.checkpointHash = hash
+	log.Info("✅ Checkpoint set", "hash", hash.Hex())
+}
+
+// GetCheckpoint returns the current checkpoint hash
+func (rx *RandomX) GetCheckpoint() common.Hash {
+	rx.checkpointMu.RLock()
+	defer rx.checkpointMu.RUnlock()
+	return rx.checkpointHash
+}
+
+// GetCheckpointOwner returns the checkpoint owner address
+func (rx *RandomX) GetCheckpointOwner() common.Address {
+	rx.checkpointMu.RLock()
+	defer rx.checkpointMu.RUnlock()
+	return rx.checkpointOwner
 }
 
 func (rx *RandomX) isClosed() bool {
@@ -368,7 +513,7 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
 	return nil
 }
 
-// randomXHash computes
+// randomXHash computes the RandomX hash
 func (rx *RandomX) randomXHash(header *types.Header, vm *VM) (*big.Int, common.Hash) {
 	input := make([]byte, 40)
 	sealHash := rx.SealHash(header)
@@ -405,8 +550,11 @@ func (rx *RandomX) GetWork() ([]string, error) {
 
 // generateWork gets work for the NEXT block
 func (rx *RandomX) generateWork() (*Work, error) {
+	rx.difficultyMu.RLock()
+	defer rx.difficultyMu.RUnlock()
+
 	var blockNum uint64 = 1
-	var difficulty *big.Int = GenesisDifficulty
+	var difficulty *big.Int = new(big.Int).Set(GlobalDifficulty)
 	var parentHash common.Hash
 
 	if rx.chain != nil {
@@ -415,8 +563,8 @@ func (rx *RandomX) generateWork() (*Work, error) {
 			blockNum = currentHeader.Number.Uint64() + 1
 			parentHash = currentHeader.Hash()
 
-			// Calculate difficulty based on parent block time
-			difficulty = rx.CalcDifficulty(rx.chain, uint64(time.Now().Unix()), currentHeader)
+			// Calculate difficulty based on parent block time with persistence
+			difficulty = rx.calcDifficultyInternal(rx.chain, uint64(time.Now().Unix()), currentHeader)
 
 			log.Info("Generating work",
 				"height", blockNum,
@@ -472,7 +620,7 @@ func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHe
 	header := &types.Header{
 		Nonce:      types.EncodeNonce(nonce),
 		Number:     big.NewInt(int64(currentWork.BlockNumber)),
-		Difficulty: GenesisDifficulty,
+		Difficulty: GlobalDifficulty,
 		Time:       uint64(time.Now().Unix()),
 	}
 
@@ -525,11 +673,47 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		return fmt.Errorf("invalid proof: result > target")
 	}
 
+	// Verify checkpoint if enabled
+	if err := rx.verifyCheckpoint(chain, header); err != nil {
+		return fmt.Errorf("checkpoint verification failed: %w", err)
+	}
+
+	return nil
+}
+
+// verifyCheckpoint verifies that the block header matches the checkpoint hash
+func (rx *RandomX) verifyCheckpoint(chain consensus.ChainHeaderReader, header *types.Header) error {
+	// Skip verification for genesis block
+	if header.Number.Uint64() == 0 {
+		return nil
+	}
+
+	rx.checkpointMu.RLock()
+	defer rx.checkpointMu.RUnlock()
+
+	// If checkpoint hash is not set, skip verification
+	if rx.checkpointHash == (common.Hash{}) {
+		return nil
+	}
+
+	// Get the block hash from the header
+	blockHash := header.Hash()
+
+	// Compare with checkpoint hash
+	if blockHash != rx.checkpointHash {
+		return fmt.Errorf("block hash %s does not match checkpoint hash %s", blockHash.Hex(), rx.checkpointHash.Hex())
+	}
+
 	return nil
 }
 
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	rx.chain = chain
+
+	// Load checkpoint from state after chain is set
+	if err := rx.loadCheckpointFromState(); err != nil {
+		log.Warn("Failed to load checkpoint from state", "error", err)
+	}
 
 	if rx.fullFake || rx.isClosed() {
 		select {
@@ -566,7 +750,7 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 	sealHeader := types.CopyHeader(header)
 	target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
 
-	log.Info("⛏️ MRndomX mining",
+	log.Info("⛏️ RandomX mining",
 		"block", sealHeader.Number.Uint64(),
 		"difficulty", sealHeader.Difficulty)
 
@@ -602,6 +786,20 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 			sealHeader.MixDigest = hash
 			sealedBlock := block.WithSeal(sealHeader)
 
+			// Store the difficulty in the database
+			blockNum := sealHeader.Number.Uint64()
+			rx.difficultyMu.Lock()
+			GlobalDifficulty.Set(sealHeader.Difficulty)
+			rx.difficultyMu.Unlock()
+
+			if err := rx.StoreDifficulty(blockNum, sealHeader.Difficulty); err != nil {
+				log.Error("Failed to store difficulty", "error", err)
+			} else {
+				log.Info("✅ Difficulty stored in database",
+					"block", blockNum,
+					"difficulty", sealHeader.Difficulty)
+			}
+
 			log.Info("BLOCK MINED!",
 				"block", sealHeader.Number.Uint64(),
 				"difficulty", sealHeader.Difficulty,
@@ -621,112 +819,160 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 	}
 }
 
-func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	if header.Number == nil {
-		header.Number = new(big.Int)
-	}
-	if header.UncleHash == (common.Hash{}) {
-		header.UncleHash = types.EmptyUncleHash
-	}
-	if header.TxHash == (common.Hash{}) {
-		header.TxHash = types.EmptyTxsHash
-	}
-	if header.ReceiptHash == (common.Hash{}) {
-		header.ReceiptHash = types.EmptyReceiptsHash
-	}
-
-	if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
-		if header.Number.Uint64() == 0 {
-			header.Difficulty = GenesisDifficulty
-			return nil
-		}
-
-		parentHash := header.ParentHash
-		parentNum := header.Number.Uint64() - 1
-		parentHeader := chain.GetHeader(parentHash, parentNum)
-
-		if parentHeader != nil {
-			newDifficulty := rx.CalcDifficulty(chain, header.Time, parentHeader)
-			header.Difficulty = newDifficulty
-
-			log.Info("Difficulty set in Prepare",
-				"block", header.Number.Uint64(),
-				"parent_difficulty", parentHeader.Difficulty,
-				"new_difficulty", newDifficulty,
-				"block_time", header.Time-parentHeader.Time)
-		} else {
-			header.Difficulty = GenesisDifficulty
-		}
-	}
-
-	return nil
-}
-
-// CalcDifficulty: very aggressive but with x2cap
-func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
+// calcDifficultyInternal calculates difficulty with proper increase and decrease
+func (rx *RandomX) calcDifficultyInternal(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	if parent == nil {
-		return GenesisDifficulty
+		return new(big.Int).Set(GlobalDifficulty)
 	}
 
 	parentTime := parent.Time
-	var diff uint64
+	var blockTime uint64
 	if time > parentTime {
-		diff = time - parentTime
+		blockTime = time - parentTime
 	} else {
-		diff = parentTime - time
+		blockTime = parentTime - time
+	}
+
+	// Use parent difficulty as base
+	baseDiff := new(big.Int).Set(parent.Difficulty)
+
+	// If difficulty is below minimum, use global
+	if baseDiff.Cmp(MinDifficulty) < 0 {
+		baseDiff.Set(GlobalDifficulty)
+	}
+
+	if blockTime == 0 {
+		return baseDiff
 	}
 
 	targetTime := uint64(TargetBlockTime)
-	currentDiff := new(big.Int).Set(parent.Difficulty)
-	minDiff := MinDifficulty
 
-	if diff > targetTime*10 {
-		log.Info("Long gap since parent block, keeping current difficulty",
-			"difficulty", currentDiff,
-			"block_time", diff,
-			"target_time", targetTime)
-		return currentDiff
+	// Calculate the ratio: target_time / block_time
+	ratioF := float64(targetTime) / float64(blockTime)
+
+	// Cap the ratio to prevent extreme adjustments
+	if ratioF > 2.0 {
+		ratioF = 2.0
+	}
+	if ratioF < 0.5 {
+		ratioF = 0.5
 	}
 
-	if diff > 0 {
-		// Calculate ratio: (targetTime * 100) / diff
-		ratio := new(big.Int).SetUint64(targetTime)
-		ratio.Mul(ratio, big.NewInt(100))
-		ratio.Div(ratio, new(big.Int).SetUint64(diff))
+	// Calculate new difficulty using floating point for precision
+	baseF := float64(baseDiff.Int64())
+	newF := baseF * ratioF
+	newInt := int64(newF)
 
-		// Cap the ratio at 200 (2x)
-		if ratio.Cmp(big.NewInt(200)) > 0 {
-			ratio = big.NewInt(200) // 2x cap
-		}
+	// Create the new difficulty as a big.Int
+	newDiff := big.NewInt(newInt)
 
-		// Minimum ratio: 0.5x (50)
-		if ratio.Cmp(big.NewInt(50)) < 0 {
-			ratio = big.NewInt(50) // 0.5x minimum
-		}
+	// Ensure we don't go below minimum
+	if newDiff.Cmp(MinDifficulty) < 0 {
+		newDiff.Set(MinDifficulty)
+	}
 
-		// Apply the ratio: newDiff = currentDiff * ratio / 100
-		newDiff := new(big.Int).Mul(currentDiff, ratio)
-		newDiff.Div(newDiff, big.NewInt(100))
+	// Ensure we don't exceed maximum
+	if newDiff.Cmp(MaxDifficulty) > 0 {
+		newDiff.Set(MaxDifficulty)
+	}
 
-		if newDiff.Cmp(minDiff) < 0 {
-			return minDiff
-		}
-
-		if newDiff.Cmp(MaxDifficulty) > 0 {
-			newDiff.Set(MaxDifficulty)
-		}
-
-		log.Info("Difficulty adjustment (2x cap)",
-			"old", currentDiff,
+	// Log the adjustment
+	if newDiff.Cmp(baseDiff) > 0 {
+		changePct := (ratioF - 1.0) * 100
+		log.Info("⬆️ Difficulty INCREASED",
+			"old", baseDiff,
 			"new", newDiff,
-			"ratio", fmt.Sprintf("%.2f", float64(ratio.Int64())/100),
-			"block_time_ms", diff*1000)
-
-		return newDiff
+			"ratio", fmt.Sprintf("%.3fx", ratioF),
+			"change", fmt.Sprintf("%+.1f%%", changePct),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	} else if newDiff.Cmp(baseDiff) < 0 {
+		changePct := (ratioF - 1.0) * 100
+		log.Info("⬇️ Difficulty DECREASED",
+			"old", baseDiff,
+			"new", newDiff,
+			"ratio", fmt.Sprintf("%.3fx", ratioF),
+			"change", fmt.Sprintf("%+.1f%%", changePct),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
 	}
 
-	log.Info("⚠️ Block time too small, using current difficulty", "difficulty", currentDiff)
-	return currentDiff
+	// Update global difficulty
+	GlobalDifficulty.Set(newDiff)
+
+	return newDiff
+}
+
+// StoreDifficulty stores the difficulty in the database for persistence
+func (rx *RandomX) StoreDifficulty(blockNum uint64, difficulty *big.Int) error {
+	if rx.db == nil {
+		return nil
+	}
+
+	rx.difficultyMu.Lock()
+	defer rx.difficultyMu.Unlock()
+
+	key := []byte("randomx_difficulty")
+	value := difficulty.Bytes()
+
+	blockKey := []byte("randomx_difficulty_block")
+	blockValue := make([]byte, 8)
+	binary.BigEndian.PutUint64(blockValue, blockNum)
+
+	batch := rx.db.NewBatch()
+	batch.Put(key, value)
+	batch.Put(blockKey, blockValue)
+
+	if err := batch.Write(); err != nil {
+		return fmt.Errorf("failed to write difficulty to database: %w", err)
+	}
+
+	log.Debug("Difficulty stored in database", "block", blockNum, "difficulty", difficulty)
+	return nil
+}
+
+// loadStoredDifficulty loads the stored difficulty from the database
+func (rx *RandomX) loadStoredDifficulty() *big.Int {
+	if rx.db == nil {
+		return nil
+	}
+
+	rx.difficultyMu.RLock()
+	defer rx.difficultyMu.RUnlock()
+
+	key := []byte("randomx_difficulty")
+	data, err := rx.db.Get(key)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+
+	return new(big.Int).SetBytes(data)
+}
+
+// LoadStoredDifficulty loads the stored difficulty with block number
+func (rx *RandomX) LoadStoredDifficulty() (*big.Int, uint64) {
+	if rx.db == nil {
+		return nil, 0
+	}
+
+	rx.difficultyMu.RLock()
+	defer rx.difficultyMu.RUnlock()
+
+	diffKey := []byte("randomx_difficulty")
+	diffData, err := rx.db.Get(diffKey)
+	if err != nil || len(diffData) == 0 {
+		return nil, 0
+	}
+
+	blockKey := []byte("randomx_difficulty_block")
+	blockData, _ := rx.db.Get(blockKey)
+
+	var blockNum uint64
+	if len(blockData) >= 8 {
+		blockNum = binary.BigEndian.Uint64(blockData)
+	}
+
+	return new(big.Int).SetBytes(diffData), blockNum
 }
 
 func (rx *RandomX) seedHash(epoch uint64) common.Hash {
@@ -829,7 +1075,6 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 	blockNumber := header.Number.Uint64()
 	coinbase := header.Coinbase
 
-	// Distribution percentages: MainKing=10%, RotatingKing=40%, Miner=50%
 	totalRewardBig := new(big.Int).Set(totalReward)
 
 	// Calculate each share
@@ -850,7 +1095,6 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 		minerReward.Add(minerReward, diff)
 	}
 
-	// Log distribution
 	log.Info("========================================")
 	log.Info("REWARD DISTRIBUTION")
 	log.Info("========================================")
@@ -863,7 +1107,6 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 			"address", rx.mainKing.Hex(),
 			"amount", FormatANTD(mainKingReward))
 	} else {
-		// If no main king, redistribute to miner
 		if mainKingReward.Sign() > 0 {
 			log.Warn("⚠️ No main king address, redistributing to miner")
 			minerReward.Add(minerReward, mainKingReward)
@@ -878,7 +1121,6 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 			"address", rotatingKing.Hex(),
 			"amount", FormatANTD(rotatingKingReward))
 	} else {
-		// If no rotating king, redistribute to miner
 		if rotatingKingReward.Sign() > 0 {
 			log.Warn("⚠️ No rotating king address, redistributing to miner")
 			minerReward.Add(minerReward, rotatingKingReward)
@@ -938,9 +1180,6 @@ func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
 		return common.Address{}
 	}
 
-	// Rotate through kings every rotationInterval blocks. The rotation boundary
-	// itself belongs to the newly current king, so rewards for that block and the
-	// following interval go to the current king rather than the previous one.
 	index := (blockNumber / rx.rotationInterval) % uint64(len(rx.rotatingKings))
 	return rx.rotatingKings[index]
 }
@@ -985,6 +1224,85 @@ func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block)
 	return nil
 }
 
+func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
+	if header.Number == nil {
+		header.Number = new(big.Int)
+	}
+	if header.UncleHash == (common.Hash{}) {
+		header.UncleHash = types.EmptyUncleHash
+	}
+	if header.TxHash == (common.Hash{}) {
+		header.TxHash = types.EmptyTxsHash
+	}
+	if header.ReceiptHash == (common.Hash{}) {
+		header.ReceiptHash = types.EmptyReceiptsHash
+	}
+
+	rx.difficultyMu.Lock()
+	defer rx.difficultyMu.Unlock()
+
+	// ALWAYS load stored difficulty first
+	storedDiff := rx.loadStoredDifficulty()
+	if storedDiff != nil && storedDiff.Cmp(MinDifficulty) >= 0 {
+		GlobalDifficulty.Set(storedDiff)
+		log.Debug("Loaded stored difficulty", "difficulty", storedDiff)
+	} else {
+		GlobalDifficulty.Set(GenesisDifficulty)
+		log.Debug("Using genesis difficulty", "difficulty", GenesisDifficulty)
+	}
+
+	if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
+		if header.Number.Uint64() == 0 {
+			header.Difficulty = new(big.Int).Set(GlobalDifficulty)
+			log.Info("Genesis block difficulty set", "difficulty", header.Difficulty)
+			return nil
+		}
+
+		parentHash := header.ParentHash
+		parentNum := header.Number.Uint64() - 1
+		parentHeader := chain.GetHeader(parentHash, parentNum)
+
+		if parentHeader != nil {
+			// Calculate the new difficulty
+			newDiff := rx.calcDifficultyInternal(chain, header.Time, parentHeader)
+
+			// Use a fresh copy
+			header.Difficulty = new(big.Int).Set(newDiff)
+
+			// Update global difficulty
+			GlobalDifficulty.Set(newDiff)
+
+			// Store the difficulty in database
+			if err := rx.StoreDifficulty(header.Number.Uint64(), newDiff); err != nil {
+				log.Error("Failed to store difficulty", "error", err)
+			}
+
+			log.Info("Difficulty set in Prepare",
+				"block", header.Number.Uint64(),
+				"parent_difficulty", parentHeader.Difficulty,
+				"new_difficulty", newDiff,
+				"global", GlobalDifficulty,
+				"block_time", header.Time-parentHeader.Time)
+		} else {
+			header.Difficulty = new(big.Int).Set(GlobalDifficulty)
+			log.Info("Using global difficulty (parent not found)",
+				"block", header.Number.Uint64(),
+				"difficulty", header.Difficulty)
+		}
+	} else {
+		// Ensure header difficulty matches global
+		if header.Difficulty.Cmp(GlobalDifficulty) != 0 {
+			log.Warn("Difficulty mismatch, correcting",
+				"header_before", header.Difficulty,
+				"global", GlobalDifficulty,
+				"block", header.Number.Uint64())
+			header.Difficulty.Set(GlobalDifficulty)
+		}
+	}
+
+	return nil
+}
+
 func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{
 		{Namespace: "randomx", Version: "1.0", Service: &RandomXAPI{randomx: rx}, Public: true},
@@ -1010,12 +1328,44 @@ func (api *RandomXAPI) GetHashrate() float64 {
 	return api.randomx.Hashrate()
 }
 
+func (api *RandomXAPI) GetDifficulty() string {
+	api.randomx.difficultyMu.RLock()
+	defer api.randomx.difficultyMu.RUnlock()
+	return GlobalDifficulty.String()
+}
+
+func (api *RandomXAPI) GetStoredDifficulty() map[string]interface{} {
+	storedDiff, blockNum := api.randomx.LoadStoredDifficulty()
+	if storedDiff == nil {
+		return map[string]interface{}{
+			"exists": false,
+			"block":  blockNum,
+		}
+	}
+	return map[string]interface{}{
+		"exists":     true,
+		"difficulty": storedDiff.String(),
+		"block":      blockNum,
+	}
+}
+
+func (api *RandomXAPI) GetCheckpoint() map[string]interface{} {
+	api.randomx.checkpointMu.RLock()
+	defer api.randomx.checkpointMu.RUnlock()
+	return map[string]interface{}{
+		"hash":  api.randomx.checkpointHash.Hex(),
+		"owner": api.randomx.checkpointOwner.Hex(),
+	}
+}
+
 func (api *RandomXAPI) GetStats() map[string]interface{} {
 	return map[string]interface{}{
 		"valid_shares":   atomic.LoadUint64(&api.randomx.sharesValid),
 		"invalid_shares": atomic.LoadUint64(&api.randomx.sharesInvalid),
 		"hashrate":       api.randomx.Hashrate(),
 		"epoch":          api.randomx.cacheEpoch,
+		"difficulty":     GlobalDifficulty.String(),
+		"checkpoint":     api.randomx.checkpointHash.Hex(),
 	}
 }
 
@@ -1038,4 +1388,87 @@ func CalculateNextDifficulty(parent *types.Header, getHeaderByNumber func(uint64
 		return GenesisDifficulty
 	}
 	return GenesisDifficulty
+}
+
+func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
+	if parent == nil {
+		return GenesisDifficulty
+	}
+
+	parentTime := parent.Time
+	var blockTime uint64
+	if time > parentTime {
+		blockTime = time - parentTime
+	} else {
+		blockTime = parentTime - time
+	}
+
+	// Use parent difficulty as base
+	baseDiff := new(big.Int).Set(parent.Difficulty)
+
+	// If difficulty is below minimum, use global
+	if baseDiff.Cmp(MinDifficulty) < 0 {
+		baseDiff.Set(GlobalDifficulty)
+	}
+
+	if blockTime == 0 {
+		return baseDiff
+	}
+
+	targetTime := uint64(TargetBlockTime)
+
+	// Calculate the ratio: target_time / block_time
+	ratioF := float64(targetTime) / float64(blockTime)
+
+	// Cap the ratio to prevent extreme adjustments
+	if ratioF > 2.0 {
+		ratioF = 2.0
+	}
+	if ratioF < 0.5 {
+		ratioF = 0.5
+	}
+
+	// Calculate new difficulty using floating point for precision
+	baseF := float64(baseDiff.Int64())
+	newF := baseF * ratioF
+	newInt := int64(newF)
+
+	// Create the new difficulty as a big.Int
+	newDiff := big.NewInt(newInt)
+
+	// Ensure we don't go below minimum
+	if newDiff.Cmp(MinDifficulty) < 0 {
+		newDiff.Set(MinDifficulty)
+	}
+
+	// Ensure we don't exceed maximum
+	if newDiff.Cmp(MaxDifficulty) > 0 {
+		newDiff.Set(MaxDifficulty)
+	}
+
+	// Log the adjustment
+	if newDiff.Cmp(baseDiff) > 0 {
+		changePct := (ratioF - 1.0) * 100
+		log.Info("⬆️ Difficulty INCREASED (CalcDifficulty)",
+			"old", baseDiff,
+			"new", newDiff,
+			"ratio", fmt.Sprintf("%.3fx", ratioF),
+			"change", fmt.Sprintf("%+.1f%%", changePct),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	} else if newDiff.Cmp(baseDiff) < 0 {
+		changePct := (ratioF - 1.0) * 100
+		log.Info("⬇️ Difficulty DECREASED (CalcDifficulty)",
+			"old", baseDiff,
+			"new", newDiff,
+			"ratio", fmt.Sprintf("%.3fx", ratioF),
+			"change", fmt.Sprintf("%+.1f%%", changePct),
+			"block_time_s", blockTime,
+			"target_time_s", targetTime)
+	}
+
+	// Update global difficulty
+	GlobalDifficulty.Set(newDiff)
+
+	return newDiff
 }

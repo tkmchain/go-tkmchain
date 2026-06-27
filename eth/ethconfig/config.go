@@ -19,6 +19,7 @@ package ethconfig
 
 import (
         "time"
+        "fmt"
 
         "github.com/ethereum/go-ethereum/common"
         "github.com/ethereum/go-ethereum/consensus"
@@ -228,35 +229,45 @@ type Config struct {
 
 // CreateConsensusEngine creates the appropriate consensus engine based on config
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, threads int, useRAMCache bool) (consensus.Engine, error) {
-        if config.RandomX == nil {
-                log.Info("RandomX config not found, using default")
-                config.RandomX = params.DefaultRandomXConfig()
-        }
+	if config.RandomX == nil {
+		log.Info("RandomX config not found, using default")
+		config.RandomX = params.DefaultRandomXConfig()
+	}
 
-        // Convert params.RandomXConfig to randomx.Config
-        randomxConfig := &randomx.Config{
-                Enabled:     true,
-                EpochLength: config.RandomX.EpochLength,
-                CacheSize:   config.RandomX.CacheSizeMB,
-                DatasetSize: config.RandomX.DatasetSizeGB,
-                MinMemory:   config.RandomX.MinMemory,
-        }
+	// Convert params.RandomXConfig to randomx.Config
+	randomxConfig := &randomx.Config{
+		Enabled:        true,
+		EpochLength:    config.RandomX.EpochLength,
+		CacheSize:      config.RandomX.CacheSizeMB,
+		DatasetSize:    config.RandomX.DatasetSizeGB,
+		MinMemory:      config.RandomX.MinMemory,
+		PersistDataset: config.RandomX.PersistDataset,
+	}
 
-        if randomxConfig.EpochLength == 0 {
-                randomxConfig.EpochLength = 2048
-        }
+	// Override with useRAMCache if provided
+	if useRAMCache {
+		randomxConfig.PersistDataset = false
+		log.Info("Using RAM cache mode (dataset not persisted)")
+	}
 
-        log.Info("Creating RandomX consensus engine",
-                "threads", threads,
-                "epoch_length", randomxConfig.EpochLength,
-                "cache_size_mb", randomxConfig.CacheSize,
-                "dataset_size_gb", randomxConfig.DatasetSize,
-                "use_ram_cache", useRAMCache)
+	if randomxConfig.EpochLength == 0 {
+		randomxConfig.EpochLength = 2048
+	}
 
-        engine, err := randomx.New(randomxConfig, threads, config.MainKingAddress, config.RotatingKingAddresses)
-        if err != nil {
-                return nil, err
-        }
+	log.Info("Creating RandomX consensus engine",
+		"threads", threads,
+		"epoch_length", randomxConfig.EpochLength,
+		"cache_size_mb", randomxConfig.CacheSize,
+		"dataset_size_gb", randomxConfig.DatasetSize,
+		"use_ram_cache", useRAMCache,
+		"persist_dataset", randomxConfig.PersistDataset,
+		"main_king", config.MainKingAddress.Hex(),
+		"rotating_kings", len(config.RotatingKingAddresses))
 
-        return engine, nil
+	engine, err := randomx.New(randomxConfig, threads, config.MainKingAddress, config.RotatingKingAddresses, db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RandomX engine: %w", err)
+	}
+
+	return engine, nil
 }
