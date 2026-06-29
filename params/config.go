@@ -48,7 +48,7 @@ type RandomXConfig struct {
 
 // RandomXChainConfig
 var RandomXChainConfig = &ChainConfig{
-        ChainID:                 big.NewInt(1),
+        ChainID:                 big.NewInt(8979),
         HomesteadBlock:          big.NewInt(0),
         DAOForkBlock:            nil,
         DAOForkSupport:          true,
