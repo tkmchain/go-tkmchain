@@ -238,7 +238,7 @@ var (
 // MainnetChainConfig is the chain parameters for RandomX mainnet.
 // Values are based on your actual genesis.json
 var MainnetChainConfig = &ChainConfig{
-	ChainID:                 big.NewInt(1), // Your genesis chainId is 1
+	ChainID:                 big.NewInt(8979), // Your genesis chainId is 1
 	HomesteadBlock:          big.NewInt(0),
 	DAOForkBlock:            nil,
 	DAOForkSupport:          true,
