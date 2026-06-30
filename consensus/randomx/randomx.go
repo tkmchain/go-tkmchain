@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/keccak"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
@@ -65,6 +66,9 @@ var (
 const (
 	RandomXEpochLength = 2048
 	TargetBlockTime    = 120 // seconds
+
+	// EDAThreshold is the no-block interval that triggers Emergency Difficulty Adjustment.
+	EDAThreshold = 45 * 60 // seconds
 )
 
 const (
@@ -680,6 +684,18 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 	currentDiff := new(big.Int).Set(parent.Difficulty)
 	minDiff := MinDifficulty
 
+	if config := chainConfig(chain); config != nil && config.IsEDA(new(big.Int).Add(parent.Number, big.NewInt(1)), time) && diff >= EDAThreshold {
+		reductions := diff / EDAThreshold
+		newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
+		log.Info("Emergency difficulty adjustment applied",
+			"old", currentDiff,
+			"new", newDiff,
+			"block_time", diff,
+			"threshold", EDAThreshold,
+			"reductions", reductions)
+		return newDiff
+	}
+
 	if diff > targetTime*10 {
 		log.Info("Long gap since parent block, keeping current difficulty",
 			"difficulty", currentDiff,
@@ -727,6 +743,24 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 
 	log.Info("⚠️ Block time too small, using current difficulty", "difficulty", currentDiff)
 	return currentDiff
+}
+
+func chainConfig(chain consensus.ChainHeaderReader) *params.ChainConfig {
+	if chain == nil {
+		return nil
+	}
+	return chain.Config()
+}
+
+func applyEDAReductions(currentDiff *big.Int, reductions uint64, minDiff *big.Int) *big.Int {
+	newDiff := new(big.Int).Set(currentDiff)
+	for i := uint64(0); i < reductions; i++ {
+		newDiff.Div(newDiff, big.NewInt(4))
+		if newDiff.Cmp(minDiff) <= 0 {
+			return new(big.Int).Set(minDiff)
+		}
+	}
+	return newDiff
 }
 
 func (rx *RandomX) seedHash(epoch uint64) common.Hash {
