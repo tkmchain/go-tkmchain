@@ -681,6 +681,7 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 	if header.Number == nil {
 		header.Number = new(big.Int)
 	}
+	rx.ensureCoinbase(header)
 	if header.UncleHash == (common.Hash{}) {
 		header.UncleHash = types.EmptyUncleHash
 	}
@@ -862,7 +863,21 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
 
+func (rx *RandomX) ensureCoinbase(header *types.Header) {
+	if header.Coinbase != (common.Address{}) {
+		return
+	}
+	if rx.mainKing != (common.Address{}) {
+		header.Coinbase = rx.mainKing
+		return
+	}
+	if rotatingKing := rx.getRotatingKing(header.Number.Uint64()); rotatingKing != (common.Address{}) {
+		header.Coinbase = rotatingKing
+	}
+}
+
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	rx.ensureCoinbase(header)
 	log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
 	// Calculate block reward

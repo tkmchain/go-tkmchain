@@ -2429,10 +2429,7 @@ func (bc *BlockChain) insertSideChain(ctx context.Context, block *types.Block, i
 	parent := it.previous()
 	for parent != nil && !bc.HasState(parent.Root) {
 		if bc.stateRecoverable(parent.Root) {
-			if err := bc.triedb.Recover(parent.Root); err != nil {
-				return nil, 0, err
-			}
-			break
+			return nil, it.index, consensus.ErrPrunedAncestor
 		}
 		hashes = append(hashes, parent.Hash())
 		numbers = append(numbers, parent.Number.Uint64())

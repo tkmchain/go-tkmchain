@@ -944,7 +944,7 @@ func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 }
 
 func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
-	if s.blockchain == nil {
+/*	if s.blockchain == nil {
 		return false
 	}
 	head := s.blockchain.CurrentBlock()
@@ -970,8 +970,8 @@ func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
 	if changed {
 		s.kingAddresses = filtered
 		s.persistRotatingKingLocksLocked()
-	}
-	return changed
+	}*/
+	return false
 }
 
 func (s *Ethereum) persistRotatingKingLocksLocked() {
