@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -43,6 +44,38 @@ func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 	if err := rx.VerifySeal(nil, header); err != errInvalidMixHash {
 		t.Fatalf("unexpected seal error: have %v, want %v", err, errInvalidMixHash)
 	}
+}
+
+func TestRotatingKingDoesNotChangeStateRoot(t *testing.T) {
+	miner := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
+
+	rootWithout := randomxFinalizedRoot(t, nil, miner)
+	rootWith := randomxFinalizedRoot(t, []common.Address{rotating}, miner)
+
+	if rootWith != rootWithout {
+		t.Fatalf("state root changed after adding rotating king: have %s, want %s", rootWith, rootWithout)
+	}
+}
+
+func randomxFinalizedRoot(t *testing.T, rotatingKings []common.Address, miner common.Address) common.Hash {
+	t.Helper()
+	rxdb := state.NewDatabaseForTesting()
+	statedb, err := state.New(types.EmptyRootHash, rxdb)
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	rx := NewFaker()
+	rx.mainKing = common.Address{}
+	rx.rotatingKings = nil
+	rx.rotatingKingActivations = nil
+	rx.SetRotationInterval(100)
+	for _, king := range rotatingKings {
+		rx.AddRotatingKing(king)
+	}
+	header := &types.Header{Number: big.NewInt(1), Coinbase: miner}
+	rx.Finalize(nil, header, statedb, &types.Body{})
+	return statedb.IntermediateRoot(false)
 }
 
 func TestRotatingKingRewardsCurrentKingAfterRotation(t *testing.T) {
