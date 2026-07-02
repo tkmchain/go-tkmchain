@@ -37,10 +37,50 @@ Block Reward = 200 ANTD (halving every ~4 years)
 ### King Registration
 
 To become a Rotating King:
-1. Hold a minimum of **100,000 ANTD**
-2. Register your address via RPC or CLI
-3. Kings rotate every 100 blocks
-4. Each king serves for one rotation period
+1. Hold at least **50,001 ANTD**: 50,000 ANTD is locked as the Rotating King stake and 1 ANTD is reserved as the registration fee.
+2. Register your address with the `rk_add` RPC method.
+3. Remain funded while the address is active. Registered kings are removed when the stake lock expires or the address no longer satisfies the funding requirement.
+4. Kings rotate every 100 blocks by default. Each king serves for one rotation period before the next registered address receives the Rotating King slot.
+
+### Rotating King RPC API
+
+The Rotating King service is exposed through the `king`, `mainking`, `rk`, and `rotatingking` RPC namespaces. The short `rk` namespace is intended for operational scripts, while `mainking` is used for checkpoint submission. Enable the namespaces on HTTP or WebSocket explicitly when serving remote RPC:
+
+```shell
+gtkm --http --http.addr 127.0.0.1 --http.api eth,net,web3,rk,mainking,randomx,miner
+```
+
+Common calls:
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `rk_add` | `address` | Registers a funded address as a Rotating King candidate and returns its status. |
+| `rk_list` | none | Lists registered and locked Rotating King addresses with status metadata. |
+| `rk_status` | `address` | Returns status for one address, including lock, rotation, and reward fields. |
+| `rk_getKingStats` | optional ignored value | Returns current king, next king, total registered kings, rotation height, and per-king statuses. |
+| `rotatingking_getInfo` | none | Returns the current schedule, main king, current king, next king, and rotation interval. |
+| `rotatingking_getCurrentKing` | none | Returns the address assigned to the current block's Rotating King slot. |
+| `rotatingking_getRotationHistory` | optional `limit` | Returns recent rotation boundaries derived from chain height. |
+| `mainking_addCheckpoint` | `number`, `hash` | Adds and broadcasts a checkpoint after the Main King node verifies the local block hash. |
+
+Example JSON-RPC requests:
+
+```shell
+# Register a funded Rotating King address
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"rk_add","params":["0xYourKingAddress"]}'
+
+# Inspect the current schedule and all registered kings
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"rk_getKingStats","params":[null]}'
+
+# Add a checkpoint from the Main King node
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"mainking_addCheckpoint","params":[12345,"0xBlockHash"]}'
+```
 
 ---
 
@@ -57,6 +97,14 @@ Tkmchain uses **RandomX PoW** - an ASIC-resistant mining algorithm optimized for
 
 ### Mining Commands
 
+Build `gtkm` with RandomX support before mining:
+
+```shell
+make gtkm
+```
+
+Start from a fully synced node, set the reward address with `--miner.etherbase`, and select the number of CPU mining threads with `--miner.threads`:
+
 ```shell
 # Start CPU mining
 gtkm --mine --miner.threads=2 --miner.etherbase=0xYourAddress
@@ -64,11 +112,55 @@ gtkm --mine --miner.threads=2 --miner.etherbase=0xYourAddress
 # Configure mining threads
 gtkm --mine --miner.threads=4 --miner.etherbase=0xYourAddress
 
-# Solo mining mode
+# Solo mining mode on a full node
 gtkm --mine --miner.etherbase=0xYourAddress --syncmode=full
 
 # Mining with boost (JIT + AES)
 gtkm --mine --miner.threads=4 --miner.etherbase=0xYourAddress --randomx.boost
+```
+
+For external RandomX miners, run a node that exposes mining work. `gtkm` provides the standard `miner_*` calls, a `randomx_*` namespace, and a local stratum bridge on `127.0.0.1:3333` when external mining is started by the miner service. Keep stratum bound to localhost unless you place it behind trusted network controls.
+
+```shell
+# Node with HTTP work APIs for a local external miner
+gtkm --syncmode=full --http --http.addr 127.0.0.1 --http.api eth,net,web3,miner,randomx \
+  --miner.etherbase=0xYourAddress
+```
+
+### RandomX Mining RPC API
+
+The mining work tuple is `[sealHash, seedHash, target, blockHeight]`. External miners hash the seal hash with a nonce using the RandomX cache selected by `seedHash`, then submit the nonce and digest back to the node.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `miner_getWork` | none | Returns `[sealHash, seedHash, target, blockHeight]` for external miners. |
+| `miner_submitWork` | `nonce`, `sealHash`, `digest` | Submits a proof-of-work solution. Returns `true` when accepted. |
+| `miner_getSeedHash` | none | Returns the RandomX seed hash for the next block. |
+| `randomx_getSeedHash` | optional `blockNumber` | Returns the seed hash for the next block or for the supplied block number. |
+| `randomx_getSeedHashForBlock` | `blockNumber` | Returns the seed hash for a specific block number. |
+| `randomx_getWork` | none | Returns the same external-mining work tuple as `miner_getWork`. |
+| `randomx_submitWork` | `nonce`, `sealHash`, `digest` | Submits typed nonce/hash/digest values. |
+| `randomx_submitWorkRaw` | `nonceHex`, `sealHashHex`, `digestHex` | Submits hex strings directly from mining adapters. |
+| `randomx_getCurrentHeight` | none | Returns the current canonical block height. |
+| `randomx_getHashrate` | none | Returns the node miner hashrate counter. |
+
+Example work loop calls:
+
+```shell
+# Fetch work
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"randomx_getWork","params":[]}'
+
+# Fetch the seed hash for block 2048
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"randomx_getSeedHashForBlock","params":[2048]}'
+
+# Submit a solution returned by an external miner
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"randomx_submitWorkRaw","params":["0xNonce8Bytes","0xSealHash","0xDigest"]}'
 ```
 
 ### Difficulty Adjustment Formula
