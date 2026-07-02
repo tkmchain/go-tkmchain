@@ -67,3 +67,23 @@ func TestRotatingKingRewardsCurrentKingAfterRotation(t *testing.T) {
 		t.Fatalf("rotating king at second rotation = %v, want %v", got, first)
 	}
 }
+
+func TestRotatingKingActivationStartsAtRotationBoundary(t *testing.T) {
+	first := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	second := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	rx := NewFaker()
+	rx.rotatingKings = nil
+	rx.SetRotationInterval(100)
+	rx.AddRotatingKing(first)
+	rx.AddRotatingKingAt(second, 200)
+
+	if got := rx.getRotatingKing(199); got != first {
+		t.Fatalf("rotating king before activation = %v, want %v", got, first)
+	}
+	if got := rx.getRotatingKing(200); got != second {
+		t.Fatalf("rotating king at activation = %v, want %v", got, second)
+	}
+	if got := rx.getRotatingKing(300); got != first {
+		t.Fatalf("rotating king after activation = %v, want %v", got, first)
+	}
+}

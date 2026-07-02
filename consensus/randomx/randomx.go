@@ -29,6 +29,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -181,11 +182,13 @@ func (vm *VM) Close() {
 }
 
 type RandomX struct {
-	config           *Config
-	fullFake         bool
-	mainKing         common.Address
-	rotatingKings    []common.Address
-	rotationInterval uint64
+	config                  *Config
+	fullFake                bool
+	mainKing                common.Address
+	rotatingKings           []common.Address
+	rotatingKingActivations map[common.Address]uint64
+	rotationInterval        uint64
+	miningThreads           int
 
 	cache      *Cache
 	dataset    *Dataset
@@ -213,11 +216,13 @@ func NewFaker() *RandomX {
 
 	// Use a fake cache for testing
 	fakeRx := &RandomX{
-		config:           config,
-		fullFake:         true,
-		rotatingKings:    []common.Address{common.Address{}},
-		rotationInterval: 100,
-		stopCh:           make(chan struct{}),
+		config:                  config,
+		fullFake:                true,
+		rotatingKings:           []common.Address{common.Address{}},
+		rotatingKingActivations: make(map[common.Address]uint64),
+		rotationInterval:        100,
+		miningThreads:           1,
+		stopCh:                  make(chan struct{}),
 	}
 
 	return fakeRx
@@ -241,19 +246,28 @@ func New(config *Config, threads int, mainKing common.Address, kingAddresses []c
 	if config.EpochLength == 0 {
 		config.EpochLength = RandomXEpochLength
 	}
+	if threads <= 0 {
+		threads = runtime.NumCPU()
+	}
 
-	kings := make([]common.Address, len(kingAddresses))
-	copy(kings, kingAddresses)
-	if mainKing != (common.Address{}) {
-		kings = append([]common.Address{mainKing}, kings...)
+	kings := make([]common.Address, 0, len(kingAddresses))
+	activations := make(map[common.Address]uint64, len(kingAddresses))
+	for _, king := range kingAddresses {
+		if king == (common.Address{}) {
+			continue
+		}
+		kings = append(kings, king)
+		activations[king] = 0
 	}
 
 	rx := &RandomX{
-		config:           config,
-		mainKing:         mainKing,
-		rotatingKings:    kings,
-		rotationInterval: 100,
-		stopCh:           make(chan struct{}),
+		config:                  config,
+		mainKing:                mainKing,
+		rotatingKings:           kings,
+		rotatingKingActivations: activations,
+		rotationInterval:        100,
+		miningThreads:           threads,
+		stopCh:                  make(chan struct{}),
 	}
 
 	if err := rx.updateCacheForEpoch(0); err != nil {
@@ -561,68 +575,106 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 		return err
 	}
 
-	vm, err := rx.getVM()
-	if err != nil {
-		return fmt.Errorf("failed to get RandomX VM: %w", err)
-	}
-	defer vm.Close()
-
 	sealHeader := types.CopyHeader(header)
 	target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
+	threads := rx.getMiningThreads()
 
 	log.Info("⛏️ MRndomX mining",
 		"block", sealHeader.Number.Uint64(),
-		"difficulty", sealHeader.Difficulty)
+		"difficulty", sealHeader.Difficulty,
+		"threads", threads)
 
+	found := make(chan *types.Block, 1)
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	var wg sync.WaitGroup
 	startNonce := uint64(time.Now().UnixNano())
-	nonce := startNonce
-	attempts := uint64(0)
 	startTime := time.Now()
+	var attempts atomic.Uint64
 
-	for {
+	for thread := 0; thread < threads; thread++ {
+		thread := thread
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			vm, err := rx.getVM()
+			if err != nil {
+				select {
+				case errCh <- fmt.Errorf("failed to get RandomX VM: %w", err):
+				default:
+				}
+				return
+			}
+			defer vm.Close()
+
+			localHeader := types.CopyHeader(sealHeader)
+			nonce := startNonce + uint64(thread)
+			step := uint64(threads)
+			for {
+				select {
+				case <-stop:
+					return
+				case <-rx.stopCh:
+					return
+				case <-done:
+					return
+				default:
+				}
+
+				localHeader.Nonce = types.EncodeNonce(nonce)
+				result, hash := rx.randomXHash(localHeader, vm)
+				total := attempts.Add(1)
+
+				if total%1000 == 0 {
+					elapsed := time.Since(startTime).Seconds()
+					if elapsed > 0 {
+						hr := float64(total) / elapsed
+						rx.hrMu.Lock()
+						rx.hashrate = uint64(hr)
+						rx.hrMu.Unlock()
+					}
+				}
+
+				if result.Cmp(target) <= 0 {
+					localHeader.MixDigest = hash
+					sealedBlock := block.WithSeal(localHeader)
+
+					log.Info("BLOCK MINED!",
+						"block", localHeader.Number.Uint64(),
+						"difficulty", localHeader.Difficulty,
+						"nonce", nonce)
+
+					doneOnce.Do(func() { close(done) })
+					select {
+					case found <- sealedBlock:
+					default:
+					}
+					return
+				}
+
+				nonce += step
+				if nonce == 0 {
+					nonce = step
+				}
+			}
+		}()
+	}
+
+	var sealErr error
+	select {
+	case sealedBlock := <-found:
 		select {
-		case <-stop:
-			return nil
-		case <-rx.stopCh:
-			return nil
+		case results <- sealedBlock:
 		default:
 		}
-
-		sealHeader.Nonce = types.EncodeNonce(nonce)
-		result, hash := rx.randomXHash(sealHeader, vm)
-		attempts++
-
-		if attempts%1000 == 0 {
-			elapsed := time.Since(startTime).Seconds()
-			if elapsed > 0 {
-				hr := float64(attempts) / elapsed
-				rx.hrMu.Lock()
-				rx.hashrate = uint64(hr)
-				rx.hrMu.Unlock()
-			}
-		}
-
-		if result.Cmp(target) <= 0 {
-			sealHeader.MixDigest = hash
-			sealedBlock := block.WithSeal(sealHeader)
-
-			log.Info("BLOCK MINED!",
-				"block", sealHeader.Number.Uint64(),
-				"difficulty", sealHeader.Difficulty,
-				"nonce", nonce)
-
-			select {
-			case results <- sealedBlock:
-			default:
-			}
-			return nil
-		}
-
-		nonce++
-		if nonce == 0 {
-			nonce = 1
-		}
+	case sealErr = <-errCh:
+	case <-stop:
+	case <-rx.stopCh:
 	}
+	doneOnce.Do(func() { close(done) })
+	wg.Wait()
+	return sealErr
 }
 
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
@@ -944,24 +996,50 @@ func (rx *RandomX) SetRotationInterval(interval uint64) {
 	rx.rotationInterval = interval
 }
 
+// SetThreads updates how many CPU worker goroutines RandomX sealing uses.
+func (rx *RandomX) SetThreads(threads int) {
+	if threads <= 0 {
+		threads = runtime.NumCPU()
+	}
+	rx.lock.Lock()
+	defer rx.lock.Unlock()
+	rx.miningThreads = threads
+}
+
+func (rx *RandomX) getMiningThreads() int {
+	rx.lock.RLock()
+	defer rx.lock.RUnlock()
+	if rx.miningThreads <= 0 {
+		return runtime.NumCPU()
+	}
+	return rx.miningThreads
+}
+
 // AddRotatingKing registers an address in the rotating king list if it is not present.
 func (rx *RandomX) AddRotatingKing(address common.Address) {
 	rx.AddRotatingKingAt(address, 0)
 }
 
 // AddRotatingKingAt registers an address in the rotating king list if it is not present.
-func (rx *RandomX) AddRotatingKingAt(address common.Address, _ uint64) {
+func (rx *RandomX) AddRotatingKingAt(address common.Address, activationHeight uint64) {
 	if address == (common.Address{}) {
 		return
 	}
 	rx.lock.Lock()
 	defer rx.lock.Unlock()
+	if rx.rotatingKingActivations == nil {
+		rx.rotatingKingActivations = make(map[common.Address]uint64)
+	}
 	for _, existing := range rx.rotatingKings {
 		if existing == address {
+			if current, ok := rx.rotatingKingActivations[address]; !ok || activationHeight < current {
+				rx.rotatingKingActivations[address] = activationHeight
+			}
 			return
 		}
 	}
 	rx.rotatingKings = append(rx.rotatingKings, address)
+	rx.rotatingKingActivations[address] = activationHeight
 }
 
 // getRotatingKing returns the rotating king for a given block
@@ -972,11 +1050,40 @@ func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
 		return common.Address{}
 	}
 
-	// Rotate through kings every rotationInterval blocks. The rotation boundary
-	// itself belongs to the newly current king, so rewards for that block and the
-	// following interval go to the current king rather than the previous one.
-	index := (blockNumber / rx.rotationInterval) % uint64(len(rx.rotatingKings))
-	return rx.rotatingKings[index]
+	var current common.Address
+	for height := uint64(0); height <= blockNumber; height += rx.rotationInterval {
+		active := rx.activeRotatingKingsAtLocked(height)
+		if len(active) == 0 {
+			continue
+		}
+		index := indexOfRotatingKing(active, current)
+		if current == (common.Address{}) || index < 0 {
+			current = active[0]
+		} else if height != 0 {
+			current = active[(index+1)%len(active)]
+		}
+	}
+	return current
+}
+
+func (rx *RandomX) activeRotatingKingsAtLocked(blockNumber uint64) []common.Address {
+	active := make([]common.Address, 0, len(rx.rotatingKings))
+	for _, address := range rx.rotatingKings {
+		if activation := rx.rotatingKingActivations[address]; activation > blockNumber {
+			continue
+		}
+		active = append(active, address)
+	}
+	return active
+}
+
+func indexOfRotatingKing(addresses []common.Address, address common.Address) int {
+	for index, candidate := range addresses {
+		if candidate == address {
+			return index
+		}
+	}
+	return -1
 }
 
 func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
