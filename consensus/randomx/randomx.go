@@ -681,7 +681,6 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 	if header.Number == nil {
 		header.Number = new(big.Int)
 	}
-	rx.ensureCoinbase(header)
 	if header.UncleHash == (common.Hash{}) {
 		header.UncleHash = types.EmptyUncleHash
 	}
@@ -863,21 +862,7 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
 }
 
-func (rx *RandomX) ensureCoinbase(header *types.Header) {
-	if header.Coinbase != (common.Address{}) {
-		return
-	}
-	if rx.mainKing != (common.Address{}) {
-		header.Coinbase = rx.mainKing
-		return
-	}
-	if rotatingKing := rx.getRotatingKing(header.Number.Uint64()); rotatingKing != (common.Address{}) {
-		header.Coinbase = rotatingKing
-	}
-}
-
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	rx.ensureCoinbase(header)
 	log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
 	// Calculate block reward
@@ -900,7 +885,21 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
-	rx.Finalize(chain, header, state, body)
+	// Calculate block reward
+	blockReward := CalculateBlockReward(header.Number.Uint64())
+	totalFees := GetTotalTransactionFees(header, receipts)
+	totalReward := CalculateTotalReward(blockReward, totalFees)
+
+	log.Info("Block reward calculated",
+		"block", header.Number.Uint64(),
+		"reward", FormatANTD(blockReward),
+		"fees", FormatANTD(totalFees),
+		"total", FormatANTD(totalReward))
+
+	// Distribute rewards to all parties
+	if totalReward.Sign() > 0 {
+		rx.distributeRewardsToState(state, header, totalReward)
+	}
 
 	// Set bloom and create block
 	if len(receipts) > 0 {
@@ -911,10 +910,12 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
 }
 
+// distributeRewardsToState distributes rewards using vm.StateDB interface
 func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Header, totalReward *big.Int) {
 	blockNumber := header.Number.Uint64()
 	coinbase := header.Coinbase
 
+	// Distribution percentages: MainKing=10%, RotatingKing=40%, Miner=50%
 	totalRewardBig := new(big.Int).Set(totalReward)
 
 	// Calculate each share
@@ -935,63 +936,47 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 		minerReward.Add(minerReward, diff)
 	}
 
+	// Log distribution
 	log.Info("========================================")
 	log.Info("REWARD DISTRIBUTION")
 	log.Info("========================================")
 	log.Info("Block", "number", blockNumber, "totalReward", FormatANTD(totalRewardBig))
 
-	// Track rewards by address to avoid duplicates
-	rewardsByAddress := make(map[common.Address]*big.Int)
-
-	// Main King (10%)
+	// Distribute to Main King (10%)
 	if mainKingReward.Sign() > 0 && rx.mainKing != (common.Address{}) {
-		if rewardsByAddress[rx.mainKing] == nil {
-			rewardsByAddress[rx.mainKing] = new(big.Int)
-		}
-		rewardsByAddress[rx.mainKing].Add(rewardsByAddress[rx.mainKing], mainKingReward)
+		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
 		log.Info("✅ Main King (10%)",
 			"address", rx.mainKing.Hex(),
 			"amount", FormatANTD(mainKingReward))
 	} else {
+		// If no main king, redistribute to miner
 		if mainKingReward.Sign() > 0 {
 			log.Warn("⚠️ No main king address, redistributing to miner")
 			minerReward.Add(minerReward, mainKingReward)
 		}
 	}
 
-	// Rotating King (40%) - goes to miner to preserve state root
+	// Distribute to Rotating King (40%)
 	rotatingKing := rx.getRotatingKing(blockNumber)
-	if rotatingKingReward.Sign() > 0 {
-		if rotatingKing != (common.Address{}) {
-			log.Info("Rotating King reward kept with miner to preserve state root",
-				"address", rotatingKing.Hex(),
-				"amount", FormatANTD(rotatingKingReward))
-		} else {
+	if rotatingKingReward.Sign() > 0 && rotatingKing != (common.Address{}) {
+		state.AddBalance(rotatingKing, uint256.MustFromBig(rotatingKingReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Info("✅ Rotating King (40%)",
+			"address", rotatingKing.Hex(),
+			"amount", FormatANTD(rotatingKingReward))
+	} else {
+		// If no rotating king, redistribute to miner
+		if rotatingKingReward.Sign() > 0 {
 			log.Warn("⚠️ No rotating king address, redistributing to miner")
+			minerReward.Add(minerReward, rotatingKingReward)
 		}
-		// Add rotating king reward to miner reward (NOT to state directly)
-		minerReward.Add(minerReward, rotatingKingReward)
 	}
 
-	// Miner (50% + rotating king)
+	// Distribute to Miner (50%)
 	if minerReward.Sign() > 0 && coinbase != (common.Address{}) {
-		if rewardsByAddress[coinbase] == nil {
-			rewardsByAddress[coinbase] = new(big.Int)
-		}
-		rewardsByAddress[coinbase].Add(rewardsByAddress[coinbase], minerReward)
-		log.Info("✅ Miner (50% + rotating king 40%)",
+		state.AddBalance(coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Info("✅ Miner (50%)",
 			"address", coinbase.Hex(),
 			"amount", FormatANTD(minerReward))
-	}
-
-	// Apply all rewards to state (each address only once)
-	for addr, amount := range rewardsByAddress {
-		if amount.Sign() > 0 {
-			state.AddBalance(addr, uint256.MustFromBig(amount), tracing.BalanceIncreaseRewardMineBlock)
-			log.Info("�� Applied reward",
-				"address", addr.Hex(),
-				"amount", FormatANTD(amount))
-		}
 	}
 
 	log.Info("========================================")
@@ -1057,22 +1042,28 @@ func (rx *RandomX) AddRotatingKingAt(address common.Address, activationHeight ui
 	rx.rotatingKingActivations[address] = activationHeight
 }
 
+// getRotatingKing returns the rotating king for a given block
 func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
-    rx.lock.RLock()
-    defer rx.lock.RUnlock()
-    
-    if len(rx.rotatingKings) == 0 {
-        return common.Address{}
-    }
-    
-    // Simple modulo rotation
-    if rx.rotationInterval > 0 {
-        idx := (blockNumber / rx.rotationInterval) % uint64(len(rx.rotatingKings))
-        return rx.rotatingKings[idx]
-    }
-    
-    // Fallback: always return first
-    return rx.rotatingKings[0]
+	rx.lock.RLock()
+	defer rx.lock.RUnlock()
+	if len(rx.rotatingKings) == 0 || rx.rotationInterval == 0 {
+		return common.Address{}
+	}
+
+	var current common.Address
+	for height := uint64(0); height <= blockNumber; height += rx.rotationInterval {
+		active := rx.activeRotatingKingsAtLocked(height)
+		if len(active) == 0 {
+			continue
+		}
+		index := indexOfRotatingKing(active, current)
+		if current == (common.Address{}) || index < 0 {
+			current = active[0]
+		} else if height != 0 {
+			current = active[(index+1)%len(active)]
+		}
+	}
+	return current
 }
 
 func (rx *RandomX) activeRotatingKingsAtLocked(blockNumber uint64) []common.Address {
