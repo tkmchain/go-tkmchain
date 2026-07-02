@@ -1100,9 +1100,23 @@ func (s *Ethereum) rotatingKingInterval() uint64 {
 	return interval
 }
 
-// SetMinerThreads is unsupported for this miner implementation.
+// SetMinerThreads dynamically updates the configured RandomX CPU mining thread count.
 func (s *Ethereum) SetMinerThreads(threads int) error {
-	return fmt.Errorf("setting miner threads is not supported")
+	if threads < 0 {
+		return fmt.Errorf("invalid miner thread count %d", threads)
+	}
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if threads == 0 {
+		threads = runtime.NumCPU()
+	}
+	s.config.RandomXMinerThreads = threads
+	s.config.Miner.Threads = threads
+	if engine, ok := s.engine.(interface{ SetThreads(int) }); ok {
+		engine.SetThreads(threads)
+	}
+	log.Info("Updated RandomX miner threads", "threads", threads)
+	return nil
 }
 
 // SetMinerEtherbase dynamically sets the reward recipient address

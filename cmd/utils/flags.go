@@ -1701,7 +1701,10 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 		cfg.Enabled = ctx.Bool(MiningEnabledFlag.Name)
 	}
 	if ctx.IsSet(MinerThreadsFlag.Name) {
-		log.Warn("The flag --miner.threads is deprecated and has no effect")
+		threads := ctx.Int(MinerThreadsFlag.Name)
+		if threads > 0 {
+			cfg.Threads = threads
+		}
 	}
 	if ctx.IsSet(MinerExtraDataFlag.Name) {
 		cfg.ExtraData = []byte(ctx.String(MinerExtraDataFlag.Name))
@@ -1764,6 +1767,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setTxPool(ctx, &cfg.TxPool)
 	setBlobPool(ctx, &cfg.BlobPool)
 	setMiner(ctx, &cfg.Miner)
+	if ctx.IsSet(MinerThreadsFlag.Name) && ctx.Int(MinerThreadsFlag.Name) > 0 {
+		cfg.RandomXMinerThreads = ctx.Int(MinerThreadsFlag.Name)
+	}
 	setRequiredBlocks(ctx, cfg)
 	params.SetCheckpointValidation(ctx.Bool(CheckpointValidationFlag.Name))
 
