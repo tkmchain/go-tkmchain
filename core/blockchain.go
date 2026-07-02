@@ -2877,8 +2877,9 @@ func (bc *BlockChain) reportBadBlock(block *types.Block, res *ProcessResult, err
 	if res != nil {
 		receipts = res.Receipts
 	}
-	rawdb.WriteBadBlock(bc.db, block)
-	log.Error(summarizeBadBlock(block, receipts, bc.Config(), err))
+	if rawdb.WriteBadBlock(bc.db, block) {
+		log.Error(summarizeBadBlock(block, receipts, bc.Config(), err))
+	}
 }
 
 // logForkReadiness will write a log when a future fork is scheduled, but not

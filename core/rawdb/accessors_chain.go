@@ -853,8 +853,9 @@ func ReadAllBadBlocks(db ethdb.Reader) []*types.Block {
 }
 
 // WriteBadBlock serializes the bad block into the database. If the cumulated
-// bad blocks exceeds the limitation, the oldest will be dropped.
-func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
+// bad blocks exceeds the limitation, the oldest will be dropped. It returns
+// whether the bad block was newly persisted.
+func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) bool {
 	blob, err := db.Get(badBlockKey)
 	if err != nil {
 		if has, hasErr := db.Has(badBlockKey); hasErr != nil || has {
@@ -869,8 +870,7 @@ func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 	}
 	for _, b := range badBlocks {
 		if b.Header.Number.Uint64() == block.NumberU64() && b.Header.Hash() == block.Hash() {
-			log.Info("Skip duplicated bad block", "number", block.NumberU64(), "hash", block.Hash())
-			return
+			return false
 		}
 	}
 	badBlocks = append(badBlocks, &badBlock{
@@ -891,6 +891,7 @@ func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 	if err := db.Put(badBlockKey, data); err != nil {
 		log.Crit("Failed to write bad blocks", "err", err)
 	}
+	return true
 }
 
 // ReadHeadHeader returns the current canonical head header.

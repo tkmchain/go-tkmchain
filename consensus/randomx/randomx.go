@@ -885,21 +885,7 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
 
-	// Calculate block reward
-	blockReward := CalculateBlockReward(header.Number.Uint64())
-	totalFees := GetTotalTransactionFees(header, receipts)
-	totalReward := CalculateTotalReward(blockReward, totalFees)
-
-	log.Info("Block reward calculated",
-		"block", header.Number.Uint64(),
-		"reward", FormatANTD(blockReward),
-		"fees", FormatANTD(totalFees),
-		"total", FormatANTD(totalReward))
-
-	// Distribute rewards to all parties
-	if totalReward.Sign() > 0 {
-		rx.distributeRewardsToState(state, header, totalReward)
-	}
+	rx.Finalize(chain, header, state, body)
 
 	// Set bloom and create block
 	if len(receipts) > 0 {
