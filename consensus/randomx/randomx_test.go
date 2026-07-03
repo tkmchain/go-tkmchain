@@ -46,15 +46,14 @@ func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 	}
 }
 
-func TestRotatingKingDoesNotChangeStateRoot(t *testing.T) {
-	miner := common.HexToAddress("0x0000000000000000000000000000000000000001")
+func TestFinalizeSkipsRewardsWithoutCoinbase(t *testing.T) {
 	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
 
-	rootWithout := randomxFinalizedRoot(t, nil, miner)
-	rootWith := randomxFinalizedRoot(t, []common.Address{rotating}, miner)
+	rootWithout := randomxFinalizedRoot(t, nil, common.Address{})
+	rootWith := randomxFinalizedRoot(t, []common.Address{rotating}, common.Address{})
 
 	if rootWith != rootWithout {
-		t.Fatalf("state root changed after adding rotating king: have %s, want %s", rootWith, rootWithout)
+		t.Fatalf("state root changed without coinbase: have %s, want %s", rootWith, rootWithout)
 	}
 }
 
@@ -76,6 +75,34 @@ func randomxFinalizedRoot(t *testing.T, rotatingKings []common.Address, miner co
 	header := &types.Header{Number: big.NewInt(1), Coinbase: miner}
 	rx.Finalize(nil, header, statedb, &types.Body{})
 	return statedb.IntermediateRoot(false)
+}
+
+func TestRotatingKingRewardGoesToCurrentIntervalKing(t *testing.T) {
+	first := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	second := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	miner := common.HexToAddress("0x0000000000000000000000000000000000000003")
+	rxdb := state.NewDatabaseForTesting()
+	statedb, err := state.New(types.EmptyRootHash, rxdb)
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	rx := NewFaker()
+	rx.mainKing = common.Address{}
+	rx.rotatingKings = nil
+	rx.rotatingKingActivations = nil
+	rx.SetRotationInterval(100)
+	rx.AddRotatingKing(first)
+	rx.AddRotatingKing(second)
+
+	header := &types.Header{Number: big.NewInt(1263), Coinbase: miner}
+	rx.Finalize(nil, header, statedb, &types.Body{})
+
+	if statedb.GetBalance(first).Sign() != 0 {
+		t.Fatalf("previous rotating king received reward outside its interval: %v", statedb.GetBalance(first))
+	}
+	if statedb.GetBalance(second).Sign() == 0 {
+		t.Fatalf("current rotating king did not receive reward for covered interval")
+	}
 }
 
 func TestRotatingKingRewardsCurrentKingAfterRotation(t *testing.T) {

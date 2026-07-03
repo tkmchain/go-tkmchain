@@ -59,6 +59,8 @@ CROSS_WINDOWS_EXT = .exe
 
 # Static linking flags for Windows
 WIN_STATIC_LDFLAGS = -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic
+HOST_RANDOMX_LDFLAGS = $(if $(filter Darwin,$(shell uname -s)),-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security,-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm)
+DARWIN_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 
 # List of all commands to build (skip bootnode if not exists)
 CMDS = gtkm clef devp2p abigen evm rlpdump
@@ -95,7 +97,7 @@ gtkm: randomx
 		exit 1; \
 	fi
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
 
@@ -103,7 +105,7 @@ gtkm: randomx
 clef: randomx
 	@echo "Building clef..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/clef ./cmd/clef
 	@echo "✅ Built: $(GOBIN)/clef"
 
@@ -111,7 +113,7 @@ clef: randomx
 devp2p: randomx
 	@echo "Building devp2p..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/devp2p ./cmd/devp2p
 	@echo "✅ Built: $(GOBIN)/devp2p"
 
@@ -119,7 +121,7 @@ devp2p: randomx
 abigen: randomx
 	@echo "Building abigen..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/abigen ./cmd/abigen
 	@echo "✅ Built: $(GOBIN)/abigen"
 
@@ -128,7 +130,7 @@ bootnode: randomx
 	@echo "Building bootnode..."
 	@mkdir -p $(GOBIN)
 	@if [ -d "./cmd/bootnode" ]; then \
-		CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+		CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/bootnode ./cmd/bootnode; \
 		echo "✅ Built: $(GOBIN)/bootnode"; \
 	else \
@@ -139,7 +141,7 @@ bootnode: randomx
 evm: randomx
 	@echo "Building evm..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/evm ./cmd/evm
 	@echo "✅ Built: $(GOBIN)/evm"
 
@@ -147,7 +149,7 @@ evm: randomx
 rlpdump: randomx
 	@echo "Building rlpdump..."
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/rlpdump ./cmd/rlpdump
 	@echo "✅ Built: $(GOBIN)/rlpdump"
 
@@ -213,7 +215,7 @@ randomx-host:
 	echo "Running CMake..."; \
 	cmake "$$SOURCE_DIR" -DARCH=native -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX..."; \
-	make -j$$(nproc); \
+	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -257,7 +259,7 @@ randomx-windows:
 		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
 		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY; \
 	echo "Building RandomX for Windows..."; \
-	make -j$$(nproc); \
+	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Windows library built: $(RANDOMX_BUILD_DIR_WINDOWS)/$(RANDOMX_LIB_STATIC)"; \
 		file "$(RANDOMX_LIB_STATIC)" || true; \
@@ -303,7 +305,7 @@ randomx-windows-386:
 		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
 		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY; \
 	echo "Building RandomX for Windows 32-bit..."; \
-	make -j$$(nproc); \
+	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Windows 32-bit library built"; \
 	else \
@@ -339,7 +341,7 @@ randomx-darwin:
 			-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_SHARED_LIBS=OFF; \
-		make -j$$(nproc); \
+		make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 		if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 			echo "✓ RandomX macOS library built: $(RANDOMX_BUILD_DIR_DARWIN)/$(RANDOMX_LIB_STATIC)"; \
 		else \
@@ -385,7 +387,7 @@ randomx-linux:
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM64..."; \
-	make -j$$(nproc); \
+	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Linux ARM64 library built: $(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -425,7 +427,7 @@ randomx-linux-arm:
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM..."; \
-	make -j$$(nproc); \
+	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Linux ARM library built: $(RANDOMX_BUILD_DIR_LINUX)/arm/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -469,7 +471,7 @@ randomx-miner: randomx-host
 		exit 1; \
 	fi
 	@mkdir -p $(GOBIN)
-	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/randomx-miner ./cmd/randomx-miner
 	@echo "✅ Built: $(GOBIN)/randomx-miner"
 
@@ -551,12 +553,12 @@ cross-darwin: randomx-darwin
 	@if [ -f "$(RANDOMX_LIB_DARWIN)" ]; then \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lstdc++ -lm" \
+			CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
 			GOOS=darwin GOARCH=amd64 \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/gtkm-darwin-amd64 ./cmd/gtkm; \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lstdc++ -lm" \
+			CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
 			GOOS=darwin GOARCH=arm64 \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/gtkm-darwin-arm64 ./cmd/gtkm; \
 		echo "✅ macOS build complete: $(CROSS_OUTPUT_DIR)/darwin/"; \
@@ -574,13 +576,13 @@ cross-darwin-all: randomx-darwin
 			echo "Building $$cmd for macOS amd64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
 				GOOS=darwin GOARCH=amd64 \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/$$cmd-darwin-amd64 ./cmd/$$cmd; \
 			echo "Building $$cmd for macOS arm64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
 				GOOS=darwin GOARCH=arm64 \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/$$cmd-darwin-arm64 ./cmd/$$cmd; \
 		done; \
@@ -600,7 +602,7 @@ cross-linux-amd64: randomx
 		echo "Building $$cmd for Linux x86_64..."; \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+			CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 			GOOS=linux GOARCH=amd64 \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/amd64/$$cmd-linux-x86_64 ./cmd/$$cmd; \
 	done
@@ -620,7 +622,7 @@ cross-linux-386: randomx
 			echo "Building $$cmd for Linux x86_32..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 				GOOS=linux GOARCH=386 \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/386/$$cmd-linux-x86_32 ./cmd/$$cmd; \
 		done; \

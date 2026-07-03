@@ -16,7 +16,8 @@ package randomx
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../build/_workspace/randomx/src
-#cgo LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build -lrandomx -lstdc++ -lm
+#cgo !darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lstdc++ -lm
+#cgo darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 
 #include <stdlib.h>
 #include <string.h>
@@ -863,7 +864,12 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	log.Info("Finalize called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+	blockNumber := header.Number.Uint64()
+	if header.Coinbase == (common.Address{}) {
+		log.Debug("Finalize skipped rewards without coinbase", "block", blockNumber)
+		return
+	}
+	log.Info("Finalize called", "block", blockNumber, "coinbase", header.Coinbase.Hex())
 
 	// Calculate block reward
 	blockReward := CalculateBlockReward(header.Number.Uint64())
@@ -883,22 +889,27 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 
 // FinalizeAndAssemble implements consensus.Engine
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	log.Info("FinalizeAndAssemble called", "block", header.Number.Uint64(), "coinbase", header.Coinbase.Hex())
+	blockNumber := header.Number.Uint64()
+	if header.Coinbase != (common.Address{}) {
+		log.Info("FinalizeAndAssemble called", "block", blockNumber, "coinbase", header.Coinbase.Hex())
 
-	// Calculate block reward
-	blockReward := CalculateBlockReward(header.Number.Uint64())
-	totalFees := GetTotalTransactionFees(header, receipts)
-	totalReward := CalculateTotalReward(blockReward, totalFees)
+		// Calculate block reward
+		blockReward := CalculateBlockReward(blockNumber)
+		totalFees := GetTotalTransactionFees(header, receipts)
+		totalReward := CalculateTotalReward(blockReward, totalFees)
 
-	log.Info("Block reward calculated",
-		"block", header.Number.Uint64(),
-		"reward", FormatANTD(blockReward),
-		"fees", FormatANTD(totalFees),
-		"total", FormatANTD(totalReward))
+		log.Info("Block reward calculated",
+			"block", blockNumber,
+			"reward", FormatANTD(blockReward),
+			"fees", FormatANTD(totalFees),
+			"total", FormatANTD(totalReward))
 
-	// Distribute rewards to all parties
-	if totalReward.Sign() > 0 {
-		rx.distributeRewardsToState(state, header, totalReward)
+		// Distribute rewards to all parties
+		if totalReward.Sign() > 0 {
+			rx.distributeRewardsToState(state, header, totalReward)
+		}
+	} else {
+		log.Debug("FinalizeAndAssemble skipped rewards without coinbase", "block", blockNumber)
 	}
 
 	// Set bloom and create block
