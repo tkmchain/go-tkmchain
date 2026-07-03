@@ -101,6 +101,7 @@ func (api *KingAPI) Addresses() []common.Address {
 func (api *KingAPI) GetInfo() RotatingKingInfo {
 	api.e.lock.Lock()
 	defer api.e.lock.Unlock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.releaseUnlockedRotatingKingsLocked()
 
 	var currentBlock uint64
@@ -138,6 +139,7 @@ func (api *KingAPI) GetKingAddresses() []common.Address {
 func (api *KingAPI) GetCurrentKing() common.Address {
 	api.e.lock.Lock()
 	defer api.e.lock.Unlock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.releaseUnlockedRotatingKingsLocked()
 	return api.e.getCurrentRotatingKing()
 }
@@ -185,6 +187,7 @@ func (api *KingAPI) GetRotationHistory(limit *uint64) []RotationHistoryEntry {
 func (api *KingAPI) GetKingStats(_ *interface{}) KingStats {
 	api.e.lock.Lock()
 	defer api.e.lock.Unlock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.releaseUnlockedRotatingKingsLocked()
 
 	var currentBlock uint64
@@ -245,6 +248,7 @@ func (api *KingAPI) AddCheckpoint(number hexutil.Uint64, hash common.Hash) (bool
 // Add registers an address as rotating king if stake requirement is met.
 func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	api.e.lock.Lock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.removeUnderfundedRotatingKingsLocked()
 	if api.e.isRotatingKingRegisteredLocked(address) {
 		api.e.lock.Unlock()
@@ -256,6 +260,7 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 	}
 	unlock := time.Now().UTC().Add(rkLockPeriod)
 	api.e.lock.Lock()
+	api.e.loadRotatingKingStateLocked()
 	if api.e.isRotatingKingRegisteredLocked(address) {
 		api.e.lock.Unlock()
 		return RKStatus{}, fmt.Errorf("rotating king address already registered: %s", address.Hex())
@@ -272,6 +277,7 @@ func (api *KingAPI) Add(address common.Address) (RKStatus, error) {
 func (api *KingAPI) List() []RKStatus {
 	api.e.lock.Lock()
 	defer api.e.lock.Unlock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.releaseUnlockedRotatingKingsLocked()
 
 	seen := make(map[common.Address]struct{})
@@ -298,6 +304,7 @@ func (api *KingAPI) List() []RKStatus {
 func (api *KingAPI) Status(address common.Address) RKStatus {
 	api.e.lock.Lock()
 	defer api.e.lock.Unlock()
+	api.e.loadRotatingKingStateLocked()
 	api.e.releaseUnlockedRotatingKingsLocked()
 	return api.statusLocked(address)
 }

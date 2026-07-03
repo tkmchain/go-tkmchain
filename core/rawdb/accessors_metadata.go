@@ -86,6 +86,31 @@ func WriteRotatingKingLocks(db ethdb.KeyValueWriter, locks []RotatingKingLock) {
 	}
 }
 
+// ReadRotatingKingAddresses retrieves the persisted rotating king address list.
+func ReadRotatingKingAddresses(db ethdb.KeyValueReader) []common.Address {
+	data, _ := db.Get(rotatingKingAddressesKey)
+	if len(data) == 0 {
+		return nil
+	}
+	var addresses []common.Address
+	if err := rlp.DecodeBytes(data, &addresses); err != nil {
+		log.Error("Invalid rotating king addresses RLP", "err", err)
+		return nil
+	}
+	return addresses
+}
+
+// WriteRotatingKingAddresses stores the rotating king address list.
+func WriteRotatingKingAddresses(db ethdb.KeyValueWriter, addresses []common.Address) {
+	data, err := rlp.EncodeToBytes(addresses)
+	if err != nil {
+		log.Crit("Failed to encode rotating king addresses", "err", err)
+	}
+	if err := db.Put(rotatingKingAddressesKey, data); err != nil {
+		log.Crit("Failed to store rotating king addresses", "err", err)
+	}
+}
+
 // ReadChainConfig retrieves the consensus settings based on the given genesis hash.
 func ReadChainConfig(db ethdb.KeyValueReader, hash common.Hash) *params.ChainConfig {
 	data, _ := db.Get(configKey(hash))

@@ -1,0 +1,24 @@
+package rawdb
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/ethereum/go-ethereum/common"
+)
+
+func TestRotatingKingAddressStorage(t *testing.T) {
+	db := NewMemoryDatabase()
+	addresses := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+	}
+
+	if got := ReadRotatingKingAddresses(db); got != nil {
+		t.Fatalf("empty rotating king addresses = %v, want nil", got)
+	}
+	WriteRotatingKingAddresses(db, addresses)
+	if got := ReadRotatingKingAddresses(db); !reflect.DeepEqual(got, addresses) {
+		t.Fatalf("rotating king addresses = %v, want %v", got, addresses)
+	}
+}
