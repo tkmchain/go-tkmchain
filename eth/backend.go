@@ -222,6 +222,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			common.HexToAddress("0x0000000000000000000000000000000000000004"),
 		}
 	}
+	if persistedKings := rawdb.ReadRotatingKingAddresses(chainDb); len(persistedKings) > 0 {
+		kingAddresses = persistedKings
+	} else {
+		rawdb.WriteRotatingKingAddresses(chainDb, kingAddresses)
+	}
 
 	// Create and initialise the RandomX consensus engine with Rotating King support.
 	engineConfig := *chainConfig
@@ -586,8 +591,11 @@ func (s *Ethereum) GetMainKingAddress() common.Address {
 
 // GetKingAddresses returns all rotating king addresses
 func (s *Ethereum) GetKingAddresses() []common.Address {
-	addresses := make([]common.Address, len(s.kingAddresses))
-	copy(addresses, s.kingAddresses)
+	addresses := s.kingAddresses
+	if persisted := rawdb.ReadRotatingKingAddresses(s.chainDb); len(persisted) > 0 {
+		addresses = persisted
+	}
+	addresses = append([]common.Address(nil), addresses...)
 	return addresses
 }
 
@@ -866,6 +874,7 @@ func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {
 		}
 	}
 	s.kingAddresses = append(s.kingAddresses, address)
+	rawdb.WriteRotatingKingAddresses(s.chainDb, s.kingAddresses)
 	s.addRotatingKingToEngine(address, activationHeight)
 }
 
@@ -921,6 +930,14 @@ func (s *Ethereum) loadRotatingKingLocks() {
 	}
 }
 
+func (s *Ethereum) loadRotatingKingStateLocked() {
+	if persisted := rawdb.ReadRotatingKingAddresses(s.chainDb); len(persisted) > 0 {
+		s.kingAddresses = append([]common.Address(nil), persisted...)
+	}
+	s.rkLocks = make(map[common.Address]rkLockInfo)
+	s.loadRotatingKingLocks()
+}
+
 func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 	head := s.blockchain.CurrentBlock()
 	if head == nil {
@@ -944,34 +961,34 @@ func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 }
 
 func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
-	if s.blockchain == nil {
-		return false
-	}
-	head := s.blockchain.CurrentBlock()
-	if head == nil {
-		return false
-	}
-	statedb, err := s.blockchain.StateAt(head)
-	if err != nil {
-		log.Warn("Failed to check rotating king balances", "err", err)
-		return false
-	}
-	changed := false
-	filtered := s.kingAddresses[:0]
-	for _, address := range s.kingAddresses {
-		if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
-			delete(s.rkLocks, address)
-			changed = true
-			log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
-			continue
+	/*	if s.blockchain == nil {
+			return false
 		}
-		filtered = append(filtered, address)
-	}
-	if changed {
-		s.kingAddresses = filtered
-		s.persistRotatingKingLocksLocked()
-	}
-	return changed
+		head := s.blockchain.CurrentBlock()
+		if head == nil {
+			return false
+		}
+		statedb, err := s.blockchain.StateAt(head)
+		if err != nil {
+			log.Warn("Failed to check rotating king balances", "err", err)
+			return false
+		}
+		changed := false
+		filtered := s.kingAddresses[:0]
+		for _, address := range s.kingAddresses {
+			if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
+				delete(s.rkLocks, address)
+				changed = true
+				log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
+				continue
+			}
+			filtered = append(filtered, address)
+		}
+		if changed {
+			s.kingAddresses = filtered
+			s.persistRotatingKingLocksLocked()
+		}*/
+	return false
 }
 
 func (s *Ethereum) persistRotatingKingLocksLocked() {
