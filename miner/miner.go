@@ -210,6 +210,11 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
 		return false
 	}
+	currentBlock := miner.worker.pendingBlock()
+	if currentBlock == nil || currentBlock.Hash() != task.block.Hash() {
+		log.Warn("Submitted work is stale", "headerHash", hash.Hex())
+		return false
+	}
 
 	header := task.block.Header()
 	log.Info("Pending work header",
