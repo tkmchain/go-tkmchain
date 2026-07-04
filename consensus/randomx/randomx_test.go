@@ -46,14 +46,14 @@ func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 	}
 }
 
-func TestFinalizeSkipsRewardsWithoutCoinbase(t *testing.T) {
+func TestFinalizeWritesRotatingKingWithoutCoinbase(t *testing.T) {
 	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
 
 	rootWithout := randomxFinalizedRoot(t, nil, common.Address{})
 	rootWith := randomxFinalizedRoot(t, []common.Address{rotating}, common.Address{})
 
-	if rootWith != rootWithout {
-		t.Fatalf("state root changed without coinbase: have %s, want %s", rootWith, rootWithout)
+	if rootWith == rootWithout {
+		t.Fatalf("state root did not include rotating king without coinbase: %s", rootWith)
 	}
 }
 

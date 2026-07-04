@@ -57,6 +57,8 @@ var (
 	GenesisDifficulty = big.NewInt(3)
 	MinDifficulty     = big.NewInt(3)
 	MaxDifficulty     = new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil)
+
+	rotatingKingStateSlot = crypto.Keccak256Hash([]byte("randomx.rotatingking"))
 )
 
 var (
@@ -865,6 +867,7 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	blockNumber := header.Number.Uint64()
+	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
 		log.Debug("Finalize skipped rewards without coinbase", "block", blockNumber)
 		return
@@ -890,6 +893,7 @@ func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 // FinalizeAndAssemble implements consensus.Engine
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	blockNumber := header.Number.Uint64()
+	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase != (common.Address{}) {
 		log.Info("FinalizeAndAssemble called", "block", blockNumber, "coinbase", header.Coinbase.Hex())
 
@@ -919,6 +923,11 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
+}
+
+func (rx *RandomX) writeRotatingKingToState(state vm.StateDB, blockNumber uint64) {
+	rotatingKing := rx.getRotatingKing(blockNumber)
+	state.SetState(params.SystemAddress, rotatingKingStateSlot, common.BytesToHash(rotatingKing.Bytes()))
 }
 
 // distributeRewardsToState distributes rewards using vm.StateDB interface
