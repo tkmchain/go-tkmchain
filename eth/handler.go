@@ -24,6 +24,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
+        "strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -264,8 +265,6 @@ func (h *handler) decHandlers() {
 	h.handlerDoneCh <- struct{}{}
 }
 
-// runEthPeer registers an eth peer into the joint eth/snap peerset, adds it to
-// various subsystems and starts handling messages.
 func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	if !h.incHandlers() {
 		return p2p.DiscQuitting
@@ -285,6 +284,13 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		peer.Log().Debug("Tkmchain handshake failed", "err", err)
 		return err
 	}
+
+	// Check if peer is banned BEFORE registering - quietly reject
+	if h.downloader != nil && h.downloader.IsBanned(peer.ID()) {
+		peer.Log().Debug("Rejected banned peer connection", "peer", peer.ID()[:8])
+		return p2p.DiscRequested
+	}
+
 	reject := false // reserved peer slots
 	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync {
 		if snap == nil {
@@ -315,8 +321,14 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	if p == nil {
 		return errors.New("peer dropped during handling")
 	}
+
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
 	if err := h.downloader.RegisterPeer(peer.ID(), int(peer.Version()), p); err != nil {
+		// Check if it's a ban error - log at debug level
+		if strings.Contains(err.Error(), "peer is banned") {
+			peer.Log().Debug("Banned peer attempted to register", "peer", peer.ID()[:8])
+			return p2p.DiscRequested
+		}
 		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
 		return err
 	}
@@ -365,7 +377,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 					return
 				}
 				if headers[0].Number.Uint64() != number || headers[0].Hash() != hash {
-					peer.Log().Info("Required block mismatch, dropping peer", "number", number, "hash", headers[0].Hash(), "want", hash)
+					peer.Log().Info("Required block mismatch, dropping peer", "number", number, "hash", headers[0].Hash(), "expected", hash)
 					res.Done <- errors.New("required block mismatch")
 					return
 				}
@@ -428,7 +440,8 @@ func (h *handler) unregisterPeer(id string) {
 	// Abort if the peer does not exist
 	peer := h.peers.peer(id)
 	if peer == nil {
-		logger.Warn("Tkmchain peer removal failed", "err", errPeerNotRegistered)
+		// Only log at debug level if the peer doesn't exist - this is common during bans
+		logger.Debug("Tkmchain peer removal skipped (not registered)", "err", errPeerNotRegistered)
 		return
 	}
 	// Remove the `eth` peer if it exists
@@ -438,12 +451,36 @@ func (h *handler) unregisterPeer(id string) {
 	if peer.snapExt != nil {
 		h.downloader.SnapSyncer.Unregister(id)
 	}
-	h.downloader.UnregisterPeer(id)
+	// Unregister from downloader - suppress "not registered" errors
+	if h.downloader != nil {
+		if err := h.downloader.UnregisterPeer(id); err != nil {
+			// Only log real errors, ignore "not registered" which happens during bans
+			if !strings.Contains(err.Error(), "not registered") && !strings.Contains(err.Error(), "unknown") {
+				logger.Error("Failed to unregister from downloader", "err", err)
+			}
+		}
+	}
 	h.txFetcher.Drop(id)
 
 	if err := h.peers.unregisterPeer(id); err != nil {
 		logger.Error("Tkmchain peer removal failed", "err", err)
 	}
+}
+
+// GetAllPeers returns all connected peers
+func (h *handler) GetAllPeers() map[string]*ethPeer {
+    if h.peers == nil {
+        return nil
+    }
+    return h.peers.GetAllPeers()
+}
+
+// GetPeer returns a specific peer by ID
+func (h *handler) GetPeer(id string) *ethPeer {
+    if h.peers == nil {
+        return nil
+    }
+    return h.peers.GetPeer(id)
 }
 
 func (h *handler) Start(maxPeers int) {
@@ -570,6 +607,11 @@ func (h *handler) txBroadcastLoop() {
 // sync is finished.
 func (h *handler) enableSyncedFeatures() {
 	h.synced.Store(true)
+}
+
+// Peers returns the peer set
+func (h *handler) Peers() *peerSet {
+	return h.peers
 }
 
 // blockRangeState holds the state of the block range update broadcasting mechanism.

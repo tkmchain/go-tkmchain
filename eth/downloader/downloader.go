@@ -20,6 +20,7 @@ package downloader
 import (
 	"errors"
 	"fmt"
+        "encoding/json"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -161,6 +162,19 @@ type Downloader struct {
 	bodyFetchHook    func([]*types.Header) // Method to call upon starting a block body fetch
 	receiptFetchHook func([]*types.Header) // Method to call upon starting a receipt fetch
 	chainInsertHook  func([]*fetchResult)  // Method to call upon inserting a chain of blocks (possibly in multiple invocations)
+
+        banList    map[string]time.Time  // Peer ID -> ban expiration time
+        banLock    sync.RWMutex          // Lock for ban list
+        banDuration time.Duration        // How long to ban (default: 24h)
+        maxBans    int                   // Max bans to track (default: 1000)
+
+    banStats    struct {
+        totalBans       int64
+        bansByReason    map[string]int64
+        lastBanTime     time.Time
+        mostRecentBans  []string  // Keep last 10 banned peers
+    }
+       statsLock   sync.RWMutex
 }
 
 // LightChain encapsulates functions required to synchronise a light chain.
@@ -249,15 +263,163 @@ func New(mode SyncMode, checkpoint uint64, stateDb ethdb.Database, mux *event.Ty
 			processed: rawdb.ReadFastTrieProgress(stateDb),
 		},
 		trackStateReq: make(chan *stateReq),
+                banList:    make(map[string]time.Time),
+                banDuration: 24 * time.Hour,  // Ban for 24 hours
+                maxBans:    1000,
 	}
 	if chain != nil {
 		dl.syncMode = newSyncModer(mode, chain, stateDb)
 	}
 	go dl.qosTuner()
 	go dl.stateFetcher()
+        go dl.cleanupBans()
 	return dl
 }
 
+// isBanned checks if a peer is currently banned
+func (d *Downloader) isBanned(id string) bool {
+	d.banLock.RLock()
+	defer d.banLock.RUnlock()
+
+	if expiry, exists := d.banList[id]; exists {
+		if time.Now().Before(expiry) {
+			return true
+		}
+		// Expired ban, remove it
+		delete(d.banList, id)
+		log.Debug("Ban expired for peer", "peer", id[:8])
+		return false
+	}
+	return false
+}
+
+// banPeer permanently bans a peer
+func (d *Downloader) banPeer(id string, duration time.Duration) {
+	d.banLock.Lock()
+	defer d.banLock.Unlock()
+
+	// Add to ban list
+	if _, exists := d.banList[id]; !exists {
+		// New ban - update statistics
+		d.statsLock.Lock()
+		d.banStats.totalBans++
+		if d.banStats.bansByReason == nil {
+			d.banStats.bansByReason = make(map[string]int64)
+		}
+		d.banStats.bansByReason["invalid_chain"]++
+		d.banStats.lastBanTime = time.Now()
+
+		// Keep recent bans list
+		d.banStats.mostRecentBans = append([]string{id}, d.banStats.mostRecentBans...)
+		if len(d.banStats.mostRecentBans) > 10 {
+			d.banStats.mostRecentBans = d.banStats.mostRecentBans[:10]
+		}
+		d.statsLock.Unlock()
+	}
+
+	d.banList[id] = time.Now().Add(duration)
+
+	// Only unregister if peer exists - check first to avoid "not registered" errors
+	if d.peers != nil {
+		if p := d.peers.Peer(id); p != nil {
+			if err := d.peers.Unregister(id); err != nil {
+				log.Debug("Peer already unregistered", "peer", id[:8])
+			} else {
+				log.Debug("Unregistered banned peer", "peer", id[:8])
+			}
+		} else {
+			log.Debug("Peer not in set, skipping unregister", "peer", id[:8])
+		}
+	}
+
+	// Drop the peer - this is safe to call even if already dropped
+	if d.dropPeer != nil {
+		d.dropPeer(id)
+	}
+
+	// Log with stats - use shortened ID to reduce noise
+	d.statsLock.RLock()
+	total := d.banStats.totalBans
+	d.statsLock.RUnlock()
+
+	log.Warn("Peer banned",
+		"peer", id[:8],
+		"duration", duration,
+		"reason", "invalid chain",
+		"totalBanned", total,
+		"activeBans", len(d.banList))
+}
+
+// Get ban statistics
+func (d *Downloader) GetBanStats() map[string]interface{} {
+    d.banLock.RLock()
+    defer d.banLock.RUnlock()
+    
+    d.statsLock.RLock()
+    defer d.statsLock.RUnlock()
+    
+    return map[string]interface{}{
+        "totalBans":      d.banStats.totalBans,
+        "activeBans":     len(d.banList),
+        "lastBanTime":    d.banStats.lastBanTime,
+        "recentBans":     d.banStats.mostRecentBans,
+        "bansByReason":   d.banStats.bansByReason,
+        "bannedPeers":    d.getBannedPeersLocked(),
+    }
+}
+
+func (d *Downloader) getBannedPeersLocked() []string {
+    banned := make([]string, 0, len(d.banList))
+    now := time.Now()
+    for id, expiry := range d.banList {
+        if now.Before(expiry) {
+            banned = append(banned, id)
+        }
+    }
+    return banned
+}
+// cleanupBans removes expired bans periodically
+func (d *Downloader) cleanupBans() {
+    ticker := time.NewTicker(10 * time.Minute)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-d.quitCh:
+            return
+        case <-ticker.C:
+            d.banLock.Lock()
+            d.cleanupBansLocked()
+            d.banLock.Unlock()
+        }
+    }
+}
+
+// cleanupBansLocked removes expired bans
+func (d *Downloader) cleanupBansLocked() {
+	now := time.Now()
+	for id, expiry := range d.banList {
+		if now.After(expiry) {
+			delete(d.banList, id)
+			log.Debug("Ban expired for peer", "peer", id[:8])
+		}
+	}
+}
+
+// getBannedPeers returns list of currently banned peers
+func (d *Downloader) getBannedPeers() []string {
+    d.banLock.RLock()
+    defer d.banLock.RUnlock()
+    
+    banned := make([]string, 0, len(d.banList))
+    now := time.Now()
+    for id, expiry := range d.banList {
+        if now.Before(expiry) {
+            banned = append(banned, id)
+        }
+    }
+    return banned
+}
 // ConfigSyncMode returns the configured sync mode, adjusted for local chain state.
 func (d *Downloader) ConfigSyncMode() SyncMode {
 	if d.syncMode == nil {
@@ -464,6 +626,13 @@ func (d *Downloader) Synchronising() bool {
 // RegisterPeer injects a new download peer into the set of block source to be
 // used for fetching hashes and blocks from.
 func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
+	// CHECK BAN STATUS FIRST
+	if d.isBanned(id) {
+		// Log at debug level - no need to spam errors for banned peers
+		log.Debug("Rejected banned peer connection", "peer", id[:8])
+		return fmt.Errorf("peer is banned: %s", id)
+	}
+
 	logger := log.New("peer", id)
 	logger.Trace("Registering sync peer")
 	if err := d.peers.Register(newPeerConnection(id, uint(version), peer, logger)); err != nil {
@@ -471,7 +640,6 @@ func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
 		return err
 	}
 	d.qosReduceConfidence()
-
 	return nil
 }
 
@@ -511,17 +679,19 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	switch err {
 	case nil:
 	case errBusy:
-
 	case errTimeout, errBadPeer, errStallingPeer, errUnsyncedPeer,
 		errEmptyHeaderSet, errPeersUnavailable, errTooOld,
 		errInvalidAncestor, errInvalidChain:
-		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
-		if d.dropPeer == nil {
-			// The dropPeer method is nil when `--copydb` is used for a local copy.
-			// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
-			log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", id)
+		
+		// PERMANENTLY BAN for invalid chain - log at debug level to reduce noise
+		if err == errInvalidChain || err == errInvalidAncestor {
+			// Only log the ban at warn level once
+			log.Warn("Peer banned for invalid chain", "peer", id[:8], "duration", "365 days")
+			d.banPeer(id, 365*24*time.Hour) // 1 year ban (effectively permanent)
 		} else {
-			d.dropPeer(id)
+			// Temporary ban for other errors
+			log.Debug("Peer temporarily banned", "peer", id[:8], "err", err, "duration", "1 hour")
+			d.banPeer(id, 365*24*time.Hour)
 		}
 	default:
 		log.Warn("Synchronisation failed, retrying", "err", err)
@@ -1208,6 +1378,9 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 			headerTimeoutMeter.Mark(1)
 			d.dropPeer(p.id)
 
+                        // BAN the peer for repeated timeouts
+                        d.banPeer(p.id, 365*24*time.Hour)
+		        d.dropPeer(p.id)
 			// Finish the sync gracefully instead of dumping the gathered data though
 			for _, ch := range []chan bool{d.bodyWakeCh, d.receiptWakeCh} {
 				select {
@@ -1224,6 +1397,72 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 	}
 }
 
+// Save bans to database
+func (d *Downloader) saveBans() {
+    if d.stateDB == nil {
+        return
+    }
+    
+    d.banLock.RLock()
+    defer d.banLock.RUnlock()
+    
+    // Serialize ban list to JSON
+    banData := make(map[string]int64)
+    now := time.Now()
+    for id, expiry := range d.banList {
+        if now.Before(expiry) {
+            banData[id] = expiry.Unix()
+        }
+    }
+    
+    if len(banData) == 0 {
+        return
+    }
+    
+    data, err := json.Marshal(banData)
+    if err != nil {
+        log.Error("Failed to marshal ban data", "err", err)
+        return
+    }
+    
+    // Store in database using a custom key
+    key := []byte("downloader/bans")
+    if err := d.stateDB.Put(key, data); err != nil {
+        log.Error("Failed to save bans", "err", err)
+    }
+}
+
+// Load bans from database
+func (d *Downloader) loadBans() {
+    if d.stateDB == nil {
+        return
+    }
+    
+    key := []byte("downloader/bans")
+    data, err := d.stateDB.Get(key)
+    if err != nil {
+        // No bans stored yet
+        return
+    }
+    
+    var banData map[string]int64
+    if err := json.Unmarshal(data, &banData); err != nil {
+        log.Error("Failed to unmarshal ban data", "err", err)
+        return
+    }
+    
+    d.banLock.Lock()
+    defer d.banLock.Unlock()
+    
+    now := time.Now()
+    for id, expiryUnix := range banData {
+        expiry := time.Unix(expiryUnix, 0)
+        if now.Before(expiry) {
+            d.banList[id] = expiry
+        }
+    }
+    log.Info("Loaded banned peers", "count", len(d.banList))
+}
 // fillHeaderSkeleton concurrently retrieves headers from all our available peers
 // and maps them to the provided skeleton header chain.
 //
@@ -1990,4 +2229,31 @@ func (d *Downloader) requestTTL() time.Duration {
 		ttl = ttlLimit
 	}
 	return ttl
+}
+
+// ============================================
+// EXPORTED BAN METHODS FOR RPC
+// ============================================
+
+// BanPeer bans a peer for the specified duration (exported version)
+func (d *Downloader) BanPeer(peerID string, duration time.Duration) {
+	d.banPeer(peerID, duration)
+}
+
+// UnbanPeer removes a peer from the ban list (exported version)
+func (d *Downloader) UnbanPeer(peerID string) {
+	d.banLock.Lock()
+	defer d.banLock.Unlock()
+	delete(d.banList, peerID)
+	log.Info("Peer unbanned", "peer", peerID)
+}
+
+// GetBannedPeers returns list of currently banned peers (exported version)
+func (d *Downloader) GetBannedPeers() []string {
+	return d.getBannedPeers()
+}
+
+// IsBanned checks if a peer is banned (exported version)
+func (d *Downloader) IsBanned(peerID string) bool {
+	return d.isBanned(peerID)
 }

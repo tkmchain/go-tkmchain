@@ -470,6 +470,30 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	return eth, nil
 }
 
+// Peers returns the peer set
+func (s *Ethereum) Peers() *peerSet {
+	if s.handler == nil {
+		return nil
+	}
+	return s.handler.Peers()
+}
+
+// GetAllPeers returns all connected peers
+func (s *Ethereum) GetAllPeers() map[string]*ethPeer {
+    if s.handler == nil {
+        return nil
+    }
+    return s.handler.GetAllPeers()
+}
+
+// GetPeer returns a specific peer by ID
+func (s *Ethereum) GetPeer(id string) *ethPeer {
+    if s.handler == nil {
+        return nil
+    }
+    return s.handler.GetPeer(id)
+}
+
 // makeExtraData creates the extra data for the miner
 func makeExtraData(extra []byte) []byte {
 	if len(extra) == 0 {

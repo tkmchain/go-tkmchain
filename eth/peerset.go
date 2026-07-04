@@ -231,3 +231,35 @@ func (ps *peerSet) close() {
 	}
 	ps.closed = true
 }
+
+// GetAllPeers returns all connected eth peers
+func (ps *peerSet) GetAllPeers() map[string]*ethPeer {
+    ps.lock.RLock()
+    defer ps.lock.RUnlock()
+    
+    // Return a copy to avoid race conditions
+    result := make(map[string]*ethPeer, len(ps.peers))
+    for id, peer := range ps.peers {
+        result[id] = peer
+    }
+    return result
+}
+
+// GetPeer returns a specific peer by ID
+func (ps *peerSet) GetPeer(id string) *ethPeer {
+    ps.lock.RLock()
+    defer ps.lock.RUnlock()
+    return ps.peers[id]
+}
+
+// GetAllPeerIDs returns all connected peer IDs
+func (ps *peerSet) GetAllPeerIDs() []string {
+    ps.lock.RLock()
+    defer ps.lock.RUnlock()
+    
+    ids := make([]string, 0, len(ps.peers))
+    for id := range ps.peers {
+        ids = append(ids, id)
+    }
+    return ids
+}

@@ -23,9 +23,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -140,4 +142,99 @@ func (api *AdminAPI) ImportChain(file string) (bool, error) {
 		blocks = blocks[:0]
 	}
 	return true, nil
+}
+
+// ============================================
+// BAN MANAGEMENT FUNCTIONS
+// ============================================
+
+// BanPeer bans a peer by ID for a specified number of hours
+func (api *AdminAPI) BanPeer(peerID string, hours int) (bool, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return false, errors.New("downloader not available")
+	}
+
+	if hours <= 0 {
+		hours = 24
+	}
+	duration := time.Duration(hours) * time.Hour
+
+	api.eth.Downloader().BanPeer(peerID, duration)
+	
+	log.Info("Peer banned via admin API", "peer", peerID, "duration", hours)
+	return true, nil
+}
+
+// UnbanPeer removes a peer from the ban list
+func (api *AdminAPI) UnbanPeer(peerID string) (bool, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return false, errors.New("downloader not available")
+	}
+
+	api.eth.Downloader().UnbanPeer(peerID)
+	log.Info("Peer unbanned via admin API", "peer", peerID)
+	return true, nil
+}
+
+// ListBannedPeers returns all currently banned peers
+func (api *AdminAPI) ListBannedPeers() ([]string, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return nil, errors.New("downloader not available")
+	}
+
+	return api.eth.Downloader().GetBannedPeers(), nil
+}
+
+// GetBanStats returns ban statistics
+func (api *AdminAPI) GetBanStats() (map[string]interface{}, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return nil, errors.New("downloader not available")
+	}
+
+	return api.eth.Downloader().GetBanStats(), nil
+}
+
+// IsBanned checks if a peer is banned
+func (api *AdminAPI) IsBanned(peerID string) (bool, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return false, errors.New("downloader not available")
+	}
+
+	return api.eth.Downloader().IsBanned(peerID), nil
+}
+
+// ClearAllBans removes all bans (use with caution!)
+func (api *AdminAPI) ClearAllBans() (int, error) {
+	if api.eth == nil || api.eth.Downloader() == nil {
+		return 0, errors.New("downloader not available")
+	}
+
+	banned := api.eth.Downloader().GetBannedPeers()
+	count := len(banned)
+	
+	for _, peerID := range banned {
+		api.eth.Downloader().UnbanPeer(peerID)
+	}
+	
+	log.Warn("All bans cleared via admin API", "count", count)
+	return count, nil
+}
+
+// GetNodeInfo returns basic node information
+func (api *AdminAPI) GetNodeInfo() (map[string]interface{}, error) {
+	if api.eth == nil {
+		return nil, errors.New("ethereum service not available")
+	}
+	
+	info := map[string]interface{}{
+		"networkID": api.eth.networkID,
+	}
+	
+	if api.eth.p2pServer != nil {
+		nodeInfo := api.eth.p2pServer.NodeInfo()
+		info["nodeURL"] = nodeInfo.Enode
+		info["listenAddr"] = nodeInfo.ListenAddr
+	}
+	
+	return info, nil
 }
