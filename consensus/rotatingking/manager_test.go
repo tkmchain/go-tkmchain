@@ -35,3 +35,19 @@ func TestGetKingAtHeightActivatesPendingOnlyKing(t *testing.T) {
 		t.Fatalf("king at 400 = %v, want %v", got, pending)
 	}
 }
+
+func TestMainKingExcludedFromRotation(t *testing.T) {
+	mainKing := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	manager := NewRotatingKingManager(mainKing, []common.Address{mainKing, rotating}, 100)
+	manager.AddKingAddress(mainKing)
+
+	if got := manager.GetKingAtHeight(0); got != rotating {
+		t.Fatalf("king at 0 = %v, want %v", got, rotating)
+	}
+	for _, got := range manager.GetKingAddresses() {
+		if got == mainKing {
+			t.Fatalf("main king was included in rotation: %v", got)
+		}
+	}
+}

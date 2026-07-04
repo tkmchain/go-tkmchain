@@ -1007,20 +1007,19 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	commitUncles(w.localUncles)
 	commitUncles(w.remoteUncles)
 
-	if !noempty {
-		// Create an empty block based on temporary copied state for sealing in advance without waiting block
-		// execution finished.
-		w.commit(uncles, nil, false, tstart)
-	}
-
 	// Fill the block with all available pending transactions.
 	filter := txpool.PendingFilter{}
 	if env.header.BaseFee != nil {
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
 	}
 	pending, _ := w.eth.TxPool().Pending(filter)
-	// Short circuit if there is no available pending transactions
+	// Only publish an empty sealing task when there are no executable transactions.
+	// Otherwise external miners can keep solving the empty task and leave transactions
+	// waiting even though they were available for inclusion.
 	if len(pending) == 0 {
+		if !noempty {
+			w.commit(uncles, nil, false, tstart)
+		}
 		w.updateSnapshot()
 		return
 	}

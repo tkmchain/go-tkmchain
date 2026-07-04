@@ -254,7 +254,7 @@ func New(config *Config, threads int, mainKing common.Address, kingAddresses []c
 	kings := make([]common.Address, 0, len(kingAddresses))
 	activations := make(map[common.Address]uint64, len(kingAddresses))
 	for _, king := range kingAddresses {
-		if king == (common.Address{}) {
+		if king == (common.Address{}) || king == mainKing {
 			continue
 		}
 		kings = append(kings, king)
@@ -939,6 +939,13 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 	minerReward := new(big.Int).Mul(totalRewardBig, big.NewInt(50))
 	minerReward.Div(minerReward, big.NewInt(100))
 
+	rotatingKing := rx.getRotatingKing(blockNumber)
+	if rotatingKing == (common.Address{}) && rx.mainKing != (common.Address{}) {
+		mainKingReward.Set(totalRewardBig)
+		rotatingKingReward.SetInt64(0)
+		minerReward.SetInt64(0)
+	}
+
 	// Adjust for rounding
 	actualTotal := new(big.Int).Add(mainKingReward, rotatingKingReward)
 	actualTotal.Add(actualTotal, minerReward)
@@ -967,19 +974,14 @@ func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Head
 		}
 	}
 
-	// Distribute to Rotating King (40%)
-	rotatingKing := rx.getRotatingKing(blockNumber)
+	// Distribute to Rotating King (40%). If none is active, the main king receives the full block reward.
 	if rotatingKingReward.Sign() > 0 && rotatingKing != (common.Address{}) {
 		state.AddBalance(rotatingKing, uint256.MustFromBig(rotatingKingReward), tracing.BalanceIncreaseRewardMineBlock)
 		log.Info("✅ Rotating King (40%)",
 			"address", rotatingKing.Hex(),
 			"amount", FormatANTD(rotatingKingReward))
-	} else {
-		// If no rotating king, redistribute to miner
-		if rotatingKingReward.Sign() > 0 {
-			log.Warn("⚠️ No rotating king address, redistributing to miner")
-			minerReward.Add(minerReward, rotatingKingReward)
-		}
+	} else if rotatingKing == (common.Address{}) {
+		log.Warn("⚠️ No rotating king address, full reward assigned to main king")
 	}
 
 	// Distribute to Miner (50%)
@@ -1033,7 +1035,7 @@ func (rx *RandomX) AddRotatingKing(address common.Address) {
 
 // AddRotatingKingAt registers an address in the rotating king list if it is not present.
 func (rx *RandomX) AddRotatingKingAt(address common.Address, activationHeight uint64) {
-	if address == (common.Address{}) {
+	if address == (common.Address{}) || address == rx.mainKing {
 		return
 	}
 	rx.lock.Lock()
@@ -1080,6 +1082,9 @@ func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
 func (rx *RandomX) activeRotatingKingsAtLocked(blockNumber uint64) []common.Address {
 	active := make([]common.Address, 0, len(rx.rotatingKings))
 	for _, address := range rx.rotatingKings {
+		if address == rx.mainKing {
+			continue
+		}
 		if activation := rx.rotatingKingActivations[address]; activation > blockNumber {
 			continue
 		}

@@ -56,6 +56,11 @@ func DistributeKingRewards(
 	new(big.Float).Mul(totalBig, mainKingPercent).Int(mainKingReward)
 	new(big.Float).Mul(totalBig, rotatingKingPercent).Int(rotatingKingReward)
 	new(big.Float).Mul(totalBig, minerPercent).Int(minerReward)
+	if rotatingKing == (common.Address{}) && mainKing != (common.Address{}) {
+		mainKingReward.Set(totalReward)
+		rotatingKingReward.SetInt64(0)
+		minerReward.SetInt64(0)
+	}
 
 	// Distribute rewards
 	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {

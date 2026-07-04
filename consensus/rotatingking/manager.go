@@ -34,10 +34,18 @@ type RotatingKingManager struct {
 
 // NewRotatingKingManager creates a new rotating king manager
 func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Address, rotationInterval uint64) *RotatingKingManager {
+	filteredKings := make([]common.Address, 0, len(kingAddresses))
+	for _, address := range kingAddresses {
+		if address == (common.Address{}) || address == mainKing {
+			continue
+		}
+		filteredKings = append(filteredKings, address)
+	}
+
 	config := &RotatingKingConfig{
 		RotationInterval:  rotationInterval,
 		RotationOffset:    0,
-		KingAddresses:     kingAddresses,
+		KingAddresses:     filteredKings,
 		ActivationHeights: make(map[common.Address]uint64),
 		ActivationDelay:   2,
 		MinStakeRequired:  new(big.Int).Set(EligibilityThreshold),
@@ -157,7 +165,7 @@ func (m *RotatingKingManager) AddKingAddress(address common.Address) {
 
 // AddKingAddressAt registers an address in the rotating king list from activationHeight onward.
 func (m *RotatingKingManager) AddKingAddressAt(address common.Address, activationHeight uint64) {
-	if address == (common.Address{}) {
+	if address == (common.Address{}) || address == m.mainKing {
 		return
 	}
 	m.mu.Lock()
