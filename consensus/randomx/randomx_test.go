@@ -57,6 +57,63 @@ func TestFinalizeWritesRotatingKingWithoutCoinbase(t *testing.T) {
 	}
 }
 
+func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
+	rx := NewFaker()
+	header := &types.Header{Number: big.NewInt(1)}
+	if err := rx.Prepare(nil, header); err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if header.Difficulty == nil || header.Difficulty.Cmp(GenesisDifficulty) != 0 {
+		t.Fatalf("difficulty mismatch: have %v, want %v", header.Difficulty, GenesisDifficulty)
+	}
+	if header.TxHash != types.EmptyTxsHash {
+		t.Fatalf("tx hash mismatch: have %s, want %s", header.TxHash, types.EmptyTxsHash)
+	}
+}
+
+func TestFinalizeAndAssembleKeepsUserTransactionsAndMatchesFinalize(t *testing.T) {
+	rx := NewFaker()
+	miner := common.HexToAddress("0x0000000000000000000000000000000000000003")
+	userTx := types.NewTransaction(0, common.HexToAddress("0x0000000000000000000000000000000000000004"), big.NewInt(1), 21000, big.NewInt(2), nil)
+	receipts := []*types.Receipt{{
+		Type:              userTx.Type(),
+		Status:            types.ReceiptStatusSuccessful,
+		CumulativeGasUsed: 21000,
+		TxHash:            userTx.Hash(),
+		GasUsed:           21000,
+		EffectiveGasPrice: big.NewInt(2),
+	}}
+
+	finalizeDB := state.NewDatabaseForTesting()
+	finalizeState, err := state.New(types.EmptyRootHash, finalizeDB)
+	if err != nil {
+		t.Fatalf("failed to create finalize state: %v", err)
+	}
+	assembleDB := state.NewDatabaseForTesting()
+	assembleState, err := state.New(types.EmptyRootHash, assembleDB)
+	if err != nil {
+		t.Fatalf("failed to create assemble state: %v", err)
+	}
+
+	finalizeHeader := &types.Header{Number: big.NewInt(1), Coinbase: miner}
+	rx.Finalize(nil, finalizeHeader, finalizeState, &types.Body{Transactions: []*types.Transaction{userTx}})
+
+	assembleHeader := &types.Header{Number: big.NewInt(1), Coinbase: miner, GasUsed: 21000}
+	block, err := rx.FinalizeAndAssemble(nil, assembleHeader, assembleState, &types.Body{Transactions: []*types.Transaction{userTx}}, receipts)
+	if err != nil {
+		t.Fatalf("failed to finalize and assemble: %v", err)
+	}
+	if len(block.Transactions()) != 4 {
+		t.Fatalf("transaction count mismatch: have %d, want %d", len(block.Transactions()), 4)
+	}
+	if block.Transactions()[0].Hash() != userTx.Hash() {
+		t.Fatalf("user transaction was not preserved at the front of the block")
+	}
+	if finalizeState.IntermediateRoot(false) != assembleState.IntermediateRoot(false) {
+		t.Fatalf("finalize and assemble roots differ: finalize %s assemble %s", finalizeState.IntermediateRoot(false), assembleState.IntermediateRoot(false))
+	}
+}
+
 func randomxFinalizedRoot(t *testing.T, rotatingKings []common.Address, miner common.Address) common.Hash {
 	t.Helper()
 	rxdb := state.NewDatabaseForTesting()

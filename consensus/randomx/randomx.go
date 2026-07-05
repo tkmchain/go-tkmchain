@@ -700,9 +700,12 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 			return nil
 		}
 
-		parentHash := header.ParentHash
-		parentNum := header.Number.Uint64() - 1
-		parentHeader := chain.GetHeader(parentHash, parentNum)
+		var parentHeader *types.Header
+		if chain != nil {
+			parentHash := header.ParentHash
+			parentNum := header.Number.Uint64() - 1
+			parentHeader = chain.GetHeader(parentHash, parentNum)
+		}
 
 		if parentHeader != nil {
 			newDifficulty := rx.CalcDifficulty(chain, header.Time, parentHeader)
@@ -866,65 +869,46 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	blockNumber := header.Number.Uint64()
-	rx.writeRotatingKingToState(state, blockNumber)
-	if header.Coinbase == (common.Address{}) {
-		log.Debug("Finalize skipped rewards without coinbase", "block", blockNumber)
-		return
-	}
-	log.Info("Finalize called", "block", blockNumber, "coinbase", header.Coinbase.Hex())
-
-	// Calculate block reward
-	blockReward := CalculateBlockReward(header.Number.Uint64())
-	totalFees := big.NewInt(0)
-	totalReward := CalculateTotalReward(blockReward, totalFees)
-
-	log.Info("Finalize - Block reward",
-		"block", header.Number.Uint64(),
-		"reward", FormatANTD(blockReward),
-		"total", FormatANTD(totalReward))
-
-	// Distribute rewards to all parties
-	if totalReward.Sign() > 0 {
-		rx.distributeRewardsToState(state, header, totalReward)
-	}
+	rx.finalizeRewards(header, state)
 }
 
-// FinalizeAndAssemble implements consensus.Engine
+// FinalizeAndAssemble finalizes RandomX state and assembles a block without dropping user transactions.
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	blockNumber := header.Number.Uint64()
-	rx.writeRotatingKingToState(state, blockNumber)
-	if header.Coinbase != (common.Address{}) {
-		log.Info("FinalizeAndAssemble called", "block", blockNumber, "coinbase", header.Coinbase.Hex())
-
-		// Calculate block reward
-		blockReward := CalculateBlockReward(blockNumber)
-		totalFees := GetTotalTransactionFees(header, receipts)
-		totalReward := CalculateTotalReward(blockReward, totalFees)
-
-		log.Info("Block reward calculated",
-			"block", blockNumber,
-			"reward", FormatANTD(blockReward),
-			"fees", FormatANTD(totalFees),
-			"total", FormatANTD(totalReward))
-
-		// Distribute rewards to all parties
-		if totalReward.Sign() > 0 {
-			rx.distributeRewardsToState(state, header, totalReward)
-			body.Transactions = appendRewardTransactions(body.Transactions, rx.RewardTransactions(header, receipts))
-			receipts = append(receipts, rewardReceipts(body.Transactions[len(body.Transactions)-3:], header, header.GasUsed)...)
-		}
-	} else {
-		log.Debug("FinalizeAndAssemble skipped rewards without coinbase", "block", blockNumber)
+	if body == nil {
+		body = &types.Body{}
 	}
-
-	// Set bloom and create block
+	rx.finalizeRewards(header, state)
+	if header.Coinbase != (common.Address{}) {
+		rewards := rx.RewardTransactions(header, receipts)
+		before := len(body.Transactions)
+		body.Transactions = appendRewardTransactions(body.Transactions, rewards)
+		if added := body.Transactions[before:]; len(added) > 0 {
+			receipts = append(receipts, rewardReceipts(added, header, header.GasUsed)...)
+		}
+	}
 	if len(receipts) > 0 {
 		header.Bloom = types.MergeBloom(receipts)
 	}
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-
+	eip158 := false
+	if chain != nil && chain.Config() != nil {
+		eip158 = chain.Config().IsEIP158(header.Number)
+	}
+	header.Root = state.IntermediateRoot(eip158)
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
+}
+
+func (rx *RandomX) finalizeRewards(header *types.Header, state vm.StateDB) {
+	blockNumber := header.Number.Uint64()
+	rx.writeRotatingKingToState(state, blockNumber)
+	if header.Coinbase == (common.Address{}) {
+		log.Debug("RandomX finalize skipped rewards without coinbase", "block", blockNumber)
+		return
+	}
+	blockReward := CalculateBlockReward(blockNumber)
+	log.Info("RandomX finalize rewards", "block", blockNumber, "coinbase", header.Coinbase.Hex(), "reward", FormatANTD(blockReward))
+	if blockReward.Sign() > 0 {
+		rx.distributeRewardsToState(state, header, blockReward)
+	}
 }
 
 func (rx *RandomX) writeRotatingKingToState(state vm.StateDB, blockNumber uint64) {
@@ -936,8 +920,7 @@ func (rx *RandomX) writeRotatingKingToState(state vm.StateDB, blockNumber uint64
 func (rx *RandomX) RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction {
 	blockNumber := header.Number.Uint64()
 	blockReward := CalculateBlockReward(blockNumber)
-	totalFees := GetTotalTransactionFees(header, receipts)
-	totalReward := CalculateTotalReward(blockReward, totalFees)
+	totalReward := CalculateTotalReward(blockReward, nil)
 	mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward := rx.rewardShares(header, totalReward)
 
 	return []*types.Transaction{
