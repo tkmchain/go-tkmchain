@@ -88,14 +88,6 @@ func (q *queue) get(addr common.Address) (*list, bool) {
 	return l, ok
 }
 
-// bump updates the heartbeat for the given account address.
-// If the address is unknown, the call is a no-op.
-func (q *queue) bump(addr common.Address) {
-	if _, ok := q.beats[addr]; ok {
-		q.beats[addr] = time.Now()
-	}
-}
-
 func (q *queue) addresses() []common.Address {
 	addrs := make([]common.Address, 0, len(q.queued))
 	for addr := range q.queued {
