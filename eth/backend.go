@@ -19,6 +19,7 @@ package eth
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -76,6 +77,8 @@ const (
 	// maxParallelENRRequests is the maximum number of parallel ENR requests
 	maxParallelENRRequests = 16
 )
+
+var rkHeaderExtraMagic = []byte("RK")
 
 // Config contains the configuration options of the TKM protocol.
 // Deprecated: use ethconfig.Config instead.
@@ -636,10 +639,17 @@ func (s *Ethereum) GetMainKingAddress() common.Address {
 	return s.mainKingAddress
 }
 
+func (s *Ethereum) rotatingKingStore() ethdb.Database {
+	if s.rotatingKingDb != nil {
+		return s.rotatingKingDb
+	}
+	return s.chainDb
+}
+
 // GetKingAddresses returns all rotating king addresses
 func (s *Ethereum) GetKingAddresses() []common.Address {
 	addresses := s.kingAddresses
-	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingDb); len(persisted) > 0 {
+	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()); len(persisted) > 0 {
 		addresses = persisted
 	}
 	addresses = append([]common.Address(nil), addresses...)
@@ -878,10 +888,11 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 		return false
 	}
 	activationHeight := uint64(0)
+	addedHeight := s.nextRotatingKingAddedHeight()
 	if indexOfRotatingKing(s.kingAddresses, address) < 0 {
 		activationHeight = s.nextRotatingKingActivationHeight()
 	}
-	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight, ActivationHeight: activationHeight}
+	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight, ActivationHeight: activationHeight, AddedHeight: addedHeight}
 	if current, ok := s.rkLocks[address]; ok {
 		if info.UnlockTime.Before(current.UnlockTime) {
 			info.UnlockTime = current.UnlockTime
@@ -892,13 +903,17 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 		if current.ActivationHeight != 0 && (info.ActivationHeight == 0 || current.ActivationHeight < info.ActivationHeight) {
 			info.ActivationHeight = current.ActivationHeight
 		}
-		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight {
+		if current.AddedHeight != 0 && (info.AddedHeight == 0 || current.AddedHeight < info.AddedHeight) {
+			info.AddedHeight = current.AddedHeight
+		}
+		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight && info.AddedHeight == current.AddedHeight {
 			return false
 		}
 	}
 	s.rkLocks[address] = info
 	s.addRotatingKingAddressLocked(address)
 	s.persistRotatingKingLocksLocked()
+	s.setRotatingKingHeaderExtraLocked(address, info.AddedHeight)
 	return true
 }
 
@@ -921,7 +936,7 @@ func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {
 		}
 	}
 	s.kingAddresses = append(s.kingAddresses, address)
-	rawdb.WriteRotatingKingAddresses(s.rotatingKingDb, s.kingAddresses)
+	rawdb.WriteRotatingKingAddresses(s.rotatingKingStore(), s.kingAddresses)
 	s.addRotatingKingToEngine(address, activationHeight)
 }
 
@@ -949,6 +964,34 @@ func (s *Ethereum) nextRotatingKingActivationHeight() uint64 {
 	return ((head.Number.Uint64() / interval) + 1) * interval
 }
 
+func (s *Ethereum) nextRotatingKingAddedHeight() uint64 {
+	if s.blockchain == nil {
+		return 0
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return 0
+	}
+	return head.Number.Uint64() + 1
+}
+
+func (s *Ethereum) setRotatingKingHeaderExtraLocked(address common.Address, addedHeight uint64) {
+	if s.miner == nil || addedHeight == 0 {
+		return
+	}
+	if err := s.miner.SetExtra(encodeRotatingKingHeaderExtra(address, addedHeight)); err != nil {
+		log.Warn("Failed to set rotating king header marker", "address", address.Hex(), "height", addedHeight, "err", err)
+	}
+}
+
+func encodeRotatingKingHeaderExtra(address common.Address, addedHeight uint64) []byte {
+	extra := make([]byte, 2+8+common.AddressLength)
+	copy(extra, rkHeaderExtraMagic)
+	binary.BigEndian.PutUint64(extra[2:10], addedHeight)
+	copy(extra[10:], address.Bytes())
+	return extra
+}
+
 func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 	head := s.blockchain.CurrentBlock()
 	if head == nil {
@@ -967,18 +1010,19 @@ func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 }
 
 func (s *Ethereum) loadRotatingKingLocks() {
-	for _, lock := range rawdb.ReadRotatingKingLocks(s.rotatingKingDb) {
+	for _, lock := range rawdb.ReadRotatingKingLocks(s.rotatingKingStore()) {
 		s.rkLocks[lock.Address] = rkLockInfo{
 			UnlockTime:       time.Unix(int64(lock.UnlockTime), 0).UTC(),
 			UnlockHeight:     lock.UnlockHeight,
 			ActivationHeight: lock.ActivationHeight,
+			AddedHeight:      lock.AddedHeight,
 		}
 		s.addRotatingKingAddressLocked(lock.Address)
 	}
 }
 
 func (s *Ethereum) loadRotatingKingStateLocked() {
-	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingDb); len(persisted) > 0 {
+	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()); len(persisted) > 0 {
 		s.kingAddresses = append([]common.Address(nil), persisted...)
 	}
 	s.rkLocks = make(map[common.Address]rkLockInfo)
@@ -1040,15 +1084,34 @@ func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
 
 func (s *Ethereum) persistRotatingKingLocksLocked() {
 	locks := make([]rawdb.RotatingKingLock, 0, len(s.rkLocks))
-	for address, info := range s.rkLocks {
+	seen := make(map[common.Address]struct{}, len(s.rkLocks))
+	for _, address := range s.kingAddresses {
+		info, ok := s.rkLocks[address]
+		if !ok {
+			continue
+		}
 		locks = append(locks, rawdb.RotatingKingLock{
 			Address:          address,
 			UnlockTime:       uint64(info.UnlockTime.Unix()),
 			UnlockHeight:     info.UnlockHeight,
 			ActivationHeight: info.ActivationHeight,
+			AddedHeight:      info.AddedHeight,
+		})
+		seen[address] = struct{}{}
+	}
+	for address, info := range s.rkLocks {
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		locks = append(locks, rawdb.RotatingKingLock{
+			Address:          address,
+			UnlockTime:       uint64(info.UnlockTime.Unix()),
+			UnlockHeight:     info.UnlockHeight,
+			ActivationHeight: info.ActivationHeight,
+			AddedHeight:      info.AddedHeight,
 		})
 	}
-	rawdb.WriteRotatingKingLocks(s.rotatingKingDb, locks)
+	rawdb.WriteRotatingKingLocks(s.rotatingKingStore(), locks)
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height

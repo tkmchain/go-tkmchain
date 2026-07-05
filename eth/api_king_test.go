@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"encoding/binary"
 	"math/big"
 	"testing"
 	"time"
@@ -26,10 +27,11 @@ func newTestKingAPI(t *testing.T, alloc types.GenesisAlloc) (*KingAPI, *Ethereum
 	}
 	t.Cleanup(chain.Stop)
 	eth := &Ethereum{
-		chainDb:       db,
-		blockchain:    chain,
-		kingAddresses: nil,
-		rkLocks:       make(map[common.Address]rkLockInfo),
+		chainDb:        db,
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		blockchain:     chain,
+		kingAddresses:  nil,
+		rkLocks:        make(map[common.Address]rkLockInfo),
 	}
 	return NewKingAPI(eth), eth
 }
@@ -145,6 +147,50 @@ func TestRecordRotatingKingLockedAddsPendingAddress(t *testing.T) {
 	}
 	if len(reloaded.kingAddresses) != 2 || reloaded.kingAddresses[0] != active || reloaded.kingAddresses[1] != pending {
 		t.Fatalf("reloaded rotating king schedule = %v, want [%v %v]", reloaded.kingAddresses, active, pending)
+	}
+}
+
+func TestPersistRotatingKingLocksKeepsFirstComeOrder(t *testing.T) {
+	first := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	second := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	eth := &Ethereum{
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		kingAddresses:  []common.Address{first, second},
+		rkLocks: map[common.Address]rkLockInfo{
+			second: {UnlockHeight: 200, ActivationHeight: 200, AddedHeight: 20},
+			first:  {UnlockHeight: 100, ActivationHeight: 100, AddedHeight: 10},
+		},
+	}
+
+	eth.persistRotatingKingLocksLocked()
+	locks := rawdb.ReadRotatingKingLocks(eth.rotatingKingDb)
+	if len(locks) != 2 {
+		t.Fatalf("persisted lock count = %d, want 2", len(locks))
+	}
+	if locks[0].Address != first || locks[0].AddedHeight != 10 {
+		t.Fatalf("first persisted lock = %+v, want %s at height 10", locks[0], first.Hex())
+	}
+	if locks[1].Address != second || locks[1].AddedHeight != 20 {
+		t.Fatalf("second persisted lock = %+v, want %s at height 20", locks[1], second.Hex())
+	}
+}
+
+func TestEncodeRotatingKingHeaderExtra(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	height := uint64(12345)
+	extra := encodeRotatingKingHeaderExtra(address, height)
+
+	if len(extra) != 30 {
+		t.Fatalf("header extra length = %d, want 30", len(extra))
+	}
+	if string(extra[:2]) != "RK" {
+		t.Fatalf("header extra magic = %q, want RK", extra[:2])
+	}
+	if got := binary.BigEndian.Uint64(extra[2:10]); got != height {
+		t.Fatalf("header extra height = %d, want %d", got, height)
+	}
+	if got := common.BytesToAddress(extra[10:]); got != address {
+		t.Fatalf("header extra address = %s, want %s", got.Hex(), address.Hex())
 	}
 }
 

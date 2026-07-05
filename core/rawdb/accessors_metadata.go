@@ -59,6 +59,7 @@ type RotatingKingLock struct {
 	UnlockTime       uint64
 	UnlockHeight     uint64
 	ActivationHeight uint64 `rlp:"optional"`
+	AddedHeight      uint64 `rlp:"optional"`
 }
 
 // ReadRotatingKingLocks retrieves dynamically registered rotating king locks.

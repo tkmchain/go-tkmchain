@@ -32,6 +32,7 @@ type rkLockInfo struct {
 	UnlockTime       time.Time
 	UnlockHeight     uint64
 	ActivationHeight uint64
+	AddedHeight      uint64
 }
 
 // RKStatus represents the status of a rotating king candidate
@@ -46,6 +47,7 @@ type RKStatus struct {
 	RegistrationFee     *big.Int       `json:"registrationFee"`
 	UnlockTime          *time.Time     `json:"unlockTime,omitempty"`
 	UnlockHeight        uint64         `json:"unlockHeight,omitempty"`
+	AddedHeight         uint64         `json:"addedHeight,omitempty"`
 	TotalReceived       *big.Int       `json:"totalReceived"`
 }
 
@@ -367,6 +369,7 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 		unlockCopy := lockInfo.UnlockTime
 		status.UnlockTime = &unlockCopy
 		status.UnlockHeight = lockInfo.UnlockHeight
+		status.AddedHeight = lockInfo.AddedHeight
 	}
 
 	return status
