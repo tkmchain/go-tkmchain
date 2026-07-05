@@ -1532,6 +1532,44 @@ func TestRepricing(t *testing.T) {
 	}
 }
 
+func TestPendingFilterBaseFee(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(eip1559Config)
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(10000000))
+
+	other, _ := crypto.GenerateKey()
+	otherAddr := crypto.PubkeyToAddress(other.PublicKey)
+	testAddBalance(pool, otherAddr, big.NewInt(10000000))
+
+	if err := pool.addRemoteSync(dynamicFeeTx(0, 100000, big.NewInt(1), big.NewInt(1), key)); err != nil {
+		t.Fatalf("failed to add low fee transaction: %v", err)
+	}
+	if err := pool.addRemoteSync(dynamicFeeTx(1, 100000, big.NewInt(10), big.NewInt(1), key)); err != nil {
+		t.Fatalf("failed to add blocked high fee transaction: %v", err)
+	}
+	if err := pool.addRemoteSync(dynamicFeeTx(0, 100000, big.NewInt(10), big.NewInt(1), other)); err != nil {
+		t.Fatalf("failed to add includable transaction: %v", err)
+	}
+
+	pending, count := pool.Pending(txpool.PendingFilter{BaseFee: uint256.NewInt(2)})
+	if count != 1 {
+		t.Fatalf("pending transaction count mismatch: have %d, want %d", count, 1)
+	}
+	if txs := pending[addr]; len(txs) != 0 {
+		t.Fatalf("underpriced account pending mismatch: have %d, want %d", len(txs), 0)
+	}
+	if txs := pending[otherAddr]; len(txs) != 1 {
+		t.Fatalf("includable account pending mismatch: have %d, want %d", len(txs), 1)
+	}
+	if _, ok := pending[addr]; ok {
+		t.Fatalf("underpriced account should not be returned")
+	}
+}
+
 func TestMinGasPriceEnforced(t *testing.T) {
 	t.Parallel()
 

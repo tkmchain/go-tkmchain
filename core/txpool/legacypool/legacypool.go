@@ -511,9 +511,16 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) (map[common.Address
 	for addr, list := range pool.pending {
 		txs := list.Flatten()
 
-		// If the miner requests tip enforcement, cap the lists now
-		if filter.MinTip != nil || filter.GasLimitCap != 0 {
+		// If the miner requests fee, tip or gas-limit enforcement, cap the lists now.
+		if filter.BaseFee != nil || filter.MinTip != nil || filter.GasLimitCap != 0 {
 			for i, tx := range txs {
+				if filter.BaseFee != nil {
+					feeCap := uint256.MustFromBig(tx.GasFeeCap())
+					if feeCap.Lt(filter.BaseFee) {
+						txs = txs[:i]
+						break
+					}
+				}
 				if filter.MinTip != nil {
 					if tx.EffectiveGasTipIntCmp(filter.MinTip, filter.BaseFee) < 0 {
 						txs = txs[:i]
