@@ -911,6 +911,8 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 		// Distribute rewards to all parties
 		if totalReward.Sign() > 0 {
 			rx.distributeRewardsToState(state, header, totalReward)
+			body.Transactions = appendRewardTransactions(body.Transactions, rx.RewardTransactions(header, receipts))
+			receipts = append(receipts, rewardReceipts(body.Transactions[len(body.Transactions)-3:], header, header.GasUsed)...)
 		}
 	} else {
 		log.Debug("FinalizeAndAssemble skipped rewards without coinbase", "block", blockNumber)
@@ -930,79 +932,117 @@ func (rx *RandomX) writeRotatingKingToState(state vm.StateDB, blockNumber uint64
 	state.SetState(params.SystemAddress, rotatingKingStateSlot, common.BytesToHash(rotatingKing.Bytes()))
 }
 
-// distributeRewardsToState distributes rewards using vm.StateDB interface
-func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Header, totalReward *big.Int) {
+// RewardTransactions returns the deterministic synthetic transactions for block rewards.
+func (rx *RandomX) RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction {
 	blockNumber := header.Number.Uint64()
-	coinbase := header.Coinbase
+	blockReward := CalculateBlockReward(blockNumber)
+	totalFees := GetTotalTransactionFees(header, receipts)
+	totalReward := CalculateTotalReward(blockReward, totalFees)
+	mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward := rx.rewardShares(header, totalReward)
 
-	// Distribution percentages: MainKing=10%, RotatingKing=40%, Miner=50%
+	return []*types.Transaction{
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, mainKing, mainKingReward),
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardRotatingKing, rotatingKing, rotatingKingReward),
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, miner, minerReward),
+	}
+}
+
+func appendRewardTransactions(txs []*types.Transaction, rewards []*types.Transaction) []*types.Transaction {
+	if len(rewards) == 0 {
+		return txs
+	}
+	if len(txs) >= len(rewards) {
+		matches := true
+		start := len(txs) - len(rewards)
+		for i := range rewards {
+			if txs[start+i].Hash() != rewards[i].Hash() {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return txs
+		}
+	}
+	return append(txs, rewards...)
+}
+
+func rewardReceipts(txs []*types.Transaction, header *types.Header, cumulativeGas uint64) []*types.Receipt {
+	receipts := make([]*types.Receipt, 0, len(txs))
+	for _, tx := range txs {
+		receipts = append(receipts, &types.Receipt{
+			Type:              tx.Type(),
+			Status:            types.ReceiptStatusSuccessful,
+			CumulativeGasUsed: cumulativeGas,
+			TxHash:            tx.Hash(),
+			GasUsed:           0,
+			EffectiveGasPrice: new(big.Int),
+		})
+	}
+	return receipts
+}
+
+func (rx *RandomX) rewardShares(header *types.Header, totalReward *big.Int) (common.Address, *big.Int, common.Address, *big.Int, common.Address, *big.Int) {
+	blockNumber := header.Number.Uint64()
+	mainKing := rx.mainKing
+	rotatingKing := rx.getRotatingKing(blockNumber)
+	miner := header.Coinbase
+
+	mainKingReward := new(big.Int)
+	rotatingKingReward := new(big.Int)
+	minerReward := new(big.Int)
+	if totalReward == nil || totalReward.Sign() == 0 {
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
 	totalRewardBig := new(big.Int).Set(totalReward)
-
-	// Calculate each share
-	mainKingReward := new(big.Int).Mul(totalRewardBig, big.NewInt(10))
+	mainKingReward.Mul(totalRewardBig, big.NewInt(10))
 	mainKingReward.Div(mainKingReward, big.NewInt(100))
-
-	rotatingKingReward := new(big.Int).Mul(totalRewardBig, big.NewInt(40))
+	rotatingKingReward.Mul(totalRewardBig, big.NewInt(40))
 	rotatingKingReward.Div(rotatingKingReward, big.NewInt(100))
-
-	minerReward := new(big.Int).Mul(totalRewardBig, big.NewInt(50))
+	minerReward.Mul(totalRewardBig, big.NewInt(50))
 	minerReward.Div(minerReward, big.NewInt(100))
 
-	// Adjust for rounding
 	actualTotal := new(big.Int).Add(mainKingReward, rotatingKingReward)
 	actualTotal.Add(actualTotal, minerReward)
 	if actualTotal.Cmp(totalRewardBig) != 0 {
-		diff := new(big.Int).Sub(totalRewardBig, actualTotal)
-		minerReward.Add(minerReward, diff)
+		minerReward.Add(minerReward, new(big.Int).Sub(totalRewardBig, actualTotal))
 	}
+	if mainKing == (common.Address{}) {
+		minerReward.Add(minerReward, mainKingReward)
+		mainKingReward = new(big.Int)
+	}
+	if rotatingKing == (common.Address{}) {
+		minerReward.Add(minerReward, rotatingKingReward)
+		rotatingKingReward = new(big.Int)
+	}
+	return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+}
 
-	// Log distribution
+// distributeRewardsToState distributes rewards using vm.StateDB interface
+func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Header, totalReward *big.Int) {
+	blockNumber := header.Number.Uint64()
+	mainKing, mainKingReward, rotatingKing, rotatingKingReward, coinbase, minerReward := rx.rewardShares(header, totalReward)
+
 	log.Info("========================================")
 	log.Info("REWARD DISTRIBUTION")
 	log.Info("========================================")
-	log.Info("Block", "number", blockNumber, "totalReward", FormatANTD(totalRewardBig))
+	log.Info("Block", "number", blockNumber, "totalReward", FormatANTD(totalReward))
 
-	// Distribute to Main King (10%)
-	if mainKingReward.Sign() > 0 && rx.mainKing != (common.Address{}) {
-		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
-		log.Info("✅ Main King (10%)",
-			"address", rx.mainKing.Hex(),
-			"amount", FormatANTD(mainKingReward))
-	} else {
-		// If no main king, redistribute to miner
-		if mainKingReward.Sign() > 0 {
-			log.Warn("⚠️ No main king address, redistributing to miner")
-			minerReward.Add(minerReward, mainKingReward)
-		}
+	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
+		state.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+		log.Info("Main King reward", "address", mainKing.Hex(), "amount", FormatANTD(mainKingReward))
 	}
-
-	// Distribute to Rotating King (40%)
-	rotatingKing := rx.getRotatingKing(blockNumber)
 	if rotatingKingReward.Sign() > 0 && rotatingKing != (common.Address{}) {
 		state.AddBalance(rotatingKing, uint256.MustFromBig(rotatingKingReward), tracing.BalanceIncreaseRewardMineBlock)
-		log.Info("✅ Rotating King (40%)",
-			"address", rotatingKing.Hex(),
-			"amount", FormatANTD(rotatingKingReward))
-	} else {
-		// If no rotating king, redistribute to miner
-		if rotatingKingReward.Sign() > 0 {
-			log.Warn("⚠️ No rotating king address, redistributing to miner")
-			minerReward.Add(minerReward, rotatingKingReward)
-		}
+		log.Info("Rotating King reward", "address", rotatingKing.Hex(), "amount", FormatANTD(rotatingKingReward))
 	}
-
-	// Distribute to Miner (50%)
 	if minerReward.Sign() > 0 && coinbase != (common.Address{}) {
 		state.AddBalance(coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
-		log.Info("✅ Miner (50%)",
-			"address", coinbase.Hex(),
-			"amount", FormatANTD(minerReward))
+		log.Info("Miner reward", "address", coinbase.Hex(), "amount", FormatANTD(minerReward))
 	}
 
 	log.Info("========================================")
-	log.Info("REWARD DISTRIBUTION COMPLETE",
-		"block", blockNumber,
-		"totalReward", FormatANTD(totalReward))
+	log.Info("REWARD DISTRIBUTION COMPLETE", "block", blockNumber, "totalReward", FormatANTD(totalReward))
 	log.Info("========================================")
 }
 

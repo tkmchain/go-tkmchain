@@ -95,8 +95,9 @@ type Ethereum struct {
 	dropper *dropper
 
 	// DB interfaces
-	chainDb      ethdb.Database // Block chain database
-	checkpointDb ethdb.Database // Immutable checkpoint database
+	chainDb        ethdb.Database // Block chain database
+	checkpointDb   ethdb.Database // Immutable checkpoint database
+	rotatingKingDb ethdb.Database // Rotating king database
 
 	engine         consensus.Engine
 	accountManager *accounts.Manager
@@ -173,9 +174,23 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		chainDb.Close()
 		return nil, err
 	}
+	rotatingKingDb, err := stack.OpenDatabaseWithOptions("rotatingking", node.DatabaseOptions{
+		Cache:            16,
+		Handles:          config.DatabaseHandles,
+		MetricsNamespace: "eth/db/rotatingking/",
+		ReadOnly:         false,
+	})
+	if err != nil {
+		checkpointDb.Close()
+		chainDb.Close()
+		return nil, err
+	}
 
 	scheme, err := rawdb.ParseStateScheme(config.StateScheme, chainDb)
 	if err != nil {
+		rotatingKingDb.Close()
+		checkpointDb.Close()
+		chainDb.Close()
 		return nil, err
 	}
 
@@ -189,6 +204,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Load chain configuration
 	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
+		rotatingKingDb.Close()
+		checkpointDb.Close()
+		chainDb.Close()
 		return nil, err
 	}
 
@@ -222,10 +240,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			common.HexToAddress("0x0000000000000000000000000000000000000004"),
 		}
 	}
-	if persistedKings := rawdb.ReadRotatingKingAddresses(chainDb); len(persistedKings) > 0 {
+	if persistedKings := rawdb.ReadRotatingKingAddresses(rotatingKingDb); len(persistedKings) > 0 {
 		kingAddresses = persistedKings
 	} else {
-		rawdb.WriteRotatingKingAddresses(chainDb, kingAddresses)
+		rawdb.WriteRotatingKingAddresses(rotatingKingDb, kingAddresses)
 	}
 
 	// Create and initialise the RandomX consensus engine with Rotating King support.
@@ -239,6 +257,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	engine, err := ethconfig.CreateConsensusEngine(&engineConfig, chainDb, config.RandomXMinerThreads, config.RandomXRAMCache)
 	if err != nil {
+		rotatingKingDb.Close()
+		checkpointDb.Close()
+		chainDb.Close()
 		return nil, fmt.Errorf("failed to create RandomX engine: %w", err)
 	}
 	if chainConfig.RotatingKingRotationInterval > 0 {
@@ -258,6 +279,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		config:          config,
 		chainDb:         chainDb,
 		checkpointDb:    checkpointDb,
+		rotatingKingDb:  rotatingKingDb,
 		accountManager:  stack.AccountManager(),
 		engine:          engine,
 		networkID:       networkID,
@@ -270,6 +292,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		rkLocks:         make(map[common.Address]rkLockInfo),
 	}
 	if err := eth.loadCheckpoints(); err != nil {
+		rotatingKingDb.Close()
 		checkpointDb.Close()
 		chainDb.Close()
 		return nil, err
@@ -480,18 +503,18 @@ func (s *Ethereum) Peers() *peerSet {
 
 // GetAllPeers returns all connected peers
 func (s *Ethereum) GetAllPeers() map[string]*ethPeer {
-    if s.handler == nil {
-        return nil
-    }
-    return s.handler.GetAllPeers()
+	if s.handler == nil {
+		return nil
+	}
+	return s.handler.GetAllPeers()
 }
 
 // GetPeer returns a specific peer by ID
 func (s *Ethereum) GetPeer(id string) *ethPeer {
-    if s.handler == nil {
-        return nil
-    }
-    return s.handler.GetPeer(id)
+	if s.handler == nil {
+		return nil
+	}
+	return s.handler.GetPeer(id)
 }
 
 // makeExtraData creates the extra data for the miner
@@ -552,7 +575,7 @@ func (s *Ethereum) APIs() []rpc.API {
 		},
 		{
 			Namespace: "mainking",
-			Service:   NewKingAPI(s),
+			Service:   NewMainKingAPI(s),
 		},
 		{
 			Namespace: "rk",
@@ -616,7 +639,7 @@ func (s *Ethereum) GetMainKingAddress() common.Address {
 // GetKingAddresses returns all rotating king addresses
 func (s *Ethereum) GetKingAddresses() []common.Address {
 	addresses := s.kingAddresses
-	if persisted := rawdb.ReadRotatingKingAddresses(s.chainDb); len(persisted) > 0 {
+	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingDb); len(persisted) > 0 {
 		addresses = persisted
 	}
 	addresses = append([]common.Address(nil), addresses...)
@@ -898,7 +921,7 @@ func (s *Ethereum) addRotatingKingAddressLocked(address common.Address) {
 		}
 	}
 	s.kingAddresses = append(s.kingAddresses, address)
-	rawdb.WriteRotatingKingAddresses(s.chainDb, s.kingAddresses)
+	rawdb.WriteRotatingKingAddresses(s.rotatingKingDb, s.kingAddresses)
 	s.addRotatingKingToEngine(address, activationHeight)
 }
 
@@ -944,7 +967,7 @@ func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 }
 
 func (s *Ethereum) loadRotatingKingLocks() {
-	for _, lock := range rawdb.ReadRotatingKingLocks(s.chainDb) {
+	for _, lock := range rawdb.ReadRotatingKingLocks(s.rotatingKingDb) {
 		s.rkLocks[lock.Address] = rkLockInfo{
 			UnlockTime:       time.Unix(int64(lock.UnlockTime), 0).UTC(),
 			UnlockHeight:     lock.UnlockHeight,
@@ -955,7 +978,7 @@ func (s *Ethereum) loadRotatingKingLocks() {
 }
 
 func (s *Ethereum) loadRotatingKingStateLocked() {
-	if persisted := rawdb.ReadRotatingKingAddresses(s.chainDb); len(persisted) > 0 {
+	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingDb); len(persisted) > 0 {
 		s.kingAddresses = append([]common.Address(nil), persisted...)
 	}
 	s.rkLocks = make(map[common.Address]rkLockInfo)
@@ -1025,7 +1048,7 @@ func (s *Ethereum) persistRotatingKingLocksLocked() {
 			ActivationHeight: info.ActivationHeight,
 		})
 	}
-	rawdb.WriteRotatingKingLocks(s.chainDb, locks)
+	rawdb.WriteRotatingKingLocks(s.rotatingKingDb, locks)
 }
 
 // getCurrentRotatingKing returns the current rotating king based on block height
@@ -1342,6 +1365,7 @@ func (s *Ethereum) Stop() error {
 	s.shutdownTracker.Stop()
 	s.chainDb.Close()
 	s.checkpointDb.Close()
+	s.rotatingKingDb.Close()
 
 	log.Info("Tkmchain backend stopped")
 	return nil

@@ -1036,17 +1036,34 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 // commit runs any post-transaction state modifications, assembles the final block
 // and commits new work if consensus engine is running.
 func (w *worker) commit(uncles []*types.Header, interval func(), update bool, start time.Time) error {
-	// Deep copy receipts here to avoid interaction between different tasks.
-	receipts := make([]*types.Receipt, len(w.current.receipts))
-	for i, l := range w.current.receipts {
-		receipts[i] = new(types.Receipt)
-		*receipts[i] = *l
-	}
 	s := w.current.state.Copy()
 	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
 	w.engine.Finalize(w.chain, w.current.header, s, body)
+	blockReceipts := w.current.receipts
+	if provider, ok := w.engine.(interface {
+		RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
+	}); ok {
+		rewards := provider.RewardTransactions(w.current.header, blockReceipts)
+		body.Transactions = append(body.Transactions, rewards...)
+		for _, tx := range rewards {
+			blockReceipts = append(blockReceipts, &types.Receipt{
+				Type:              tx.Type(),
+				Status:            types.ReceiptStatusSuccessful,
+				CumulativeGasUsed: w.current.header.GasUsed,
+				TxHash:            tx.Hash(),
+				GasUsed:           0,
+				EffectiveGasPrice: new(big.Int),
+			})
+		}
+	}
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
-	block := types.NewBlock(w.current.header, body, w.current.receipts, trie.NewStackTrie(nil))
+	block := types.NewBlock(w.current.header, body, blockReceipts, trie.NewStackTrie(nil))
+	// Deep copy receipts here to avoid interaction between different tasks.
+	receipts := make([]*types.Receipt, len(blockReceipts))
+	for i, l := range blockReceipts {
+		receipts[i] = new(types.Receipt)
+		*receipts[i] = *l
+	}
 	if w.isRunning() {
 		if interval != nil {
 			interval()

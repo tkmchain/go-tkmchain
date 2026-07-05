@@ -49,9 +49,34 @@ type RKStatus struct {
 	TotalReceived       *big.Int       `json:"totalReceived"`
 }
 
+// MainKingInfo describes the configured main king.
+type MainKingInfo struct {
+	Address common.Address `json:"address"`
+}
+
+// MainKingAPI provides RPC methods for the main king address.
+type MainKingAPI struct {
+	e *Ethereum
+}
+
+func NewMainKingAPI(e *Ethereum) *MainKingAPI {
+	return &MainKingAPI{e: e}
+}
+
+func (api *MainKingAPI) Address() common.Address {
+	return api.e.GetMainKingAddress()
+}
+
+func (api *MainKingAPI) GetAddress() common.Address {
+	return api.Address()
+}
+
+func (api *MainKingAPI) GetInfo() MainKingInfo {
+	return MainKingInfo{Address: api.Address()}
+}
+
 // RotatingKingInfo describes the current rotating king schedule.
 type RotatingKingInfo struct {
-	MainKing            common.Address   `json:"mainKing"`
 	CurrentKing         common.Address   `json:"currentKing"`
 	NextKing            common.Address   `json:"nextKing"`
 	KingAddresses       []common.Address `json:"kingAddresses"`
@@ -63,7 +88,6 @@ type RotatingKingInfo struct {
 
 // KingStats describes the rotating king schedule and registered king status.
 type KingStats struct {
-	MainKing            common.Address `json:"mainKing"`
 	CurrentKing         common.Address `json:"currentKing"`
 	NextKing            common.Address `json:"nextKing"`
 	TotalKings          int            `json:"totalKings"`
@@ -119,7 +143,6 @@ func (api *KingAPI) GetInfo() RotatingKingInfo {
 	}
 
 	return RotatingKingInfo{
-		MainKing:            api.e.GetMainKingAddress(),
 		CurrentKing:         api.e.getCurrentRotatingKing(),
 		NextKing:            api.e.getNextRotatingKing(),
 		KingAddresses:       api.e.GetKingAddresses(),
@@ -223,7 +246,6 @@ func (api *KingAPI) GetKingStats(_ *interface{}) KingStats {
 	}
 
 	return KingStats{
-		MainKing:            api.e.GetMainKingAddress(),
 		CurrentKing:         api.e.getCurrentRotatingKing(),
 		NextKing:            api.e.getNextRotatingKing(),
 		TotalKings:          len(api.e.kingAddresses),

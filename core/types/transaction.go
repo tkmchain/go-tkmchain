@@ -18,6 +18,7 @@ package types
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,17 @@ const (
 	SetCodeTxType    = 0x04
 )
 
+const blockRewardTxPrefix = "tkmchain:blockreward:v1:"
+
+const (
+	// BlockRewardMainKing identifies the main king reward transaction.
+	BlockRewardMainKing = iota
+	// BlockRewardRotatingKing identifies the rotating king reward transaction.
+	BlockRewardRotatingKing
+	// BlockRewardMiner identifies the miner reward transaction.
+	BlockRewardMiner
+)
+
 // Transaction is an Ethereum transaction.
 type Transaction struct {
 	inner TxData    // Consensus contents of a transaction
@@ -68,6 +80,34 @@ func NewTx(inner TxData) *Transaction {
 	tx := new(Transaction)
 	tx.setDecoded(inner.copy(), 0)
 	return tx
+}
+
+// NewBlockRewardTx creates a deterministic synthetic transaction for a block reward payment.
+func NewBlockRewardTx(blockNumber uint64, kind int, to common.Address, amount *big.Int) *Transaction {
+	data := make([]byte, len(blockRewardTxPrefix)+9)
+	copy(data, blockRewardTxPrefix)
+	binary.BigEndian.PutUint64(data[len(blockRewardTxPrefix):], blockNumber)
+	data[len(data)-1] = byte(kind)
+	if amount == nil {
+		amount = new(big.Int)
+	}
+	return NewTx(&LegacyTx{
+		Nonce:    blockNumber*3 + uint64(kind),
+		To:       &to,
+		Value:    amount,
+		Gas:      0,
+		GasPrice: new(big.Int),
+		Data:     data,
+	})
+}
+
+// IsBlockRewardTx reports whether tx is a synthetic block reward transaction.
+func IsBlockRewardTx(tx *Transaction) bool {
+	if tx == nil || tx.Type() != LegacyTxType || tx.Gas() != 0 || tx.GasPrice().Sign() != 0 {
+		return false
+	}
+	data := tx.Data()
+	return len(data) == len(blockRewardTxPrefix)+9 && string(data[:len(blockRewardTxPrefix)]) == blockRewardTxPrefix
 }
 
 // TxData is the underlying data of a transaction.

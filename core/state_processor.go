@@ -100,6 +100,14 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
+		if types.IsBlockRewardTx(tx) {
+			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used())
+			if err != nil {
+				return nil, err
+			}
+			receipts = append(receipts, rewardReceipts...)
+			break
+		}
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -133,6 +141,36 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		Logs:     allLogs,
 		GasUsed:  gp.Used(),
 	}, nil
+}
+
+type rewardTransactionProvider interface {
+	RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
+}
+
+func (p *StateProcessor) processBlockRewardTxs(txs types.Transactions, header *types.Header, receipts []*types.Receipt, cumulativeGas uint64) ([]*types.Receipt, error) {
+	provider, ok := p.chain.Engine().(rewardTransactionProvider)
+	if !ok {
+		return nil, fmt.Errorf("block reward transactions are not supported by %T", p.chain.Engine())
+	}
+	expected := provider.RewardTransactions(header, receipts)
+	if len(txs) != len(expected) {
+		return nil, fmt.Errorf("invalid block reward transaction count: have %d, want %d", len(txs), len(expected))
+	}
+	rewardReceipts := make([]*types.Receipt, 0, len(expected))
+	for i, want := range expected {
+		if txs[i].Hash() != want.Hash() {
+			return nil, fmt.Errorf("invalid block reward transaction %d: have %s, want %s", i, txs[i].Hash(), want.Hash())
+		}
+		rewardReceipts = append(rewardReceipts, &types.Receipt{
+			Type:              txs[i].Type(),
+			Status:            types.ReceiptStatusSuccessful,
+			CumulativeGasUsed: cumulativeGas,
+			TxHash:            txs[i].Hash(),
+			GasUsed:           0,
+			EffectiveGasPrice: new(big.Int),
+		})
+	}
+	return rewardReceipts, nil
 }
 
 // postExecution processes the post-execution system calls if Prague is enabled.
