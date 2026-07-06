@@ -197,10 +197,13 @@ func TestEncodeRotatingKingHeaderExtra(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to decode rotating king header extra")
 	}
-	if !decoded.Full {
-		t.Fatal("decoded header extra is not full v2 metadata")
+	if len(extra) != int(params.MaximumExtraDataSize) {
+		t.Fatalf("header extra length = %d, want %d", len(extra), params.MaximumExtraDataSize)
 	}
-	if decoded.Address != address || decoded.AddedHeight != info.AddedHeight || decoded.ActivationHeight != info.ActivationHeight || decoded.UnlockHeight != info.UnlockHeight || !decoded.UnlockTime.Equal(info.UnlockTime) || decoded.Hash != info.Hash {
+	if !decoded.Full {
+		t.Fatal("decoded header extra is not compact metadata")
+	}
+	if decoded.Address != address || decoded.AddedHeight != info.AddedHeight || decoded.ActivationHeight != info.ActivationHeight || decoded.UnlockHeight != info.UnlockHeight {
 		t.Fatalf("decoded header extra = %+v, want address %s info %+v", decoded, address.Hex(), info)
 	}
 }
@@ -261,7 +264,7 @@ func TestRecoverRotatingKingStateFromHeaderExtra(t *testing.T) {
 	if len(locks) != 1 {
 		t.Fatalf("recovered lock count = %d, want 1", len(locks))
 	}
-	if lock := locks[0]; lock.Address != address || lock.Hash != info.Hash || lock.UnlockHeight != info.UnlockHeight || lock.ActivationHeight != info.ActivationHeight || lock.AddedHeight != info.AddedHeight || lock.UnlockTime != uint64(info.UnlockTime.Unix()) {
+	if lock := locks[0]; lock.Address != address || lock.UnlockHeight != info.UnlockHeight || lock.ActivationHeight != info.ActivationHeight || lock.AddedHeight != info.AddedHeight {
 		t.Fatalf("recovered lock = %+v, want address %s info %+v", lock, address.Hex(), info)
 	}
 }

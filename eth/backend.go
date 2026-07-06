@@ -82,6 +82,7 @@ const (
 var (
 	rkHeaderExtraMagic    = []byte("RK")
 	rkHeaderExtraVersion2 = byte(2)
+	rkHeaderExtraVersion3 = byte(3)
 )
 
 // Config contains the configuration options of the TKM protocol.
@@ -1035,16 +1036,27 @@ type rotatingKingHeaderInfo struct {
 }
 
 func encodeRotatingKingHeaderExtra(address common.Address, info rkLockInfo) []byte {
-	extra := make([]byte, 2+1+common.AddressLength+8*4+common.HashLength)
+	extra := make([]byte, int(params.MaximumExtraDataSize))
 	copy(extra, rkHeaderExtraMagic)
-	extra[2] = rkHeaderExtraVersion2
+	extra[2] = rkHeaderExtraVersion3
 	copy(extra[3:23], address.Bytes())
-	binary.BigEndian.PutUint64(extra[23:31], info.AddedHeight)
-	binary.BigEndian.PutUint64(extra[31:39], info.ActivationHeight)
-	binary.BigEndian.PutUint64(extra[39:47], info.UnlockHeight)
-	binary.BigEndian.PutUint64(extra[47:55], uint64(info.UnlockTime.UTC().Unix()))
-	copy(extra[55:87], info.Hash.Bytes())
+	putUint24(extra[23:26], info.AddedHeight)
+	putUint24(extra[26:29], info.ActivationHeight)
+	putUint24(extra[29:32], info.UnlockHeight)
 	return extra
+}
+
+func putUint24(dst []byte, value uint64) {
+	if value > 0xffffff {
+		value = 0xffffff
+	}
+	dst[0] = byte(value >> 16)
+	dst[1] = byte(value >> 8)
+	dst[2] = byte(value)
+}
+
+func uint24(src []byte) uint64 {
+	return uint64(src[0])<<16 | uint64(src[1])<<8 | uint64(src[2])
 }
 
 func decodeRotatingKingHeaderExtra(extra []byte) (rotatingKingHeaderInfo, bool) {
@@ -1055,6 +1067,15 @@ func decodeRotatingKingHeaderExtra(extra []byte) (rotatingKingHeaderInfo, bool) 
 		return rotatingKingHeaderInfo{
 			AddedHeight: binary.BigEndian.Uint64(extra[2:10]),
 			Address:     common.BytesToAddress(extra[10:]),
+		}, true
+	}
+	if len(extra) >= int(params.MaximumExtraDataSize) && extra[2] == rkHeaderExtraVersion3 {
+		return rotatingKingHeaderInfo{
+			Address:          common.BytesToAddress(extra[3:23]),
+			AddedHeight:      uint24(extra[23:26]),
+			ActivationHeight: uint24(extra[26:29]),
+			UnlockHeight:     uint24(extra[29:32]),
+			Full:             true,
 		}, true
 	}
 	if len(extra) < 2+1+common.AddressLength+8*4+common.HashLength || extra[2] != rkHeaderExtraVersion2 {
