@@ -163,6 +163,47 @@ func testTransactionPriceNonceSort(t *testing.T, baseFee *big.Int) {
 	}
 }
 
+func TestForcedPendingTransactionAgeSort(t *testing.T) {
+	t.Parallel()
+
+	signer := types.HomesteadSigner{}
+	oldKey, _ := crypto.GenerateKey()
+	newKey, _ := crypto.GenerateKey()
+	oldAddr := crypto.PubkeyToAddress(oldKey.PublicKey)
+	newAddr := crypto.PubkeyToAddress(newKey.PublicKey)
+
+	oldTx, _ := types.SignTx(types.NewTransaction(0, common.Address{}, big.NewInt(100), 100, big.NewInt(1), nil), signer, oldKey)
+	oldTx.SetTime(time.Now().Add(-forcedPendingTransactionAge - time.Second))
+	newTx, _ := types.SignTx(types.NewTransaction(0, common.Address{}, big.NewInt(100), 100, big.NewInt(100), nil), signer, newKey)
+	newTx.SetTime(time.Now())
+
+	groups := map[common.Address][]*txpool.LazyTransaction{
+		oldAddr: {{
+			Hash:      oldTx.Hash(),
+			Tx:        oldTx,
+			Time:      oldTx.Time(),
+			GasFeeCap: uint256.MustFromBig(oldTx.GasFeeCap()),
+			GasTipCap: uint256.MustFromBig(oldTx.GasTipCap()),
+			Gas:       oldTx.Gas(),
+			BlobGas:   oldTx.BlobGas(),
+		}},
+		newAddr: {{
+			Hash:      newTx.Hash(),
+			Tx:        newTx,
+			Time:      newTx.Time(),
+			GasFeeCap: uint256.MustFromBig(newTx.GasFeeCap()),
+			GasTipCap: uint256.MustFromBig(newTx.GasTipCap()),
+			Gas:       newTx.Gas(),
+			BlobGas:   newTx.BlobGas(),
+		}},
+	}
+	txset := newTransactionsByPriceAndNonce(signer, groups, nil)
+	tx, _ := txset.Peek()
+	if tx == nil || tx.Hash != oldTx.Hash() {
+		t.Fatalf("old pending transaction not forced first: have %v want %v", tx, oldTx.Hash())
+	}
+}
+
 // Tests that if multiple transactions have the same price, the ones seen earlier
 // are prioritized to avoid network spam attacks aiming for a specific ordering.
 func TestTransactionTimeSort(t *testing.T) {

@@ -19,6 +19,7 @@ package miner
 import (
 	"container/heap"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -26,11 +27,14 @@ import (
 	"github.com/holiman/uint256"
 )
 
+const forcedPendingTransactionAge = 5 * time.Minute
+
 // txWithMinerFee wraps a transaction with its gas price or effective miner gasTipCap
 type txWithMinerFee struct {
-	tx   *txpool.LazyTransaction
-	from common.Address
-	fees *uint256.Int
+	tx     *txpool.LazyTransaction
+	from   common.Address
+	fees   *uint256.Int
+	forced bool
 }
 
 // newTxWithMinerFee creates a wrapped transaction, calculating the effective
@@ -48,9 +52,10 @@ func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee 
 		}
 	}
 	return &txWithMinerFee{
-		tx:   tx,
-		from: from,
-		fees: tip,
+		tx:     tx,
+		from:   from,
+		fees:   tip,
+		forced: !tx.Time.IsZero() && time.Since(tx.Time) >= forcedPendingTransactionAge,
 	}, nil
 }
 
@@ -60,6 +65,9 @@ type txByPriceAndTime []*txWithMinerFee
 
 func (s txByPriceAndTime) Len() int { return len(s) }
 func (s txByPriceAndTime) Less(i, j int) bool {
+	if s[i].forced != s[j].forced {
+		return s[i].forced
+	}
 	// If the prices are equal, use the time the transaction was first seen for
 	// deterministic sorting
 	cmp := s[i].fees.Cmp(s[j].fees)
