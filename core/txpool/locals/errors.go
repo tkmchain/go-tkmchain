@@ -34,8 +34,6 @@ func IsTemporaryReject(err error) bool {
 		return true
 	case errors.Is(err, legacypool.ErrAuthorityReserved):
 		return true
-	case errors.Is(err, txpool.ErrUnderpriced):
-		return true
 	case errors.Is(err, legacypool.ErrTxPoolOverflow):
 		return true
 	case errors.Is(err, legacypool.ErrFutureReplacePending):
