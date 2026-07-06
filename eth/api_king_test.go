@@ -184,20 +184,85 @@ func TestPersistRotatingKingLocksKeepsFirstComeOrder(t *testing.T) {
 
 func TestEncodeRotatingKingHeaderExtra(t *testing.T) {
 	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
-	height := uint64(12345)
-	extra := encodeRotatingKingHeaderExtra(address, height)
+	info := rkLockInfo{
+		Hash:             common.HexToHash("0x1234"),
+		UnlockTime:       time.Unix(1000, 0).UTC(),
+		UnlockHeight:     23456,
+		ActivationHeight: 12400,
+		AddedHeight:      12345,
+	}
+	extra := encodeRotatingKingHeaderExtra(address, info)
 
-	if len(extra) != 30 {
-		t.Fatalf("header extra length = %d, want 30", len(extra))
+	decoded, ok := decodeRotatingKingHeaderExtra(extra)
+	if !ok {
+		t.Fatal("failed to decode rotating king header extra")
 	}
-	if string(extra[:2]) != "RK" {
-		t.Fatalf("header extra magic = %q, want RK", extra[:2])
+	if !decoded.Full {
+		t.Fatal("decoded header extra is not full v2 metadata")
 	}
-	if got := binary.BigEndian.Uint64(extra[2:10]); got != height {
-		t.Fatalf("header extra height = %d, want %d", got, height)
+	if decoded.Address != address || decoded.AddedHeight != info.AddedHeight || decoded.ActivationHeight != info.ActivationHeight || decoded.UnlockHeight != info.UnlockHeight || !decoded.UnlockTime.Equal(info.UnlockTime) || decoded.Hash != info.Hash {
+		t.Fatalf("decoded header extra = %+v, want address %s info %+v", decoded, address.Hex(), info)
 	}
-	if got := common.BytesToAddress(extra[10:]); got != address {
-		t.Fatalf("header extra address = %s, want %s", got.Hex(), address.Hex())
+}
+
+func TestDecodeLegacyRotatingKingHeaderExtra(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	height := uint64(12345)
+	extra := make([]byte, 2+8+common.AddressLength)
+	copy(extra, rkHeaderExtraMagic)
+	binary.BigEndian.PutUint64(extra[2:10], height)
+	copy(extra[10:], address.Bytes())
+
+	decoded, ok := decodeRotatingKingHeaderExtra(extra)
+	if !ok {
+		t.Fatal("failed to decode legacy rotating king header extra")
+	}
+	if decoded.Full {
+		t.Fatal("legacy rotating king marker decoded as full metadata")
+	}
+	if decoded.Address != address || decoded.AddedHeight != height {
+		t.Fatalf("decoded legacy header extra = %+v, want address %s height %d", decoded, address.Hex(), height)
+	}
+}
+
+func TestRecoverRotatingKingStateFromHeaderExtra(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	info := rkLockInfo{
+		Hash:             common.HexToHash("0x5678"),
+		UnlockTime:       time.Unix(2000, 0).UTC(),
+		UnlockHeight:     500,
+		ActivationHeight: 300,
+		AddedHeight:      1,
+	}
+	genesis := &core.Genesis{Config: params.TestChainConfig}
+	db, blocks, _ := core.GenerateChainWithGenesis(genesis, randomx.NewFaker(), 1, func(i int, gen *core.BlockGen) {
+		gen.SetExtra(encodeRotatingKingHeaderExtra(address, info))
+	})
+	chain, err := core.NewBlockChain(db, genesis, randomx.NewFaker(), nil)
+	if err != nil {
+		t.Fatalf("failed to create test chain: %v", err)
+	}
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert test chain: %v", err)
+	}
+
+	eth := &Ethereum{
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		blockchain:     chain,
+	}
+	eth.rkLocks = make(map[common.Address]rkLockInfo)
+	if !eth.recoverRotatingKingStateFromHeadersLocked() {
+		t.Fatal("rotating king state was not recovered from headers")
+	}
+	if got := rawdb.ReadRotatingKingAddresses(eth.rotatingKingDb); len(got) != 1 || got[0] != address {
+		t.Fatalf("recovered addresses = %v, want [%s]", got, address.Hex())
+	}
+	locks := rawdb.ReadRotatingKingLocks(eth.rotatingKingDb)
+	if len(locks) != 1 {
+		t.Fatalf("recovered lock count = %d, want 1", len(locks))
+	}
+	if lock := locks[0]; lock.Address != address || lock.Hash != info.Hash || lock.UnlockHeight != info.UnlockHeight || lock.ActivationHeight != info.ActivationHeight || lock.AddedHeight != info.AddedHeight || lock.UnlockTime != uint64(info.UnlockTime.Unix()) {
+		t.Fatalf("recovered lock = %+v, want address %s info %+v", lock, address.Hex(), info)
 	}
 }
 

@@ -79,7 +79,10 @@ const (
 	maxParallelENRRequests = 16
 )
 
-var rkHeaderExtraMagic = []byte("RK")
+var (
+	rkHeaderExtraMagic    = []byte("RK")
+	rkHeaderExtraVersion2 = byte(2)
+)
 
 // Config contains the configuration options of the TKM protocol.
 // Deprecated: use ethconfig.Config instead.
@@ -377,6 +380,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	eth.lock.Lock()
+	eth.recoverRotatingKingStateFromHeadersLocked()
+	eth.lock.Unlock()
 
 	// Initialize filter maps for log indexing
 	fmConfig := filtermaps.Config{
@@ -946,7 +953,7 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 	s.rkLocks[address] = info
 	s.addRotatingKingAddressLocked(address)
 	s.persistRotatingKingLocksLocked()
-	s.setRotatingKingHeaderExtraLocked(address, info.AddedHeight)
+	s.setRotatingKingHeaderExtraLocked(address, info)
 	return true
 }
 
@@ -1008,21 +1015,61 @@ func (s *Ethereum) nextRotatingKingAddedHeight() uint64 {
 	return head.Number.Uint64() + 1
 }
 
-func (s *Ethereum) setRotatingKingHeaderExtraLocked(address common.Address, addedHeight uint64) {
-	if s.miner == nil || addedHeight == 0 {
+func (s *Ethereum) setRotatingKingHeaderExtraLocked(address common.Address, info rkLockInfo) {
+	if s.miner == nil || info.AddedHeight == 0 {
 		return
 	}
-	if err := s.miner.SetExtra(encodeRotatingKingHeaderExtra(address, addedHeight)); err != nil {
-		log.Warn("Failed to set rotating king header marker", "address", address.Hex(), "height", addedHeight, "err", err)
+	if err := s.miner.SetExtra(encodeRotatingKingHeaderExtra(address, info)); err != nil {
+		log.Warn("Failed to set rotating king header marker", "address", address.Hex(), "height", info.AddedHeight, "err", err)
 	}
 }
 
-func encodeRotatingKingHeaderExtra(address common.Address, addedHeight uint64) []byte {
-	extra := make([]byte, 2+8+common.AddressLength)
+type rotatingKingHeaderInfo struct {
+	Address          common.Address
+	AddedHeight      uint64
+	ActivationHeight uint64
+	UnlockHeight     uint64
+	UnlockTime       time.Time
+	Hash             common.Hash
+	Full             bool
+}
+
+func encodeRotatingKingHeaderExtra(address common.Address, info rkLockInfo) []byte {
+	extra := make([]byte, 2+1+common.AddressLength+8*4+common.HashLength)
 	copy(extra, rkHeaderExtraMagic)
-	binary.BigEndian.PutUint64(extra[2:10], addedHeight)
-	copy(extra[10:], address.Bytes())
+	extra[2] = rkHeaderExtraVersion2
+	copy(extra[3:23], address.Bytes())
+	binary.BigEndian.PutUint64(extra[23:31], info.AddedHeight)
+	binary.BigEndian.PutUint64(extra[31:39], info.ActivationHeight)
+	binary.BigEndian.PutUint64(extra[39:47], info.UnlockHeight)
+	binary.BigEndian.PutUint64(extra[47:55], uint64(info.UnlockTime.UTC().Unix()))
+	copy(extra[55:87], info.Hash.Bytes())
 	return extra
+}
+
+func decodeRotatingKingHeaderExtra(extra []byte) (rotatingKingHeaderInfo, bool) {
+	if len(extra) < len(rkHeaderExtraMagic) || string(extra[:2]) != string(rkHeaderExtraMagic) {
+		return rotatingKingHeaderInfo{}, false
+	}
+	if len(extra) == 2+8+common.AddressLength {
+		return rotatingKingHeaderInfo{
+			AddedHeight: binary.BigEndian.Uint64(extra[2:10]),
+			Address:     common.BytesToAddress(extra[10:]),
+		}, true
+	}
+	if len(extra) < 2+1+common.AddressLength+8*4+common.HashLength || extra[2] != rkHeaderExtraVersion2 {
+		return rotatingKingHeaderInfo{}, false
+	}
+	unlockTime := binary.BigEndian.Uint64(extra[47:55])
+	return rotatingKingHeaderInfo{
+		Address:          common.BytesToAddress(extra[3:23]),
+		AddedHeight:      binary.BigEndian.Uint64(extra[23:31]),
+		ActivationHeight: binary.BigEndian.Uint64(extra[31:39]),
+		UnlockHeight:     binary.BigEndian.Uint64(extra[39:47]),
+		UnlockTime:       time.Unix(int64(unlockTime), 0).UTC(),
+		Hash:             common.BytesToHash(extra[55:87]),
+		Full:             true,
+	}, true
 }
 
 func rotatingKingRegistrationHash(address common.Address, unlock time.Time, unlockHeight uint64, activationHeight uint64, addedHeight uint64) common.Hash {
@@ -1074,6 +1121,54 @@ func (s *Ethereum) loadRotatingKingStateLocked() {
 	s.kingAddresses = registeredRotatingKingAddresses(rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()), locks)
 	s.rkLocks = make(map[common.Address]rkLockInfo)
 	s.loadRotatingKingLocks()
+}
+
+func (s *Ethereum) recoverRotatingKingStateFromHeadersLocked() bool {
+	if s.blockchain == nil {
+		return false
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil || head.Number == nil {
+		return false
+	}
+	changed := false
+	for number := uint64(0); number <= head.Number.Uint64(); number++ {
+		block := s.blockchain.GetBlockByNumber(number)
+		if block == nil {
+			continue
+		}
+		info, ok := decodeRotatingKingHeaderExtra(block.Header().Extra)
+		if !ok || info.Address == (common.Address{}) {
+			continue
+		}
+		if indexOfRotatingKing(s.kingAddresses, info.Address) < 0 {
+			s.kingAddresses = append(s.kingAddresses, info.Address)
+			changed = true
+		}
+		if info.Full {
+			lock := rkLockInfo{
+				Hash:             info.Hash,
+				UnlockTime:       info.UnlockTime,
+				UnlockHeight:     info.UnlockHeight,
+				ActivationHeight: info.ActivationHeight,
+				AddedHeight:      info.AddedHeight,
+			}
+			if lock.Hash == (common.Hash{}) {
+				lock.Hash = rotatingKingRegistrationHash(info.Address, lock.UnlockTime, lock.UnlockHeight, lock.ActivationHeight, lock.AddedHeight)
+			}
+			if current, ok := s.rkLocks[info.Address]; !ok || current.Hash == (common.Hash{}) || current.AddedHeight == 0 {
+				s.rkLocks[info.Address] = lock
+				changed = true
+			}
+		}
+		s.addRotatingKingToEngine(info.Address, info.ActivationHeight)
+	}
+	if changed {
+		rawdb.WriteRotatingKingAddresses(s.rotatingKingStore(), s.kingAddresses)
+		s.persistRotatingKingLocksLocked()
+		log.Info("Recovered rotating king state from canonical headers", "addresses", len(s.kingAddresses), "locks", len(s.rkLocks))
+	}
+	return changed
 }
 
 func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
