@@ -233,15 +233,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if mainKingAddress == (common.Address{}) {
 		mainKingAddress = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
 	}
-	kingAddresses := chainConfig.RotatingKingAddresses
-	if len(kingAddresses) == 0 {
-		kingAddresses = config.KingAddresses
-	}
-	if persistedKings := rawdb.ReadRotatingKingAddresses(rotatingKingDb); len(persistedKings) > 0 {
-		kingAddresses = persistedKings
-	} else {
-		rawdb.WriteRotatingKingAddresses(rotatingKingDb, kingAddresses)
-	}
+	kingAddresses := loadRegisteredRotatingKingAddresses(rotatingKingDb)
 
 	// Create and initialise the RandomX consensus engine with Rotating King support.
 	engineConfig := *chainConfig
@@ -847,6 +839,50 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	return info
 }
 
+func loadRegisteredRotatingKingAddresses(db ethdb.Database) []common.Address {
+	locks := rawdb.ReadRotatingKingLocks(db)
+	persisted := rawdb.ReadRotatingKingAddresses(db)
+	addresses := registeredRotatingKingAddresses(persisted, locks)
+	rawdb.WriteRotatingKingAddresses(db, addresses)
+	return addresses
+}
+
+func registeredRotatingKingAddresses(preferred []common.Address, locks []rawdb.RotatingKingLock) []common.Address {
+	if len(locks) == 0 {
+		return nil
+	}
+	locked := make(map[common.Address]struct{}, len(locks))
+	for _, lock := range locks {
+		if lock.Address != (common.Address{}) {
+			locked[lock.Address] = struct{}{}
+		}
+	}
+	addresses := make([]common.Address, 0, len(locked))
+	seen := make(map[common.Address]struct{}, len(locked))
+	for _, address := range preferred {
+		if _, ok := locked[address]; !ok {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		addresses = append(addresses, address)
+		seen[address] = struct{}{}
+	}
+	for _, lock := range locks {
+		address := lock.Address
+		if address == (common.Address{}) {
+			continue
+		}
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		addresses = append(addresses, address)
+		seen[address] = struct{}{}
+	}
+	return addresses
+}
+
 func (s *Ethereum) noteRotatingKing(address common.Address, unlock time.Time) bool {
 	s.lock.Lock()
 	s.removeUnderfundedRotatingKingsLocked()
@@ -1034,9 +1070,8 @@ func (s *Ethereum) loadRotatingKingLocks() {
 }
 
 func (s *Ethereum) loadRotatingKingStateLocked() {
-	if persisted := rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()); len(persisted) > 0 {
-		s.kingAddresses = append([]common.Address(nil), persisted...)
-	}
+	locks := rawdb.ReadRotatingKingLocks(s.rotatingKingStore())
+	s.kingAddresses = registeredRotatingKingAddresses(rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()), locks)
 	s.rkLocks = make(map[common.Address]rkLockInfo)
 	s.loadRotatingKingLocks()
 }
