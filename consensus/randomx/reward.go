@@ -37,9 +37,9 @@ var (
 
 	// Block timing constants
 	TargetBlockTimeSeconds uint64 = 120
-	BlocksPerHalving       = uint64(4 * 365 * 24 * 60 * 60 / TargetBlockTimeSeconds) // ~4 years
-	GenesisTimestamp       = int64(1763731821)
-	MaxHalvings            = uint64(64)
+	BlocksPerHalving              = uint64(4 * 365 * 24 * 60 * 60 / TargetBlockTimeSeconds) // ~4 years
+	GenesisTimestamp              = int64(1763731821)
+	MaxHalvings                   = uint64(64)
 )
 
 // RewardDistribution defines how rewards are split among participants
@@ -155,6 +155,20 @@ func DistributeRewards(
 		// Adjust miner reward to account for rounding
 		diff := new(big.Int).Sub(totalRewardBig, actualTotal)
 		minerReward.Add(minerReward, diff)
+	}
+
+	if mainKing == (common.Address{}) {
+		minerReward.Add(minerReward, mainKingReward)
+		mainKingReward = new(big.Int)
+	}
+
+	if rotatingKing == (common.Address{}) {
+		if mainKing != (common.Address{}) {
+			mainKingReward.Add(mainKingReward, rotatingKingReward)
+		} else {
+			minerReward.Add(minerReward, rotatingKingReward)
+		}
+		rotatingKingReward = new(big.Int)
 	}
 
 	log.Info("�� Reward Distribution Breakdown",

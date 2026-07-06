@@ -35,14 +35,6 @@ var (
 
 func newUint64(val uint64) *uint64 { return &val }
 
-func defaultRotatingKingAddresses() []common.Address {
-	return []common.Address{
-		common.HexToAddress("0x0000000000000000000000000000000000000002"),
-		common.HexToAddress("0x0000000000000000000000000000000000000003"),
-		common.HexToAddress("0x0000000000000000000000000000000000000004"),
-	}
-}
-
 // RandomXConfig is the consensus engine configs for RandomX proof-of-work based sealing.
 type RandomXConfig struct {
 	EpochLength    uint64 `json:"epochLength"`    // Blocks per epoch (default: 2048)
@@ -84,7 +76,6 @@ var RandomXChainConfig = &ChainConfig{
 	EDATime:                      newUint64(0),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
-	RotatingKingAddresses:        defaultRotatingKingAddresses(),
 	RotatingKingRotationInterval: 100,
 	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
@@ -275,7 +266,6 @@ var MainnetChainConfig = &ChainConfig{
 	EDATime:                      newUint64(0),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
-	RotatingKingAddresses:        defaultRotatingKingAddresses(),
 	RotatingKingRotationInterval: 100,
 	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
@@ -313,7 +303,6 @@ var TestChainConfig = &ChainConfig{
 	UBTTime:                      nil,
 	EDATime:                      nil,
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
-	RotatingKingAddresses:        defaultRotatingKingAddresses(),
 	RotatingKingRotationInterval: 100,
 	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{

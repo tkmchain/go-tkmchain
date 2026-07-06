@@ -995,7 +995,11 @@ func (rx *RandomX) rewardShares(header *types.Header, totalReward *big.Int) (com
 		mainKingReward = new(big.Int)
 	}
 	if rotatingKing == (common.Address{}) {
-		minerReward.Add(minerReward, rotatingKingReward)
+		if mainKing != (common.Address{}) {
+			mainKingReward.Add(mainKingReward, rotatingKingReward)
+		} else {
+			minerReward.Add(minerReward, rotatingKingReward)
+		}
 		rotatingKingReward = new(big.Int)
 	}
 	return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward

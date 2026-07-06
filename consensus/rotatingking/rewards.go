@@ -42,6 +42,20 @@ func DistributeRewards(
 	new(big.Float).Mul(totalBig, rotatingKingPercent).Int(rotatingKingReward)
 	new(big.Float).Mul(totalBig, minerPercent).Int(minerReward)
 
+	if mainKing == (common.Address{}) {
+		minerReward.Add(minerReward, mainKingReward)
+		mainKingReward = new(big.Int)
+	}
+
+	if rotatingKing == (common.Address{}) {
+		if mainKing != (common.Address{}) {
+			mainKingReward.Add(mainKingReward, rotatingKingReward)
+		} else {
+			minerReward.Add(minerReward, rotatingKingReward)
+		}
+		rotatingKingReward = new(big.Int)
+	}
+
 	// Distribute rewards
 	if mainKingReward.Sign() > 0 {
 		stateDB.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)

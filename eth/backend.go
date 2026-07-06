@@ -236,13 +236,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if len(kingAddresses) == 0 {
 		kingAddresses = config.KingAddresses
 	}
-	if len(kingAddresses) == 0 {
-		kingAddresses = []common.Address{
-			common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			common.HexToAddress("0x0000000000000000000000000000000000000003"),
-			common.HexToAddress("0x0000000000000000000000000000000000000004"),
-		}
-	}
 	if persistedKings := rawdb.ReadRotatingKingAddresses(rotatingKingDb); len(persistedKings) > 0 {
 		kingAddresses = persistedKings
 	} else {

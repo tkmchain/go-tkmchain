@@ -156,7 +156,7 @@ func TestTimestampCompatError(t *testing.T) {
 		"mismatching Shanghai fork timestamp in database (have timestamp 0, want timestamp 1681338455, rewindto timestamp 0)")
 }
 
-func TestDefaultRotatingKingConfigsAreNotPermanentMainKing(t *testing.T) {
+func TestDefaultRotatingKingConfigsHaveNoUsableRotatingKing(t *testing.T) {
 	configs := map[string]*ChainConfig{
 		"randomx": RandomXChainConfig,
 		"mainnet": MainnetChainConfig,
@@ -165,11 +165,8 @@ func TestDefaultRotatingKingConfigsAreNotPermanentMainKing(t *testing.T) {
 
 	for name, config := range configs {
 		t.Run(name, func(t *testing.T) {
-			if len(config.RotatingKingAddresses) < 2 {
-				t.Fatalf("rotating king address count = %d, want multiple rotating wallets", len(config.RotatingKingAddresses))
-			}
-			if len(config.RotatingKingAddresses) == 1 && config.RotatingKingAddresses[0] == config.MainKingAddress {
-				t.Fatalf("main king %s is configured as the permanent rotating king", config.MainKingAddress.Hex())
+			if len(config.RotatingKingAddresses) != 0 {
+				t.Fatalf("default rotating king addresses = %v, want none", config.RotatingKingAddresses)
 			}
 		})
 	}

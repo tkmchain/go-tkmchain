@@ -204,3 +204,36 @@ func TestRotatingKingActivationStartsAtRotationBoundary(t *testing.T) {
 		t.Fatalf("rotating king after activation = %v, want %v", got, first)
 	}
 }
+
+func TestRewardSharesFallbackRotatingKingRewardToMainKing(t *testing.T) {
+	mainKing := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	miner := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	rx := NewFaker()
+	rx.mainKing = mainKing
+	rx.rotatingKings = nil
+	rx.rotatingKingActivations = nil
+	rx.SetRotationInterval(100)
+
+	totalReward := big.NewInt(1000)
+	header := &types.Header{Number: big.NewInt(1), Coinbase: miner}
+	gotMainKing, mainKingReward, rotatingKing, rotatingKingReward, gotMiner, minerReward := rx.rewardShares(header, totalReward)
+
+	if gotMainKing != mainKing {
+		t.Fatalf("main king = %s, want %s", gotMainKing.Hex(), mainKing.Hex())
+	}
+	if rotatingKing != (common.Address{}) {
+		t.Fatalf("rotating king = %s, want zero address", rotatingKing.Hex())
+	}
+	if gotMiner != miner {
+		t.Fatalf("miner = %s, want %s", gotMiner.Hex(), miner.Hex())
+	}
+	if mainKingReward.Cmp(big.NewInt(500)) != 0 {
+		t.Fatalf("main king reward = %s, want 500", mainKingReward)
+	}
+	if rotatingKingReward.Sign() != 0 {
+		t.Fatalf("rotating king reward = %s, want 0", rotatingKingReward)
+	}
+	if minerReward.Cmp(big.NewInt(500)) != 0 {
+		t.Fatalf("miner reward = %s, want 500", minerReward)
+	}
+}
