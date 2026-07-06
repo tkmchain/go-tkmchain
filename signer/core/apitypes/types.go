@@ -92,6 +92,7 @@ type SendTxArgs struct {
 	MaxPriorityFeePerGas *hexutil.Big             `json:"maxPriorityFeePerGas"`
 	Value                hexutil.Big              `json:"value"`
 	Nonce                hexutil.Uint64           `json:"nonce"`
+	Type                 *hexutil.Uint64          `json:"type,omitempty"`
 
 	// We accept "data" and "input" for backwards-compatibility reasons.
 	// "input" is the newer name and should be preferred by clients.
@@ -146,6 +147,22 @@ func (args *SendTxArgs) ToTransaction() (*types.Transaction, error) {
 	}
 	var data types.TxData
 	switch {
+	case args.Type != nil && uint64(*args.Type) == types.RandomXTxType:
+		al := types.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		data = &types.RandomXTx{
+			To:         to,
+			ChainID:    (*big.Int)(args.ChainID),
+			Nonce:      uint64(args.Nonce),
+			Gas:        uint64(args.Gas),
+			GasFeeCap:  (*big.Int)(args.MaxFeePerGas),
+			GasTipCap:  (*big.Int)(args.MaxPriorityFeePerGas),
+			Value:      (*big.Int)(&args.Value),
+			Data:       args.data(),
+			AccessList: al,
+		}
 	case args.BlobHashes != nil:
 		al := types.AccessList{}
 		if args.AccessList != nil {

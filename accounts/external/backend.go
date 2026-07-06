@@ -215,11 +215,15 @@ func (api *ExternalSigner) SignTx(account accounts.Account, tx *types.Transactio
 	switch tx.Type() {
 	case types.LegacyTxType, types.AccessListTxType:
 		args.GasPrice = (*hexutil.Big)(tx.GasPrice())
-	case types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType:
+	case types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType, types.RandomXTxType:
 		args.MaxFeePerGas = (*hexutil.Big)(tx.GasFeeCap())
 		args.MaxPriorityFeePerGas = (*hexutil.Big)(tx.GasTipCap())
 	default:
 		return nil, fmt.Errorf("unsupported tx type %d", tx.Type())
+	}
+	if tx.Type() == types.RandomXTxType {
+		txType := hexutil.Uint64(tx.Type())
+		args.Type = &txType
 	}
 	// We should request the default chain id that we're operating with
 	// (the chain we're executing on)
