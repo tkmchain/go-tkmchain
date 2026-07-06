@@ -155,3 +155,22 @@ func TestTimestampCompatError(t *testing.T) {
 	require.Equal(t, newTimestampCompatError(errWhat, newUint64(0), newUint64(1681338455)).Error(),
 		"mismatching Shanghai fork timestamp in database (have timestamp 0, want timestamp 1681338455, rewindto timestamp 0)")
 }
+
+func TestDefaultRotatingKingConfigsAreNotPermanentMainKing(t *testing.T) {
+	configs := map[string]*ChainConfig{
+		"randomx": RandomXChainConfig,
+		"mainnet": MainnetChainConfig,
+		"test":    TestChainConfig,
+	}
+
+	for name, config := range configs {
+		t.Run(name, func(t *testing.T) {
+			if len(config.RotatingKingAddresses) < 2 {
+				t.Fatalf("rotating king address count = %d, want multiple rotating wallets", len(config.RotatingKingAddresses))
+			}
+			if len(config.RotatingKingAddresses) == 1 && config.RotatingKingAddresses[0] == config.MainKingAddress {
+				t.Fatalf("main king %s is configured as the permanent rotating king", config.MainKingAddress.Hex())
+			}
+		})
+	}
+}
