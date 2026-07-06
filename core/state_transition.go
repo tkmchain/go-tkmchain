@@ -18,6 +18,7 @@ package core
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -220,6 +221,7 @@ type Message struct {
 	BlobGasFeeCap         *uint256.Int
 	BlobHashes            []common.Hash
 	SetCodeAuthorizations []types.SetCodeAuthorization
+	TxType                byte
 
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
@@ -283,6 +285,7 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		SkipNonceChecks:       false,
 		SkipTransactionChecks: false,
 		BlobHashes:            tx.BlobHashes(),
+		TxType:                tx.Type(),
 		BlobGasFeeCap:         blobGasFeeCap,
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
@@ -450,6 +453,14 @@ func (st *stateTransition) preCheck() error {
 	isOsaka := st.evm.ChainConfig().IsOsaka(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	isAmsterdam := st.evm.ChainConfig().IsAmsterdam(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	if !msg.SkipTransactionChecks {
+		if msg.TxType == types.RandomXTxType {
+			if !st.evm.ChainConfig().IsRandomXTx(st.evm.Context.BlockNumber) {
+				return fmt.Errorf("%w: type %d rejected, block not yet at RandomX transaction fork", ErrTxTypeNotSupported, msg.TxType)
+			}
+			if msg.To == nil {
+				return errors.New("randomx tx must be a coin transfer with a recipient")
+			}
+		}
 		// Verify tx gas limit does not exceed EIP-7825 cap.
 		if isOsaka && !isAmsterdam && msg.GasLimit > params.MaxTxGas {
 			return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, msg.GasLimit)

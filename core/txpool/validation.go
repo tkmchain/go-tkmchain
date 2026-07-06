@@ -86,6 +86,17 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if !rules.IsPrague && tx.Type() == types.SetCodeTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if tx.Type() == types.RandomXTxType {
+		next := new(big.Int).Add(head.Number, big.NewInt(1))
+		if !rules.IsRandomXTx && !opts.Config.IsRandomXTx(next) {
+			return fmt.Errorf("%w: type %d rejected, pool not yet at RandomX transaction fork", core.ErrTxTypeNotSupported, tx.Type())
+		}
+	}
+	if tx.Type() == types.RandomXTxType {
+		if tx.To() == nil {
+			return errors.New("randomx tx must be a coin transfer with a recipient")
+		}
+	}
 	// Check whether the init code size has been exceeded
 	if tx.To() == nil {
 		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(tx.Data()))); err != nil {

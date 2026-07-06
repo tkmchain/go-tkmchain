@@ -224,6 +224,7 @@ func newModernSigner(chainID *big.Int, fork forks.Fork) Signer {
 	}
 	if fork >= forks.London {
 		s.txtypes.set(DynamicFeeTxType)
+		s.txtypes.set(RandomXTxType)
 	}
 	if fork >= forks.Cancun {
 		s.txtypes.set(BlobTxType)

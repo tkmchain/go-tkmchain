@@ -60,6 +60,7 @@ var RandomXChainConfig = &ChainConfig{
 	IstanbulBlock:                big.NewInt(0),
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
+	RandomXTxBlock:               big.NewInt(2450),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 newUint64(0),
@@ -129,6 +130,7 @@ type ChainConfig struct {
 	IstanbulBlock       *big.Int `json:"istanbulBlock,omitempty"`
 	BerlinBlock         *big.Int `json:"berlinBlock,omitempty"`
 	LondonBlock         *big.Int `json:"londonBlock,omitempty"`
+	RandomXTxBlock      *big.Int `json:"randomXTxBlock,omitempty"`
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`
 
@@ -250,6 +252,7 @@ var MainnetChainConfig = &ChainConfig{
 	IstanbulBlock:                big.NewInt(0),
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
+	RandomXTxBlock:               big.NewInt(2450),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 newUint64(0),
@@ -288,6 +291,7 @@ var TestChainConfig = &ChainConfig{
 	IstanbulBlock:                big.NewInt(0),
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
+	RandomXTxBlock:               big.NewInt(2450),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 nil,
@@ -326,6 +330,7 @@ var (
 		IstanbulBlock:       big.NewInt(0),
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
+		RandomXTxBlock:      big.NewInt(2450),
 		Clique: &CliqueConfig{
 			Period: 0,
 			Epoch:  30000,
@@ -349,6 +354,7 @@ var (
 		IstanbulBlock:       big.NewInt(0),
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
+		RandomXTxBlock:      big.NewInt(2450),
 		ShanghaiTime:        newUint64(0),
 		CancunTime:          newUint64(0),
 		PragueTime:          newUint64(0),
@@ -418,6 +424,11 @@ func (c *ChainConfig) IsBerlin(num *big.Int) bool {
 // IsLondon returns whether num is at or beyond London.
 func (c *ChainConfig) IsLondon(num *big.Int) bool {
 	return isBlockForked(c.LondonBlock, num)
+}
+
+// IsRandomXTx returns whether num is at or beyond the RandomX transaction fork.
+func (c *ChainConfig) IsRandomXTx(num *big.Int) bool {
+	return c.IsLondon(num) && isBlockForked(c.RandomXTxBlock, num)
 }
 
 // IsArrowGlacier returns whether num is at or beyond Arrow Glacier.
@@ -504,6 +515,7 @@ type Rules struct {
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
+	IsRandomXTx                                             bool
 	IsArrowGlacier, IsGrayGlacier                           bool
 	IsShanghai, IsCancun, IsPrague, IsOsaka                 bool
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
@@ -529,6 +541,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsIstanbul:       c.IsIstanbul(num),
 		IsBerlin:         c.IsBerlin(num),
 		IsLondon:         c.IsLondon(num),
+		IsRandomXTx:      c.IsRandomXTx(num),
 		IsArrowGlacier:   c.IsArrowGlacier(num),
 		IsGrayGlacier:    c.IsGrayGlacier(num),
 		IsShanghai:       c.IsShanghai(num, timestamp),
@@ -574,6 +587,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"istanbulBlock", c.IstanbulBlock, false},
 		{"berlinBlock", c.BerlinBlock, false},
 		{"londonBlock", c.LondonBlock, false},
+		{"randomXTxBlock", c.RandomXTxBlock, true},
 		{"arrowGlacierBlock", c.ArrowGlacierBlock, true},
 		{"grayGlacierBlock", c.GrayGlacierBlock, true},
 	}
@@ -746,6 +760,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkBlockIncompatible(c.LondonBlock, newcfg.LondonBlock, headBlock) {
 		return newBlockCompatError("London fork block", c.LondonBlock, newcfg.LondonBlock)
+	}
+	if isForkBlockIncompatible(c.RandomXTxBlock, newcfg.RandomXTxBlock, headBlock) {
+		return newBlockCompatError("RandomX transaction fork block", c.RandomXTxBlock, newcfg.RandomXTxBlock)
 	}
 	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)

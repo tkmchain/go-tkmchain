@@ -507,6 +507,8 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 		usedType = types.SetCodeTxType
 	case args.BlobHashes != nil || defaultType == types.BlobTxType:
 		usedType = types.BlobTxType
+	case defaultType == types.RandomXTxType:
+		usedType = types.RandomXTxType
 	case args.MaxFeePerGas != nil || defaultType == types.DynamicFeeTxType:
 		usedType = types.DynamicFeeTxType
 	case args.AccessList != nil || defaultType == types.AccessListTxType:
@@ -564,6 +566,23 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 				version = types.BlobSidecarVersion1
 			}
 			data.(*types.BlobTx).Sidecar = types.NewBlobTxSidecar(version, args.Blobs, args.Commitments, args.Proofs)
+		}
+
+	case types.RandomXTxType:
+		al := types.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		data = &types.RandomXTx{
+			To:         args.To,
+			ChainID:    (*big.Int)(args.ChainID),
+			Nonce:      uint64(*args.Nonce),
+			Gas:        uint64(*args.Gas),
+			GasFeeCap:  (*big.Int)(args.MaxFeePerGas),
+			GasTipCap:  (*big.Int)(args.MaxPriorityFeePerGas),
+			Value:      (*big.Int)(args.Value),
+			Data:       args.data(),
+			AccessList: al,
 		}
 
 	case types.DynamicFeeTxType:

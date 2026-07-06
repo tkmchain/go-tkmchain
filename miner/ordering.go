@@ -31,10 +31,11 @@ const forcedPendingTransactionAge = 5 * time.Minute
 
 // txWithMinerFee wraps a transaction with its gas price or effective miner gasTipCap
 type txWithMinerFee struct {
-	tx     *txpool.LazyTransaction
-	from   common.Address
-	fees   *uint256.Int
-	forced bool
+	tx      *txpool.LazyTransaction
+	from    common.Address
+	fees    *uint256.Int
+	randomx bool
+	forced  bool
 }
 
 // newTxWithMinerFee creates a wrapped transaction, calculating the effective
@@ -52,10 +53,11 @@ func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee 
 		}
 	}
 	return &txWithMinerFee{
-		tx:     tx,
-		from:   from,
-		fees:   tip,
-		forced: !tx.Time.IsZero() && time.Since(tx.Time) >= forcedPendingTransactionAge,
+		tx:      tx,
+		from:    from,
+		fees:    tip,
+		randomx: tx.Tx != nil && tx.Tx.Type() == types.RandomXTxType,
+		forced:  !tx.Time.IsZero() && time.Since(tx.Time) >= forcedPendingTransactionAge,
 	}, nil
 }
 
@@ -65,6 +67,9 @@ type txByPriceAndTime []*txWithMinerFee
 
 func (s txByPriceAndTime) Len() int { return len(s) }
 func (s txByPriceAndTime) Less(i, j int) bool {
+	if s[i].randomx != s[j].randomx {
+		return s[i].randomx
+	}
 	if s[i].forced != s[j].forced {
 		return s[i].forced
 	}

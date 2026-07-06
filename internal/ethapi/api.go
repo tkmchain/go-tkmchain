@@ -1194,6 +1194,20 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 
+	case types.RandomXTxType:
+		al := tx.AccessList()
+		yparity := hexutil.Uint64(v.Sign())
+		result.Accesses = &al
+		result.ChainID = (*hexutil.Big)(tx.ChainId())
+		result.YParity = &yparity
+		result.GasFeeCap = (*hexutil.Big)(tx.GasFeeCap())
+		result.GasTipCap = (*hexutil.Big)(tx.GasTipCap())
+		if baseFee != nil && blockHash != (common.Hash{}) {
+			result.GasPrice = (*hexutil.Big)(effectiveGasPrice(tx, baseFee))
+		} else {
+			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
+		}
+
 	case types.BlobTxType:
 		al := tx.AccessList()
 		yparity := hexutil.Uint64(v.Sign())
@@ -1740,7 +1754,7 @@ func (api *TransactionAPI) SendTransaction(ctx context.Context, args Transaction
 		return common.Hash{}, err
 	}
 	// Assemble the transaction and sign with the wallet
-	tx := args.ToTransaction(types.DynamicFeeTxType)
+	tx := args.ToTransaction(api.defaultTransactionType(args))
 
 	signed, err := wallet.SignTx(account, tx, api.b.ChainConfig().ChainID)
 	if err != nil {
@@ -1762,12 +1776,21 @@ func (api *TransactionAPI) FillTransaction(ctx context.Context, args Transaction
 		return nil, err
 	}
 	// Assemble the transaction and obtain rlp
-	tx := args.ToTransaction(types.DynamicFeeTxType)
+	tx := args.ToTransaction(api.defaultTransactionType(args))
 	data, err := tx.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
 	return &SignTransactionResult{data, tx}, nil
+}
+
+func (api *TransactionAPI) defaultTransactionType(args TransactionArgs) int {
+	header := api.b.CurrentHeader()
+	next := new(big.Int).Add(header.Number, common.Big1)
+	if api.b.ChainConfig().IsRandomXTx(next) && args.To != nil && args.AccessList == nil && args.AuthorizationList == nil && args.BlobHashes == nil {
+		return types.RandomXTxType
+	}
+	return types.DynamicFeeTxType
 }
 
 func (api *TransactionAPI) currentBlobSidecarVersion() byte {
@@ -1958,7 +1981,7 @@ func (api *TransactionAPI) SignTransaction(ctx context.Context, args Transaction
 		return nil, err
 	}
 	// Before actually sign the transaction, ensure the transaction fee is reasonable.
-	tx := args.ToTransaction(types.DynamicFeeTxType)
+	tx := args.ToTransaction(api.defaultTransactionType(args))
 	if err := checkTxFee(tx.GasPrice(), tx.Gas(), api.b.RPCTxFeeCap()); err != nil {
 		return nil, err
 	}
@@ -2014,7 +2037,7 @@ func (api *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs,
 	if err := sendArgs.setDefaults(ctx, api.b, sidecarConfig{}); err != nil {
 		return common.Hash{}, err
 	}
-	matchTx := sendArgs.ToTransaction(types.DynamicFeeTxType)
+	matchTx := sendArgs.ToTransaction(api.defaultTransactionType(sendArgs))
 
 	// Before replacing the old transaction, ensure the _new_ transaction fee is reasonable.
 	price := matchTx.GasPrice()
@@ -2044,7 +2067,7 @@ func (api *TransactionAPI) Resend(ctx context.Context, sendArgs TransactionArgs,
 			if gasLimit != nil && *gasLimit != 0 {
 				sendArgs.Gas = gasLimit
 			}
-			signedTx, err := api.sign(sendArgs.from(), sendArgs.ToTransaction(types.DynamicFeeTxType))
+			signedTx, err := api.sign(sendArgs.from(), sendArgs.ToTransaction(api.defaultTransactionType(sendArgs)))
 			if err != nil {
 				return common.Hash{}, err
 			}

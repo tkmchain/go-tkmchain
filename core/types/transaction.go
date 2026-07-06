@@ -51,6 +51,7 @@ const (
 	DynamicFeeTxType = 0x02
 	BlobTxType       = 0x03
 	SetCodeTxType    = 0x04
+	RandomXTxType    = 0x05
 )
 
 const blockRewardTxPrefix = "tkmchain:blockreward:v1:"
@@ -252,6 +253,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(BlobTx)
 	case SetCodeTxType:
 		inner = new(SetCodeTx)
+	case RandomXTxType:
+		inner = new(RandomXTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}

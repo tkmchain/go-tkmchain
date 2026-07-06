@@ -260,6 +260,48 @@ func TestRecipientNormal(t *testing.T) {
 	}
 }
 
+func TestRandomXTransactionCoding(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := NewTx(&RandomXTx{
+		ChainID:   big.NewInt(8979),
+		Nonce:     1,
+		GasTipCap: big.NewInt(2),
+		GasFeeCap: big.NewInt(10),
+		Gas:       21000,
+		To:        &testAddr,
+		Value:     big.NewInt(1000),
+	})
+	signed, err := SignTx(tx, NewLondonSigner(big.NewInt(8979)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := signed.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Transaction
+	if err := decoded.UnmarshalBinary(bin); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Type() != RandomXTxType || decoded.Hash() != signed.Hash() {
+		t.Fatalf("decoded tx mismatch: type %d hash %s", decoded.Type(), decoded.Hash())
+	}
+	jsonTx, err := signed.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decodedJSON Transaction
+	if err := decodedJSON.UnmarshalJSON(jsonTx); err != nil {
+		t.Fatal(err)
+	}
+	if decodedJSON.Type() != RandomXTxType || decodedJSON.Hash() != signed.Hash() {
+		t.Fatalf("decoded json tx mismatch: type %d hash %s", decodedJSON.Type(), decodedJSON.Hash())
+	}
+}
+
 // TestTransactionCoding tests serializing/de-serializing to/from rlp and JSON.
 func TestTransactionCoding(t *testing.T) {
 	key, err := crypto.GenerateKey()
