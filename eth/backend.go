@@ -670,16 +670,20 @@ func (s *Ethereum) startMining(pool bool) error {
 		log.Info("Mining is not enabled in config, use --mine flag to enable")
 		return nil
 	}
-	if s.miner.Mining() {
-		return nil
-	}
-	if ready, reason, local, highest := s.readyToMine(); !ready {
+	ready, reason, local, highest := s.readyToMine()
+	if !ready {
+		if s.miner.Mining() {
+			s.miner.Stop()
+		}
 		s.miningStartPool = pool
 		if !s.miningStartPending {
 			s.miningStartPending = true
 			go s.waitForMiningReady()
 		}
 		log.Info("RandomX mining deferred", "reason", reason, "local", local, "peerHeight", highest)
+		return nil
+	}
+	if s.miner.Mining() {
 		return nil
 	}
 	return s.startMiningLocked(pool)
@@ -827,6 +831,7 @@ func (s *Ethereum) StopMining() error {
 
 	s.miningStartPending = false
 	s.miningStartPool = false
+	s.miningPool = false
 	if !s.miner.Mining() {
 		return nil
 	}
@@ -840,7 +845,8 @@ func (s *Ethereum) StopMining() error {
 func (s *Ethereum) IsMining() bool {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
-	return s.miner.Mining()
+	ready, _, _, _ := s.readyToMine()
+	return s.miner.Mining() && ready
 }
 
 // GetMiningInfo returns detailed mining information
@@ -848,15 +854,22 @@ func (s *Ethereum) GetMiningInfo() map[string]interface{} {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
+	ready, reason, local, highest := s.readyToMine()
+	activeMining := s.miner.Mining() && ready
 	info := map[string]interface{}{
-		"enabled":      s.config.Miner.Enabled,
-		"mining":       s.miner.Mining(),
-		"threads":      runtime.NumCPU(),
-		"etherbase":    s.config.Miner.Etherbase.Hex(),
-		"hashrate":     s.miner.HashRate(),
-		"gasprice":     s.config.Miner.GasPrice.String(),
-		"gaslimit":     s.config.Miner.GasLimit,
-		"block_number": s.blockchain.CurrentBlock().Number.Uint64(),
+		"enabled":        s.config.Miner.Enabled,
+		"mining":         activeMining,
+		"worker_mining":  s.miner.Mining(),
+		"mining_pending": s.miningStartPending,
+		"mining_reason":  reason,
+		"peer_height":    highest,
+		"local_height":   local,
+		"threads":        runtime.NumCPU(),
+		"etherbase":      s.config.Miner.Etherbase.Hex(),
+		"hashrate":       s.miner.HashRate(),
+		"gasprice":       s.config.Miner.GasPrice.String(),
+		"gaslimit":       s.config.Miner.GasLimit,
+		"block_number":   s.blockchain.CurrentBlock().Number.Uint64(),
 	}
 	pending, queued := s.txPool.Stats()
 	info["pending_txs"] = pending + queued
