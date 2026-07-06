@@ -115,6 +115,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.GasFeeCapIntCmp(tx.GasTipCap()) < 0 {
 		return core.ErrTipAboveFeeCap
 	}
+	if rules.IsEIP155 && tx.Type() == types.LegacyTxType && !tx.Protected() {
+		return fmt.Errorf("%w: legacy transaction must be replay-protected with EIP-155", ErrInvalidSender)
+	}
 	// Make sure the transaction is signed properly
 	if _, err := types.Sender(signer, tx); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSender, err)

@@ -96,6 +96,44 @@ func TestValidateTransactionEIP2681(t *testing.T) {
 	}
 }
 
+func TestValidateTransactionRejectsUnprotectedLegacyAfterEIP155(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := &types.Header{
+		Number:     big.NewInt(1),
+		GasLimit:   5000000,
+		Time:       1,
+		Difficulty: big.NewInt(1),
+	}
+	opts := &ValidationOptions{
+		Config:       params.TestChainConfig,
+		Accept:       0xFF,
+		MaxSize:      32 * 1024,
+		MaxBlobCount: 6,
+		MinTip:       big.NewInt(0),
+	}
+
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	tx := types.NewTransaction(0, to, big.NewInt(1000), 21000, big.NewInt(1), nil)
+	unprotected, err := types.SignTx(tx, types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(unprotected, head, types.LatestSigner(params.TestChainConfig), opts); !errors.Is(err, ErrInvalidSender) {
+		t.Fatalf("ValidateTransaction() error = %v, want %v", err, ErrInvalidSender)
+	}
+
+	protected, err := types.SignTx(tx, types.LatestSigner(params.TestChainConfig), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(protected, head, types.LatestSigner(params.TestChainConfig), opts); err != nil {
+		t.Fatalf("ValidateTransaction() protected error = %v", err)
+	}
+}
+
 // createTestTransaction creates a basic transaction for testing
 func createTestTransaction(key *ecdsa.PrivateKey, nonce uint64) *types.Transaction {
 	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
@@ -110,6 +148,6 @@ func createTestTransaction(key *ecdsa.PrivateKey, nonce uint64) *types.Transacti
 	}
 
 	tx := types.NewTx(txdata)
-	signedTx, _ := types.SignTx(tx, types.HomesteadSigner{}, key)
+	signedTx, _ := types.SignTx(tx, types.LatestSigner(params.TestChainConfig), key)
 	return signedTx
 }
