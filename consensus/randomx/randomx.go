@@ -95,6 +95,14 @@ type Work struct {
 	Height      uint64 `json:"height"`
 }
 
+type miningState struct {
+    mu          sync.Mutex
+    nonce       uint64
+    lastCheck   time.Time
+    hashCount   uint64
+    foundBlocks uint64
+}
+
 type Cache struct{ ptr *C.randomx_cache }
 type Dataset struct{ ptr *C.randomx_dataset }
 type VM struct{ ptr *C.randomx_vm }
@@ -547,6 +555,173 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 }
 
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+    rx.chain = chain
+    
+    if chain == nil {
+        return fmt.Errorf("chain is nil")
+    }
+
+    if rx.fullFake || rx.isClosed() {
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    header := block.Header()
+
+    if header.MixDigest != (common.Hash{}) {
+        if err := rx.VerifySeal(chain, header); err != nil {
+            return err
+        }
+        select {
+        case results <- block:
+        default:
+        }
+        return nil
+    }
+
+    epoch := rx.epoch(header.Number.Uint64())
+    if err := rx.updateCacheForEpoch(epoch); err != nil {
+        return err
+    }
+
+    sealHeader := types.CopyHeader(header)
+    target := new(big.Int).Div(maxUint256, sealHeader.Difficulty)
+    threads := rx.getMiningThreads()
+
+    log.Info("⛏️ RandomX mining started",
+        "block", sealHeader.Number.Uint64(),
+        "difficulty", sealHeader.Difficulty,
+        "threads", threads,
+        "target", target.String())
+
+    found := make(chan *types.Block, 1)
+    errCh := make(chan error, 1)
+    done := make(chan struct{})
+    var doneOnce sync.Once
+    var wg sync.WaitGroup
+    
+    // Use atomic for shared mining state
+    var nonceCounter uint64
+    var hashCount uint64
+    lastCheck := time.Now()
+
+    // Add timeout for production stability
+    miningTimeout := time.NewTimer(5 * time.Minute)
+    defer miningTimeout.Stop()
+
+    for i := 0; i < threads; i++ {
+        wg.Add(1)
+        go func(threadID int) {
+            defer wg.Done()
+            
+            vm, err := rx.getVM()
+            if err != nil {
+                select {
+                case errCh <- fmt.Errorf("failed to get RandomX VM: %w", err):
+                default:
+                }
+                return
+            }
+            defer vm.Close()
+
+            localHeader := types.CopyHeader(sealHeader)
+            
+            for {
+                select {
+                case <-stop:
+                    return
+                case <-rx.stopCh:
+                    return
+                case <-done:
+                    return
+                case <-miningTimeout.C:
+                    log.Warn("Mining timeout, restarting")
+                    miningTimeout.Reset(5 * time.Minute)
+                    continue
+                default:
+                }
+
+                // Get next nonce atomically
+                nonce := atomic.AddUint64(&nonceCounter, 1) - 1
+
+                // Handle nonce overflow
+                if nonce == ^uint64(0) {
+                    log.Warn("Nonce space exhausted, resetting")
+                    atomic.StoreUint64(&nonceCounter, 0)
+                    continue
+                }
+
+                localHeader.Nonce = types.EncodeNonce(nonce)
+                result, hash := rx.randomXHash(localHeader, vm)
+                
+                // Update hash count
+                atomic.AddUint64(&hashCount, 1)
+                
+                // Log progress periodically
+                if atomic.LoadUint64(&hashCount)%10000 == 0 {
+                    elapsed := time.Since(lastCheck).Seconds()
+                    if elapsed > 0 {
+                        hr := float64(atomic.LoadUint64(&hashCount)) / elapsed
+                        rx.hrMu.Lock()
+                        rx.hashrate = uint64(hr)
+                        rx.hrMu.Unlock()
+                        log.Debug("Mining progress", 
+                            "thread", threadID,
+                            "hashrate", fmt.Sprintf("%.2f", hr),
+                            "nonce", nonce)
+                    }
+                }
+
+                if result.Cmp(target) <= 0 {
+                    localHeader.MixDigest = hash
+                    sealedBlock := block.WithSeal(localHeader)
+
+                    log.Info("✅ BLOCK MINED!",
+                        "block", localHeader.Number.Uint64(),
+                        "difficulty", localHeader.Difficulty,
+                        "nonce", nonce,
+                        "thread", threadID,
+                        "hash", hash.Hex())
+
+                    doneOnce.Do(func() { close(done) })
+                    select {
+                    case found <- sealedBlock:
+                    default:
+                    }
+                    return
+                }
+            }
+        }(i)
+    }
+
+    // Wait for mining result
+    var sealErr error
+    select {
+    case sealedBlock := <-found:
+        select {
+        case results <- sealedBlock:
+            log.Info("�� Block submitted to results channel", "block", sealedBlock.Number())
+        default:
+            log.Warn("Results channel full, block dropped")
+        }
+    case sealErr = <-errCh:
+        log.Error("Mining error", "error", sealErr)
+    case <-stop:
+        log.Info("Mining stopped by signal")
+    case <-rx.stopCh:
+        log.Info("Mining stopped by engine closure")
+    }
+
+    doneOnce.Do(func() { close(done) })
+    wg.Wait()
+    
+    return sealErr
+}
+/*
+func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	rx.chain = chain
 
 	if rx.fullFake || rx.isClosed() {
@@ -676,7 +851,7 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 	wg.Wait()
 	return sealErr
 }
-
+*/
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
 	if header.Number == nil {
 		header.Number = new(big.Int)
