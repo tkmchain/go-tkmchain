@@ -714,7 +714,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 		return err
 	}
 	env := &environment{
-		signer:    types.NewEIP155Signer(w.config.ChainID),
+		signer:    types.MakeSigner(w.config, header.Number, header.Time),
 		state:     state,
 		ancestors: mapset.NewSet(),
 		family:    mapset.NewSet(),

@@ -139,6 +139,56 @@ func minerTestGenesisBlock(period uint64, gasLimit uint64, faucet common.Address
 	}
 }
 
+func TestMakeCurrentUsesForkSigner(t *testing.T) {
+	config := *params.RandomXChainConfig
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	to := common.HexToAddress("0x000000000000000000000000000000000000c0de")
+	db := rawdb.NewMemoryDatabase()
+	genesis := &core.Genesis{
+		Config:   &config,
+		GasLimit: 11_500_000,
+		BaseFee:  big.NewInt(params.InitialBaseFee),
+		Alloc: map[common.Address]types.Account{
+			from: {Balance: new(big.Int).Lsh(big.NewInt(1), 128)},
+		},
+	}
+	engine := clique.New(&params.CliqueConfig{Period: 15, Epoch: 30000}, db)
+	bc, err := core.NewBlockChain(db, genesis, engine, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bc.Stop()
+	parentNumber := new(big.Int).Sub(config.RandomXTxBlock, common.Big1)
+	parentHeader := &types.Header{Number: parentNumber, Root: bc.Genesis().Root(), GasLimit: 11_500_000}
+	header := &types.Header{Number: new(big.Int).Set(config.RandomXTxBlock), GasLimit: 11_500_000, BaseFee: big.NewInt(params.InitialBaseFee)}
+	w := &worker{
+		chain:  bc,
+		config: &config,
+	}
+	if err := w.makeCurrent(types.NewBlock(parentHeader, nil, nil, trie.NewStackTrie(nil)), header); err != nil {
+		t.Fatal(err)
+	}
+	tx := types.MustSignNewTx(key, w.current.signer, &types.RandomXTx{
+		ChainID:   config.ChainID,
+		GasTipCap: big.NewInt(2),
+		GasFeeCap: big.NewInt(params.InitialBaseFee + 2),
+		Gas:       params.TxGas,
+		To:        &to,
+		Value:     big.NewInt(1),
+	})
+	sender, err := types.Sender(w.current.signer, tx)
+	if err != nil {
+		t.Fatalf("miner signer rejected randomx tx: %v", err)
+	}
+	if sender != from {
+		t.Fatalf("sender = %v, want %v", sender, from)
+	}
+}
+
 func createMiner(t *testing.T) *Miner {
 	// Create Ethash config
 	config := Config{
