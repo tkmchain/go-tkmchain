@@ -1785,11 +1785,6 @@ func (api *TransactionAPI) FillTransaction(ctx context.Context, args Transaction
 }
 
 func (api *TransactionAPI) defaultTransactionType(args TransactionArgs) int {
-	header := api.b.CurrentHeader()
-	next := new(big.Int).Add(header.Number, common.Big1)
-	if api.b.ChainConfig().IsRandomXTx(next) && args.To != nil && args.AccessList == nil && args.AuthorizationList == nil && args.BlobHashes == nil {
-		return types.RandomXTxType
-	}
 	return types.DynamicFeeTxType
 }
 

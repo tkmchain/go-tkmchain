@@ -48,6 +48,7 @@ type TransactionArgs struct {
 	MaxPriorityFeePerGas *hexutil.Big    `json:"maxPriorityFeePerGas"`
 	Value                *hexutil.Big    `json:"value"`
 	Nonce                *hexutil.Uint64 `json:"nonce"`
+	Type                 *hexutil.Uint64 `json:"type,omitempty"`
 
 	// We accept "data" and "input" for backwards-compatibility reasons.
 	// "input" is the newer name and should be preferred by clients.
@@ -502,20 +503,24 @@ func (args *TransactionArgs) ToMessage(baseFee *big.Int, skipNonceCheck bool) *c
 // This assumes that setDefaults has been called.
 func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 	usedType := types.LegacyTxType
-	switch {
-	case args.AuthorizationList != nil || defaultType == types.SetCodeTxType:
-		usedType = types.SetCodeTxType
-	case args.BlobHashes != nil || defaultType == types.BlobTxType:
-		usedType = types.BlobTxType
-	case defaultType == types.RandomXTxType:
-		usedType = types.RandomXTxType
-	case args.MaxFeePerGas != nil || defaultType == types.DynamicFeeTxType:
-		usedType = types.DynamicFeeTxType
-	case args.AccessList != nil || defaultType == types.AccessListTxType:
-		usedType = types.AccessListTxType
+	if args.Type != nil {
+		usedType = int(*args.Type)
+	} else {
+		switch {
+		case args.AuthorizationList != nil || defaultType == types.SetCodeTxType:
+			usedType = types.SetCodeTxType
+		case args.BlobHashes != nil || defaultType == types.BlobTxType:
+			usedType = types.BlobTxType
+		case defaultType == types.RandomXTxType:
+			usedType = types.RandomXTxType
+		case args.MaxFeePerGas != nil || defaultType == types.DynamicFeeTxType:
+			usedType = types.DynamicFeeTxType
+		case args.AccessList != nil || defaultType == types.AccessListTxType:
+			usedType = types.AccessListTxType
+		}
 	}
 	// Make it possible to default to newer tx, but use legacy if gasprice is provided
-	if args.GasPrice != nil {
+	if args.GasPrice != nil && args.Type == nil {
 		usedType = types.LegacyTxType
 	}
 	var data types.TxData
