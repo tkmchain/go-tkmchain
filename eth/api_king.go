@@ -29,6 +29,7 @@ var (
 )
 
 type rkLockInfo struct {
+	Hash             common.Hash
 	UnlockTime       time.Time
 	UnlockHeight     uint64
 	ActivationHeight uint64
@@ -37,6 +38,7 @@ type rkLockInfo struct {
 
 // RKStatus represents the status of a rotating king candidate
 type RKStatus struct {
+	Hash                common.Hash    `json:"hash"`
 	Address             common.Address `json:"address"`
 	Registered          bool           `json:"registered"`
 	Current             bool           `json:"current"`
@@ -366,6 +368,7 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 	}
 
 	if locked {
+		status.Hash = lockInfo.Hash
 		unlockCopy := lockInfo.UnlockTime
 		status.UnlockTime = &unlockCopy
 		status.UnlockHeight = lockInfo.UnlockHeight

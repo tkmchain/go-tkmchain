@@ -22,3 +22,20 @@ func TestRotatingKingAddressStorage(t *testing.T) {
 		t.Fatalf("rotating king addresses = %v, want %v", got, addresses)
 	}
 }
+
+func TestRotatingKingLockStorageIncludesHash(t *testing.T) {
+	db := NewMemoryDatabase()
+	locks := []RotatingKingLock{{
+		Address:          common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		UnlockTime:       123,
+		UnlockHeight:     456,
+		ActivationHeight: 400,
+		AddedHeight:      300,
+		Hash:             common.HexToHash("0x1234"),
+	}}
+
+	WriteRotatingKingLocks(db, locks)
+	if got := ReadRotatingKingLocks(db); !reflect.DeepEqual(got, locks) {
+		t.Fatalf("rotating king locks = %+v, want %+v", got, locks)
+	}
+}

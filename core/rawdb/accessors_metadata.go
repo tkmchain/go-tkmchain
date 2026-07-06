@@ -58,8 +58,9 @@ type RotatingKingLock struct {
 	Address          common.Address
 	UnlockTime       uint64
 	UnlockHeight     uint64
-	ActivationHeight uint64 `rlp:"optional"`
-	AddedHeight      uint64 `rlp:"optional"`
+	ActivationHeight uint64      `rlp:"optional"`
+	AddedHeight      uint64      `rlp:"optional"`
+	Hash             common.Hash `rlp:"optional"`
 }
 
 // ReadRotatingKingLocks retrieves dynamically registered rotating king locks.

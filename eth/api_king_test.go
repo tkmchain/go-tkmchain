@@ -65,6 +65,9 @@ func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
 	if !status.Registered || status.Address != eligible {
 		t.Fatalf("eligible address status = %+v, want registered %s", status, eligible.Hex())
 	}
+	if status.Hash == (common.Hash{}) {
+		t.Fatalf("eligible address status missing registration hash")
+	}
 	if len(eth.kingAddresses) != 1 || eth.kingAddresses[0] != eligible {
 		t.Fatalf("rotating king schedule = %v, want [%v]", eth.kingAddresses, eligible)
 	}
@@ -132,6 +135,10 @@ func TestRecordRotatingKingLockedAddsPendingAddress(t *testing.T) {
 	if len(eth.kingAddresses) != 2 || eth.kingAddresses[0] != active || eth.kingAddresses[1] != pending {
 		t.Fatalf("active rotating king schedule = %v, want [%v %v]", eth.kingAddresses, active, pending)
 	}
+	lockHash := eth.rkLocks[pending].Hash
+	if lockHash == (common.Hash{}) {
+		t.Fatalf("pending rotating king lock missing hash")
+	}
 	if got := eth.rkLocks[pending]; !got.UnlockTime.Equal(unlock) || got.UnlockHeight != unlockHeight {
 		t.Fatalf("pending rotating king lock = %v, want unlock %v height %d", got, unlock, unlockHeight)
 	}
@@ -142,8 +149,8 @@ func TestRecordRotatingKingLockedAddsPendingAddress(t *testing.T) {
 	}
 	reloaded.chainDb = eth.chainDb
 	reloaded.loadRotatingKingLocks()
-	if got := reloaded.rkLocks[pending]; !got.UnlockTime.Equal(unlock) || got.UnlockHeight != unlockHeight {
-		t.Fatalf("reloaded rotating king lock = %v, want unlock %v height %d", got, unlock, unlockHeight)
+	if got := reloaded.rkLocks[pending]; !got.UnlockTime.Equal(unlock) || got.UnlockHeight != unlockHeight || got.Hash != lockHash {
+		t.Fatalf("reloaded rotating king lock = %v, want unlock %v height %d hash %s", got, unlock, unlockHeight, lockHash.Hex())
 	}
 	if len(reloaded.kingAddresses) != 2 || reloaded.kingAddresses[0] != active || reloaded.kingAddresses[1] != pending {
 		t.Fatalf("reloaded rotating king schedule = %v, want [%v %v]", reloaded.kingAddresses, active, pending)

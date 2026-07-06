@@ -44,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/locals"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
@@ -885,7 +886,7 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 	if indexOfRotatingKing(s.kingAddresses, address) < 0 {
 		activationHeight = s.nextRotatingKingActivationHeight()
 	}
-	info := rkLockInfo{UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight, ActivationHeight: activationHeight, AddedHeight: addedHeight}
+	info := rkLockInfo{Hash: rotatingKingRegistrationHash(address, unlock, unlockHeight, activationHeight, addedHeight), UnlockTime: unlock.UTC(), UnlockHeight: unlockHeight, ActivationHeight: activationHeight, AddedHeight: addedHeight}
 	if current, ok := s.rkLocks[address]; ok {
 		if info.UnlockTime.Before(current.UnlockTime) {
 			info.UnlockTime = current.UnlockTime
@@ -899,7 +900,10 @@ func (s *Ethereum) recordRotatingKingLocked(address common.Address, unlock time.
 		if current.AddedHeight != 0 && (info.AddedHeight == 0 || current.AddedHeight < info.AddedHeight) {
 			info.AddedHeight = current.AddedHeight
 		}
-		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight && info.AddedHeight == current.AddedHeight {
+		if current.Hash != (common.Hash{}) {
+			info.Hash = current.Hash
+		}
+		if info.UnlockTime.Equal(current.UnlockTime) && info.UnlockHeight == current.UnlockHeight && info.ActivationHeight == current.ActivationHeight && info.AddedHeight == current.AddedHeight && info.Hash == current.Hash {
 			return false
 		}
 	}
@@ -985,6 +989,16 @@ func encodeRotatingKingHeaderExtra(address common.Address, addedHeight uint64) [
 	return extra
 }
 
+func rotatingKingRegistrationHash(address common.Address, unlock time.Time, unlockHeight uint64, activationHeight uint64, addedHeight uint64) common.Hash {
+	payload := make([]byte, common.AddressLength+8*4)
+	copy(payload, address.Bytes())
+	binary.BigEndian.PutUint64(payload[common.AddressLength:], uint64(unlock.UTC().UnixNano()))
+	binary.BigEndian.PutUint64(payload[common.AddressLength+8:], unlockHeight)
+	binary.BigEndian.PutUint64(payload[common.AddressLength+16:], activationHeight)
+	binary.BigEndian.PutUint64(payload[common.AddressLength+24:], addedHeight)
+	return crypto.Keccak256Hash(payload)
+}
+
 func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 	head := s.blockchain.CurrentBlock()
 	if head == nil {
@@ -1004,7 +1018,12 @@ func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 
 func (s *Ethereum) loadRotatingKingLocks() {
 	for _, lock := range rawdb.ReadRotatingKingLocks(s.rotatingKingStore()) {
+		hash := lock.Hash
+		if hash == (common.Hash{}) {
+			hash = rotatingKingRegistrationHash(lock.Address, time.Unix(int64(lock.UnlockTime), 0).UTC(), lock.UnlockHeight, lock.ActivationHeight, lock.AddedHeight)
+		}
 		s.rkLocks[lock.Address] = rkLockInfo{
+			Hash:             hash,
 			UnlockTime:       time.Unix(int64(lock.UnlockTime), 0).UTC(),
 			UnlockHeight:     lock.UnlockHeight,
 			ActivationHeight: lock.ActivationHeight,
@@ -1089,6 +1108,7 @@ func (s *Ethereum) persistRotatingKingLocksLocked() {
 			UnlockHeight:     info.UnlockHeight,
 			ActivationHeight: info.ActivationHeight,
 			AddedHeight:      info.AddedHeight,
+			Hash:             info.Hash,
 		})
 		seen[address] = struct{}{}
 	}
@@ -1102,6 +1122,7 @@ func (s *Ethereum) persistRotatingKingLocksLocked() {
 			UnlockHeight:     info.UnlockHeight,
 			ActivationHeight: info.ActivationHeight,
 			AddedHeight:      info.AddedHeight,
+			Hash:             info.Hash,
 		})
 	}
 	rawdb.WriteRotatingKingLocks(s.rotatingKingStore(), locks)
