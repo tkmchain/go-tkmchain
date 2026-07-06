@@ -133,6 +133,7 @@ type Ethereum struct {
 	rkLocks            map[common.Address]rkLockInfo
 	miningStartPending bool
 	miningStartPool    bool
+	miningPool         bool
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -753,6 +754,33 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 	return true, "", localHeight, highest
 }
 
+func (s *Ethereum) enforceMiningPeers() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.lock.Lock()
+			if s.config.Miner.Enabled && s.miner.Mining() {
+				if ready, reason, local, highest := s.readyToMine(); !ready {
+					pool := s.miningPool
+					s.miner.Stop()
+					s.miningStartPool = pool
+					if !s.miningStartPending {
+						s.miningStartPending = true
+						go s.waitForMiningReady()
+					}
+					log.Warn("RandomX mining stopped until peers are ready", "reason", reason, "local", local, "peerHeight", highest)
+				}
+			}
+			s.lock.Unlock()
+		case <-s.handler.quitSync:
+			return
+		}
+	}
+}
+
 func (s *Ethereum) startMiningLocked(pool bool) error {
 	// Set etherbase if provided and not already set
 	if s.config.Miner.Etherbase != (common.Address{}) {
@@ -774,6 +802,7 @@ func (s *Ethereum) startMiningLocked(pool bool) error {
 	}
 
 	// Start the miner
+	s.miningPool = pool
 	if pool {
 		s.miner.StartExternal(s.config.Miner.Etherbase)
 	} else {
@@ -797,6 +826,7 @@ func (s *Ethereum) StopMining() error {
 	defer s.lock.Unlock()
 
 	s.miningStartPending = false
+	s.miningStartPool = false
 	if !s.miner.Mining() {
 		return nil
 	}
@@ -1456,6 +1486,7 @@ func (s *Ethereum) Start() error {
 	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() })
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
+	go s.enforceMiningPeers()
 
 	log.Info("Tkmchain backend started with RandomX consensus")
 	return nil
