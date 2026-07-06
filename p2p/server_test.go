@@ -656,3 +656,22 @@ func syncAddPeer(srv *Server, node *enode.Node) bool {
 		}
 	}
 }
+
+func TestClientVersionAllowed(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "Gtkm/v1.17.4-eda/linux-amd64/go1.24.0", want: false},
+		{name: "Gtkm/v1.17.5-eda/linux-amd64/go1.24.0", want: true},
+		{name: "Gtkm/v1.18.0-eda/linux-amd64/go1.24.0", want: true},
+		{name: "Gtkm/custom/v1.17.5-eda/linux-amd64/go1.24.0", want: true},
+		{name: "unknown-client", want: true},
+	}
+
+	for _, tt := range tests {
+		if got := clientVersionAllowed(tt.name); got != tt.want {
+			t.Fatalf("clientVersionAllowed(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

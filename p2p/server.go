@@ -27,6 +27,8 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,6 +71,53 @@ type protoHandshakeError struct{ err error }
 
 func (e *protoHandshakeError) Error() string { return fmt.Sprintf("rlpx proto error: %v", e.err) }
 func (e *protoHandshakeError) Unwrap() error { return e.err }
+
+const minClientVersion = "1.17.5"
+
+func clientVersionAllowed(name string) bool {
+	major, minor, patch, ok := parseClientVersion(name)
+	if !ok {
+		return true
+	}
+	minMajor, minMinor, minPatch, _ := parseClientVersion("v" + minClientVersion)
+	if major != minMajor {
+		return major > minMajor
+	}
+	if minor != minMinor {
+		return minor > minMinor
+	}
+	return patch >= minPatch
+}
+
+func parseClientVersion(name string) (major uint64, minor uint64, patch uint64, ok bool) {
+	for _, part := range strings.Split(name, "/") {
+		if !strings.HasPrefix(part, "v") {
+			continue
+		}
+		versionPart := strings.TrimPrefix(part, "v")
+		if cut := strings.IndexAny(versionPart, "-+"); cut >= 0 {
+			versionPart = versionPart[:cut]
+		}
+		pieces := strings.Split(versionPart, ".")
+		if len(pieces) != 3 {
+			continue
+		}
+		parsed := [3]uint64{}
+		valid := true
+		for i, piece := range pieces {
+			value, err := strconv.ParseUint(piece, 10, 64)
+			if err != nil {
+				valid = false
+				break
+			}
+			parsed[i] = value
+		}
+		if valid {
+			return parsed[0], parsed[1], parsed[2], true
+		}
+	}
+	return 0, 0, 0, false
+}
 
 // Server manages all peer connections.
 type Server struct {
@@ -942,6 +991,10 @@ func (srv *Server) setupConn(c *conn, dialDest *enode.Node) error {
 	if id := c.node.ID(); !bytes.Equal(crypto.Keccak256(phs.ID), id[:]) {
 		clog.Trace("Wrong devp2p handshake identity", "phsid", hex.EncodeToString(phs.ID))
 		return DiscUnexpectedIdentity
+	}
+	if !clientVersionAllowed(phs.Name) {
+		clog.Trace("Rejected peer with incompatible client version", "name", phs.Name, "minimum", minClientVersion)
+		return DiscIncompatibleVersion
 	}
 	c.caps, c.name = phs.Caps, phs.Name
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
