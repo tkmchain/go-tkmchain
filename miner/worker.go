@@ -1029,9 +1029,9 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	if env.header.BaseFee != nil {
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
 	}
-	pending, _ := w.eth.TxPool().Pending(filter)
+	pending, pendingCount := w.pendingTransactions(filter)
 	// Short circuit if there is no available pending transactions
-	if len(pending) == 0 {
+	if pendingCount == 0 {
 		w.updateSnapshot()
 		return
 	}
@@ -1042,6 +1042,26 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		}
 	}
 	w.commit(uncles, w.fullTaskHook, true, tstart)
+}
+
+func (w *worker) pendingTransactions(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int) {
+	pool := w.eth.TxPool()
+	pending, count := pool.Pending(filter)
+	if count > 0 {
+		return pending, count
+	}
+	pendingBefore, queuedBefore := pool.Stats()
+	if queuedBefore == 0 {
+		return pending, count
+	}
+	if err := pool.Sync(); err != nil {
+		log.Debug("Failed to force txpool pending promotion", "err", err, "queued", queuedBefore)
+		return pending, count
+	}
+	pending, count = pool.Pending(filter)
+	pendingAfter, queuedAfter := pool.Stats()
+	log.Debug("Forced txpool pending promotion before mining", "pendingBefore", pendingBefore, "queuedBefore", queuedBefore, "pendingAfter", pendingAfter, "queuedAfter", queuedAfter, "selected", count)
+	return pending, count
 }
 
 // commit runs any post-transaction state modifications, assembles the final block
