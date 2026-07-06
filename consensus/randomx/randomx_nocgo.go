@@ -36,7 +36,7 @@ import (
 const (
 	RandomXEpochLength = 2048
 	TargetBlockTime    = 120
-	EDAThreshold       = 45 * 60
+	EDAThreshold       = 7 * 60
 )
 
 type Config struct {

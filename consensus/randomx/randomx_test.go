@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestVerifySealAcceptsZeroMixDigestDuringBootstrap(t *testing.T) {
@@ -235,5 +236,41 @@ func TestRewardSharesFallbackRotatingKingRewardToMainKing(t *testing.T) {
 	}
 	if minerReward.Cmp(big.NewInt(500)) != 0 {
 		t.Fatalf("miner reward = %s, want 500", minerReward)
+	}
+}
+
+type edaTestChain struct {
+	config *params.ChainConfig
+}
+
+func (c edaTestChain) Config() *params.ChainConfig                             { return c.config }
+func (c edaTestChain) CurrentHeader() *types.Header                            { return nil }
+func (c edaTestChain) GetHeader(hash common.Hash, number uint64) *types.Header { return nil }
+func (c edaTestChain) GetHeaderByNumber(number uint64) *types.Header           { return nil }
+func (c edaTestChain) GetHeaderByHash(hash common.Hash) *types.Header          { return nil }
+
+func TestCalcDifficultyAppliesEDAEverySevenMinutes(t *testing.T) {
+	edaTime := uint64(0)
+	config := &params.ChainConfig{
+		ChainID:     big.NewInt(1),
+		LondonBlock: big.NewInt(0),
+		EDATime:     &edaTime,
+	}
+	chain := edaTestChain{config: config}
+	rx := NewFaker()
+	parent := &types.Header{
+		Number:     big.NewInt(1),
+		Time:       1_000,
+		Difficulty: big.NewInt(1024),
+	}
+
+	oneStep := rx.CalcDifficulty(chain, parent.Time+EDAThreshold, parent)
+	if want := big.NewInt(256); oneStep.Cmp(want) != 0 {
+		t.Fatalf("one EDA step difficulty = %v, want %v", oneStep, want)
+	}
+
+	twoSteps := rx.CalcDifficulty(chain, parent.Time+2*EDAThreshold, parent)
+	if want := big.NewInt(64); twoSteps.Cmp(want) != 0 {
+		t.Fatalf("two EDA step difficulty = %v, want %v", twoSteps, want)
 	}
 }

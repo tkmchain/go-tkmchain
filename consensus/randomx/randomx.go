@@ -69,7 +69,7 @@ const (
 	TargetBlockTime    = 120 // seconds
 
 	// EDAThreshold is the no-block interval that triggers Emergency Difficulty Adjustment.
-	EDAThreshold = 45 * 60 // seconds
+	EDAThreshold = 7 * 60 // seconds
 )
 
 const (
