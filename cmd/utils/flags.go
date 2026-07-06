@@ -2265,7 +2265,7 @@ func RegisterSyncOverrideService(stack *node.Node, eth *eth.Ethereum, config syn
 }
 
 func verifyLocalCheckpoints(eth *eth.Ethereum) {
-	if eth == nil || !params.CheckpointValidationEnabled {
+	if eth == nil || (!params.CheckpointValidationEnabled && !params.HasMandatoryCheckpoints()) {
 		return
 	}
 	chain := eth.BlockChain()
@@ -2278,6 +2278,9 @@ func verifyLocalCheckpoints(eth *eth.Ethereum) {
 	}
 	localHeight := head.Number.Uint64()
 	for _, checkpoint := range params.AllCheckpoints() {
+		if !params.ShouldValidateCheckpoint(checkpoint.Number) {
+			continue
+		}
 		if checkpoint.Number > localHeight {
 			continue
 		}

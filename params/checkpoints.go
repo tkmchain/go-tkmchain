@@ -43,6 +43,10 @@ type Checkpoints struct {
 // enforced during block insertion.
 var CheckpointValidationEnabled = true
 
+var mandatoryRandomXCheckpoints = map[uint64]common.Hash{
+	2370: common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17"),
+}
+
 // RandomXCheckpoints holds the globally accessible hardcoded RandomX checkpoints.
 var RandomXCheckpoints = initRandomXCheckpoints()
 
@@ -53,7 +57,10 @@ func initRandomXCheckpoints() *Checkpoints {
 	}
 	// Real checkpoint: block 0 (genesis) must match the actual genesis hash.
 	cp.Points[0] = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
-        
+	for number, hash := range mandatoryRandomXCheckpoints {
+		cp.Points[number] = hash
+	}
+
 	// Add more checkpoints at strategic heights
 	// cp.Points[1000] = common.HexToHash("0x...")
 	// cp.Points[2000] = common.HexToHash("0x...")
@@ -65,6 +72,20 @@ func initRandomXCheckpoints() *Checkpoints {
 // SetCheckpointValidation enables or disables hardcoded checkpoint validation.
 func SetCheckpointValidation(enabled bool) {
 	CheckpointValidationEnabled = enabled
+}
+
+// HasMandatoryCheckpoints reports whether any checkpoint is always enforced.
+func HasMandatoryCheckpoints() bool {
+	return len(mandatoryRandomXCheckpoints) > 0
+}
+
+// ShouldValidateCheckpoint reports whether a checkpoint at number must be enforced.
+func ShouldValidateCheckpoint(number uint64) bool {
+	if CheckpointValidationEnabled {
+		return true
+	}
+	_, ok := mandatoryRandomXCheckpoints[number]
+	return ok
 }
 
 // AddCheckpoint adds an immutable checkpoint. Existing checkpoints cannot be changed.

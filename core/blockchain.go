@@ -1848,11 +1848,12 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 				prev.Hash().Bytes()[:4], i, block.NumberU64(), block.Hash().Bytes()[:4], block.ParentHash().Bytes()[:4])
 		}
 	}
-	if params.CheckpointValidationEnabled {
-		for i, block := range chain {
-			if checkpoint, ok := params.GetCheckpoint(block.NumberU64()); ok && checkpoint != block.Hash() {
-				return i, fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", block.NumberU64(), block.Hash(), checkpoint)
-			}
+	for i, block := range chain {
+		if !params.ShouldValidateCheckpoint(block.NumberU64()) {
+			continue
+		}
+		if checkpoint, ok := params.GetCheckpoint(block.NumberU64()); ok && checkpoint != block.Hash() {
+			return i, fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", block.NumberU64(), block.Hash(), checkpoint)
 		}
 	}
 	// Pre-checks passed, start the full block imports
@@ -2608,16 +2609,20 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 			return errInvalidNewChain
 		}
 	}
-	if params.CheckpointValidationEnabled {
-		for _, header := range oldChain {
-			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint == header.Hash() {
-				return fmt.Errorf("checkpoint reorg at block %d: checkpoint hash %s is permanent", header.Number.Uint64(), checkpoint)
-			}
+	for _, header := range oldChain {
+		if !params.ShouldValidateCheckpoint(header.Number.Uint64()) {
+			continue
 		}
-		for _, header := range newChain {
-			if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint != header.Hash() {
-				return fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", header.Number.Uint64(), header.Hash(), checkpoint)
-			}
+		if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint == header.Hash() {
+			return fmt.Errorf("checkpoint reorg at block %d: checkpoint hash %s is permanent", header.Number.Uint64(), checkpoint)
+		}
+	}
+	for _, header := range newChain {
+		if !params.ShouldValidateCheckpoint(header.Number.Uint64()) {
+			continue
+		}
+		if checkpoint, ok := params.GetCheckpoint(header.Number.Uint64()); ok && checkpoint != header.Hash() {
+			return fmt.Errorf("checkpoint mismatch at block %d: have %s, want %s", header.Number.Uint64(), header.Hash(), checkpoint)
 		}
 	}
 	// Ensure the user sees large reorgs
