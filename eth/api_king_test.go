@@ -269,6 +269,97 @@ func TestRecoverRotatingKingStateFromHeaderExtra(t *testing.T) {
 	}
 }
 
+func TestRecoverRotatingKingFromCanonicalHeaderPersistsState(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	info := rkLockInfo{
+		Hash:             common.HexToHash("0x9abc"),
+		UnlockTime:       time.Unix(2000, 0).UTC(),
+		UnlockHeight:     500,
+		ActivationHeight: 300,
+		AddedHeight:      250,
+	}
+	eth := &Ethereum{
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		rkLocks:        make(map[common.Address]rkLockInfo),
+		engine:         randomx.NewFaker(),
+	}
+	header := &types.Header{
+		Number: big.NewInt(250),
+		Extra:  encodeRotatingKingHeaderExtra(address, info),
+	}
+
+	eth.recoverRotatingKingFromCanonicalHeader(header)
+
+	if got := rawdb.ReadRotatingKingAddresses(eth.rotatingKingDb); len(got) != 1 || got[0] != address {
+		t.Fatalf("persisted addresses = %v, want [%s]", got, address.Hex())
+	}
+	locks := rawdb.ReadRotatingKingLocks(eth.rotatingKingDb)
+	if len(locks) != 1 {
+		t.Fatalf("persisted lock count = %d, want 1", len(locks))
+	}
+	if lock := locks[0]; lock.Address != address || lock.UnlockHeight != info.UnlockHeight || lock.ActivationHeight != info.ActivationHeight || lock.AddedHeight != info.AddedHeight {
+		t.Fatalf("persisted lock = %+v, want address %s info %+v", lock, address.Hex(), info)
+	}
+}
+
+func TestRecoverRotatingKingFromCanonicalHeaderSkipsExpired(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	info := rkLockInfo{
+		Hash:             common.HexToHash("0x9abc"),
+		UnlockTime:       time.Unix(2000, 0).UTC(),
+		UnlockHeight:     100,
+		ActivationHeight: 50,
+		AddedHeight:      1,
+	}
+	eth := &Ethereum{
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		rkLocks:        make(map[common.Address]rkLockInfo),
+		engine:         randomx.NewFaker(),
+	}
+	header := &types.Header{
+		Number: big.NewInt(150),
+		Extra:  encodeRotatingKingHeaderExtra(address, info),
+	}
+
+	eth.recoverRotatingKingFromCanonicalHeader(header)
+
+	if got := rawdb.ReadRotatingKingAddresses(eth.rotatingKingDb); len(got) != 0 {
+		t.Fatalf("persisted expired addresses = %v, want none", got)
+	}
+	if locks := rawdb.ReadRotatingKingLocks(eth.rotatingKingDb); len(locks) != 0 {
+		t.Fatalf("persisted expired lock count = %d, want 0", len(locks))
+	}
+}
+
+func TestRecoverRotatingKingFromCanonicalHeaderPrunesExpiredState(t *testing.T) {
+	address := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	eth := &Ethereum{
+		rotatingKingDb: rawdb.NewMemoryDatabase(),
+		kingAddresses:  []common.Address{address},
+		rkLocks: map[common.Address]rkLockInfo{
+			address: {UnlockHeight: 100, ActivationHeight: 50, AddedHeight: 1},
+		},
+		engine: randomx.NewFaker(),
+	}
+	rawdb.WriteRotatingKingAddresses(eth.rotatingKingDb, eth.kingAddresses)
+	eth.persistRotatingKingLocksLocked()
+
+	eth.recoverRotatingKingFromCanonicalHeader(&types.Header{Number: big.NewInt(100)})
+
+	if len(eth.kingAddresses) != 0 {
+		t.Fatalf("active expired addresses = %v, want none", eth.kingAddresses)
+	}
+	if len(eth.rkLocks) != 0 {
+		t.Fatalf("active expired locks = %v, want none", eth.rkLocks)
+	}
+	if got := rawdb.ReadRotatingKingAddresses(eth.rotatingKingDb); len(got) != 0 {
+		t.Fatalf("persisted expired addresses = %v, want none", got)
+	}
+	if locks := rawdb.ReadRotatingKingLocks(eth.rotatingKingDb); len(locks) != 0 {
+		t.Fatalf("persisted expired lock count = %d, want 0", len(locks))
+	}
+}
+
 func TestRotatingKingAtActivatesLockedAddressAtNextRotation(t *testing.T) {
 	active := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	pending := common.HexToAddress("0x0000000000000000000000000000000000000002")

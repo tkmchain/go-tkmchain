@@ -1153,41 +1153,102 @@ func (s *Ethereum) recoverRotatingKingStateFromHeadersLocked() bool {
 		return false
 	}
 	changed := false
-	for number := uint64(0); number <= head.Number.Uint64(); number++ {
+	currentHeight := head.Number.Uint64()
+	for number := uint64(0); number <= currentHeight; number++ {
 		block := s.blockchain.GetBlockByNumber(number)
 		if block == nil {
 			continue
 		}
-		info, ok := decodeRotatingKingHeaderExtra(block.Header().Extra)
-		if !ok || info.Address == (common.Address{}) {
-			continue
-		}
-		if indexOfRotatingKing(s.kingAddresses, info.Address) < 0 {
-			s.kingAddresses = append(s.kingAddresses, info.Address)
+		if s.recoverRotatingKingFromHeaderLocked(block.Header(), currentHeight) {
 			changed = true
 		}
-		if info.Full {
-			lock := rkLockInfo{
-				Hash:             info.Hash,
-				UnlockTime:       info.UnlockTime,
-				UnlockHeight:     info.UnlockHeight,
-				ActivationHeight: info.ActivationHeight,
-				AddedHeight:      info.AddedHeight,
-			}
-			if lock.Hash == (common.Hash{}) {
-				lock.Hash = rotatingKingRegistrationHash(info.Address, lock.UnlockTime, lock.UnlockHeight, lock.ActivationHeight, lock.AddedHeight)
-			}
-			if current, ok := s.rkLocks[info.Address]; !ok || current.Hash == (common.Hash{}) || current.AddedHeight == 0 {
-				s.rkLocks[info.Address] = lock
-				changed = true
-			}
-		}
-		s.addRotatingKingToEngine(info.Address, info.ActivationHeight)
+	}
+	if s.pruneExpiredRotatingKingsLocked(currentHeight) {
+		changed = true
 	}
 	if changed {
 		rawdb.WriteRotatingKingAddresses(s.rotatingKingStore(), s.kingAddresses)
 		s.persistRotatingKingLocksLocked()
 		log.Info("Recovered rotating king state from canonical headers", "addresses", len(s.kingAddresses), "locks", len(s.rkLocks))
+	}
+	return changed
+}
+
+func (s *Ethereum) recoverRotatingKingFromHeaderLocked(header *types.Header, currentHeight uint64) bool {
+	if header == nil {
+		return false
+	}
+	info, ok := decodeRotatingKingHeaderExtra(header.Extra)
+	if !ok || info.Address == (common.Address{}) {
+		return false
+	}
+	if info.Full && info.UnlockHeight != 0 && currentHeight >= info.UnlockHeight {
+		return false
+	}
+	changed := false
+	if indexOfRotatingKing(s.kingAddresses, info.Address) < 0 {
+		s.kingAddresses = append(s.kingAddresses, info.Address)
+		changed = true
+	}
+	if info.Full {
+		lock := rkLockInfo{
+			Hash:             info.Hash,
+			UnlockTime:       info.UnlockTime,
+			UnlockHeight:     info.UnlockHeight,
+			ActivationHeight: info.ActivationHeight,
+			AddedHeight:      info.AddedHeight,
+		}
+		if lock.Hash == (common.Hash{}) {
+			lock.Hash = rotatingKingRegistrationHash(info.Address, lock.UnlockTime, lock.UnlockHeight, lock.ActivationHeight, lock.AddedHeight)
+		}
+		if current, ok := s.rkLocks[info.Address]; !ok || current.Hash == (common.Hash{}) || current.AddedHeight == 0 {
+			s.rkLocks[info.Address] = lock
+			changed = true
+		}
+	}
+	s.addRotatingKingToEngine(info.Address, info.ActivationHeight)
+	return changed
+}
+
+func (s *Ethereum) recoverRotatingKingFromCanonicalHeader(header *types.Header) {
+	if header == nil || header.Number == nil {
+		return
+	}
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	currentHeight := header.Number.Uint64()
+	changed := s.recoverRotatingKingFromHeaderLocked(header, currentHeight)
+	if s.pruneExpiredRotatingKingsLocked(currentHeight) {
+		changed = true
+	}
+	if changed {
+		rawdb.WriteRotatingKingAddresses(s.rotatingKingStore(), s.kingAddresses)
+		s.persistRotatingKingLocksLocked()
+		log.Info("Recovered rotating king from canonical header", "block", currentHeight, "addresses", len(s.kingAddresses), "locks", len(s.rkLocks))
+	}
+}
+
+func (s *Ethereum) pruneExpiredRotatingKingsLocked(currentHeight uint64) bool {
+	changed := false
+	filtered := s.kingAddresses[:0]
+	for _, address := range s.kingAddresses {
+		info, locked := s.rkLocks[address]
+		if locked && info.UnlockHeight != 0 && currentHeight >= info.UnlockHeight {
+			delete(s.rkLocks, address)
+			changed = true
+			continue
+		}
+		filtered = append(filtered, address)
+	}
+	if len(filtered) != len(s.kingAddresses) {
+		changed = true
+	}
+	s.kingAddresses = filtered
+	for address, info := range s.rkLocks {
+		if info.UnlockHeight != 0 && currentHeight >= info.UnlockHeight {
+			delete(s.rkLocks, address)
+			changed = true
+		}
 	}
 	return changed
 }
@@ -1198,14 +1259,9 @@ func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 		return s.removeUnderfundedRotatingKingsLocked()
 	}
 	currentHeight := head.Number.Uint64()
-	changed := false
-	for address, info := range s.rkLocks {
-		if info.UnlockHeight != 0 && currentHeight >= info.UnlockHeight {
-			delete(s.rkLocks, address)
-			changed = true
-		}
-	}
+	changed := s.pruneExpiredRotatingKingsLocked(currentHeight)
 	if changed {
+		rawdb.WriteRotatingKingAddresses(s.rotatingKingStore(), s.kingAddresses)
 		s.persistRotatingKingLocksLocked()
 	}
 	if s.removeUnderfundedRotatingKingsLocked() {
@@ -1512,6 +1568,7 @@ func (s *Ethereum) updateFilterMapsHeads() {
 	for {
 		select {
 		case ev := <-headEventCh:
+			s.recoverRotatingKingFromCanonicalHeader(ev.Header)
 			setHead(ev.Header)
 		case blockProc := <-blockProcCh:
 			s.filterMaps.SetBlockProcessing(blockProc)
