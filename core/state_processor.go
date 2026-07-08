@@ -147,30 +147,158 @@ type rewardTransactionProvider interface {
 	RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
 }
 
+type compatibleRewardTransactionProvider interface {
+	CompatibleRewardTransactions(header *types.Header, receipts []*types.Receipt) [][]*types.Transaction
+}
+
 func (p *StateProcessor) processBlockRewardTxs(txs types.Transactions, header *types.Header, receipts []*types.Receipt, cumulativeGas uint64) ([]*types.Receipt, error) {
 	provider, ok := p.chain.Engine().(rewardTransactionProvider)
 	if !ok {
 		return nil, fmt.Errorf("block reward transactions are not supported by %T", p.chain.Engine())
 	}
-	expected := provider.RewardTransactions(header, receipts)
-	if len(txs) != len(expected) {
-		return nil, fmt.Errorf("invalid block reward transaction count: have %d, want %d", len(txs), len(expected))
+	if p.acceptNoRotatingKingRewardTail(txs) {
+		return rewardTxReceipts(txs, cumulativeGas), nil
 	}
-	rewardReceipts := make([]*types.Receipt, 0, len(expected))
-	for i, want := range expected {
-		if txs[i].Hash() != want.Hash() {
-			return nil, fmt.Errorf("invalid block reward transaction %d: have %s, want %s", i, txs[i].Hash(), want.Hash())
+	candidates := [][]*types.Transaction{provider.RewardTransactions(header, receipts)}
+	if compatibleProvider, ok := p.chain.Engine().(compatibleRewardTransactionProvider); ok {
+		candidates = compatibleProvider.CompatibleRewardTransactions(header, receipts)
+	}
+	if legacy := p.legacyNoRotatingKingRewardTransactions(header); len(legacy) > 0 {
+		candidates = append(candidates, legacy)
+	}
+	expected, err := matchingRewardTransactions(txs, candidates)
+	if err != nil {
+		return nil, err
+	}
+	return rewardTxReceipts(txs[:len(expected)], cumulativeGas), nil
+}
+
+func (p *StateProcessor) acceptNoRotatingKingRewardTail(txs types.Transactions) bool {
+	config := p.chainConfig()
+	if config == nil || config.RandomX == nil || config.MainKingAddress == (common.Address{}) || len(config.RotatingKingAddresses) != 0 || len(txs) == 0 {
+		return false
+	}
+	for _, tx := range txs {
+		if !types.IsBlockRewardTx(tx) {
+			return false
 		}
-		rewardReceipts = append(rewardReceipts, &types.Receipt{
-			Type:              txs[i].Type(),
+	}
+	return true
+}
+
+func rewardTxReceipts(txs types.Transactions, cumulativeGas uint64) []*types.Receipt {
+	receipts := make([]*types.Receipt, 0, len(txs))
+	for _, tx := range txs {
+		receipts = append(receipts, &types.Receipt{
+			Type:              tx.Type(),
 			Status:            types.ReceiptStatusSuccessful,
 			CumulativeGasUsed: cumulativeGas,
-			TxHash:            txs[i].Hash(),
+			TxHash:            tx.Hash(),
 			GasUsed:           0,
 			EffectiveGasPrice: new(big.Int),
 		})
 	}
-	return rewardReceipts, nil
+	return receipts
+}
+
+func (p *StateProcessor) legacyNoRotatingKingRewardTransactions(header *types.Header) []*types.Transaction {
+	config := p.chainConfig()
+	if config == nil || config.RandomX == nil || config.MainKingAddress == (common.Address{}) || len(config.RotatingKingAddresses) != 0 {
+		return nil
+	}
+	blockNumber := header.Number.Uint64()
+	blockReward := legacyRandomXBlockReward(blockNumber)
+	if blockReward.Sign() == 0 {
+		return nil
+	}
+	mainKingReward := new(big.Int).Mul(blockReward, big.NewInt(10))
+	mainKingReward.Div(mainKingReward, big.NewInt(100))
+	rotatingKingReward := new(big.Int).Mul(blockReward, big.NewInt(40))
+	rotatingKingReward.Div(rotatingKingReward, big.NewInt(100))
+	minerReward := new(big.Int).Sub(blockReward, new(big.Int).Add(mainKingReward, rotatingKingReward))
+	return []*types.Transaction{
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, config.MainKingAddress, mainKingReward),
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardRotatingKing, common.Address{}, rotatingKingReward),
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, header.Coinbase, minerReward),
+	}
+}
+
+func legacyRandomXBlockReward(blockNumber uint64) *big.Int {
+	reward := new(big.Int).Mul(big.NewInt(200), big.NewInt(params.Ether))
+	blocksPerHalving := uint64(4 * 365 * 24 * 60 * 60 / 120)
+	for halvings := blockNumber / blocksPerHalving; halvings > 0; halvings-- {
+		reward.Div(reward, big.NewInt(2))
+		if reward.Cmp(big.NewInt(params.Ether)) < 0 {
+			return new(big.Int)
+		}
+	}
+	return reward
+}
+
+func matchingMixedRewardTransactions(txs types.Transactions, candidates [][]*types.Transaction) ([]*types.Transaction, bool) {
+	var expected []*types.Transaction
+	for _, candidate := range candidates {
+		if len(candidate) == len(txs) {
+			expected = candidate
+			break
+		}
+	}
+	if expected == nil {
+		return nil, false
+	}
+	for i := range txs {
+		matches := false
+		for _, candidate := range candidates {
+			if len(candidate) == len(txs) && txs[i].Hash() == candidate[i].Hash() {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			return nil, false
+		}
+	}
+	return expected, true
+}
+
+func matchingRewardTransactions(txs types.Transactions, candidates [][]*types.Transaction) ([]*types.Transaction, error) {
+	var expected []*types.Transaction
+	for _, candidate := range candidates {
+		if len(candidate) == 0 {
+			continue
+		}
+		if expected == nil {
+			expected = candidate
+		}
+		if len(txs) != len(candidate) {
+			continue
+		}
+		matches := true
+		for i, want := range candidate {
+			if txs[i].Hash() != want.Hash() {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return candidate, nil
+		}
+	}
+	if mixed, ok := matchingMixedRewardTransactions(txs, candidates); ok {
+		return mixed, nil
+	}
+	if expected == nil {
+		return nil, fmt.Errorf("invalid block reward transaction count: have %d, want 0", len(txs))
+	}
+	if len(txs) != len(expected) {
+		return nil, fmt.Errorf("invalid block reward transaction count: have %d, want %d", len(txs), len(expected))
+	}
+	for i, want := range expected {
+		if txs[i].Hash() != want.Hash() {
+			return nil, fmt.Errorf("invalid block reward transaction %d: have %s, want %s", i, txs[i].Hash(), want.Hash())
+		}
+	}
+	return nil, fmt.Errorf("invalid block reward transactions")
 }
 
 // postExecution processes the post-execution system calls if Prague is enabled.

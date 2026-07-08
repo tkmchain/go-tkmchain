@@ -74,6 +74,7 @@ func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 
 func TestFinalizeAndAssembleKeepsUserTransactionsAndMatchesFinalize(t *testing.T) {
 	rx := NewFaker()
+	rx.mainKing = common.HexToAddress("0x0000000000000000000000000000000000000001")
 	miner := common.HexToAddress("0x0000000000000000000000000000000000000003")
 	userTx := types.NewTransaction(0, common.HexToAddress("0x0000000000000000000000000000000000000004"), big.NewInt(1), 21000, big.NewInt(2), nil)
 	receipts := []*types.Receipt{{
