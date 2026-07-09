@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"bytes"
 	"errors"
 	"math/big"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/tvm"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
@@ -573,6 +575,17 @@ func (evm *EVM) create(caller common.Address, code []byte, gas GasBudget, value 
 	contract.SetCallCode(common.Hash{}, code)
 	contract.IsDeployment = true
 
+	if isTVMDeploymentCode(code) {
+		err = evm.initTVMContract(contract, address, code)
+		if err != nil {
+			evm.StateDB.RevertToSnapshot(snapshot)
+			if err != ErrCodeStoreOutOfGas {
+				contract.UseGas(GasCosts{RegularGas: contract.Gas.RegularGas}, evm.Config.Tracer, tracing.GasChangeCallFailedExecution)
+			}
+		}
+		return code, address, contract.Gas, err
+	}
+
 	ret, err = evm.initNewContract(contract, address)
 	if err != nil && (evm.chainRules.IsHomestead || err != ErrCodeStoreOutOfGas) {
 		evm.StateDB.RevertToSnapshot(snapshot)
@@ -581,6 +594,30 @@ func (evm *EVM) create(caller common.Address, code []byte, gas GasBudget, value 
 		}
 	}
 	return ret, address, contract.Gas, err
+}
+
+func isTVMDeploymentCode(code []byte) bool {
+	return len(code) >= len(tvm.Magic) && bytes.Equal(code[:len(tvm.Magic)], tvm.Magic[:])
+}
+
+func (evm *EVM) initTVMContract(contract *Contract, address common.Address, code []byte) error {
+	if _, err := tvm.UnmarshalBinary(code); err != nil {
+		return err
+	}
+	if !evm.chainRules.IsEIP4762 {
+		createDataGas := uint64(len(code)) * params.CreateDataGas
+		if !contract.UseGas(GasCosts{RegularGas: createDataGas}, evm.Config.Tracer, tracing.GasChangeCallCodeStorage) {
+			return ErrCodeStoreOutOfGas
+		}
+	} else {
+		consumed, wanted := evm.AccessEvents.CodeChunksRangeGas(address, 0, uint64(len(code)), uint64(len(code)), true, contract.Gas.RegularGas)
+		contract.UseGas(GasCosts{RegularGas: consumed}, evm.Config.Tracer, tracing.GasChangeWitnessCodeChunk)
+		if len(code) > 0 && consumed < wanted {
+			return ErrCodeStoreOutOfGas
+		}
+	}
+	evm.StateDB.SetCode(address, code, tracing.CodeChangeContractCreation)
+	return nil
 }
 
 // initNewContract runs a new contract's creation code, performs checks on the
