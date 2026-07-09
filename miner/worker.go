@@ -681,8 +681,16 @@ func (w *worker) persistSealedBlock(block *types.Block) {
 		logs = append(logs, receipt.Logs...)
 	}
 	// Commit block and state to database.
+	if block.NumberU64() > 0 && !w.chain.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
+		log.Warn("Dropping mined block without parent state", "number", block.Number(), "hash", hash, "parent", block.ParentHash())
+		return
+	}
 	_, err := w.chain.InsertChain(types.Blocks{block})
 	if err != nil {
+		if errors.Is(err, consensus.ErrPrunedAncestor) {
+			log.Warn("Dropping mined block with pruned parent state", "number", block.Number(), "hash", hash, "parent", block.ParentHash())
+			return
+		}
 		log.Error("Failed writing block to chain", "err", err)
 		return
 	}
@@ -981,6 +989,10 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	parentBlock := w.chain.GetBlock(parent.Hash(), parent.Number.Uint64())
 	if parentBlock == nil {
 		log.Error("Failed to retrieve parent block", "number", parent.Number, "hash", parent.Hash())
+		return
+	}
+	if !w.chain.HasBlockAndState(parentBlock.Hash(), parentBlock.NumberU64()) {
+		log.Warn("Skipping mining work without parent state", "number", parentBlock.Number(), "hash", parentBlock.Hash())
 		return
 	}
 	err := w.makeCurrent(parentBlock, header)
