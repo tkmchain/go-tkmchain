@@ -579,7 +579,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas GasBudget, value 
 		err = evm.initTVMContract(contract, address, code)
 		if err != nil {
 			evm.StateDB.RevertToSnapshot(snapshot)
-			if err != ErrCodeStoreOutOfGas {
+			if err != ErrExecutionReverted {
 				contract.UseGas(GasCosts{RegularGas: contract.Gas.RegularGas}, evm.Config.Tracer, tracing.GasChangeCallFailedExecution)
 			}
 		}
@@ -597,7 +597,11 @@ func (evm *EVM) create(caller common.Address, code []byte, gas GasBudget, value 
 }
 
 func isTVMDeploymentCode(code []byte) bool {
-	return len(code) >= len(tvm.Magic) && bytes.Equal(code[:len(tvm.Magic)], tvm.Magic[:])
+	if len(code) < len(tvm.Magic) || !bytes.Equal(code[:len(tvm.Magic)], tvm.Magic[:]) {
+		return false
+	}
+	_, err := tvm.UnmarshalBinary(code)
+	return err == nil
 }
 
 func (evm *EVM) initTVMContract(contract *Contract, address common.Address, code []byte) error {
