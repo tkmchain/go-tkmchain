@@ -548,7 +548,7 @@ func (s *Ethereum) APIs() []rpc.API {
 		},
 		{
 			Namespace: "tvm",
-			Service:   NewTVMAPI(),
+			Service:   NewTVMAPI(s.APIBackend),
 		},
 		{
 			Namespace: "tkm",
