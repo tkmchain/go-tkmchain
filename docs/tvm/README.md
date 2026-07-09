@@ -99,3 +99,201 @@ The RPC input accepts compiled module bytes as `code`, optional ABI/compiler met
 The initial TVM runtime is exposed through the TVM precompile at `0x00000000000000000000000000000000000000f2`. The precompile accepts a validated TVM envelope, charges deterministic gas based on input size, decodes the envelope, and executes the bounded TVM runtime through a restricted host environment.
 
 The host environment currently exposes storage load and storage store operations scoped to the TVM precompile account. Static execution rejects storage writes, preserving EVM `STATICCALL` semantics. The first runtime target supports deterministic conformance opcodes for returning call input, returning the code hash, reading storage, and writing storage; future C++ tooling should compile safe contract templates to this bounded target rather than executing arbitrary native binaries.
+
+## How to create a TVM smart contract
+
+A TVM smart contract is created with the same account model as an EVM contract: the deployment transaction has no `to` address, consumes gas, increments the sender nonce, and returns a `contractAddress` in the transaction receipt. The difference is the deployment bytecode. For TVM, the transaction data must be a validated TVM envelope, not EVM initcode.
+
+### What is needed
+
+A deployer needs the following inputs before sending the deployment transaction:
+
+| Input | Required | Description |
+| --- | --- | --- |
+| `code` | yes | Compiled deterministic TVM module bytes. In the current implementation this is the bounded TVM instruction/module payload accepted by `core/tvm`. Future C++ tooling should emit these module bytes. |
+| `metadata` | no | ABI, compiler settings, source metadata, or verification information. Metadata is stored inside the envelope and committed by `metadataHash`. |
+| `memoryPages` | yes | Maximum TVM linear memory pages. Must be in `[1, 256]`. |
+| `stackSlots` | yes | Maximum TVM stack slots. Must be in `[1, 1024]`. |
+| `callDepth` | yes | Maximum nested TVM call depth. Must be in `[1, 1024]`. |
+| funded deployer account | yes | The account sending the creation transaction must have enough TKM/ANTD to pay gas and any value sent with the contract. |
+| enabled RPC namespaces | yes | Use `eth` for sending/checking transactions and `tvm` for building or viewing TVM envelopes. Start HTTP with `--http.api eth,net,web3,tvm` or include `tvm` in any custom API list. |
+
+The TVM envelope contains:
+
+- `magic`: `TVM\0`, used by contract creation to detect a TVM deployment;
+- `version`: currently `1`;
+- `target`: currently `cpp-evm-v1`;
+- `codeHash`: Keccak-256 hash of the module bytes;
+- `metadataHash`: Keccak-256 hash of metadata bytes;
+- resource limits;
+- module bytes and metadata bytes.
+
+### Step 1: build the deployment envelope
+
+Use `tvm_buildDeployment` to validate the module and wrap it in a deployable envelope. The `code` and `metadata` fields are hex bytes.
+
+```sh
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0",
+    "method":"tvm_buildDeployment",
+    "params":[{
+      "code":"0x01",
+      "metadata":"0x",
+      "memoryPages":1,
+      "stackSlots":16,
+      "callDepth":4
+    }],
+    "id":1
+  }' | jq '.'
+```
+
+The response includes `deploymentCode`. This is the exact byte string that must be sent as the contract creation transaction `data`/`input`.
+
+Example response shape:
+
+```json
+{
+  "version": 1,
+  "target": "cpp-evm-v1",
+  "codeHash": "0x...",
+  "metadataHash": "0x...",
+  "deploymentCode": "0x54564d00..."
+}
+```
+
+The `deploymentCode` starts with `0x54564d00`, which is `TVM\0` in hex. If the deployment data does not start with this magic prefix, normal EVM contract creation rules apply instead.
+
+### Step 2: send a contract creation transaction
+
+Send an Ethereum-style contract creation transaction with:
+
+- `from`: deployer address;
+- no `to` field;
+- `data`: the `deploymentCode` returned by `tvm_buildDeployment`;
+- enough `gas` to pay base creation cost and code storage cost;
+- optional `value` if the contract account should be funded at creation.
+
+Example with an unlocked local account:
+
+```sh
+DEPLOYMENT_CODE="0x54564d00..."
+FROM="0xYourDeployerAddress"
+
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"eth_sendTransaction\",
+    \"params\":[{
+      \"from\":\"$FROM\",
+      \"data\":\"$DEPLOYMENT_CODE\",
+      \"gas\":\"0x100000\"
+    }],
+    \"id\":1
+  }" | jq '.'
+```
+
+For production deployments, sign the transaction offline and submit it with `eth_sendRawTransaction`.
+
+### Step 3: confirm the receipt
+
+After the transaction is mined, check the receipt:
+
+```sh
+TX="0xYourDeploymentTransactionHash"
+
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"eth_getTransactionReceipt\",
+    \"params\":[\"$TX\"],
+    \"id\":1
+  }" | jq '.'
+```
+
+A successful deployment has:
+
+- `status: "0x1"`;
+- `contractAddress` set to the new TVM contract account;
+- gas used for transaction execution and code storage.
+
+### Step 4: verify that code was stored
+
+The chain stores the full TVM envelope as the account code. `eth_getCode` therefore returns the stored envelope bytes:
+
+```sh
+CONTRACT="0xYourContractAddress"
+
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"eth_getCode\",
+    \"params\":[\"$CONTRACT\",\"latest\"],
+    \"id\":1
+  }" | jq -r '.result'
+```
+
+The result should be non-empty and should begin with `0x54564d00`.
+
+For a decoded TVM-specific view, use `tvm_getCode`:
+
+```sh
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"tvm_getCode\",
+    \"params\":[\"$CONTRACT\",\"latest\"],
+    \"id\":1
+  }" | jq '.'
+```
+
+`tvm_getCode` returns the decoded module bytes as `code`, metadata as `metadata`, the raw stored envelope as `envelope`, and the hashes/limits declared at deployment.
+
+If the caller only needs the module bytes, use `tvm_getWasm`:
+
+```sh
+curl -s -X POST http://localhost:8545 \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"jsonrpc\":\"2.0\",
+    \"method\":\"tvm_getWasm\",
+    \"params\":[\"$CONTRACT\",\"latest\"],
+    \"id\":1
+  }" | jq '.'
+```
+
+### Contract creation behavior inside the VM
+
+During contract creation, the VM checks the creation data before running EVM initcode:
+
+1. If the data starts with `TVM\0`, the VM treats it as a TVM deployment envelope.
+2. The envelope is decoded and validated with `tvm.UnmarshalBinary`.
+3. The VM charges normal contract code storage gas for the full envelope size.
+4. The original envelope is stored with `StateDB.SetCode(contractAddress, envelope)`.
+5. The transaction receipt reports the created `contractAddress` just like an EVM contract deployment.
+
+If the data does not start with `TVM\0`, creation continues through the normal EVM initcode path. This keeps existing EVM contract deployment behavior unchanged.
+
+### Common errors
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `tvm_getCode` returns `method does not exist` | The node was started without the `tvm` RPC namespace, or the running binary is old. | Rebuild/restart and include `tvm` in `--http.api`, for example `--http.api eth,net,web3,tvm`. |
+| Receipt has `status: "0x1"` but `eth_getCode` returns `0x` | The node is running a binary without TVM envelope storage support, or the contract was deployed before the fix. | Rebuild/restart and redeploy. Existing empty-code contracts are not repaired automatically. |
+| Deployment fails with invalid target/version/hash | The `deploymentCode` is not a valid TVM envelope or was modified after `tvm_buildDeployment`. | Rebuild the envelope with `tvm_buildDeployment` and send the returned `deploymentCode` unchanged. |
+| Deployment runs as EVM instead of TVM | The data does not start with the TVM magic prefix `0x54564d00`. | Use `deploymentCode` from `tvm_buildDeployment`, not raw module bytes. |
+| Out of gas during deployment | Gas limit does not cover contract creation and envelope code storage. | Increase the transaction gas limit. |
+
+### Minimal deployment checklist
+
+1. Compile or prepare deterministic TVM module bytes.
+2. Call `tvm_validateDeployment` or `tvm_buildDeployment` with safe limits.
+3. Send a contract creation transaction with `data` equal to `deploymentCode` and no `to` field.
+4. Wait for a receipt with `status: "0x1"` and `contractAddress`.
+5. Confirm `eth_getCode(contractAddress, "latest")` returns bytes beginning with `0x54564d00`.
+6. Use `tvm_getCode` or `tvm_getWasm` to inspect the decoded TVM contract code.
