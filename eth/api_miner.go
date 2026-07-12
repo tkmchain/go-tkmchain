@@ -89,18 +89,6 @@ func (api *MinerAPI) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest
 		return false
 	}
 
-	work, err := api.e.Miner().GetWork()
-	if err != nil {
-		log.Error("No current work available for submission", "err", err)
-		return false
-	}
-	if hash != common.HexToHash(work[0]) {
-		log.Warn("Header hash mismatch",
-			"expected", work[0][:16],
-			"got", hash.Hex()[:16])
-		return false
-	}
-
 	return api.e.Miner().SubmitWork(nonce, hash, digest)
 }
 

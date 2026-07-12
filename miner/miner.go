@@ -271,7 +271,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		"blockNumber", sealedBlock.NumberU64(),
 		"mixDigest", digest.Hex()[:16])
 
-	if !miner.worker.persistSealedBlock(sealedBlock) {
+	if !miner.worker.persistSealedTask(hash, task, sealedBlock) {
 		log.Warn("Valid proof-of-work did not import block", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
 		return false
 	}

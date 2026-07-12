@@ -643,8 +643,6 @@ func (w *worker) drainSealedBlocks() {
 }
 
 func (w *worker) persistSealedBlock(block *types.Block) bool {
-	w.persistMu.Lock()
-	defer w.persistMu.Unlock()
 
 	// Short circuit when receiving empty result.
 	if block == nil {
@@ -654,17 +652,26 @@ func (w *worker) persistSealedBlock(block *types.Block) bool {
 	if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
 		return false
 	}
-	var (
-		sealhash = w.engine.SealHash(block.Header())
-		hash     = block.Hash()
-	)
+	sealhash := w.engine.SealHash(block.Header())
 	w.pendingMu.RLock()
 	task, exist := w.pendingTasks[sealhash]
 	w.pendingMu.RUnlock()
 	if !exist {
-		log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", hash)
+		log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", block.Hash())
 		return false
 	}
+	return w.persistSealedTask(sealhash, task, block)
+}
+
+func (w *worker) persistSealedTask(sealhash common.Hash, task *task, block *types.Block) bool {
+	w.persistMu.Lock()
+	defer w.persistMu.Unlock()
+
+	if task == nil || block == nil {
+		return false
+	}
+	hash := block.Hash()
+
 	// Different block could share same sealhash, deep copy here to prevent write-write conflict.
 	var (
 		receipts = make([]*types.Receipt, len(task.receipts))
