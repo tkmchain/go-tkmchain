@@ -642,17 +642,17 @@ func (w *worker) drainSealedBlocks() {
 	}
 }
 
-func (w *worker) persistSealedBlock(block *types.Block) {
+func (w *worker) persistSealedBlock(block *types.Block) bool {
 	w.persistMu.Lock()
 	defer w.persistMu.Unlock()
 
 	// Short circuit when receiving empty result.
 	if block == nil {
-		return
+		return false
 	}
 	// Short circuit when receiving duplicate result caused by resubmitting.
 	if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
-		return
+		return false
 	}
 	var (
 		sealhash = w.engine.SealHash(block.Header())
@@ -663,7 +663,7 @@ func (w *worker) persistSealedBlock(block *types.Block) {
 	w.pendingMu.RUnlock()
 	if !exist {
 		log.Debug("Block found but pending task already cleaned (harmless for RandomX)", "number", block.Number(), "sealhash", sealhash, "hash", hash)
-		return
+		return false
 	}
 	// Different block could share same sealhash, deep copy here to prevent write-write conflict.
 	var (
@@ -683,16 +683,16 @@ func (w *worker) persistSealedBlock(block *types.Block) {
 	// Commit block and state to database.
 	if block.NumberU64() > 0 && !w.chain.HasBlockAndState(block.ParentHash(), block.NumberU64()-1) {
 		log.Warn("Dropping mined block without parent state", "number", block.Number(), "hash", hash, "parent", block.ParentHash())
-		return
+		return false
 	}
 	_, err := w.chain.InsertChain(types.Blocks{block})
 	if err != nil {
 		if errors.Is(err, consensus.ErrPrunedAncestor) {
 			log.Warn("Dropping mined block with pruned parent state", "number", block.Number(), "hash", hash, "parent", block.ParentHash())
-			return
+			return false
 		}
 		log.Error("Failed writing block to chain", "err", err)
-		return
+		return false
 	}
 	log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 		"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
@@ -712,7 +712,11 @@ func (w *worker) persistSealedBlock(block *types.Block) {
 	_ = logs
 
 	// Insert the block into the set of pending ones to resultLoop for confirmations
+	w.pendingMu.Lock()
+	delete(w.pendingTasks, sealhash)
+	w.pendingMu.Unlock()
 	w.unconfirmed.Insert(block.NumberU64(), block.Hash())
+	return true
 }
 
 // makeCurrent creates a new environment for the current cycle.

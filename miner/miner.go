@@ -266,19 +266,18 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	}
 
 	sealedBlock := task.block.WithSeal(newHeader)
-	log.Info("Valid proof-of-work submitted, submitting block to result channel",
+	log.Info("Valid proof-of-work submitted, importing external block",
 		"nonce", newHeader.Nonce,
 		"blockNumber", sealedBlock.NumberU64(),
 		"mixDigest", digest.Hex()[:16])
 
-	select {
-	case miner.worker.resultCh <- sealedBlock:
-		log.Info("Block submitted to result channel successfully")
-		return true
-	case <-time.After(5 * time.Second):
-		log.Warn("Timeout submitting block to result channel")
+	if !miner.worker.persistSealedBlock(sealedBlock) {
+		log.Warn("Valid proof-of-work did not import block", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
 		return false
 	}
+	log.Info("External proof-of-work imported block successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
+	return true
+
 }
 
 func prepareSealedHeader(header *types.Header, block *types.Block) {
