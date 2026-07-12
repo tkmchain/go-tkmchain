@@ -43,9 +43,13 @@ type Checkpoints struct {
 // enforced during block insertion.
 var CheckpointValidationEnabled = true
 
-var mandatoryRandomXCheckpoints = map[uint64]common.Hash{
-	2370: common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17"),
-}
+var (
+	mandatoryRandomXCheckpoints = map[uint64]common.Hash{
+		2370: common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17"),
+	}
+	mandatoryEgyptCheckpoints  = map[uint64]common.Hash{}
+	activeMandatoryCheckpoints = mandatoryRandomXCheckpoints
+)
 
 // RandomXCheckpoints holds the globally accessible hardcoded RandomX checkpoints.
 var RandomXCheckpoints = initRandomXCheckpoints()
@@ -56,7 +60,7 @@ func initRandomXCheckpoints() *Checkpoints {
 		Points: make(map[uint64]common.Hash),
 	}
 	// Real checkpoint: block 0 (genesis) must match the actual genesis hash.
-	cp.Points[0] = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
+	cp.Points[0] = MainnetGenesisHash
 	for number, hash := range mandatoryRandomXCheckpoints {
 		cp.Points[number] = hash
 	}
@@ -69,6 +73,27 @@ func initRandomXCheckpoints() *Checkpoints {
 	return cp
 }
 
+// initEgyptCheckpoints initialises the checkpoints for the Egypt RandomX testnet.
+func initEgyptCheckpoints() *Checkpoints {
+	return &Checkpoints{
+		Points: map[uint64]common.Hash{
+			0: EgyptGenesisHash,
+		},
+	}
+}
+
+// SetActiveCheckpointGenesis selects the hardcoded checkpoints for a genesis hash.
+func SetActiveCheckpointGenesis(genesis common.Hash) {
+	switch genesis {
+	case EgyptGenesisHash:
+		RandomXCheckpoints = initEgyptCheckpoints()
+		activeMandatoryCheckpoints = mandatoryEgyptCheckpoints
+	default:
+		RandomXCheckpoints = initRandomXCheckpoints()
+		activeMandatoryCheckpoints = mandatoryRandomXCheckpoints
+	}
+}
+
 // SetCheckpointValidation enables or disables hardcoded checkpoint validation.
 func SetCheckpointValidation(enabled bool) {
 	CheckpointValidationEnabled = enabled
@@ -76,7 +101,7 @@ func SetCheckpointValidation(enabled bool) {
 
 // HasMandatoryCheckpoints reports whether any checkpoint is always enforced.
 func HasMandatoryCheckpoints() bool {
-	return len(mandatoryRandomXCheckpoints) > 0
+	return len(activeMandatoryCheckpoints) > 0
 }
 
 // ShouldValidateCheckpoint reports whether a checkpoint at number must be enforced.
@@ -84,7 +109,7 @@ func ShouldValidateCheckpoint(number uint64) bool {
 	if CheckpointValidationEnabled {
 		return true
 	}
-	_, ok := mandatoryRandomXCheckpoints[number]
+	_, ok := activeMandatoryCheckpoints[number]
 	return ok
 }
 

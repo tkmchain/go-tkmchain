@@ -17,7 +17,31 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+func TestEgyptCheckpointSetUsesEgyptGenesis(t *testing.T) {
+	SetActiveCheckpointGenesis(EgyptGenesisHash)
+	defer SetActiveCheckpointGenesis(MainnetGenesisHash)
+
+	got, ok := GetCheckpoint(0)
+	if !ok {
+		t.Fatal("missing Egypt genesis checkpoint")
+	}
+	if got != EgyptGenesisHash {
+		t.Fatalf("Egypt genesis checkpoint = %s, want %s", got, EgyptGenesisHash)
+	}
+	if _, ok := GetCheckpoint(2370); ok {
+		t.Fatal("Egypt checkpoint set inherited mainnet checkpoint 2370")
+	}
+	old := CheckpointValidationEnabled
+	defer SetCheckpointValidation(old)
+	SetCheckpointValidation(false)
+	if ShouldValidateCheckpoint(2370) {
+		t.Fatal("Egypt checkpoint set treats mainnet checkpoint 2370 as mandatory")
+	}
+}
+
 func TestMandatoryRandomXCheckpoint2370(t *testing.T) {
+	SetActiveCheckpointGenesis(MainnetGenesisHash)
+
 	want := common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17")
 	got, ok := GetCheckpoint(2370)
 	if !ok {

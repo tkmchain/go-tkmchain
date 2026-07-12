@@ -1980,6 +1980,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.NetworkId = 1
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
+		params.SetActiveCheckpointGenesis(params.MainnetGenesisHash)
 	case ctx.Bool(HoleskyFlag.Name):
 		cfg.NetworkId = 17000
 		cfg.Genesis = core.DefaultHoleskyGenesisBlock()
@@ -1996,6 +1997,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.NetworkId = params.EgyptChainConfig.ChainID.Uint64()
 		cfg.Genesis = core.DefaultEgyptGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.EgyptGenesisHash)
+		params.SetActiveCheckpointGenesis(params.EgyptGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
 		cfg.NetworkId = 1337
 		cfg.SyncMode = ethconfig.FullSync
