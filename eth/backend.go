@@ -720,12 +720,20 @@ func (s *Ethereum) waitForMiningReady() {
 	}
 }
 
+func (s *Ethereum) isEgyptNetwork() bool {
+	return s != nil && s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().ChainID != nil && s.blockchain.Config().ChainID.Cmp(params.EgyptChainConfig.ChainID) == 0
+}
+
 func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 	localHead := s.blockchain.CurrentBlock()
 	if localHead == nil {
 		return false, "no local head", 0, 0
 	}
 	localHeight := localHead.Number.Uint64()
+
+	if s.isEgyptNetwork() {
+		return true, "", localHeight, localHeight
+	}
 
 	if s.handler == nil || s.handler.peers.len() == 0 {
 		return false, "waiting for peers", localHeight, localHeight
