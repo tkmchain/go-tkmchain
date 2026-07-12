@@ -213,12 +213,12 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	task, exist := miner.worker.pendingTasks[hash]
 	miner.worker.pendingMu.RUnlock()
 	if !exist {
-		log.Warn("No pending work matching submitted header hash", "headerHash", hash.Hex())
+		log.Debug("Ignoring stale submitted work without pending task", "headerHash", hash.Hex(), "head", miner.eth.BlockChain().CurrentBlock().Number)
 		return false
 	}
 	currentBlock := miner.worker.pendingBlock()
 	if currentBlock == nil || currentBlock.Hash() != task.block.Hash() {
-		log.Warn("Submitted work is stale", "headerHash", hash.Hex())
+		log.Debug("Ignoring stale submitted work", "headerHash", hash.Hex(), "head", miner.eth.BlockChain().CurrentBlock().Number)
 		return false
 	}
 
