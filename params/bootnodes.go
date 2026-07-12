@@ -22,9 +22,9 @@ import "github.com/ethereum/go-ethereum/common"
 // the main RandomX network.
 var MainnetBootnodes = []string{
 	// Ethereum Foundation Go Bootnodes
-        "enode://cc01b3e649c0d1e6a8fc3a8037552237d2f778d29efb798b66537a6112e2343ecbf0ae95441b73d4590f1286aa32d30b4dfa2755e7692618e6053595c4975f57@187.124.217.73:3000",
-        "enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@129.151.164.202:3000",
-        "enode://8a19c90481b9790f22ab905cb78b336ae49c6c9e9db6998b9983b8f6f2cb77e581f213f7f9949802963e6e4e47fc5a1dc12bbeeacd8cd66edcae1711ea932302@129.151.164.223:3000",
+	"enode://cc01b3e649c0d1e6a8fc3a8037552237d2f778d29efb798b66537a6112e2343ecbf0ae95441b73d4590f1286aa32d30b4dfa2755e7692618e6053595c4975f57@187.124.217.73:3000",
+	"enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@129.151.164.202:3000",
+	"enode://8a19c90481b9790f22ab905cb78b336ae49c6c9e9db6998b9983b8f6f2cb77e581f213f7f9949802963e6e4e47fc5a1dc12bbeeacd8cd66edcae1711ea932302@129.151.164.223:3000",
 }
 
 // TestnetBootnodes are bootstrap nodes for RandomX test networks.
@@ -43,12 +43,15 @@ var (
 	// HoodiBootnodes are the enode URLs of the P2P bootstrap nodes running on
 	// the Hoodi test network.
 	HoodiBootnodes = TestnetBootnodes
+	// EgyptBootnodes are the enode URLs of the P2P bootstrap nodes running on
+	// the Egypt RandomX test network.
+	EgyptBootnodes = TestnetBootnodes
 )
 
 var V5Bootnodes = []string{
-        "enr:-J24QDURbVyt4rhioV0Fc4Fhs2n8ihxCSsZ0G39VUb6qOTvqP-3rCAdzAlvMwc5s2LG_-RQW5XjHWUFyEFtOAwTCQ_CGAZ7gNIyeg2V0aMfGhBMEcTCAgmlkgnY0gmlwhLt82UmJc2VjcDI1NmsxoQPMAbPmScDR5qj8OoA3VSI30vd40p77eYtmU3phEuI0PoN0Y3CCC7iDdWRwggu4",
+	"enr:-J24QDURbVyt4rhioV0Fc4Fhs2n8ihxCSsZ0G39VUb6qOTvqP-3rCAdzAlvMwc5s2LG_-RQW5XjHWUFyEFtOAwTCQ_CGAZ7gNIyeg2V0aMfGhBMEcTCAgmlkgnY0gmlwhLt82UmJc2VjcDI1NmsxoQPMAbPmScDR5qj8OoA3VSI30vd40p77eYtmU3phEuI0PoN0Y3CCC7iDdWRwggu4",
 	"enr:-J24QBDVl53NvxMJidI-ePeT8Xcv2cAchAr4sWnQYJSVMyKmD_iRaY5lPH5aNoJRmZaKWEK9QDufjXirk6HiPQV0Z76GAZ7bCY4lg2V0aMfGhBMEcTCAgmlkgnY0gmlwhIGXpN-Jc2VjcDI1NmsxoQKKGckEgbl5DyKrkFy3izNq5Jxsnp22mYuZg7j28st35YN0Y3CCC7iDdWRwggu4",
-        "enr:-J24QOCZF-JdCDCoq3hWMZeZr3wBtNr-Abo0biCsU4qYE17tQ0RDCBAz2moD80yTXafCiB1jBlRp9ruIWytjAsjaeGCGAZ7ZjOp1g2V0aMfGhBMEcTCAgmlkgnY0gmlwhIGXpMqJc2VjcDI1NmsxoQIsNudmq1LwSr_BKYkbDZLU1h3_a4z0lpEP1wRr58pmr4N0Y3CCC7iDdWRwggu4",
+	"enr:-J24QOCZF-JdCDCoq3hWMZeZr3wBtNr-Abo0biCsU4qYE17tQ0RDCBAz2moD80yTXafCiB1jBlRp9ruIWytjAsjaeGCGAZ7ZjOp1g2V0aMfGhBMEcTCAgmlkgnY0gmlwhIGXpMqJc2VjcDI1NmsxoQIsNudmq1LwSr_BKYkbDZLU1h3_a4z0lpEP1wRr58pmr4N0Y3CCC7iDdWRwggu4",
 }
 
 const dnsPrefix = "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUDPE@"

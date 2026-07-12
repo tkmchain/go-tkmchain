@@ -315,6 +315,9 @@ func prepare(ctx *cli.Context) {
 	case ctx.IsSet(utils.HoodiFlag.Name):
 		log.Info("Starting Geth on Hoodi testnet...")
 
+	case ctx.IsSet(utils.EgyptFlag.Name):
+		log.Info("Starting Geth on Egypt RandomX testnet...")
+
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
 		log.Info("Starting Geth on RandomX mainnet...")
 	}

@@ -247,6 +247,8 @@ func getGenesisState(db ethdb.Database, blockhash common.Hash) (alloc types.Gene
 		genesis = DefaultHoleskyGenesisBlock()
 	case params.HoodiGenesisHash:
 		genesis = DefaultHoodiGenesisBlock()
+	case params.EgyptGenesisHash:
+		genesis = DefaultEgyptGenesisBlock()
 	case params.RandomXGenesisHash:
 		genesis = DefaultRandomXGenesisBlock()
 	}
@@ -472,6 +474,8 @@ func (g *Genesis) chainConfigOrDefault(ghash common.Hash, stored *params.ChainCo
 		return params.SepoliaChainConfig
 	case ghash == params.HoodiGenesisHash:
 		return params.HoodiChainConfig
+	case ghash == params.EgyptGenesisHash:
+		return params.EgyptChainConfig
 	case ghash == params.RandomXGenesisHash:
 		return params.RandomXChainConfig
 	default:
@@ -685,6 +689,16 @@ func DefaultHoodiGenesisBlock() *Genesis {
 	}
 }
 
+// DefaultEgyptGenesisBlock returns the Egypt RandomX testnet genesis block.
+func DefaultEgyptGenesisBlock() *Genesis {
+	genesis := DefaultRandomXGenesisBlock()
+	genesis.Config = params.EgyptChainConfig
+	genesis.Timestamp = 1767225600
+	genesis.ExtraData = []byte("egypt randomx testnet")
+	genesis.Difficulty = big.NewInt(1)
+	return genesis
+}
+
 // DefaultRandomXGenesisBlock returns the default RandomX genesis block.
 func DefaultRandomXGenesisBlock() *Genesis {
 	alloc := make(types.GenesisAlloc)
@@ -699,24 +713,24 @@ func DefaultRandomXGenesisBlock() *Genesis {
 	// genesis. Since isSet is true from block 0 and owner is a non-zero burner,
 	// initialize and setCheckpoint cannot change the checkpoint hash afterwards.
 	alloc[common.HexToAddress(randomXCheckpointAddress)] = types.Account{
-	    Code:    common.FromHex(randomXCheckpointCode),
-	    Balance: big.NewInt(0),
-	    Storage: map[common.Hash]common.Hash{
-	        // Slot 0: owner address (right‑padded to 32 bytes)
-	        common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
+		Code:    common.FromHex(randomXCheckpointCode),
+		Balance: big.NewInt(0),
+		Storage: map[common.Hash]common.Hash{
+			// Slot 0: owner address (right‑padded to 32 bytes)
+			common.BigToHash(big.NewInt(0)): common.BytesToHash(common.LeftPadBytes(common.HexToAddress(randomXCheckpointOwner).Bytes(), 32)),
 
-	        // Slot 1: checkpointHash (the permanent blockchain anchor)
-	        common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
+			// Slot 1: checkpointHash (the permanent blockchain anchor)
+			common.BigToHash(big.NewInt(1)): common.HexToHash(params.RandomXCheckpointHash),
 
-	        // Slot 2: setAtBlock (uint256) – 0 initially
-	        common.BigToHash(big.NewInt(2)): common.Hash{},
+			// Slot 2: setAtBlock (uint256) – 0 initially
+			common.BigToHash(big.NewInt(2)): common.Hash{},
 
-	        // Slot 3: setAtTimestamp (uint256) – 0 initially
-	        common.BigToHash(big.NewInt(3)): common.Hash{},
+			// Slot 3: setAtTimestamp (uint256) – 0 initially
+			common.BigToHash(big.NewInt(3)): common.Hash{},
 
-	        // Slot 4: isSet (bool) – 1 = true (already finalised)
-	        common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
-	    },
+			// Slot 4: isSet (bool) – 1 = true (already finalised)
+			common.BigToHash(big.NewInt(4)): common.BigToHash(big.NewInt(1)),
+		},
 	}
 
 	return &Genesis{

@@ -31,6 +31,7 @@ var (
 	HoleskyGenesisHash = common.HexToHash("0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4")
 	HoodiGenesisHash   = common.HexToHash("0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b")
 	RandomXGenesisHash = common.HexToHash("0x6bdca03e891cd028a92355065c211ead725d3e3be9f4de1047c3c5faa464a55e")
+	EgyptGenesisHash   = common.HexToHash("0x401fa319862e4da5e93462e743f74b15996e2bc9203f48dfc20bfd61bfb06196")
 )
 
 func newUint64(val uint64) *uint64 { return &val }
@@ -369,6 +370,42 @@ var (
 	SepoliaChainConfig = TestChainConfig
 	HoleskyChainConfig = TestChainConfig
 	HoodiChainConfig   = TestChainConfig
+	EgyptChainConfig   = &ChainConfig{
+		ChainID:                      big.NewInt(8980),
+		HomesteadBlock:               big.NewInt(0),
+		DAOForkBlock:                 nil,
+		DAOForkSupport:               false,
+		EIP150Block:                  big.NewInt(0),
+		EIP155Block:                  big.NewInt(0),
+		EIP158Block:                  big.NewInt(0),
+		ByzantiumBlock:               big.NewInt(0),
+		ConstantinopleBlock:          big.NewInt(0),
+		PetersburgBlock:              big.NewInt(0),
+		IstanbulBlock:                big.NewInt(0),
+		BerlinBlock:                  big.NewInt(0),
+		LondonBlock:                  big.NewInt(0),
+		RandomXTxBlock:               big.NewInt(0),
+		ArrowGlacierBlock:            nil,
+		GrayGlacierBlock:             nil,
+		ShanghaiTime:                 nil,
+		CancunTime:                   nil,
+		PragueTime:                   nil,
+		OsakaTime:                    nil,
+		BPO1Time:                     nil,
+		BPO2Time:                     nil,
+		BPO3Time:                     nil,
+		BPO4Time:                     nil,
+		BPO5Time:                     nil,
+		AmsterdamTime:                nil,
+		UBTTime:                      nil,
+		EDATime:                      nil,
+		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+		RotatingKingRotationInterval: 100,
+		RandomX:                      DefaultRandomXConfig(),
+		BlobScheduleConfig: &BlobScheduleConfig{
+			Cancun: DefaultCancunBlobConfig,
+		},
+	}
 )
 
 // IsHomestead returns whether num is at or beyond Homestead.

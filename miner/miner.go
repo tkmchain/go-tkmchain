@@ -160,13 +160,19 @@ func (miner *Miner) GetWork() ([4]string, error) {
 		"headerHash", header.Hash().Hex(),
 		"difficulty", header.Difficulty)
 	miner.worker.pendingMu.RLock()
-	task, exist := miner.worker.pendingTasks[sealHash]
+	pendingTask, exist := miner.worker.pendingTasks[sealHash]
 	miner.worker.pendingMu.RUnlock()
-	if !exist || task.block == nil {
-		return [4]string{}, errors.New("pending work is not ready")
+	if !exist || pendingTask.block == nil {
+		pendingTask = &task{state: state, block: block, createdAt: time.Now()}
+		miner.worker.pendingMu.Lock()
+		miner.worker.pendingTasks[sealHash] = pendingTask
+		miner.worker.pendingMu.Unlock()
 	}
-	if task.block.Hash() != block.Hash() {
-		return [4]string{}, errors.New("pending work changed")
+	if pendingTask.block.Hash() != block.Hash() {
+		pendingTask = &task{state: state, block: block, createdAt: time.Now()}
+		miner.worker.pendingMu.Lock()
+		miner.worker.pendingTasks[sealHash] = pendingTask
+		miner.worker.pendingMu.Unlock()
 	}
 	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
 		return [4]string{}, errors.New("invalid pending work difficulty")
