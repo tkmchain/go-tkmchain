@@ -1695,6 +1695,42 @@ func (api *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*ty
 	return wallet.SignTx(account, tx, api.b.ChainConfig().ChainID)
 }
 
+// TKMPaymentAPI exposes narrow payment signing helpers for pool automation.
+type TKMPaymentAPI struct {
+	b         Backend
+	nonceLock *AddrLocker
+}
+
+// NewTKMPaymentAPI creates a payment API without enabling the deprecated personal namespace.
+func NewTKMPaymentAPI(b Backend, nonceLock *AddrLocker) *TKMPaymentAPI {
+	return &TKMPaymentAPI{b: b, nonceLock: nonceLock}
+}
+
+// SendTransactionWithPassphrase signs and submits a transaction using the supplied passphrase.
+func (api *TKMPaymentAPI) SendTransactionWithPassphrase(ctx context.Context, args TransactionArgs, passphrase string) (common.Hash, error) {
+	account := accounts.Account{Address: args.from()}
+	wallet, err := api.b.AccountManager().Find(account)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if args.Nonce == nil {
+		api.nonceLock.LockAddr(args.from())
+		defer api.nonceLock.UnlockAddr(args.from())
+	}
+	if args.IsEIP4844() {
+		return common.Hash{}, errBlobTxNotSupported
+	}
+	if err := args.setDefaults(ctx, api.b, sidecarConfig{}); err != nil {
+		return common.Hash{}, err
+	}
+	tx := args.ToTransaction(types.DynamicFeeTxType)
+	signed, err := wallet.SignTxWithPassphrase(account, passphrase, tx, api.b.ChainConfig().ChainID)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return SubmitTransaction(ctx, api.b, signed)
+}
+
 // SubmitTransaction is a helper function that submits tx to txPool and logs a message.
 func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (common.Hash, error) {
 	// If the transaction fee cap is already specified, ensure the
