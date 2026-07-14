@@ -26,13 +26,13 @@ import (
 // ==================== Constants ====================
 
 var (
-	// EligibilityThreshold is the minimum balance required for king eligibility (100k ANTD)
+	// EligibilityThreshold is the minimum balance required for king eligibility (100k TKM)
 	EligibilityThreshold = new(big.Int).Mul(big.NewInt(100_000), big.NewInt(1e18))
 
-	// InitialBlockReward is the starting block reward (200 ANTD)
+	// InitialBlockReward is the starting block reward (200 TKM)
 	InitialBlockReward = new(big.Int).Mul(big.NewInt(200), big.NewInt(1e18))
 
-	// GenesisPremine is the initial supply at genesis (60,000,000 ANTD)
+	// GenesisPremine is the initial supply at genesis (60,000,000 TKM)
 	GenesisPremine = new(big.Int).Mul(big.NewInt(60_000_000), big.NewInt(1e18))
 
 	// Block timing constants
@@ -326,7 +326,7 @@ func CalculateCirculatingSupply(blockNumber uint64) *big.Int {
 	return total
 }
 
-// FormatANTD formats ANTD amount with decimals (for logs/RPC)
+// FormatANTD formats TKM amount with decimals (for logs/RPC)
 func FormatANTD(amount *big.Int) string {
 	if amount == nil {
 		return "0"
@@ -350,7 +350,7 @@ func FormatANTD(amount *big.Int) string {
 	return whole.String() + "." + remainderStr[:min(6, len(remainderStr))]
 }
 
-// ParseANTD parses an ANTD amount string to big.Int
+// ParseANTD parses a TKM amount string to big.Int
 func ParseANTD(amountStr string) (*big.Int, error) {
 	oneANTD := big.NewInt(1e18)
 	result := big.NewInt(0)

@@ -16,7 +16,9 @@ package randomx
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../build/_workspace/randomx/src
-#cgo !darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lstdc++ -lm
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lstdc++ -lm
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-linux-arm64 -lrandomx -lstdc++ -lm
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-windows-amd64 -lrandomx -lstdc++ -lwinpthread
 #cgo darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 
 #include <stdlib.h>
@@ -70,6 +72,9 @@ const (
 
 	// EDAThreshold is the no-block interval that triggers Emergency Difficulty Adjustment.
 	EDAThreshold = 7 * 60 // seconds
+
+	// EgyptEDAThreshold keeps the RandomX testnet usable with small pool/miner hashrates.
+	EgyptEDAThreshold = 30 // seconds
 )
 
 const (
@@ -784,16 +789,29 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 	currentDiff := new(big.Int).Set(parent.Difficulty)
 	minDiff := MinDifficulty
 
-	if config := chainConfig(chain); config != nil && config.IsEDA(new(big.Int).Add(parent.Number, big.NewInt(1)), time) && diff >= EDAThreshold {
-		reductions := diff / EDAThreshold
-		newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
-		log.Info("Emergency difficulty adjustment applied",
-			"old", currentDiff,
-			"new", newDiff,
-			"block_time", diff,
-			"threshold", EDAThreshold,
-			"reductions", reductions)
-		return newDiff
+	if config := chainConfig(chain); config != nil {
+		if isEgyptConfig(config) && diff >= EgyptEDAThreshold {
+			reductions := diff / EgyptEDAThreshold
+			newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
+			log.Info("Egypt emergency difficulty adjustment applied",
+				"old", currentDiff,
+				"new", newDiff,
+				"block_time", diff,
+				"threshold", EgyptEDAThreshold,
+				"reductions", reductions)
+			return newDiff
+		}
+		if config.IsEDA(new(big.Int).Add(parent.Number, big.NewInt(1)), time) && diff >= EDAThreshold {
+			reductions := diff / EDAThreshold
+			newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
+			log.Info("Emergency difficulty adjustment applied",
+				"old", currentDiff,
+				"new", newDiff,
+				"block_time", diff,
+				"threshold", EDAThreshold,
+				"reductions", reductions)
+			return newDiff
+		}
 	}
 
 	if diff > targetTime*10 {
@@ -850,6 +868,10 @@ func chainConfig(chain consensus.ChainHeaderReader) *params.ChainConfig {
 		return nil
 	}
 	return chain.Config()
+}
+
+func isEgyptConfig(config *params.ChainConfig) bool {
+	return config != nil && config.ChainID != nil && config.ChainID.Cmp(params.EgyptChainConfig.ChainID) == 0
 }
 
 func applyEDAReductions(currentDiff *big.Int, reductions uint64, minDiff *big.Int) *big.Int {

@@ -250,6 +250,26 @@ func (c edaTestChain) GetHeader(hash common.Hash, number uint64) *types.Header {
 func (c edaTestChain) GetHeaderByNumber(number uint64) *types.Header           { return nil }
 func (c edaTestChain) GetHeaderByHash(hash common.Hash) *types.Header          { return nil }
 
+func TestCalcDifficultyAppliesFastEDAOnEgypt(t *testing.T) {
+	chain := edaTestChain{config: params.EgyptChainConfig}
+	rx := NewFaker()
+	parent := &types.Header{
+		Number:     big.NewInt(63),
+		Time:       1_000,
+		Difficulty: big.NewInt(7424),
+	}
+
+	oneStep := rx.CalcDifficulty(chain, parent.Time+EgyptEDAThreshold, parent)
+	if want := big.NewInt(1856); oneStep.Cmp(want) != 0 {
+		t.Fatalf("one Egypt EDA step difficulty = %v, want %v", oneStep, want)
+	}
+
+	manySteps := rx.CalcDifficulty(chain, parent.Time+6*EgyptEDAThreshold, parent)
+	if manySteps.Cmp(MinDifficulty) != 0 {
+		t.Fatalf("many Egypt EDA steps difficulty = %v, want min %v", manySteps, MinDifficulty)
+	}
+}
+
 func TestCalcDifficultyAppliesEDAEverySevenMinutes(t *testing.T) {
 	edaTime := uint64(0)
 	config := &params.ChainConfig{

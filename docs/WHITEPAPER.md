@@ -64,7 +64,7 @@ The roadmap requires this area to be treated as launch-critical. Difficulty rule
 
 ## 6. Issuance and reward distribution
 
-Tkmchain starts with a 200 ANTD block reward. At 120-second block targets, the halving interval is approximately four years. Reward calculation supports up to 64 halving periods and stops paying block subsidy once the reward falls below 1 ANTD.
+Tkmchain starts with a 200 TKM block reward. At 120-second block targets, the halving interval is approximately four years. Reward calculation supports up to 64 halving periods and stops paying block subsidy once the reward falls below 1 TKM.
 
 For each finalized block, the total reward is calculated as:
 

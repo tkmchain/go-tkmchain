@@ -23,7 +23,7 @@ The codebase already contains the core foundation for the Tkmchain identity:
 - `gtkm` is the main node command, with Tkmchain branding, RandomX mining flags, and JSON-RPC support.
 - Chain configuration includes chain ID `8979`, RandomX configuration, RandomX transaction activation, a Main King address, and a default 100-block Rotating King interval.
 - RandomX consensus code covers sealing, seal verification, seed hashes, mining work, share submission, hashrate tracking, and a no-cgo fallback path.
-- Block reward logic starts at 200 ANTD, targets 120-second blocks, halves over roughly four-year periods, and splits rewards 10 percent to Main King, 40 percent to Rotating King, and 50 percent to the miner.
+- Block reward logic starts at 200 TKM, targets 120-second blocks, halves over roughly four-year periods, and splits rewards 10 percent to Main King, 40 percent to Rotating King, and 50 percent to the miner.
 - Rotating King APIs expose registration, status, king lists, rotation history, current/next king views, and Main King checkpoint submission.
 - External miner integration exposes `miner_*` and `randomx_*` work APIs and a local stratum bridge path.
 - TVM has an initial secure deployment envelope, resource limits, hashes, RPC deployment helpers, and a stateful precompile at `0x00000000000000000000000000000000000000f2`.

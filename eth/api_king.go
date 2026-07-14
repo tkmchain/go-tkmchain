@@ -20,11 +20,11 @@ type KingAPI struct {
 }
 
 var (
-	// Required stake for rotating king registration (50,000 ANTD)
+	// Required stake for rotating king registration (50,000 TKM)
 	rkRequiredStake = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))
 	// Lock period for staked funds (30 days)
 	rkLockPeriod = 30 * 24 * time.Hour
-	// High fee reserved for rotating king registration transactions (1 ANTD)
+	// High fee reserved for rotating king registration transactions (1 TKM)
 	rkRegistrationFee = new(big.Int).SetUint64(params.Ether)
 )
 

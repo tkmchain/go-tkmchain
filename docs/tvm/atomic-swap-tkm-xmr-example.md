@@ -1,6 +1,6 @@
 # TVM example: atomic swap between TKM and XMR
 
-This document shows an example TVM smart contract design for swapping native TKM/ANTD value against Monero (XMR). The TKM side is an HTLC-style contract: it locks TKM until either the XMR side reveals the swap secret or the timeout expires.
+This document shows an example TVM smart contract design for swapping native TKM value against Monero (XMR). The TKM side is an HTLC-style contract: it locks TKM until either the XMR side reveals the swap secret or the timeout expires.
 
 Important: Monero does not have Ethereum-style smart contracts. A real TKM/XMR atomic swap needs two parts:
 
@@ -39,7 +39,7 @@ A single swap record can be stored under a `swapId` derived from Alice, Bob, has
 struct Swap {
     address tkmDepositor;      // Alice
     address tkmClaimer;        // Bob
-    uint256 amount;            // locked TKM/ANTD amount in wei units
+    uint256 amount;            // locked TKM amount in wei units
     bytes32 hashlock;          // keccak256(secret)
     uint64 refundHeight;       // block height when Alice can refund
     bool claimed;

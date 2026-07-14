@@ -115,7 +115,7 @@ A deployer needs the following inputs before sending the deployment transaction:
 | `memoryPages` | yes | Maximum TVM linear memory pages. Must be in `[1, 256]`. |
 | `stackSlots` | yes | Maximum TVM stack slots. Must be in `[1, 1024]`. |
 | `callDepth` | yes | Maximum nested TVM call depth. Must be in `[1, 1024]`. |
-| funded deployer account | yes | The account sending the creation transaction must have enough TKM/ANTD to pay gas and any value sent with the contract. |
+| funded deployer account | yes | The account sending the creation transaction must have enough TKM to pay gas and any value sent with the contract. |
 | enabled RPC namespaces | yes | Use `eth` for sending/checking transactions and `tvm` for building or viewing TVM envelopes. Start HTTP with `--http.api eth,net,web3,tvm` or include `tvm` in any custom API list. |
 
 The TVM envelope contains:

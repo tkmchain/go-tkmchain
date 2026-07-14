@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	// EligibilityThreshold is the minimum balance required for king eligibility (100k ANTD)
+	// EligibilityThreshold is the minimum balance required for king eligibility (100k TKM)
 	EligibilityThreshold = new(big.Int).Mul(big.NewInt(100000), big.NewInt(1e18))
 )
 

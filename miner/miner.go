@@ -134,6 +134,9 @@ func (miner *Miner) PendingBlock() *types.Block {
 func (miner *Miner) SetEtherbase(addr common.Address) {
 	miner.coinbase = addr
 	miner.worker.setEtherbase(addr)
+	if miner.worker.isRunning() {
+		go miner.worker.generateWorkForExternal()
+	}
 }
 
 // ========== METHODS FOR XMRig ==========

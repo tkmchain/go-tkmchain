@@ -28,16 +28,16 @@ Tkmchain features a unique **Rotating Kings** governance system with a 10/40/50 
 ### Reward Distribution
 
 ```
-Block Reward = 200 ANTD (halving every ~4 years)
-├── Main King:     20 ANTD (10%)
-├── Rotating King: 80 ANTD (40%)
-└── Miner:        100 ANTD (50%)
+Block Reward = 200 TKM (halving every ~4 years)
+├── Main King:     20 TKM (10%)
+├── Rotating King: 80 TKM (40%)
+└── Miner:        100 TKM (50%)
 ```
 
 ### King Registration
 
 To become a Rotating King:
-1. Hold at least **50,001 ANTD**: 50,000 ANTD is locked as the Rotating King stake and 1 ANTD is reserved as the registration fee.
+1. Hold at least **50,001 TKM**: 50,000 TKM is locked as the Rotating King stake and 1 TKM is reserved as the registration fee.
 2. Register your address with the `rk_add` RPC method.
 3. Remain funded while the address is active. Registered kings are removed when the stake lock expires or the address no longer satisfies the funding requirement.
 4. Kings rotate every 100 blocks by default. Each king serves for one rotation period before the next registered address receives the Rotating King slot.

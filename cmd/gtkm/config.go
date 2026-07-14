@@ -222,9 +222,15 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
                 }
         }
 
-        // Etherbase (miner reward address)
+        // Etherbase (miner reward address). Supplying an etherbase alone is
+        // treated as pool/external mining, so miner_getWork has a valid reward
+        // address without starting local CPU solo mining.
         if ctx.IsSet(utils.MinerEtherbaseFlag.Name) {
                 cfg.RandomX.Etherbase = ctx.String(utils.MinerEtherbaseFlag.Name)
+                if !ctx.IsSet(utils.MiningEnabledFlag.Name) && !ctx.IsSet(utils.PoolMiningFlag.Name) {
+                        cfg.RandomX.Enabled = true
+                        cfg.RandomX.Pool = true
+                }
         }
 
         // Extra data
