@@ -860,14 +860,15 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 			return newDiff
 		}
 		if config.IsEDA(new(big.Int).Add(parent.Number, big.NewInt(1)), time) && diff >= EDAThreshold {
-			reductions := diff / EDAThreshold
-			newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
+			skippedIntervals := diff / EDAThreshold
+			newDiff := applyMainnetEDAReduction(currentDiff, minDiff)
 			log.Info("Emergency difficulty adjustment applied",
 				"old", currentDiff,
 				"new", newDiff,
 				"block_time", diff,
 				"threshold", EDAThreshold,
-				"reductions", reductions)
+				"reductions", 1,
+				"skipped_intervals", skippedIntervals)
 			return newDiff
 		}
 	}
@@ -930,6 +931,15 @@ func chainConfig(chain consensus.ChainHeaderReader) *params.ChainConfig {
 
 func isEgyptConfig(config *params.ChainConfig) bool {
 	return config != nil && config.ChainID != nil && config.ChainID.Cmp(params.EgyptChainConfig.ChainID) == 0
+}
+
+func applyMainnetEDAReduction(currentDiff *big.Int, minDiff *big.Int) *big.Int {
+	newDiff := new(big.Int).Mul(currentDiff, big.NewInt(75))
+	newDiff.Div(newDiff, big.NewInt(100))
+	if newDiff.Cmp(minDiff) < 0 {
+		return new(big.Int).Set(minDiff)
+	}
+	return newDiff
 }
 
 func applyEDAReductions(currentDiff *big.Int, reductions uint64, minDiff *big.Int) *big.Int {

@@ -270,7 +270,7 @@ func TestCalcDifficultyAppliesFastEDAOnEgypt(t *testing.T) {
 	}
 }
 
-func TestCalcDifficultyAppliesEDAEverySevenMinutes(t *testing.T) {
+func TestCalcDifficultyAppliesGentleMainnetEDAOncePerBlock(t *testing.T) {
 	edaTime := uint64(0)
 	config := &params.ChainConfig{
 		ChainID:     big.NewInt(1),
@@ -286,12 +286,12 @@ func TestCalcDifficultyAppliesEDAEverySevenMinutes(t *testing.T) {
 	}
 
 	oneStep := rx.CalcDifficulty(chain, parent.Time+EDAThreshold, parent)
-	if want := big.NewInt(256); oneStep.Cmp(want) != 0 {
+	if want := big.NewInt(768); oneStep.Cmp(want) != 0 {
 		t.Fatalf("one EDA step difficulty = %v, want %v", oneStep, want)
 	}
 
-	twoSteps := rx.CalcDifficulty(chain, parent.Time+2*EDAThreshold, parent)
-	if want := big.NewInt(64); twoSteps.Cmp(want) != 0 {
-		t.Fatalf("two EDA step difficulty = %v, want %v", twoSteps, want)
+	longGap := rx.CalcDifficulty(chain, parent.Time+5*EDAThreshold, parent)
+	if want := big.NewInt(768); longGap.Cmp(want) != 0 {
+		t.Fatalf("long gap EDA difficulty = %v, want one gentle reduction %v", longGap, want)
 	}
 }
