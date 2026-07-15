@@ -781,6 +781,10 @@ func (s *Ethereum) startMiningLocked(pool bool) error {
 		s.config.Miner.GasCeil = s.config.Miner.GasLimit
 	}
 
+	if s.config.Miner.Etherbase == (common.Address{}) {
+		log.Warn("RandomX mining work is disabled until etherbase is set", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+	}
+
 	// Start the miner
 	if pool {
 		s.miner.StartExternal(s.config.Miner.Etherbase)

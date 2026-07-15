@@ -969,7 +969,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		Time:       uint64(timestamp),
 	}
 	if w.coinbase == (common.Address{}) {
-		log.Error("Refusing to generate mining work without etherbase")
+		log.Error("Refusing to generate mining work without etherbase", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
 		return
 	}
 	header.Coinbase = w.coinbase

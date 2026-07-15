@@ -551,13 +551,22 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	defer vm.Close()
 
 	target := new(big.Int).Div(maxUint256, header.Difficulty)
+	if rx.validProof(header, vm, target) {
+		return nil
+	}
+
+	if chain != nil && chain.Config().IsKyoto(header.Number, header.Time) {
+		return fmt.Errorf("invalid proof: result > target")
+	}
+
 	if rx.validProofWithNonceVariants(header, vm, target) {
 		return nil
 	}
 
 	// Early RandomX external-miner builds used a full-memory VM flag while later
-	// verifier builds used the dataset without that flag. Accept both modes so
-	// already-mined RandomX blocks remain syncable across upgraded nodes.
+	// verifier builds used the dataset without that flag. Accept both modes only
+	// before Kyoto so already-mined RandomX blocks remain syncable while new blocks
+	// use one strict proof format.
 	if legacyVM, legacyErr := rx.getLegacyFullMemVM(); legacyErr == nil {
 		defer legacyVM.Close()
 		if rx.validProofWithNonceVariants(header, legacyVM, target) {
@@ -569,9 +578,13 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	return fmt.Errorf("invalid proof: result > target")
 }
 
-func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, target *big.Int) bool {
+func (rx *RandomX) validProof(header *types.Header, vm *VM, target *big.Int) bool {
 	result, _ := rx.randomXHash(header, vm)
-	if result.Cmp(target) <= 0 {
+	return result.Cmp(target) <= 0
+}
+
+func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, target *big.Int) bool {
+	if rx.validProof(header, vm, target) {
 		return true
 	}
 
