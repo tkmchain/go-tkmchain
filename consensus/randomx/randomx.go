@@ -550,14 +550,59 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	}
 	defer vm.Close()
 
-	result, _ := rx.randomXHash(header, vm)
-
 	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	if result.Cmp(target) > 0 {
-		return fmt.Errorf("invalid proof: result > target")
+	if rx.validProofWithNonceVariants(header, vm, target) {
+		return nil
 	}
 
-	return nil
+	// Early RandomX external-miner builds used a full-memory VM flag while later
+	// verifier builds used the dataset without that flag. Accept both modes so
+	// already-mined RandomX blocks remain syncable across upgraded nodes.
+	if legacyVM, legacyErr := rx.getLegacyFullMemVM(); legacyErr == nil {
+		defer legacyVM.Close()
+		if rx.validProofWithNonceVariants(header, legacyVM, target) {
+			log.Warn("Accepted legacy RandomX proof variant", "number", header.Number.Uint64(), "hash", header.Hash())
+			return nil
+		}
+	}
+
+	return fmt.Errorf("invalid proof: result > target")
+}
+
+func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, target *big.Int) bool {
+	result, _ := rx.randomXHash(header, vm)
+	if result.Cmp(target) <= 0 {
+		return true
+	}
+
+	legacyHeader := types.CopyHeader(header)
+	for i := 0; i < len(header.Nonce); i++ {
+		legacyHeader.Nonce[i] = header.Nonce[len(header.Nonce)-1-i]
+	}
+	result, _ = rx.randomXHash(legacyHeader, vm)
+	return result.Cmp(target) <= 0
+}
+
+func (rx *RandomX) getLegacyFullMemVM() (*VM, error) {
+	if rx.isClosed() {
+		return nil, errEngineClosed
+	}
+
+	rx.cacheMu.RLock()
+	defer rx.cacheMu.RUnlock()
+
+	if rx.cache == nil {
+		return nil, errNoCache
+	}
+	if rx.dataset == nil {
+		return nil, fmt.Errorf("legacy full-memory dataset is unavailable")
+	}
+
+	flags := RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_FULL_MEM
+	if vm := NewVM(flags, nil, rx.dataset); vm != nil {
+		return vm, nil
+	}
+	return nil, fmt.Errorf("failed to create legacy full-memory RandomX VM")
 }
 
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
