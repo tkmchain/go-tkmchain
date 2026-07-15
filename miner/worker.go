@@ -775,6 +775,35 @@ func (w *worker) commitUncle(env *environment, uncle *types.Header) error {
 	return nil
 }
 
+func (w *worker) rewardBlockBody(header *types.Header, txs []*types.Transaction, receipts []*types.Receipt) ([]*types.Transaction, []*types.Receipt, int) {
+	provider, ok := w.engine.(interface {
+		RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
+	})
+	if !ok {
+		return txs, receipts, 0
+	}
+	rewards := provider.RewardTransactions(header, receipts)
+	if len(rewards) == 0 {
+		return txs, receipts, 0
+	}
+	withRewards := make([]*types.Transaction, 0, len(txs)+len(rewards))
+	withRewards = append(withRewards, txs...)
+	withRewards = append(withRewards, rewards...)
+	withReceipts := make([]*types.Receipt, 0, len(receipts)+len(rewards))
+	withReceipts = append(withReceipts, receipts...)
+	for _, tx := range rewards {
+		withReceipts = append(withReceipts, &types.Receipt{
+			Type:              tx.Type(),
+			Status:            types.ReceiptStatusSuccessful,
+			CumulativeGasUsed: header.GasUsed,
+			TxHash:            tx.Hash(),
+			GasUsed:           0,
+			EffectiveGasPrice: new(big.Int),
+		})
+	}
+	return withRewards, withReceipts, len(rewards)
+}
+
 // updateSnapshot updates pending snapshot block and state.
 // Note this function assumes the current variable is thread safe.
 func (w *worker) updateSnapshot() {
@@ -798,10 +827,11 @@ func (w *worker) updateSnapshot() {
 		return false
 	})
 
+	txs, receipts, _ := w.rewardBlockBody(w.current.header, w.current.txs, w.current.receipts)
 	w.snapshotBlock = types.NewBlock(
 		w.current.header,
-		&types.Body{Transactions: w.current.txs, Uncles: uncles},
-		w.current.receipts,
+		&types.Body{Transactions: txs, Uncles: uncles},
+		receipts,
 		trie.NewStackTrie(nil),
 	)
 
@@ -1092,23 +1122,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	w.engine.Finalize(w.chain, w.current.header, s, body)
 	blockReceipts := w.current.receipts
 	rewardTxCount := 0
-	if provider, ok := w.engine.(interface {
-		RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
-	}); ok {
-		rewards := provider.RewardTransactions(w.current.header, blockReceipts)
-		rewardTxCount = len(rewards)
-		body.Transactions = append(body.Transactions, rewards...)
-		for _, tx := range rewards {
-			blockReceipts = append(blockReceipts, &types.Receipt{
-				Type:              tx.Type(),
-				Status:            types.ReceiptStatusSuccessful,
-				CumulativeGasUsed: w.current.header.GasUsed,
-				TxHash:            tx.Hash(),
-				GasUsed:           0,
-				EffectiveGasPrice: new(big.Int),
-			})
-		}
-	}
+	body.Transactions, blockReceipts, rewardTxCount = w.rewardBlockBody(w.current.header, body.Transactions, blockReceipts)
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
 	block := types.NewBlock(w.current.header, body, blockReceipts, trie.NewStackTrie(nil))
 	// Deep copy receipts here to avoid interaction between different tasks.
