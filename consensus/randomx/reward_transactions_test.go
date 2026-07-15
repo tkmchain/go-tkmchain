@@ -11,7 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func TestRewardTransactionsOnlyIncludeZeroRotatingKingWhenMainKingReceivesFallback(t *testing.T) {
+func TestRewardTransactionsKeepVisibleSplitWithoutRotatingKing(t *testing.T) {
 	mainKing := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	miner := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	rx := NewFaker()
@@ -24,8 +24,8 @@ func TestRewardTransactionsOnlyIncludeZeroRotatingKingWhenMainKingReceivesFallba
 	if len(rewards) != 3 {
 		t.Fatalf("reward tx count = %d, want 3", len(rewards))
 	}
-	wantMain := types.NewBlockRewardTx(1, types.BlockRewardMainKing, mainKing, new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)))
-	wantRotating := types.NewBlockRewardTx(1, types.BlockRewardRotatingKing, common.Address{}, new(big.Int))
+	wantMain := types.NewBlockRewardTx(1, types.BlockRewardMainKing, mainKing, new(big.Int).Mul(big.NewInt(20), big.NewInt(1e18)))
+	wantRotating := types.NewBlockRewardTx(1, types.BlockRewardRotatingKing, common.Address{}, new(big.Int).Mul(big.NewInt(80), big.NewInt(1e18)))
 	wantMiner := types.NewBlockRewardTx(1, types.BlockRewardMiner, miner, new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)))
 	for i, want := range []*types.Transaction{wantMain, wantRotating, wantMiner} {
 		if rewards[i].Hash() != want.Hash() {
@@ -34,7 +34,7 @@ func TestRewardTransactionsOnlyIncludeZeroRotatingKingWhenMainKingReceivesFallba
 	}
 }
 
-func TestRewardTransactionsOmitZeroRewardsWithoutMainKingFallback(t *testing.T) {
+func TestRewardTransactionsKeepMinerOnlyWhenNoKingAddressesExist(t *testing.T) {
 	miner := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	rx := NewFaker()
 	rx.mainKing = common.Address{}
@@ -52,7 +52,7 @@ func TestRewardTransactionsOmitZeroRewardsWithoutMainKingFallback(t *testing.T) 
 	}
 }
 
-func TestCompatibleRewardTransactionsIncludeLegacyNoRotatingKingMarkers(t *testing.T) {
+func TestCompatibleRewardTransactionsIncludePreviousFallbackMarkers(t *testing.T) {
 	mainKing := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	miner := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	rx := NewFaker()
@@ -63,15 +63,24 @@ func TestCompatibleRewardTransactionsIncludeLegacyNoRotatingKingMarkers(t *testi
 
 	sets := rx.CompatibleRewardTransactions(&types.Header{Number: big.NewInt(1), Coinbase: miner}, nil)
 	if len(sets) != 2 {
-		t.Fatalf("compatible reward set count = %d, want canonical and legacy", len(sets))
+		t.Fatalf("compatible reward set count = %d, want canonical and previous fallback", len(sets))
 	}
-	legacy := sets[1]
+	legacy := sets[0]
 	wantMain := types.NewBlockRewardTx(1, types.BlockRewardMainKing, mainKing, new(big.Int).Mul(big.NewInt(20), big.NewInt(1e18)))
 	wantRotating := types.NewBlockRewardTx(1, types.BlockRewardRotatingKing, common.Address{}, new(big.Int).Mul(big.NewInt(80), big.NewInt(1e18)))
 	wantMiner := types.NewBlockRewardTx(1, types.BlockRewardMiner, miner, new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)))
 	for i, want := range []*types.Transaction{wantMain, wantRotating, wantMiner} {
 		if legacy[i].Hash() != want.Hash() {
 			t.Fatalf("legacy reward tx %d hash = %s, want %s", i, legacy[i].Hash(), want.Hash())
+		}
+	}
+	fallback := sets[1]
+	wantFallbackMain := types.NewBlockRewardTx(1, types.BlockRewardMainKing, mainKing, new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)))
+	wantFallbackRotating := types.NewBlockRewardTx(1, types.BlockRewardRotatingKing, common.Address{}, new(big.Int))
+	wantFallbackMiner := types.NewBlockRewardTx(1, types.BlockRewardMiner, miner, new(big.Int).Mul(big.NewInt(100), big.NewInt(1e18)))
+	for i, want := range []*types.Transaction{wantFallbackMain, wantFallbackRotating, wantFallbackMiner} {
+		if fallback[i].Hash() != want.Hash() {
+			t.Fatalf("fallback reward tx %d hash = %s, want %s", i, fallback[i].Hash(), want.Hash())
 		}
 	}
 }

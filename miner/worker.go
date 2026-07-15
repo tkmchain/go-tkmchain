@@ -1091,10 +1091,12 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
 	w.engine.Finalize(w.chain, w.current.header, s, body)
 	blockReceipts := w.current.receipts
+	rewardTxCount := 0
 	if provider, ok := w.engine.(interface {
 		RewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction
 	}); ok {
 		rewards := provider.RewardTransactions(w.current.header, blockReceipts)
+		rewardTxCount = len(rewards)
 		body.Transactions = append(body.Transactions, rewards...)
 		for _, tx := range rewards {
 			blockReceipts = append(blockReceipts, &types.Receipt{
@@ -1126,7 +1128,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 			w.pendingTasks[sealHash] = &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}
 			w.pendingMu.Unlock()
 			log.Info("Commit new external mining work", "number", block.Number(), "sealhash", sealHash,
-				"uncles", len(uncles), "txs", w.current.tcount, "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(start)))
+				"uncles", len(uncles), "txs", w.current.tcount, "rewardtxs", rewardTxCount, "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(start)))
 		} else {
 			select {
 			case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
@@ -1139,7 +1141,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 				feesEth := new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
 
 				log.Info("Commit new mining work", "number", block.Number(), "sealhash", sealHash,
-					"uncles", len(uncles), "txs", w.current.tcount, "gas", block.GasUsed(), "fees", feesEth, "elapsed", common.PrettyDuration(time.Since(start)))
+					"uncles", len(uncles), "txs", w.current.tcount, "rewardtxs", rewardTxCount, "gas", block.GasUsed(), "fees", feesEth, "elapsed", common.PrettyDuration(time.Since(start)))
 
 			case <-w.exitCh:
 				log.Info("Worker has exited")

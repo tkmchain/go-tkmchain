@@ -1091,8 +1091,49 @@ func (rx *RandomX) RewardTransactions(header *types.Header, receipts []*types.Re
 	blockNumber := header.Number.Uint64()
 	blockReward := CalculateBlockReward(blockNumber)
 	totalReward := CalculateTotalReward(blockReward, nil)
-	mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward := rx.rewardShares(header, totalReward)
+	mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward := rx.rewardMarkerShares(header, totalReward)
 
+	rewards := make([]*types.Transaction, 0, 3)
+	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
+		rewards = append(rewards, types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, mainKing, mainKingReward))
+	}
+	if rotatingKingReward.Sign() > 0 {
+		rewards = append(rewards, types.NewBlockRewardTx(blockNumber, types.BlockRewardRotatingKing, rotatingKing, rotatingKingReward))
+	}
+	if minerReward.Sign() > 0 && miner != (common.Address{}) {
+		rewards = append(rewards, types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, miner, minerReward))
+	}
+	return rewards
+}
+
+func (rx *RandomX) CompatibleRewardTransactions(header *types.Header, receipts []*types.Receipt) [][]*types.Transaction {
+	canonical := rx.RewardTransactions(header, receipts)
+	candidates := [][]*types.Transaction{canonical}
+	for _, candidate := range [][]*types.Transaction{
+		rx.legacyRewardTransactions(header, receipts),
+		rx.fallbackRewardTransactions(header, receipts),
+	} {
+		if len(candidate) > 0 && !containsRewardTransactionSet(candidates, candidate) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
+func containsRewardTransactionSet(candidates [][]*types.Transaction, target []*types.Transaction) bool {
+	for _, candidate := range candidates {
+		if sameRewardTransactions(candidate, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (rx *RandomX) fallbackRewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction {
+	blockNumber := header.Number.Uint64()
+	blockReward := CalculateBlockReward(blockNumber)
+	totalReward := CalculateTotalReward(blockReward, nil)
+	mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward := rx.rewardShares(header, totalReward)
 	rewards := make([]*types.Transaction, 0, 3)
 	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
 		rewards = append(rewards, types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, mainKing, mainKingReward))
@@ -1106,15 +1147,6 @@ func (rx *RandomX) RewardTransactions(header *types.Header, receipts []*types.Re
 		rewards = append(rewards, types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, miner, minerReward))
 	}
 	return rewards
-}
-
-func (rx *RandomX) CompatibleRewardTransactions(header *types.Header, receipts []*types.Receipt) [][]*types.Transaction {
-	canonical := rx.RewardTransactions(header, receipts)
-	legacy := rx.legacyRewardTransactions(header, receipts)
-	if sameRewardTransactions(canonical, legacy) {
-		return [][]*types.Transaction{canonical}
-	}
-	return [][]*types.Transaction{canonical, legacy}
 }
 
 func (rx *RandomX) legacyRewardTransactions(header *types.Header, receipts []*types.Receipt) []*types.Transaction {
@@ -1147,6 +1179,40 @@ func (rx *RandomX) legacyRewardTransactions(header *types.Header, receipts []*ty
 		types.NewBlockRewardTx(blockNumber, types.BlockRewardRotatingKing, rotatingKing, rotatingKingReward),
 		types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, miner, minerReward),
 	}
+}
+
+func (rx *RandomX) rewardMarkerShares(header *types.Header, totalReward *big.Int) (common.Address, *big.Int, common.Address, *big.Int, common.Address, *big.Int) {
+	blockNumber := header.Number.Uint64()
+	mainKing := rx.mainKing
+	rotatingKing := rx.getRotatingKing(blockNumber)
+	miner := header.Coinbase
+
+	mainKingReward := new(big.Int)
+	rotatingKingReward := new(big.Int)
+	minerReward := new(big.Int)
+	if totalReward == nil || totalReward.Sign() == 0 {
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
+	totalRewardBig := new(big.Int).Set(totalReward)
+	mainKingReward.Mul(totalRewardBig, big.NewInt(10))
+	mainKingReward.Div(mainKingReward, big.NewInt(100))
+	rotatingKingReward.Mul(totalRewardBig, big.NewInt(40))
+	rotatingKingReward.Div(rotatingKingReward, big.NewInt(100))
+	minerReward.Mul(totalRewardBig, big.NewInt(50))
+	minerReward.Div(minerReward, big.NewInt(100))
+
+	actualTotal := new(big.Int).Add(mainKingReward, rotatingKingReward)
+	actualTotal.Add(actualTotal, minerReward)
+	if actualTotal.Cmp(totalRewardBig) != 0 {
+		minerReward.Add(minerReward, new(big.Int).Sub(totalRewardBig, actualTotal))
+	}
+	if mainKing == (common.Address{}) {
+		minerReward.Add(minerReward, mainKingReward)
+		minerReward.Add(minerReward, rotatingKingReward)
+		mainKingReward = new(big.Int)
+		rotatingKingReward = new(big.Int)
+	}
+	return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
 }
 
 func sameRewardTransactions(a, b []*types.Transaction) bool {
