@@ -32,9 +32,9 @@ RANDOMX_SRC_DIR ?= $(RANDOMX_DIR)/src
 
 # RandomX build directories per platform
 RANDOMX_BUILD_DIR_HOST ?= $(RANDOMX_DIR)/build-host
-RANDOMX_BUILD_DIR_WINDOWS ?= $(RANDOMX_DIR)/build-windows
+RANDOMX_BUILD_DIR_WINDOWS ?= $(RANDOMX_DIR)/build-windows-amd64
 RANDOMX_BUILD_DIR_DARWIN ?= $(RANDOMX_DIR)/build-darwin
-RANDOMX_BUILD_DIR_LINUX ?= $(RANDOMX_DIR)/build-linux
+RANDOMX_BUILD_DIR_LINUX ?= $(RANDOMX_DIR)/build-linux-arm64
 
 # Use the posix versions of the compilers
 MINGW64_CC = x86_64-w64-mingw32-gcc-posix
@@ -215,7 +215,7 @@ randomx-host:
 	echo "Running CMake..."; \
 	cmake "$$SOURCE_DIR" -DARCH=native -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX..."; \
-	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -253,13 +253,15 @@ randomx-windows:
 		-DCMAKE_CXX_COMPILER=$(MINGW64_CXX) \
 		-DCMAKE_SYSTEM_NAME=Windows \
 		-DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+		-DARCH_ID=x86_64 \
+		-DCMAKE_SIZEOF_VOID_P=8 \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF \
 		-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
 		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
 		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY; \
 	echo "Building RandomX for Windows..."; \
-	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Windows library built: $(RANDOMX_BUILD_DIR_WINDOWS)/$(RANDOMX_LIB_STATIC)"; \
 		file "$(RANDOMX_LIB_STATIC)" || true; \
@@ -299,13 +301,15 @@ randomx-windows-386:
 		-DCMAKE_CXX_COMPILER=$(MINGW32_CXX) \
 		-DCMAKE_SYSTEM_NAME=Windows \
 		-DCMAKE_SYSTEM_PROCESSOR=i686 \
+		-DARCH_ID=i386 \
+		-DCMAKE_SIZEOF_VOID_P=4 \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF \
 		-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
 		-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
 		-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY; \
 	echo "Building RandomX for Windows 32-bit..."; \
-	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Windows 32-bit library built"; \
 	else \
@@ -341,7 +345,7 @@ randomx-darwin:
 			-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_SHARED_LIBS=OFF; \
-		make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+		cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 		if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 			echo "✓ RandomX macOS library built: $(RANDOMX_BUILD_DIR_DARWIN)/$(RANDOMX_LIB_STATIC)"; \
 		else \
@@ -349,10 +353,9 @@ randomx-darwin:
 			exit 1; \
 		fi; \
 	else \
-		echo "⚠️ OSXCross not found. Skipping macOS build."; \
-		echo "To build for macOS, either:"; \
-		echo "  1. Install OSXCross: https://github.com/tpoechtrager/osxcross"; \
-		echo "  2. Or build natively on a Mac with: make cross-darwin"; \
+		echo "ERROR: OSXCross not found; refusing to build macOS without native RandomX."; \
+		echo "Install OSXCross or build natively on macOS with RandomX enabled."; \
+		exit 1; \
 	fi
 
 #? randomx-linux: Build RandomX for Linux ARM64 (cross-compile from x86_64).
@@ -387,7 +390,7 @@ randomx-linux:
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM64..."; \
-	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Linux ARM64 library built: $(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -427,7 +430,7 @@ randomx-linux-arm:
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM..."; \
-	make -j$$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX Linux ARM library built: $(RANDOMX_BUILD_DIR_LINUX)/arm/$(RANDOMX_LIB_STATIC)"; \
 	else \
@@ -564,7 +567,8 @@ cross-darwin: randomx-darwin
 		echo "✅ macOS build complete: $(CROSS_OUTPUT_DIR)/darwin/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/darwin/; \
 	else \
-		echo "⚠️ RandomX macOS library not found. Skipping macOS build."; \
+		echo "ERROR: RandomX macOS library not found; refusing to build macOS without RandomX."; \
+		exit 1; \
 	fi
 
 #? cross-darwin-all: Build all macOS executables.
@@ -589,7 +593,8 @@ cross-darwin-all: randomx-darwin
 		echo "✅ All macOS builds complete: $(CROSS_OUTPUT_DIR)/darwin/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/darwin/; \
 	else \
-		echo "⚠️ RandomX macOS library not found. Skipping macOS builds."; \
+		echo "ERROR: RandomX macOS library not found; refusing to build macOS without RandomX."; \
+		exit 1; \
 	fi
 
 # ----- LINUX (All Architectures) -----

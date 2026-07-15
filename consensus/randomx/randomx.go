@@ -19,7 +19,7 @@ package randomx
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lstdc++ -lm
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-linux-arm64 -lrandomx -lstdc++ -lm
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-windows-amd64 -lrandomx -lstdc++ -lwinpthread
-#cgo darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-host -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
+#cgo darwin LDFLAGS: -L${SRCDIR}/../../build/_workspace/randomx/build-darwin -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 
 #include <stdlib.h>
 #include <string.h>
