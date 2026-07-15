@@ -592,7 +592,7 @@ func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, tar
 	for i := 0; i < len(header.Nonce); i++ {
 		legacyHeader.Nonce[i] = header.Nonce[len(header.Nonce)-1-i]
 	}
-	result, _ = rx.randomXHash(legacyHeader, vm)
+	result, _ := rx.randomXHash(legacyHeader, vm)
 	return result.Cmp(target) <= 0
 }
 
