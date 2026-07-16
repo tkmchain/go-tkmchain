@@ -20,10 +20,11 @@ func NewVMFromCache(cache *Cache) *VM {
 	if cache == nil || cache.ptr == nil {
 		return nil
 	}
-	flags := RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES
-	vm := C.randomx_create_vm(C.randomx_flags(flags), cache.ptr, nil)
-	if vm == nil {
-		return nil
+	for _, flags := range randomXFlagCandidates(0) {
+		vm := C.randomx_create_vm(C.randomx_flags(flags), cache.ptr, nil)
+		if vm != nil {
+			return &VM{ptr: vm}
+		}
 	}
-	return &VM{ptr: vm}
+	return nil
 }

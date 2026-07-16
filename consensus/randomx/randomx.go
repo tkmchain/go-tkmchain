@@ -83,6 +83,50 @@ const (
 	RANDOMX_FLAG_JIT      = 8
 )
 
+func randomXBaseFlags() int {
+	return RANDOMX_FLAG_HARD_AES
+}
+
+func randomXFastFlags() int {
+	flags := randomXBaseFlags()
+	// RandomX JIT is not consistently available on darwin and arm64/aarch64
+	// targets. On those platforms executable-memory restrictions or missing JIT
+	// support can make randomx_create_vm return nil even though interpreter mode
+	// works correctly.
+	if runtime.GOOS == "darwin" || runtime.GOARCH == "arm64" {
+		return flags
+	}
+	return flags | RANDOMX_FLAG_JIT
+}
+
+func randomXFlagCandidates(extra int) []int {
+	candidates := []int{
+		randomXFastFlags() | extra,
+		randomXBaseFlags() | extra,
+		extra,
+	}
+	unique := candidates[:0]
+	seen := make(map[int]struct{}, len(candidates))
+	for _, flags := range candidates {
+		if _, ok := seen[flags]; ok {
+			continue
+		}
+		seen[flags] = struct{}{}
+		unique = append(unique, flags)
+	}
+	return unique
+}
+
+func newVMWithFallback(cache *Cache, dataset *Dataset, extra int) (*VM, int) {
+	for _, flags := range randomXFlagCandidates(extra) {
+		if vm := NewVM(flags, cache, dataset); vm != nil {
+			return vm, flags
+		}
+		log.Warn("RandomX VM creation failed, trying fallback flags", "flags", flags)
+	}
+	return nil, 0
+}
+
 type Config struct {
 	Enabled        bool
 	EpochLength    uint64
@@ -342,14 +386,14 @@ func (rx *RandomX) getVM() (*VM, error) {
 		return nil, errNoCache
 	}
 
-	flags := RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES
-
 	if rx.dataset != nil {
-		if vm := NewVM(flags, nil, rx.dataset); vm != nil {
+		if vm, flags := newVMWithFallback(nil, rx.dataset, 0); vm != nil {
+			log.Debug("Created RandomX dataset VM", "flags", flags)
 			return vm, nil
 		}
 	}
-	if vm := NewVM(flags, rx.cache, nil); vm != nil {
+	if vm, flags := newVMWithFallback(rx.cache, nil, 0); vm != nil {
+		log.Debug("Created RandomX cache VM", "flags", flags)
 		return vm, nil
 	}
 	return nil, fmt.Errorf("failed to create RandomX VM")
@@ -381,13 +425,13 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
 		rx.dataset = nil
 	}
 
-	rx.cache = NewCache(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES)
+	rx.cache = NewCache(randomXFastFlags())
 	if rx.cache == nil {
 		return fmt.Errorf("failed to allocate RandomX cache")
 	}
 	rx.cache.Init(seedBytes)
 
-	if ds := NewDataset(RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES); ds != nil {
+	if ds := NewDataset(randomXFastFlags()); ds != nil {
 		log.Info("Initializing full RandomX dataset...")
 		ds.InitDataset(rx.cache, 0, 0)
 		rx.dataset = ds
@@ -611,8 +655,8 @@ func (rx *RandomX) getLegacyFullMemVM() (*VM, error) {
 		return nil, fmt.Errorf("legacy full-memory dataset is unavailable")
 	}
 
-	flags := RANDOMX_FLAG_JIT | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_FULL_MEM
-	if vm := NewVM(flags, nil, rx.dataset); vm != nil {
+	if vm, flags := newVMWithFallback(nil, rx.dataset, RANDOMX_FLAG_FULL_MEM); vm != nil {
+		log.Debug("Created legacy full-memory RandomX VM", "flags", flags)
 		return vm, nil
 	}
 	return nil, fmt.Errorf("failed to create legacy full-memory RandomX VM")
