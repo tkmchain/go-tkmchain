@@ -33,8 +33,12 @@ RANDOMX_SRC_DIR ?= $(RANDOMX_DIR)/src
 # RandomX build directories per platform
 RANDOMX_BUILD_DIR_HOST ?= $(RANDOMX_DIR)/build-host
 RANDOMX_BUILD_DIR_WINDOWS ?= $(RANDOMX_DIR)/build-windows-amd64
-RANDOMX_BUILD_DIR_DARWIN ?= $(RANDOMX_DIR)/build-darwin
-RANDOMX_BUILD_DIR_LINUX ?= $(RANDOMX_DIR)/build-linux-arm64
+RANDOMX_BUILD_DIR_DARWIN_AMD64 ?= $(RANDOMX_DIR)/build-darwin-amd64
+RANDOMX_BUILD_DIR_DARWIN_ARM64 ?= $(RANDOMX_DIR)/build-darwin-arm64
+RANDOMX_BUILD_DIR_LINUX_ARM64 ?= $(RANDOMX_DIR)/build-linux-arm64
+RANDOMX_BUILD_DIR_LINUX_ARM ?= $(RANDOMX_DIR)/build-linux-arm
+RANDOMX_BUILD_DIR_DARWIN ?= $(RANDOMX_BUILD_DIR_DARWIN_AMD64)
+RANDOMX_BUILD_DIR_LINUX ?= $(RANDOMX_BUILD_DIR_LINUX_ARM64)
 
 # Use the posix versions of the compilers
 MINGW64_CC = x86_64-w64-mingw32-gcc-posix
@@ -50,8 +54,12 @@ ARM_CXX = arm-linux-gnueabihf-g++
 RANDOMX_LIB_STATIC = librandomx.a
 RANDOMX_LIB_HOST = $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)
 RANDOMX_LIB_WINDOWS = $(RANDOMX_BUILD_DIR_WINDOWS)/$(RANDOMX_LIB_STATIC)
-RANDOMX_LIB_DARWIN = $(RANDOMX_BUILD_DIR_DARWIN)/$(RANDOMX_LIB_STATIC)
-RANDOMX_LIB_LINUX = $(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)
+RANDOMX_LIB_DARWIN_AMD64 = $(RANDOMX_BUILD_DIR_DARWIN_AMD64)/$(RANDOMX_LIB_STATIC)
+RANDOMX_LIB_DARWIN_ARM64 = $(RANDOMX_BUILD_DIR_DARWIN_ARM64)/$(RANDOMX_LIB_STATIC)
+RANDOMX_LIB_DARWIN = $(RANDOMX_LIB_DARWIN_AMD64)
+RANDOMX_LIB_LINUX_ARM64 = $(RANDOMX_BUILD_DIR_LINUX_ARM64)/$(RANDOMX_LIB_STATIC)
+RANDOMX_LIB_LINUX_ARM = $(RANDOMX_BUILD_DIR_LINUX_ARM)/$(RANDOMX_LIB_STATIC)
+RANDOMX_LIB_LINUX = $(RANDOMX_LIB_LINUX_ARM64)
 
 # Cross-compilation targets
 CROSS_OUTPUT_DIR = ./build/dist
@@ -60,7 +68,9 @@ CROSS_WINDOWS_EXT = .exe
 # Static linking flags for Windows
 WIN_STATIC_LDFLAGS = -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic
 HOST_RANDOMX_LDFLAGS = $(if $(filter Darwin,$(shell uname -s)),-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security,-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm)
-DARWIN_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
+DARWIN_AMD64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_AMD64) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
+DARWIN_ARM64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_ARM64) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
+DARWIN_RANDOMX_LDFLAGS = $(DARWIN_AMD64_RANDOMX_LDFLAGS)
 
 # List of all commands to build (skip bootnode if not exists)
 CMDS = gtkm clef devp2p abigen evm rlpdump
@@ -218,6 +228,18 @@ randomx-host:
 	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)"; \
+		HOST_OS="$$(uname -s)"; \
+		HOST_ARCH="$$(uname -m)"; \
+		TARGET_DIR=""; \
+		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; fi; \
+		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "x86_64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; fi; \
+		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "aarch64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_LINUX_ARM64)"; fi; \
+		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "armv7l" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_LINUX_ARM)"; fi; \
+		if [ -n "$$TARGET_DIR" ]; then \
+			mkdir -p "$$TARGET_DIR"; \
+			cp "$(RANDOMX_LIB_STATIC)" "$$TARGET_DIR/$(RANDOMX_LIB_STATIC)"; \
+			echo "✓ RandomX host library copied for cgo: $$TARGET_DIR/$(RANDOMX_LIB_STATIC)"; \
+		fi; \
 	else \
 		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC)"; \
 		exit 1; \
@@ -317,15 +339,14 @@ randomx-windows-386:
 		exit 1; \
 	fi
 
-#? randomx-darwin: Build RandomX for macOS (requires OSXCross).
-randomx-darwin:
+#? randomx-darwin: Build RandomX for macOS amd64 and arm64 (requires OSXCross or native macOS tooling).
+randomx-darwin: randomx-darwin-amd64 randomx-darwin-arm64
+
+#? randomx-darwin-amd64: Build RandomX for macOS amd64.
+randomx-darwin-amd64:
 	@set -e; \
-	echo "=== Building RandomX for macOS ==="; \
-	echo "Note: This requires OSXCross installed"; \
-	echo "See: https://github.com/tpoechtrager/osxcross"; \
-	echo ""; \
-	echo "If OSXCross is not available, this will fail."; \
-	echo "For macOS builds, it's recommended to build natively on macOS."; \
+	echo "=== Building RandomX for macOS amd64 ==="; \
+	echo "Note: Cross builds require OSXCross; native macOS builds can use local clang."; \
 	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
 	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
 		echo "Cloning RandomX into $$SOURCE_DIR..."; \
@@ -335,26 +356,54 @@ randomx-darwin:
 	else \
 		echo "RandomX already cloned at $$SOURCE_DIR"; \
 	fi; \
-	echo "Creating build directory..."; \
-	mkdir -p "$(RANDOMX_BUILD_DIR_DARWIN)"; \
-	cd "$(RANDOMX_BUILD_DIR_DARWIN)"; \
-	echo "Running CMake for macOS..."; \
-	if command -v osxcross >/dev/null 2>&1; then \
-		cmake "$$SOURCE_DIR" \
-			-DCMAKE_SYSTEM_NAME=Darwin \
-			-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
-			-DCMAKE_BUILD_TYPE=Release \
-			-DBUILD_SHARED_LIBS=OFF; \
-		cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
-		if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
-			echo "✓ RandomX macOS library built: $(RANDOMX_BUILD_DIR_DARWIN)/$(RANDOMX_LIB_STATIC)"; \
-		else \
-			echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for macOS"; \
-			exit 1; \
-		fi; \
+	mkdir -p "$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; \
+	cd "$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; \
+	cmake "$$SOURCE_DIR" \
+		-DCMAKE_SYSTEM_NAME=Darwin \
+		-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+		-DCMAKE_OSX_ARCHITECTURES=x86_64 \
+		-DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+		-DARCH_ID=x86_64 \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF; \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
+		echo "✓ RandomX macOS amd64 library built: $(RANDOMX_LIB_DARWIN_AMD64)"; \
 	else \
-		echo "ERROR: OSXCross not found; refusing to build macOS without native RandomX."; \
-		echo "Install OSXCross or build natively on macOS with RandomX enabled."; \
+		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for macOS amd64"; \
+		exit 1; \
+	fi
+
+#? randomx-darwin-arm64: Build RandomX for macOS arm64.
+randomx-darwin-arm64:
+	@set -e; \
+	echo "=== Building RandomX for macOS arm64 ==="; \
+	echo "Note: Cross builds require OSXCross; native macOS builds can use local clang."; \
+	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
+	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
+		echo "Cloning RandomX into $$SOURCE_DIR..."; \
+		rm -rf "$$SOURCE_DIR"; \
+		mkdir -p "$$(dirname $$SOURCE_DIR)"; \
+		git clone --depth 1 --branch $(RANDOMX_VERSION) $(RANDOMX_REPO) "$$SOURCE_DIR"; \
+	else \
+		echo "RandomX already cloned at $$SOURCE_DIR"; \
+	fi; \
+	mkdir -p "$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; \
+	cd "$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; \
+	cmake "$$SOURCE_DIR" \
+		-DCMAKE_SYSTEM_NAME=Darwin \
+		-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+		-DCMAKE_OSX_ARCHITECTURES=arm64 \
+		-DCMAKE_SYSTEM_PROCESSOR=arm64 \
+		-DARCH_ID=arm64 \
+		-DARM_ID=arm64 \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF; \
+	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
+	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
+		echo "✓ RandomX macOS arm64 library built: $(RANDOMX_LIB_DARWIN_ARM64)"; \
+	else \
+		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for macOS arm64"; \
 		exit 1; \
 	fi
 
@@ -378,8 +427,8 @@ randomx-linux:
 		echo "RandomX already cloned at $$SOURCE_DIR"; \
 	fi; \
 	echo "Creating build directory..."; \
-	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX)"; \
-	cd "$(RANDOMX_BUILD_DIR_LINUX)"; \
+	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX_ARM64)"; \
+	cd "$(RANDOMX_BUILD_DIR_LINUX_ARM64)"; \
 	echo "Using compiler: $(AARCH64_CC)"; \
 	echo "Running CMake for Linux ARM64..."; \
 	cmake "$$SOURCE_DIR" \
@@ -387,12 +436,14 @@ randomx-linux:
 		-DCMAKE_CXX_COMPILER=$(AARCH64_CXX) \
 		-DCMAKE_SYSTEM_NAME=Linux \
 		-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+		-DARCH_ID=aarch64 \
+		-DARM_ID=aarch64 \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM64..."; \
 	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
-		echo "✓ RandomX Linux ARM64 library built: $(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)"; \
+		echo "✓ RandomX Linux ARM64 library built: $(RANDOMX_LIB_LINUX_ARM64)"; \
 	else \
 		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for Linux ARM64"; \
 		exit 1; \
@@ -418,8 +469,8 @@ randomx-linux-arm:
 		echo "RandomX already cloned at $$SOURCE_DIR"; \
 	fi; \
 	echo "Creating build directory..."; \
-	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX)/arm"; \
-	cd "$(RANDOMX_BUILD_DIR_LINUX)/arm"; \
+	mkdir -p "$(RANDOMX_BUILD_DIR_LINUX_ARM)"; \
+	cd "$(RANDOMX_BUILD_DIR_LINUX_ARM)"; \
 	echo "Using compiler: $(ARM_CC)"; \
 	echo "Running CMake for Linux ARM..."; \
 	cmake "$$SOURCE_DIR" \
@@ -427,12 +478,14 @@ randomx-linux-arm:
 		-DCMAKE_CXX_COMPILER=$(ARM_CXX) \
 		-DCMAKE_SYSTEM_NAME=Linux \
 		-DCMAKE_SYSTEM_PROCESSOR=arm \
+		-DARCH_ID=arm \
+		-DARM_ID=arm \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM..."; \
 	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
-		echo "✓ RandomX Linux ARM library built: $(RANDOMX_BUILD_DIR_LINUX)/arm/$(RANDOMX_LIB_STATIC)"; \
+		echo "✓ RandomX Linux ARM library built: $(RANDOMX_LIB_LINUX_ARM)"; \
 	else \
 		echo "ERROR: Failed to build $(RANDOMX_LIB_STATIC) for Linux ARM"; \
 		exit 1; \
@@ -458,7 +511,7 @@ randomx-install: randomx-host
 randomx-check:
 	@echo "=== RandomX Build Status ==="
 	@echo ""
-	@for lib in "$(RANDOMX_LIB_HOST)" "$(RANDOMX_LIB_WINDOWS)" "$(RANDOMX_LIB_DARWIN)" "$(RANDOMX_BUILD_DIR_LINUX)/$(RANDOMX_LIB_STATIC)"; do \
+	@for lib in "$(RANDOMX_LIB_HOST)" "$(RANDOMX_LIB_WINDOWS)" "$(RANDOMX_LIB_DARWIN_AMD64)" "$(RANDOMX_LIB_DARWIN_ARM64)" "$(RANDOMX_LIB_LINUX_ARM64)" "$(RANDOMX_LIB_LINUX_ARM)"; do \
 		if [ -f "$$lib" ]; then \
 			echo "✓ $$lib"; \
 		else \
@@ -553,21 +606,22 @@ cross-windows-all: randomx-windows randomx-windows-386
 cross-darwin: randomx-darwin
 	@echo "Building gtkm for macOS..."
 	@mkdir -p $(CROSS_OUTPUT_DIR)/darwin
-	@if [ -f "$(RANDOMX_LIB_DARWIN)" ]; then \
+	@if [ -f "$(RANDOMX_LIB_DARWIN_AMD64)" ] && [ -f "$(RANDOMX_LIB_DARWIN_ARM64)" ]; then \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
+			CGO_LDFLAGS="$(DARWIN_AMD64_RANDOMX_LDFLAGS)" \
 			GOOS=darwin GOARCH=amd64 \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/gtkm-darwin-amd64 ./cmd/gtkm; \
 		CGO_ENABLED=1 \
 			CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-			CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
+			CGO_LDFLAGS="$(DARWIN_ARM64_RANDOMX_LDFLAGS)" \
 			GOOS=darwin GOARCH=arm64 \
 			go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/gtkm-darwin-arm64 ./cmd/gtkm; \
 		echo "✅ macOS build complete: $(CROSS_OUTPUT_DIR)/darwin/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/darwin/; \
 	else \
-		echo "ERROR: RandomX macOS library not found; refusing to build macOS without RandomX."; \
+		echo "ERROR: RandomX macOS libraries not found; refusing to build macOS without RandomX."; \
+		echo "Missing one of: $(RANDOMX_LIB_DARWIN_AMD64), $(RANDOMX_LIB_DARWIN_ARM64)"; \
 		exit 1; \
 	fi
 
@@ -575,25 +629,26 @@ cross-darwin: randomx-darwin
 cross-darwin-all: randomx-darwin
 	@echo "Building ALL macOS executables..."
 	@mkdir -p $(CROSS_OUTPUT_DIR)/darwin
-	@if [ -f "$(RANDOMX_LIB_DARWIN)" ]; then \
+	@if [ -f "$(RANDOMX_LIB_DARWIN_AMD64)" ] && [ -f "$(RANDOMX_LIB_DARWIN_ARM64)" ]; then \
 		for cmd in $(CROSS_CMDS); do \
 			echo "Building $$cmd for macOS amd64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
+				CGO_LDFLAGS="$(DARWIN_AMD64_RANDOMX_LDFLAGS)" \
 				GOOS=darwin GOARCH=amd64 \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/$$cmd-darwin-amd64 ./cmd/$$cmd; \
 			echo "Building $$cmd for macOS arm64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="$(DARWIN_RANDOMX_LDFLAGS)" \
+				CGO_LDFLAGS="$(DARWIN_ARM64_RANDOMX_LDFLAGS)" \
 				GOOS=darwin GOARCH=arm64 \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/darwin/$$cmd-darwin-arm64 ./cmd/$$cmd; \
 		done; \
 		echo "✅ All macOS builds complete: $(CROSS_OUTPUT_DIR)/darwin/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/darwin/; \
 	else \
-		echo "ERROR: RandomX macOS library not found; refusing to build macOS without RandomX."; \
+		echo "ERROR: RandomX macOS libraries not found; refusing to build macOS without RandomX."; \
+		echo "Missing one of: $(RANDOMX_LIB_DARWIN_AMD64), $(RANDOMX_LIB_DARWIN_ARM64)"; \
 		exit 1; \
 	fi
 
@@ -644,7 +699,7 @@ cross-linux-arm64: randomx-linux
 			echo "Building $$cmd for Linux ARM64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM64) -lrandomx -lstdc++ -lm" \
 				GOOS=linux GOARCH=arm64 CC=$(AARCH64_CC) CXX=$(AARCH64_CXX) \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm64/$$cmd-linux-arm64 ./cmd/$$cmd; \
 		done; \
@@ -656,7 +711,7 @@ cross-linux-arm64: randomx-linux
 	fi
 
 #? cross-linux-arm: Build Linux ARM (32-bit) executables.
-cross-linux-arm: randomx-linux
+cross-linux-arm: randomx-linux-arm
 	@echo "Building Linux ARM (32-bit) executables..."
 	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/arm
 	@if [ -n "$(HAS_ARM)" ]; then \
@@ -664,7 +719,7 @@ cross-linux-arm: randomx-linux
 			echo "Building $$cmd for Linux ARM..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM) -lrandomx -lstdc++ -lm" \
 				GOOS=linux GOARCH=arm CC=$(ARM_CC) CXX=$(ARM_CXX) \
 				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm/$$cmd-linux-arm ./cmd/$$cmd; \
 		done; \

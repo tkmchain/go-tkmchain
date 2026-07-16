@@ -13,9 +13,19 @@ func TestRandomXFlagCandidatesFallback(t *testing.T) {
 	if len(candidates) == 0 {
 		t.Fatal("no RandomX flag candidates returned")
 	}
-	fallback := randomXBaseFlags()
-	if candidates[len(candidates)-1] != fallback {
-		t.Fatalf("last candidate = %d, want non-JIT fallback %d", candidates[len(candidates)-1], fallback)
+	if candidates[len(candidates)-1] != 0 {
+		t.Fatalf("last candidate = %d, want soft interpreter fallback 0", candidates[len(candidates)-1])
+	}
+
+	hasBase := false
+	for _, flags := range candidates {
+		if flags == randomXBaseFlags() {
+			hasBase = true
+			break
+		}
+	}
+	if !hasBase {
+		t.Fatalf("candidates %v do not include HARD_AES fallback %d", candidates, randomXBaseFlags())
 	}
 
 	fast := randomXFastFlags()
