@@ -433,15 +433,13 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			}
 
 		case <-timer.C:
-			// If mining is running resubmit a new work cycle periodically to pull in
-			// higher priced transactions. Disable this overhead for pending blocks.
+			// Refresh mining work periodically even when there are no new
+			// transactions. RandomX difficulty depends on elapsed time since
+			// the parent block, so stale empty work would prevent EDA from
+			// lowering difficulty during long no-block gaps.
 			if w.isRunning() {
-				// Short circuit if no new transaction arrives.
-				if atomic.LoadInt32(&w.newTxs) == 0 {
-					timer.Reset(recommit)
-					continue
-				}
-				commit(true, commitInterruptResubmit)
+				timestamp = time.Now().Unix()
+				commit(atomic.LoadInt32(&w.newTxs) > 0, commitInterruptResubmit)
 			}
 
 		case interval := <-w.resubmitIntervalCh:
@@ -1129,10 +1127,10 @@ func (w *worker) pendingTransactions(filter txpool.PendingFilter) (map[common.Ad
 func (w *worker) commit(uncles []*types.Header, interval func(), update bool, start time.Time) error {
 	s := w.current.state.Copy()
 	body := &types.Body{Transactions: w.current.txs, Uncles: uncles}
-	w.engine.Finalize(w.chain, w.current.header, s, body)
 	blockReceipts := w.current.receipts
 	rewardTxCount := 0
 	body.Transactions, blockReceipts, rewardTxCount = w.rewardBlockBody(w.current.header, body.Transactions, blockReceipts)
+	w.engine.Finalize(w.chain, w.current.header, s, body)
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
 	block := types.NewBlock(w.current.header, body, blockReceipts, trie.NewStackTrie(nil))
 	// Deep copy receipts here to avoid interaction between different tasks.
