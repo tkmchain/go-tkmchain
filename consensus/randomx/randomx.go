@@ -193,9 +193,16 @@ func NewDataset(flags int) *Dataset {
 	return &Dataset{ptr: d}
 }
 
+func DatasetItemCount() uint64 {
+	return uint64(C.randomx_dataset_item_count())
+}
+
 func (d *Dataset) InitDataset(cache *Cache, start, count uint64) {
 	if d == nil || d.ptr == nil || cache == nil || cache.ptr == nil {
 		return
+	}
+	if count == 0 {
+		count = DatasetItemCount()
 	}
 	C.randomx_init_dataset(d.ptr, cache.ptr, C.ulong(start), C.ulong(count))
 }
@@ -389,7 +396,7 @@ func (rx *RandomX) getVM() (*VM, error) {
 	}
 
 	if rx.dataset != nil {
-		if vm, flags := newVMWithFallback(nil, rx.dataset, 0); vm != nil {
+		if vm, flags := newVMWithFallback(nil, rx.dataset, RANDOMX_FLAG_FULL_MEM); vm != nil {
 			log.Debug("Created RandomX dataset VM", "flags", flags)
 			return vm, nil
 		}
@@ -433,13 +440,19 @@ func (rx *RandomX) updateCacheForEpoch(epoch uint64) error {
 	}
 	rx.cache.Init(seedBytes)
 
-	if ds := NewDataset(randomXFastFlags()); ds != nil {
-		log.Info("Initializing full RandomX dataset...")
-		ds.InitDataset(rx.cache, 0, 0)
-		rx.dataset = ds
-		log.Info("✅ Full dataset ready")
+	persistDataset := rx.config != nil && rx.config.PersistDataset
+	if persistDataset {
+		if ds := NewDataset(randomXFastFlags()); ds != nil {
+			items := DatasetItemCount()
+			log.Info("Initializing full RandomX dataset...", "items", items)
+			ds.InitDataset(rx.cache, 0, items)
+			rx.dataset = ds
+			log.Info("✅ Full dataset ready")
+		} else {
+			log.Warn("⚠️ Falling back to light mode (cache only)")
+		}
 	} else {
-		log.Warn("⚠️ Falling back to light mode (cache only)")
+		log.Info("RandomX light mode ready")
 	}
 
 	rx.cacheEpoch = epoch
@@ -1016,7 +1029,11 @@ func (rx *RandomX) seedHash(epoch uint64) common.Hash {
 }
 
 func (rx *RandomX) epoch(blockNum uint64) uint64 {
-	return blockNum / rx.config.EpochLength
+	epochLength := uint64(RandomXEpochLength)
+	if rx.config != nil && rx.config.EpochLength > 0 {
+		epochLength = rx.config.EpochLength
+	}
+	return blockNum / epochLength
 }
 
 func (rx *RandomX) SealHash(header *types.Header) common.Hash {

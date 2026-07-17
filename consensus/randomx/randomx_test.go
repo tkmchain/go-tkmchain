@@ -21,6 +21,7 @@ package randomx
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,21 +30,46 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-func TestVerifySealAcceptsZeroMixDigestDuringBootstrap(t *testing.T) {
+func TestVerifySealRejectsZeroMixDigestDuringBootstrap(t *testing.T) {
 	rx := &RandomX{}
-	header := &types.Header{Number: big.NewInt(1)}
+	header := &types.Header{Number: big.NewInt(1), Difficulty: GenesisDifficulty}
 
-	if err := rx.VerifySeal(nil, header); err != nil {
-		t.Fatalf("unexpected bootstrap seal rejection: %v", err)
+	err := rx.VerifySeal(nil, header)
+	if err == nil || !strings.Contains(err.Error(), "invalid proof") {
+		t.Fatalf("unexpected seal error: %v", err)
 	}
 }
 
 func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
 	rx := &RandomX{}
-	header := &types.Header{Number: big.NewInt(21)}
+	header := &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty}
 
-	if err := rx.VerifySeal(nil, header); err != errInvalidMixHash {
-		t.Fatalf("unexpected seal error: have %v, want %v", err, errInvalidMixHash)
+	err := rx.VerifySeal(nil, header)
+	if err == nil || !strings.Contains(err.Error(), "invalid proof") {
+		t.Fatalf("unexpected seal error: %v", err)
+	}
+}
+
+func TestDefaultLightModeCreatesVM(t *testing.T) {
+	rx, err := New(DefaultConfig(), 1, common.Address{}, nil)
+	if err != nil {
+		t.Fatalf("new RandomX failed: %v", err)
+	}
+	defer rx.Close()
+
+	if rx.dataset != nil {
+		t.Fatal("default config unexpectedly initialized full dataset")
+	}
+	vm, err := rx.getVM()
+	if err != nil {
+		t.Fatalf("getVM failed: %v", err)
+	}
+	defer vm.Close()
+
+	out := make([]byte, 32)
+	vm.CalculateHash([]byte("tkm-randomx-smoke"), out)
+	if common.BytesToHash(out) == (common.Hash{}) {
+		t.Fatal("RandomX hash output is zero")
 	}
 }
 
@@ -60,7 +86,7 @@ func TestFinalizeWritesRotatingKingWithoutCoinbase(t *testing.T) {
 
 func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 	rx := NewFaker()
-	header := &types.Header{Number: big.NewInt(1)}
+	header := &types.Header{Number: big.NewInt(1), Difficulty: GenesisDifficulty}
 	if err := rx.Prepare(nil, header); err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
