@@ -1145,7 +1145,7 @@ func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *ty
 		return
 	}
 	if rx.skipImplicitRewards(chain, header, body) {
-		log.Debug("RandomX finalize skipped implicit rewards after Kyoto", "block", blockNumber)
+		rx.distributeKyotoEmptyBlockRewards(state, header, CalculateBlockReward(blockNumber))
 		return
 	}
 	blockReward := CalculateBlockReward(blockNumber)
@@ -1168,6 +1168,21 @@ func (rx *RandomX) skipImplicitRewards(chain consensus.ChainHeaderReader, header
 		}
 	}
 	return true
+}
+
+func (rx *RandomX) distributeKyotoEmptyBlockRewards(state vm.StateDB, header *types.Header, blockReward *big.Int) {
+	if blockReward == nil || blockReward.Sign() == 0 {
+		return
+	}
+	mainKingReward := new(big.Int).Mul(blockReward, big.NewInt(50))
+	mainKingReward.Div(mainKingReward, big.NewInt(100))
+	minerReward := new(big.Int).Sub(new(big.Int).Set(blockReward), mainKingReward)
+	if rx.mainKing != (common.Address{}) && mainKingReward.Sign() > 0 {
+		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+	if header.Coinbase != (common.Address{}) && minerReward.Sign() > 0 {
+		state.AddBalance(header.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
 }
 
 func (rx *RandomX) distributeBodyRewardTransactions(state vm.StateDB, body *types.Body) bool {
