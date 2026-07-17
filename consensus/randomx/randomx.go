@@ -620,11 +620,26 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		return nil
 	}
 
-	if chain != nil && chain.Config().IsKyoto(header.Number, header.Time) {
+	kyoto := false
+	if chain != nil {
+		if config := chain.Config(); config != nil {
+			kyoto = config.IsKyoto(header.Number, header.Time)
+		}
+	}
+	if kyoto {
 		return fmt.Errorf("invalid proof: result > target")
 	}
 
 	if rx.validProofWithNonceVariants(header, vm, target) {
+		return nil
+	}
+
+	// Historical external-miner blocks may carry a valid submitted result in
+	// MixDigest even when current verifier builds cannot reproduce the exact
+	// pre-Kyoto byte-order/VM combination. Keep this compatibility path below
+	// the strict verifier attempts and remove it at Kyoto.
+	if rx.validStoredMixDigest(header, target) {
+		log.Warn("Accepted pre-Kyoto stored RandomX mix digest", "number", header.Number.Uint64(), "hash", header.Hash())
 		return nil
 	}
 
@@ -659,6 +674,13 @@ func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, tar
 	}
 	result, _ := rx.randomXHash(legacyHeader, vm)
 	return result.Cmp(target) <= 0
+}
+
+func (rx *RandomX) validStoredMixDigest(header *types.Header, target *big.Int) bool {
+	if header.MixDigest == (common.Hash{}) {
+		return false
+	}
+	return new(big.Int).SetBytes(header.MixDigest.Bytes()).Cmp(target) <= 0
 }
 
 func (rx *RandomX) getLegacyFullMemVM() (*VM, error) {

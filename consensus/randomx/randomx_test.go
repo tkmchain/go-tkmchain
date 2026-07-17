@@ -63,6 +63,21 @@ func TestVerifySealRejectsZeroMixDigestAfterRandomXTxActivation(t *testing.T) {
 	}
 }
 
+func TestValidStoredMixDigestAcceptsBlock2450ProofValue(t *testing.T) {
+	rx := &RandomX{}
+	difficulty := new(big.Int).SetUint64(0x4a554)
+	target := new(big.Int).Div(maxUint256, difficulty)
+	header := &types.Header{
+		Number:     big.NewInt(2450),
+		Difficulty: difficulty,
+		MixDigest:  common.HexToHash("0x0000242a94ce61ceba227a73e415ff4221d070ed428ae7a8f07940f70741a2a8"),
+	}
+
+	if !rx.validStoredMixDigest(header, target) {
+		t.Fatal("block 2450 stored mix digest should be below target")
+	}
+}
+
 func TestEpochForBlockStartsAtRandomXTxActivation(t *testing.T) {
 	rx := &RandomX{config: DefaultConfig()}
 	config := *params.RandomXChainConfig
