@@ -333,6 +333,13 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 				writeRotatingKingToStateValue(s, king)
 			},
 		})
+		candidates = append(candidates, candidate{
+			name: "historical-rotating-slot-normal-implicit-" + king.Hex(),
+			apply: func(s vm.StateDB) {
+				writeRotatingKingToStateValue(s, king)
+				rx.distributeRewardsToStateWithRotatingKing(s, header, blockReward, king)
+			},
+		})
 	}
 	for _, candidate := range candidates {
 		copyState := statedb.Copy()
@@ -635,6 +642,27 @@ func (rx *RandomX) rewardShares(header *types.Header, totalReward *big.Int) (com
 
 func (rx *RandomX) distributeRewardsToState(state vm.StateDB, header *types.Header, totalReward *big.Int) {
 	mainKing, mainKingReward, rotatingKing, rotatingKingReward, coinbase, minerReward := rx.rewardShares(header, totalReward)
+	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
+		state.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+	if rotatingKingReward.Sign() > 0 && rotatingKing != (common.Address{}) {
+		state.AddBalance(rotatingKing, uint256.MustFromBig(rotatingKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+	if minerReward.Sign() > 0 && coinbase != (common.Address{}) {
+		state.AddBalance(coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+}
+
+func (rx *RandomX) distributeRewardsToStateWithRotatingKing(state vm.StateDB, header *types.Header, totalReward *big.Int, rotatingKing common.Address) {
+	mainKing, mainKingReward, _, rotatingKingReward, coinbase, minerReward := rx.rewardShares(header, totalReward)
+	if rotatingKing == (common.Address{}) {
+		if mainKing != (common.Address{}) {
+			mainKingReward.Add(mainKingReward, rotatingKingReward)
+		} else {
+			minerReward.Add(minerReward, rotatingKingReward)
+		}
+		rotatingKingReward = new(big.Int)
+	}
 	if mainKingReward.Sign() > 0 && mainKing != (common.Address{}) {
 		state.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
