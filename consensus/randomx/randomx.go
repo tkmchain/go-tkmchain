@@ -524,7 +524,7 @@ func (rx *RandomX) generateWork() (*Work, error) {
 	}
 
 	sealHash := rx.SealHash(header)
-	seedHash := rx.seedHash(rx.epoch(blockNum))
+	seedHash := rx.seedHash(rx.epochForBlock(rx.chain, blockNum))
 	target := new(big.Int).Div(maxUint256, difficulty)
 
 	return &Work{
@@ -604,7 +604,7 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		}
 	}
 
-	epoch := rx.epoch(num)
+	epoch := rx.epochForBlock(chain, num)
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
 		return err
 	}
@@ -711,7 +711,7 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 		return nil
 	}
 
-	epoch := rx.epoch(header.Number.Uint64())
+	epoch := rx.epochForBlock(chain, header.Number.Uint64())
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
 		return err
 	}
@@ -1032,6 +1032,20 @@ func (rx *RandomX) seedHash(epoch uint64) common.Hash {
 		}
 	}
 	return common.BytesToHash(seed)
+}
+
+func (rx *RandomX) epochForBlock(chain consensus.ChainHeaderReader, blockNum uint64) uint64 {
+	if chain != nil {
+		if config := chain.Config(); config != nil && config.RandomXTxBlock != nil {
+			activation := config.RandomXTxBlock.Uint64()
+			if blockNum >= activation {
+				blockNum -= activation
+			} else {
+				blockNum = 0
+			}
+		}
+	}
+	return rx.epoch(blockNum)
 }
 
 func (rx *RandomX) epoch(blockNum uint64) uint64 {
@@ -1563,11 +1577,11 @@ func (api *RandomXAPI) GetSeedHash(block *uint64) (common.Hash, error) {
 	if block != nil {
 		bn = *block
 	}
-	return api.randomx.seedHash(api.randomx.epoch(bn)), nil
+	return api.randomx.seedHash(api.randomx.epochForBlock(api.randomx.chain, bn)), nil
 }
 
 func (api *RandomXAPI) GetCurrentEpoch(blockNumber uint64) uint64 {
-	return api.randomx.epoch(blockNumber)
+	return api.randomx.epochForBlock(api.randomx.chain, blockNumber)
 }
 
 func (api *RandomXAPI) GetHashrate() float64 {

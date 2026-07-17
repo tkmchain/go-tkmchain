@@ -63,6 +63,23 @@ func TestVerifySealRejectsZeroMixDigestAfterRandomXTxActivation(t *testing.T) {
 	}
 }
 
+func TestEpochForBlockStartsAtRandomXTxActivation(t *testing.T) {
+	rx := &RandomX{config: DefaultConfig()}
+	config := *params.RandomXChainConfig
+	config.RandomXTxBlock = big.NewInt(2450)
+	chain := verifySealTestChain{config: &config}
+
+	if epoch := rx.epochForBlock(chain, 2449); epoch != 0 {
+		t.Fatalf("pre-activation epoch = %d, want 0", epoch)
+	}
+	if epoch := rx.epochForBlock(chain, 2450); epoch != 0 {
+		t.Fatalf("activation epoch = %d, want 0", epoch)
+	}
+	if epoch := rx.epochForBlock(chain, 2450+RandomXEpochLength); epoch != 1 {
+		t.Fatalf("next RandomX epoch = %d, want 1", epoch)
+	}
+}
+
 func TestDefaultLightModeCreatesVM(t *testing.T) {
 	rx, err := New(DefaultConfig(), 1, common.Address{}, nil)
 	if err != nil {
