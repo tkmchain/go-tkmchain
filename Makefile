@@ -85,8 +85,7 @@ HAS_MINGW32 := $(if $(HAS_MINGW32),1,0)
 
 # Check if ARM compilers are available
 HAS_ARM := $(shell command -v arm-linux-gnueabihf-gcc 2>/dev/null || echo "")
-HAS_ARM64 := $(shell command -v aarch64-linux-gnu-gcc 2>/dev/null || echo "")
-HAS_ARM64 := $(if $(HAS_ARM64),1,0)
+HAS_ARM64 := $(shell command -v $(AARCH64_CC) >/dev/null 2>&1 && command -v $(AARCH64_CXX) >/dev/null 2>&1 && echo 1 || echo 0)
 
 # Check if 32-bit Linux headers are available
 HAS_32BIT_LIBS := $(shell dpkg -l libc6-dev-i386 2>/dev/null | grep -c "^ii" || echo "0")
@@ -223,13 +222,16 @@ randomx-host:
 	mkdir -p "$(RANDOMX_BUILD_DIR_HOST)"; \
 	cd "$(RANDOMX_BUILD_DIR_HOST)"; \
 	echo "Running CMake..."; \
-	cmake "$$SOURCE_DIR" -DARCH=native -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
+	HOST_OS="$$(uname -s)"; \
+	HOST_ARCH="$$(uname -m)"; \
+	CMAKE_ARCH_ARGS="-DARCH=native"; \
+	if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then CMAKE_ARCH_ARGS="-DARCH=default -DARCH_ID=arm64 -DARM_ID=arm64"; fi; \
+	if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "aarch64" ]; then CMAKE_ARCH_ARGS="-DARCH=default -DARCH_ID=aarch64 -DARM_ID=aarch64"; fi; \
+	cmake "$$SOURCE_DIR" $$CMAKE_ARCH_ARGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX..."; \
 	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)"; \
-		HOST_OS="$$(uname -s)"; \
-		HOST_ARCH="$$(uname -m)"; \
 		TARGET_DIR=""; \
 		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; fi; \
 		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "x86_64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; fi; \
@@ -397,6 +399,7 @@ randomx-darwin-arm64:
 		-DCMAKE_SYSTEM_PROCESSOR=arm64 \
 		-DARCH_ID=arm64 \
 		-DARM_ID=arm64 \
+		-DARCH=default \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	cmake --build . --target randomx --parallel $$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1); \
@@ -412,11 +415,11 @@ randomx-linux:
 	@set -e; \
 	if [ "$(HAS_ARM64)" -eq 0 ]; then \
 		echo "⚠️  aarch64-linux-gnu-g++ not found. Skipping ARM64 build."; \
-		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu"; \
+		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
 		exit 0; \
 	fi; \
 	echo "=== Building RandomX for Linux ARM64 ==="; \
-	echo "Requires: sudo apt-get install gcc-aarch64-linux-gnu"; \
+	echo "Requires: sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
 	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
 	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
 		echo "Cloning RandomX into $$SOURCE_DIR..."; \
@@ -438,6 +441,7 @@ randomx-linux:
 		-DCMAKE_SYSTEM_PROCESSOR=aarch64 \
 		-DARCH_ID=aarch64 \
 		-DARM_ID=aarch64 \
+		-DARCH=default \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF; \
 	echo "Building RandomX for Linux ARM64..."; \
@@ -707,7 +711,7 @@ cross-linux-arm64: randomx-linux
 		ls -la $(CROSS_OUTPUT_DIR)/linux/arm64/; \
 	else \
 		echo "⚠️ ARM64 compiler not found. Skipping ARM64 builds."; \
-		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu"; \
+		echo "   To install: sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu"; \
 	fi
 
 #? cross-linux-arm: Build Linux ARM (32-bit) executables.

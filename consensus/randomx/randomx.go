@@ -124,7 +124,7 @@ func newVMWithFallback(cache *Cache, dataset *Dataset, extra int) (*VM, int) {
 		if vm := NewVM(flags, cache, dataset); vm != nil {
 			return vm, flags
 		}
-		log.Debug("RandomX VM creation failed, trying fallback flags", "flags", flags)
+		log.Warn("RandomX VM creation failed, trying fallback flags", "flags", flags)
 	}
 	return nil, 0
 }
@@ -640,7 +640,7 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	// verifier attempts and bound post-Kyoto acceptance to the known historical
 	// segment that was mined before the strict proof format was restored.
 	if rx.allowStoredMixDigestProof(header, kyoto) && rx.validStoredMixDigest(header, target) {
-		log.Debug("Accepted historical stored RandomX mix digest", "number", header.Number.Uint64(), "hash", header.Hash(), "kyoto", kyoto)
+		log.Warn("Accepted historical stored RandomX mix digest", "number", header.Number.Uint64(), "hash", header.Hash(), "kyoto", kyoto)
 		return nil
 	}
 
