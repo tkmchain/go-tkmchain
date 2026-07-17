@@ -78,6 +78,22 @@ func TestValidStoredMixDigestAcceptsBlock2450ProofValue(t *testing.T) {
 	}
 }
 
+func TestStoredMixDigestCompatibilityWindow(t *testing.T) {
+	rx := NewFaker()
+	preKyoto := &types.Header{Number: big.NewInt(int64(kyotoStoredMixDigestCompatUntil + 1))}
+	if !rx.allowStoredMixDigestProof(preKyoto, false) {
+		t.Fatal("pre-Kyoto stored mix digest compatibility should remain available")
+	}
+	kyotoHistorical := &types.Header{Number: big.NewInt(int64(kyotoStoredMixDigestCompatUntil))}
+	if !rx.allowStoredMixDigestProof(kyotoHistorical, true) {
+		t.Fatal("historical Kyoto stored mix digest compatibility should be available")
+	}
+	kyotoFuture := &types.Header{Number: big.NewInt(int64(kyotoStoredMixDigestCompatUntil + 1))}
+	if rx.allowStoredMixDigestProof(kyotoFuture, true) {
+		t.Fatal("future Kyoto stored mix digest compatibility should be disabled")
+	}
+}
+
 func TestEpochForBlockStartsAtRandomXTxActivation(t *testing.T) {
 	rx := &RandomX{config: DefaultConfig()}
 	config := *params.RandomXChainConfig
