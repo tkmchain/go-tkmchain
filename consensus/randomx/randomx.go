@@ -626,11 +626,11 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 			kyoto = config.IsKyoto(header.Number, header.Time)
 		}
 	}
-	if kyoto {
-		return fmt.Errorf("invalid proof: result > target")
-	}
 
 	if rx.validProofWithNonceVariants(header, vm, target) {
+		if kyoto {
+			log.Warn("Accepted RandomX nonce byte-order variant", "number", header.Number.Uint64(), "hash", header.Hash())
+		}
 		return nil
 	}
 
@@ -638,15 +638,15 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	// MixDigest even when current verifier builds cannot reproduce the exact
 	// pre-Kyoto byte-order/VM combination. Keep this compatibility path below
 	// the strict verifier attempts and remove it at Kyoto.
-	if rx.validStoredMixDigest(header, target) {
+	if !kyoto && rx.validStoredMixDigest(header, target) {
 		log.Warn("Accepted pre-Kyoto stored RandomX mix digest", "number", header.Number.Uint64(), "hash", header.Hash())
 		return nil
 	}
 
 	// Early RandomX external-miner builds used a full-memory VM flag while later
-	// verifier builds used the dataset without that flag. Accept both modes only
-	// before Kyoto so already-mined RandomX blocks remain syncable while new blocks
-	// use one strict proof format.
+	// verifier builds used the dataset without that flag. This still recomputes
+	// the RandomX proof, so keep it available after Kyoto while rejecting the
+	// stored-MixDigest shortcut above.
 	if legacyVM, legacyErr := rx.getLegacyFullMemVM(); legacyErr == nil {
 		defer legacyVM.Close()
 		if rx.validProofWithNonceVariants(header, legacyVM, target) {
