@@ -292,8 +292,13 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
 		return false
 	}
-	if header.Coinbase == (common.Address{}) || body == nil || len(body.Transactions) != 0 {
+	if header.Coinbase == (common.Address{}) || body == nil {
 		return false
+	}
+	for _, tx := range body.Transactions {
+		if types.IsBlockRewardTx(tx) {
+			return false
+		}
 	}
 	blockNumber := header.Number.Uint64()
 	blockReward := CalculateBlockReward(blockNumber)

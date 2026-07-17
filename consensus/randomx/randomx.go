@@ -1202,8 +1202,13 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
 		return false
 	}
-	if header.Coinbase == (common.Address{}) || body == nil || len(body.Transactions) != 0 {
+	if header.Coinbase == (common.Address{}) || body == nil {
 		return false
+	}
+	for _, tx := range body.Transactions {
+		if types.IsBlockRewardTx(tx) {
+			return false
+		}
 	}
 	blockNumber := header.Number.Uint64()
 	blockReward := CalculateBlockReward(blockNumber)
@@ -1259,10 +1264,10 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 			continue
 		}
 		candidate.apply(statedb)
-		log.Warn("Accepted Kyoto empty-block historical finalization", "block", blockNumber, "mode", candidate.name, "root", root)
+		log.Warn("Accepted Kyoto historical finalization", "block", blockNumber, "mode", candidate.name, "root", root)
 		return true
 	}
-	log.Warn("No Kyoto empty-block historical finalization matched", "block", blockNumber, "target", targetRoot)
+	log.Warn("No Kyoto historical finalization matched", "block", blockNumber, "target", targetRoot)
 	return false
 }
 
