@@ -1185,6 +1185,51 @@ func (rx *RandomX) distributeKyotoEmptyBlockRewards(state vm.StateDB, header *ty
 	}
 }
 
+func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderReader, header *types.Header, statedb *state.StateDB, body *types.Body, targetRoot common.Hash, eip158 bool) bool {
+	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
+		return false
+	}
+	if header.Coinbase == (common.Address{}) || body == nil || len(body.Transactions) != 0 {
+		return false
+	}
+	blockNumber := header.Number.Uint64()
+	blockReward := CalculateBlockReward(blockNumber)
+	type candidate struct {
+		name  string
+		apply func(vm.StateDB)
+	}
+	candidates := []candidate{
+		{name: "rotating-slot-kyoto-50-50", apply: func(s vm.StateDB) {
+			rx.writeRotatingKingToState(s, blockNumber)
+			rx.distributeKyotoEmptyBlockRewards(s, header, blockReward)
+		}},
+		{name: "kyoto-50-50", apply: func(s vm.StateDB) {
+			rx.distributeKyotoEmptyBlockRewards(s, header, blockReward)
+		}},
+		{name: "rotating-slot-only", apply: func(s vm.StateDB) {
+			rx.writeRotatingKingToState(s, blockNumber)
+		}},
+		{name: "no-finalize", apply: func(s vm.StateDB) {}},
+		{name: "normal-implicit", apply: func(s vm.StateDB) {
+			rx.writeRotatingKingToState(s, blockNumber)
+			rx.distributeRewardsToState(s, header, blockReward)
+		}},
+	}
+	for _, candidate := range candidates {
+		copyState := statedb.Copy()
+		candidate.apply(copyState)
+		root := copyState.IntermediateRoot(eip158)
+		if root != targetRoot {
+			continue
+		}
+		candidate.apply(statedb)
+		log.Warn("Accepted Kyoto empty-block historical finalization", "block", blockNumber, "mode", candidate.name, "root", root)
+		return true
+	}
+	log.Warn("No Kyoto empty-block historical finalization matched", "block", blockNumber, "target", targetRoot)
+	return false
+}
+
 func (rx *RandomX) distributeBodyRewardTransactions(state vm.StateDB, body *types.Body) bool {
 	if body == nil || len(body.Transactions) == 0 {
 		return false

@@ -132,7 +132,21 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		return nil, err
 	}
 
-	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
+	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards).
+	if len(block.Transactions()) == 0 {
+		if finalizer, ok := p.chain.Engine().(interface {
+			FinalizeKyotoEmptyBlockForRoot(consensus.ChainHeaderReader, *types.Header, *state.StateDB, *types.Body, common.Hash, bool) bool
+		}); ok {
+			if finalizer.FinalizeKyotoEmptyBlockForRoot(p.chain, header, statedb, block.Body(), header.Root, config.IsEIP158(header.Number)) {
+				return &ProcessResult{
+					Receipts: receipts,
+					Requests: requests,
+					Logs:     allLogs,
+					GasUsed:  gp.Used(),
+				}, nil
+			}
+		}
+	}
 	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body())
 
 	return &ProcessResult{
