@@ -554,7 +554,7 @@ func (rx *RandomX) AddRotatingKing(address common.Address) {
 }
 
 func (rx *RandomX) AddRotatingKingAt(address common.Address, activationHeight uint64) {
-	if address == (common.Address{}) || address == rx.mainKing {
+	if address == (common.Address{}) {
 		return
 	}
 	rx.lock.Lock()
@@ -574,15 +574,24 @@ func (rx *RandomX) AddRotatingKingAt(address common.Address, activationHeight ui
 func (rx *RandomX) getRotatingKing(blockNumber uint64) common.Address {
 	rx.lock.RLock()
 	defer rx.lock.RUnlock()
-	active := rx.activeRotatingKingsAtLocked(blockNumber)
-	if len(active) == 0 {
+	if len(rx.rotatingKings) == 0 || rx.rotationInterval == 0 {
 		return common.Address{}
 	}
-	interval := rx.rotationInterval
-	if interval == 0 {
-		interval = 100
+
+	var current common.Address
+	for height := uint64(0); height <= blockNumber; height += rx.rotationInterval {
+		active := rx.activeRotatingKingsAtLocked(height)
+		if len(active) == 0 {
+			continue
+		}
+		index := indexOfRotatingKing(active, current)
+		if current == (common.Address{}) || index < 0 {
+			current = active[0]
+		} else if height != 0 {
+			current = active[(index+1)%len(active)]
+		}
 	}
-	return active[(blockNumber/interval)%uint64(len(active))]
+	return current
 }
 
 func (rx *RandomX) activeRotatingKingsAtLocked(blockNumber uint64) []common.Address {
@@ -593,6 +602,15 @@ func (rx *RandomX) activeRotatingKingsAtLocked(blockNumber uint64) []common.Addr
 		}
 	}
 	return active
+}
+
+func indexOfRotatingKing(addresses []common.Address, address common.Address) int {
+	for index, candidate := range addresses {
+		if candidate == address {
+			return index
+		}
+	}
+	return -1
 }
 
 func (rx *RandomX) APIs(chain consensus.ChainHeaderReader) []rpc.API {

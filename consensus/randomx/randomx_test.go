@@ -143,7 +143,7 @@ func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 	}
 }
 
-func TestKyotoEmptyBlockUsesHistoricalImplicitRewards(t *testing.T) {
+func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	rx := NewFaker()
 	rx.mainKing = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
 	miner := common.HexToAddress("0x4441d6fed0836b77a503e0b2788bfed6fd8c23a8")
@@ -152,9 +152,6 @@ func TestKyotoEmptyBlockUsesHistoricalImplicitRewards(t *testing.T) {
 	chain := verifySealTestChain{config: &config}
 	header := &types.Header{Number: big.NewInt(5636), Time: 1, Coinbase: miner}
 
-	if !rx.skipImplicitRewards(chain, header, &types.Body{}) {
-		t.Fatal("empty Kyoto block should use reward-tx-free compatibility path")
-	}
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	if err != nil {
 		t.Fatal(err)
@@ -167,9 +164,15 @@ func TestKyotoEmptyBlockUsesHistoricalImplicitRewards(t *testing.T) {
 	if mainBal.Cmp(want) != 0 || minerBal.Cmp(want) != 0 {
 		t.Fatalf("unexpected balances: main=%v miner=%v want=%v", mainBal, minerBal, want)
 	}
+
+	rewardTxState, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := &types.Body{Transactions: []*types.Transaction{types.NewBlockRewardTx(5636, types.BlockRewardMiner, header.Coinbase, big.NewInt(1))}}
-	if rx.skipImplicitRewards(chain, header, body) {
-		t.Fatal("Kyoto block with reward tx should not use empty-block path")
+	rx.Finalize(chain, header, rewardTxState, body)
+	if got := rewardTxState.GetBalance(miner).ToBig(); got.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("reward transaction balance = %v, want 1", got)
 	}
 }
 
@@ -254,7 +257,7 @@ func TestRotatingKingRewardGoesToCurrentIntervalKing(t *testing.T) {
 	rx.AddRotatingKing(first)
 	rx.AddRotatingKing(second)
 
-	header := &types.Header{Number: big.NewInt(1263), Coinbase: miner}
+	header := &types.Header{Number: big.NewInt(1363), Coinbase: miner}
 	rx.Finalize(nil, header, statedb, &types.Body{})
 
 	if statedb.GetBalance(first).Sign() != 0 {
