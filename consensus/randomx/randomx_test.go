@@ -143,6 +143,22 @@ func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 	}
 }
 
+func TestSkipImplicitRewardsAfterKyotoEmptyBlock(t *testing.T) {
+	rx := NewFaker()
+	config := *params.RandomXChainConfig
+	config.KyotoTime = new(uint64)
+	chain := verifySealTestChain{config: &config}
+	header := &types.Header{Number: big.NewInt(5636), Time: 1, Coinbase: common.HexToAddress("0x4441d6fed0836b77a503e0b2788bfed6fd8c23a8")}
+
+	if !rx.skipImplicitRewards(chain, header, &types.Body{}) {
+		t.Fatal("empty Kyoto block should skip implicit rewards")
+	}
+	body := &types.Body{Transactions: []*types.Transaction{types.NewBlockRewardTx(5636, types.BlockRewardMiner, header.Coinbase, big.NewInt(1))}}
+	if rx.skipImplicitRewards(chain, header, body) {
+		t.Fatal("Kyoto block with reward tx should not skip reward application")
+	}
+}
+
 func TestFinalizeAndAssembleKeepsUserTransactionsAndMatchesFinalize(t *testing.T) {
 	rx := NewFaker()
 	rx.mainKing = common.HexToAddress("0x0000000000000000000000000000000000000001")

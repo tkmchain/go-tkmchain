@@ -1106,7 +1106,7 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	rx.finalizeRewards(header, state, body)
+	rx.finalizeRewards(chain, header, state, body)
 }
 
 // FinalizeAndAssemble finalizes RandomX state and assembles a block without dropping user transactions.
@@ -1114,8 +1114,8 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	if body == nil {
 		body = &types.Body{}
 	}
-	rx.finalizeRewards(header, state, body)
-	if header.Coinbase != (common.Address{}) {
+	rx.finalizeRewards(chain, header, state, body)
+	if header.Coinbase != (common.Address{}) && !rx.skipImplicitRewards(chain, header, body) {
 		rewards := rx.RewardTransactions(header, receipts)
 		before := len(body.Transactions)
 		body.Transactions = appendRewardTransactions(body.Transactions, rewards)
@@ -1134,7 +1134,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
 }
 
-func (rx *RandomX) finalizeRewards(header *types.Header, state vm.StateDB, body *types.Body) {
+func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	blockNumber := header.Number.Uint64()
 	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
@@ -1144,11 +1144,30 @@ func (rx *RandomX) finalizeRewards(header *types.Header, state vm.StateDB, body 
 	if rx.distributeBodyRewardTransactions(state, body) {
 		return
 	}
+	if rx.skipImplicitRewards(chain, header, body) {
+		log.Debug("RandomX finalize skipped implicit rewards after Kyoto", "block", blockNumber)
+		return
+	}
 	blockReward := CalculateBlockReward(blockNumber)
 	log.Info("RandomX finalize rewards", "block", blockNumber, "coinbase", header.Coinbase.Hex(), "reward", FormatANTD(blockReward))
 	if blockReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, blockReward)
 	}
+}
+
+func (rx *RandomX) skipImplicitRewards(chain consensus.ChainHeaderReader, header *types.Header, body *types.Body) bool {
+	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
+		return false
+	}
+	if body == nil || len(body.Transactions) == 0 {
+		return true
+	}
+	for _, tx := range body.Transactions {
+		if types.IsBlockRewardTx(tx) {
+			return false
+		}
+	}
+	return true
 }
 
 func (rx *RandomX) distributeBodyRewardTransactions(state vm.StateDB, body *types.Body) bool {
