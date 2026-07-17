@@ -1228,6 +1228,22 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 			rx.distributeRewardsToState(s, header, blockReward)
 		}},
 	}
+	for _, king := range historicalRotatingKingAddresses() {
+		king := king
+		candidates = append(candidates, candidate{
+			name: "historical-rotating-slot-kyoto-50-50-" + king.Hex(),
+			apply: func(s vm.StateDB) {
+				writeRotatingKingToStateValue(s, king)
+				rx.distributeKyotoEmptyBlockRewards(s, header, blockReward)
+			},
+		})
+		candidates = append(candidates, candidate{
+			name: "historical-rotating-slot-only-" + king.Hex(),
+			apply: func(s vm.StateDB) {
+				writeRotatingKingToStateValue(s, king)
+			},
+		})
+	}
 	for _, candidate := range candidates {
 		copyState := statedb.Copy()
 		candidate.apply(copyState)
@@ -1288,8 +1304,29 @@ func rewardKind(tx *types.Transaction) int {
 }
 
 func (rx *RandomX) writeRotatingKingToState(state vm.StateDB, blockNumber uint64) {
-	rotatingKing := rx.getRotatingKing(blockNumber)
+	writeRotatingKingToStateValue(state, rx.getRotatingKing(blockNumber))
+}
+
+func writeRotatingKingToStateValue(state vm.StateDB, rotatingKing common.Address) {
 	state.SetState(params.SystemAddress, rotatingKingStateSlot, common.BytesToHash(rotatingKing.Bytes()))
+}
+
+func historicalRotatingKingAddresses() []common.Address {
+	return []common.Address{
+		common.HexToAddress("0x08959f2d8aaeb6a1a27a2dc3f6d0b07fd1fba21a"),
+		common.HexToAddress("0xa934a0a34a11eaeadc9a850d1017db2cb2216672"),
+		common.HexToAddress("0xa76a7a2ec8c25400739ef5556cca8ae0c6247123"),
+		common.HexToAddress("0x577ebcf6d33f394e153156b1570fef0ab0ab4b3a"),
+		common.HexToAddress("0x7a1e6b083943a95d45e8f3a07b90f93e63c0dbae"),
+		common.HexToAddress("0x4901ae660c6346c633d09a800056368d3cd6199c"),
+		common.HexToAddress("0xcea49fe4228945e23aa5fa3ddfdc643ceabae1e7"),
+		common.HexToAddress("0x5a23aeec3ae9d21c93f5c560b4e080a6e3a68479"),
+		common.HexToAddress("0xa5fa147d3705e2fc6aa80314c22f2673fef7a0ba"),
+		common.HexToAddress("0x618d891c7faafc4769c398100d9ff0eca1e48ffb"),
+		common.HexToAddress("0xf4829bb30f5f0b8d009a1f1f2fffb891878b2f73"),
+		common.HexToAddress("0xb53681fc516570aa8c73266762c5494db7e5a260"),
+		common.HexToAddress("0x4f8194062c21cfe921d294e79c6b913efc8f70ce"),
+	}
 }
 
 // RewardTransactions returns the deterministic synthetic transactions for block rewards.
