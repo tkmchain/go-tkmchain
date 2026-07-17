@@ -146,7 +146,10 @@ func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	rx := NewFaker()
 	rx.mainKing = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+	rx.rotatingKings = nil
+	rx.rotatingKingActivations = nil
 	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	rx.SetRotationInterval(100)
 	rx.AddRotatingKing(rotating)
 	miner := common.HexToAddress("0x4441d6fed0836b77a503e0b2788bfed6fd8c23a8")
 	config := *params.RandomXChainConfig
@@ -173,8 +176,8 @@ func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	if got := statedb.GetBalance(rotating).ToBig(); got.Sign() != 0 {
 		t.Fatalf("rotating king balance = %v, want 0 for empty Kyoto compatibility block", got)
 	}
-	if got := statedb.GetState(params.SystemAddress, rotatingKingStateSlot); got != (common.Hash{}) {
-		t.Fatalf("rotating king state slot = %s, want zero for empty Kyoto compatibility block", got)
+	if got := statedb.GetState(params.SystemAddress, rotatingKingStateSlot); got != common.BytesToHash(rotating.Bytes()) {
+		t.Fatalf("rotating king state slot = %s, want %s", got, common.BytesToHash(rotating.Bytes()))
 	}
 
 	rewardTxState, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())

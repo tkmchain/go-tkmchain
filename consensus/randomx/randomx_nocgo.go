@@ -241,16 +241,15 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 
 func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	blockNumber := header.Number.Uint64()
+	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
-		rx.writeRotatingKingToState(state, blockNumber)
+		return
+	}
+	if rx.distributeBodyRewardTransactions(state, body) {
 		return
 	}
 	if rx.skipImplicitRewards(chain, header, body) {
 		rx.distributeKyotoEmptyBlockRewards(state, header, CalculateBlockReward(blockNumber))
-		return
-	}
-	rx.writeRotatingKingToState(state, blockNumber)
-	if rx.distributeBodyRewardTransactions(state, body) {
 		return
 	}
 	blockReward := CalculateBlockReward(blockNumber)
