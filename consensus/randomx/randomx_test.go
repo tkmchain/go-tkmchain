@@ -146,11 +146,17 @@ func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
 func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	rx := NewFaker()
 	rx.mainKing = common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+	rotating := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	rx.AddRotatingKing(rotating)
 	miner := common.HexToAddress("0x4441d6fed0836b77a503e0b2788bfed6fd8c23a8")
 	config := *params.RandomXChainConfig
 	config.KyotoTime = new(uint64)
 	chain := verifySealTestChain{config: &config}
 	header := &types.Header{Number: big.NewInt(5636), Time: 1, Coinbase: miner}
+
+	if !rx.skipImplicitRewards(chain, header, &types.Body{}) {
+		t.Fatal("empty Kyoto block should use reward-tx-free compatibility path")
+	}
 
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	if err != nil {
@@ -164,12 +170,18 @@ func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	if mainBal.Cmp(want) != 0 || minerBal.Cmp(want) != 0 {
 		t.Fatalf("unexpected balances: main=%v miner=%v want=%v", mainBal, minerBal, want)
 	}
+	if got := statedb.GetBalance(rotating).ToBig(); got.Sign() != 0 {
+		t.Fatalf("rotating king balance = %v, want 0 for empty Kyoto compatibility block", got)
+	}
 
 	rewardTxState, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := &types.Body{Transactions: []*types.Transaction{types.NewBlockRewardTx(5636, types.BlockRewardMiner, header.Coinbase, big.NewInt(1))}}
+	if rx.skipImplicitRewards(chain, header, body) {
+		t.Fatal("Kyoto block with reward tx should not use empty-block path")
+	}
 	rx.Finalize(chain, header, rewardTxState, body)
 	if got := rewardTxState.GetBalance(miner).ToBig(); got.Cmp(big.NewInt(1)) != 0 {
 		t.Fatalf("reward transaction balance = %v, want 1", got)

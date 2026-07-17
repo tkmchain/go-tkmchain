@@ -1115,7 +1115,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 		body = &types.Body{}
 	}
 	rx.finalizeRewards(chain, header, state, body)
-	if header.Coinbase != (common.Address{}) {
+	if header.Coinbase != (common.Address{}) && !rx.skipImplicitRewards(chain, header, body) {
 		rewards := rx.RewardTransactions(header, receipts)
 		before := len(body.Transactions)
 		body.Transactions = appendRewardTransactions(body.Transactions, rewards)
@@ -1144,10 +1144,44 @@ func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *ty
 	if rx.distributeBodyRewardTransactions(state, body) {
 		return
 	}
+	if rx.skipImplicitRewards(chain, header, body) {
+		rx.distributeKyotoEmptyBlockRewards(state, header, CalculateBlockReward(blockNumber))
+		return
+	}
 	blockReward := CalculateBlockReward(blockNumber)
 	log.Info("RandomX finalize rewards", "block", blockNumber, "coinbase", header.Coinbase.Hex(), "reward", FormatANTD(blockReward))
 	if blockReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, blockReward)
+	}
+}
+
+func (rx *RandomX) skipImplicitRewards(chain consensus.ChainHeaderReader, header *types.Header, body *types.Body) bool {
+	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
+		return false
+	}
+	if body == nil || len(body.Transactions) == 0 {
+		return true
+	}
+	for _, tx := range body.Transactions {
+		if types.IsBlockRewardTx(tx) {
+			return false
+		}
+	}
+	return true
+}
+
+func (rx *RandomX) distributeKyotoEmptyBlockRewards(state vm.StateDB, header *types.Header, blockReward *big.Int) {
+	if blockReward == nil || blockReward.Sign() == 0 {
+		return
+	}
+	mainKingReward := new(big.Int).Mul(blockReward, big.NewInt(50))
+	mainKingReward.Div(mainKingReward, big.NewInt(100))
+	minerReward := new(big.Int).Sub(new(big.Int).Set(blockReward), mainKingReward)
+	if rx.mainKing != (common.Address{}) && mainKingReward.Sign() > 0 {
+		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+	if header.Coinbase != (common.Address{}) && minerReward.Sign() > 0 {
+		state.AddBalance(header.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
 }
 

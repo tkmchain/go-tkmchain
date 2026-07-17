@@ -212,15 +212,15 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
-	rx.finalizeRewards(header, state, body)
+	rx.finalizeRewards(chain, header, state, body)
 }
 
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	if body == nil {
 		body = &types.Body{}
 	}
-	rx.finalizeRewards(header, state, body)
-	if header.Coinbase != (common.Address{}) {
+	rx.finalizeRewards(chain, header, state, body)
+	if header.Coinbase != (common.Address{}) && !rx.skipImplicitRewards(chain, header, body) {
 		rewards := rx.RewardTransactions(header, receipts)
 		before := len(body.Transactions)
 		body.Transactions = appendRewardTransactions(body.Transactions, rewards)
@@ -239,7 +239,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), nil
 }
 
-func (rx *RandomX) finalizeRewards(header *types.Header, state vm.StateDB, body *types.Body) {
+func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	blockNumber := header.Number.Uint64()
 	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
@@ -248,9 +248,43 @@ func (rx *RandomX) finalizeRewards(header *types.Header, state vm.StateDB, body 
 	if rx.distributeBodyRewardTransactions(state, body) {
 		return
 	}
+	if rx.skipImplicitRewards(chain, header, body) {
+		rx.distributeKyotoEmptyBlockRewards(state, header, CalculateBlockReward(blockNumber))
+		return
+	}
 	blockReward := CalculateBlockReward(blockNumber)
 	if blockReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, blockReward)
+	}
+}
+
+func (rx *RandomX) skipImplicitRewards(chain consensus.ChainHeaderReader, header *types.Header, body *types.Body) bool {
+	if chain == nil || chain.Config() == nil || !chain.Config().IsKyoto(header.Number, header.Time) {
+		return false
+	}
+	if body == nil || len(body.Transactions) == 0 {
+		return true
+	}
+	for _, tx := range body.Transactions {
+		if types.IsBlockRewardTx(tx) {
+			return false
+		}
+	}
+	return true
+}
+
+func (rx *RandomX) distributeKyotoEmptyBlockRewards(state vm.StateDB, header *types.Header, blockReward *big.Int) {
+	if blockReward == nil || blockReward.Sign() == 0 {
+		return
+	}
+	mainKingReward := new(big.Int).Mul(blockReward, big.NewInt(50))
+	mainKingReward.Div(mainKingReward, big.NewInt(100))
+	minerReward := new(big.Int).Sub(new(big.Int).Set(blockReward), mainKingReward)
+	if rx.mainKing != (common.Address{}) && mainKingReward.Sign() > 0 {
+		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	}
+	if header.Coinbase != (common.Address{}) && minerReward.Sign() > 0 {
+		state.AddBalance(header.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
 }
 
