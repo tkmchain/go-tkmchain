@@ -173,6 +173,9 @@ func TestKyotoEmptyBlockStillAppliesImplicitRewards(t *testing.T) {
 	if got := statedb.GetBalance(rotating).ToBig(); got.Sign() != 0 {
 		t.Fatalf("rotating king balance = %v, want 0 for empty Kyoto compatibility block", got)
 	}
+	if got := statedb.GetState(params.SystemAddress, rotatingKingStateSlot); got != (common.Hash{}) {
+		t.Fatalf("rotating king state slot = %s, want zero for empty Kyoto compatibility block", got)
+	}
 
 	rewardTxState, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	if err != nil {
