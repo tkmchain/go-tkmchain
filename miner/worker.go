@@ -282,6 +282,16 @@ func (w *worker) setExtra(extra []byte) {
 	w.extra = extra
 }
 
+// setGasCeil updates the target block gas limit for newly generated work.
+func (w *worker) setGasCeil(gasCeil uint64) {
+	if gasCeil < params.TxGas {
+		gasCeil = params.TxGas
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.gasCeil = gasCeil
+}
+
 // setRecommitInterval updates the interval for miner sealing work recommitting.
 func (w *worker) setRecommitInterval(interval time.Duration) {
 	w.resubmitIntervalCh <- interval

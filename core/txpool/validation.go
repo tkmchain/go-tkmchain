@@ -111,8 +111,14 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Value().Sign() < 0 {
 		return ErrNegativeValue
 	}
-	// Ensure the transaction doesn't exceed the current block limit gas
-	if head.GasLimit < tx.Gas() {
+	// Ensure the transaction does not exceed the current block gas limit.
+	// If historical blocks dropped below the intrinsic transfer gas,
+	// use the protocol minimum while the next recovery block is pending.
+	gasLimit := head.GasLimit
+	if gasLimit < params.MinGasLimit {
+		gasLimit = params.MinGasLimit
+	}
+	if gasLimit < tx.Gas() {
 		return ErrGasLimit
 	}
 	// Sanity check for extremely large numbers (supported by RLP or RPC)

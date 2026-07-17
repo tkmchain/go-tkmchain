@@ -186,6 +186,9 @@ func CalcGasLimit(parentGasLimit, desiredLimit uint64) uint64 {
 		if limit > desiredLimit {
 			limit = desiredLimit
 		}
+		if limit < params.MinGasLimit {
+			limit = params.MinGasLimit
+		}
 		return limit
 	}
 	if limit > desiredLimit {

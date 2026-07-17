@@ -120,6 +120,17 @@ func (miner *Miner) SetRecommitInterval(interval time.Duration) {
 	miner.worker.setRecommitInterval(interval)
 }
 
+// SetGasLimit sets the target gas limit for newly generated work.
+func (miner *Miner) SetGasLimit(gasLimit uint64) {
+	if gasLimit < params.TxGas {
+		gasLimit = params.TxGas
+	}
+	miner.worker.setGasCeil(gasLimit)
+	if miner.worker.isRunning() {
+		go miner.worker.generateWorkForExternal()
+	}
+}
+
 // Pending returns the currently pending block and its associated state.
 func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
 	return miner.worker.pending()

@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // MinerAPI provides an API to control the miner and handle external miners (XMRig)
@@ -131,7 +132,12 @@ func (api *MinerAPI) SetGasPrice(gasPrice hexutil.Big) bool {
 
 // SetGasLimit sets the gaslimit to target towards during mining.
 func (api *MinerAPI) SetGasLimit(gasLimit hexutil.Uint64) bool {
-	api.e.config.Miner.GasCeil = uint64(gasLimit)
+	limit := uint64(gasLimit)
+	if limit < params.TxGas {
+		limit = params.TxGas
+	}
+	api.e.config.Miner.GasCeil = limit
+	api.e.miner.SetGasLimit(limit)
 	return true
 }
 

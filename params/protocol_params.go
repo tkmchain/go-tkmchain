@@ -17,13 +17,13 @@
 package params
 
 import (
+	"github.com/ethereum/go-ethereum/common"
 	"math/big"
-        "github.com/ethereum/go-ethereum/common"
 )
 
 const (
 	GasLimitBoundDivisor uint64 = 1024               // The bound divisor of the gas limit, used in update calculations.
-	MinGasLimit          uint64 = 5000               // Minimum the gas limit may ever be.
+	MinGasLimit          uint64 = 21000              // Minimum the gas limit may ever be.
 	MaxGasLimit          uint64 = 0x7fffffffffffffff // Maximum the gas limit (2^63-1).
 	GenesisGasLimit      uint64 = 134217728
 
@@ -182,7 +182,7 @@ var Bls12381G2MultiExpDiscountTable = [128]uint64{1000, 1000, 923, 884, 855, 832
 var (
 	DifficultyBoundDivisor = big.NewInt(2048)    // The bound divisor of the difficulty
 	GenesisDifficulty      = big.NewInt(4194304) // YOUR genesis difficulty (0x400000)
-	MinimumDifficulty      = big.NewInt(1310)  // The minimum that the difficulty may ever be
+	MinimumDifficulty      = big.NewInt(1310)    // The minimum that the difficulty may ever be
 	DurationLimit          = big.NewInt(13)      // The decision boundary on the blocktime duration
 )
 
