@@ -30,21 +30,34 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-func TestVerifySealRejectsZeroMixDigestDuringBootstrap(t *testing.T) {
+type verifySealTestChain struct {
+	config *params.ChainConfig
+}
+
+func (c verifySealTestChain) Config() *params.ChainConfig               { return c.config }
+func (verifySealTestChain) CurrentHeader() *types.Header                { return nil }
+func (verifySealTestChain) GetHeader(common.Hash, uint64) *types.Header { return nil }
+func (verifySealTestChain) GetHeaderByNumber(uint64) *types.Header      { return nil }
+func (verifySealTestChain) GetHeaderByHash(common.Hash) *types.Header   { return nil }
+
+func TestVerifySealSkipsPreRandomXTxBlock(t *testing.T) {
 	rx := &RandomX{}
+	config := *params.RandomXChainConfig
+	config.RandomXTxBlock = big.NewInt(2450)
 	header := &types.Header{Number: big.NewInt(1), Difficulty: GenesisDifficulty}
 
-	err := rx.VerifySeal(nil, header)
-	if err == nil || !strings.Contains(err.Error(), "invalid proof") {
-		t.Fatalf("unexpected seal error: %v", err)
+	if err := rx.VerifySeal(verifySealTestChain{config: &config}, header); err != nil {
+		t.Fatalf("unexpected pre-RandomX seal rejection: %v", err)
 	}
 }
 
-func TestVerifySealRejectsZeroMixDigestAfterBootstrap(t *testing.T) {
+func TestVerifySealRejectsZeroMixDigestAfterRandomXTxActivation(t *testing.T) {
 	rx := &RandomX{}
+	config := *params.RandomXChainConfig
+	config.RandomXTxBlock = big.NewInt(1)
 	header := &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty}
 
-	err := rx.VerifySeal(nil, header)
+	err := rx.VerifySeal(verifySealTestChain{config: &config}, header)
 	if err == nil || !strings.Contains(err.Error(), "invalid proof") {
 		t.Fatalf("unexpected seal error: %v", err)
 	}

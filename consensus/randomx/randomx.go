@@ -597,6 +597,12 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	if num == 0 {
 		return nil
 	}
+	if chain != nil {
+		config := chain.Config()
+		if config != nil && !config.IsRandomXTx(header.Number) {
+			return nil
+		}
+	}
 
 	epoch := rx.epoch(num)
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
