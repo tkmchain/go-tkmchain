@@ -1255,6 +1255,14 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 	return nodes
 }
 
+func seedStaticNodesFromBootnodes(cfg *p2p.Config) {
+	if len(cfg.StaticNodes) > 0 || len(cfg.BootstrapNodes) == 0 {
+		return
+	}
+	cfg.StaticNodes = append([]*enode.Node(nil), cfg.BootstrapNodes...)
+	log.Info("Seeded static peers from bootnodes", "static", len(cfg.StaticNodes))
+}
+
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
@@ -1473,13 +1481,14 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setNAT(ctx, cfg)
 	setListenAddress(ctx, cfg)
 	setBootstrapNodes(ctx, cfg)
+	seedStaticNodesFromBootnodes(cfg)
 	setBootstrapNodesV5(ctx, cfg)
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)
 	}
 	ethPeers := cfg.MaxPeers
-	log.Info("Maximum peer count", "TKM", ethPeers, "total", cfg.MaxPeers)
+	log.Info("Maximum peer count", "TKM", ethPeers, "total", cfg.MaxPeers, "bootnodes", len(cfg.BootstrapNodes), "static", len(cfg.StaticNodes), "discovery", !cfg.NoDiscovery)
 
 	if ctx.IsSet(MaxPendingPeersFlag.Name) {
 		cfg.MaxPendingPeers = ctx.Int(MaxPendingPeersFlag.Name)
