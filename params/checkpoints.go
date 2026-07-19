@@ -46,6 +46,8 @@ var CheckpointValidationEnabled = true
 var (
 	mandatoryRandomXCheckpoints = map[uint64]common.Hash{
 		2370: common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17"),
+		6000: common.HexToHash("0x4d3cd743aec4b40c276174d6582049189901a0a78fa6fc280b8c5cfd946fa660"),
+		7165: common.HexToHash("0xcd0abe2c94903b0a7584ac5892ff812d2f2450853fc6a055cbb09807ce8c9f53"),
 	}
 	mandatoryEgyptCheckpoints  = map[uint64]common.Hash{}
 	activeMandatoryCheckpoints = mandatoryRandomXCheckpoints
