@@ -503,17 +503,26 @@ func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, peerI
 		return
 	}
 	if block.Hash() != hash {
-		log.Warn("Ignoring checkpoint with mismatched local block hash", "number", number, "announced", hash, "local", block.Hash(), "peer", peerID)
+		log.Warn("Disconnecting peer for checkpoint with mismatched local block hash", "number", number, "announced", hash, "local", block.Hash(), "peer", peerID)
+		if s.handler != nil {
+			s.handler.removePeer(peerID)
+		}
 		return
 	}
 	if existing, ok := params.GetCheckpoint(number); ok {
 		if existing != hash {
-			log.Warn("Ignoring conflicting checkpoint", "number", number, "hash", hash, "existing", existing, "peer", peerID)
+			log.Warn("Disconnecting peer for conflicting checkpoint", "number", number, "hash", hash, "existing", existing, "peer", peerID)
+			if s.handler != nil {
+				s.handler.removePeer(peerID)
+			}
 		}
 		return
 	}
 	if err := s.storeCheckpoint(number, hash); err != nil {
-		log.Warn("Ignoring conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
+		log.Warn("Disconnecting peer for conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
+		if s.handler != nil {
+			s.handler.removePeer(peerID)
+		}
 		return
 	}
 	s.broadcastCheckpointExcept(number, hash, peerID)

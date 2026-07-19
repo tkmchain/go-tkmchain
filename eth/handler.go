@@ -24,7 +24,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
-        "strings"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +46,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
@@ -181,6 +182,25 @@ type handler struct {
 	handlerDoneCh  chan struct{}
 }
 
+// checkpointRequiredBlocks merges CLI required-block challenges with enforced
+// checkpoints, making checkpoint mismatches a peer-level disconnect condition.
+func checkpointRequiredBlocks(required map[uint64]common.Hash) map[uint64]common.Hash {
+	merged := make(map[uint64]common.Hash, len(required)+len(params.AllCheckpoints()))
+	for number, hash := range required {
+		merged[number] = hash
+	}
+	for _, checkpoint := range params.AllCheckpoints() {
+		if !params.ShouldValidateCheckpoint(checkpoint.Number) {
+			continue
+		}
+		if existing, ok := merged[checkpoint.Number]; ok && existing != checkpoint.Hash {
+			log.Error("Required block conflicts with hardcoded checkpoint", "number", checkpoint.Number, "required", existing, "checkpoint", checkpoint.Hash)
+		}
+		merged[checkpoint.Number] = checkpoint.Hash
+	}
+	return merged
+}
+
 // newHandler returns a handler for all Ethereum chain management protocol.
 func newHandler(config *handlerConfig) (*handler, error) {
 	h := &handler{
@@ -191,7 +211,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		chain:              config.Chain,
 		peers:              newPeerSet(),
 		txBroadcastKey:     newBroadcastChoiceKey(),
-		requiredBlocks:     config.RequiredBlocks,
+		requiredBlocks:     checkpointRequiredBlocks(config.RequiredBlocks),
 		rotatingKingUpdate: config.RotatingKingUpdate,
 		checkpointUpdate:   config.CheckpointUpdate,
 		quitSync:           make(chan struct{}),
@@ -347,7 +367,8 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	dead := make(chan struct{})
 	defer close(dead)
 
-	// If we have any explicit peer required block hashes, request them
+	// If we have any peer required block hashes, request them. This includes
+	// hardcoded checkpoints, so peers on a conflicting chain are disconnected.
 	for number, hash := range h.requiredBlocks {
 		resCh := make(chan *eth.Response)
 
@@ -378,6 +399,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 				}
 				if headers[0].Number.Uint64() != number || headers[0].Hash() != hash {
 					peer.Log().Info("Required block mismatch, dropping peer", "number", number, "hash", headers[0].Hash(), "expected", hash)
+					h.removePeer(peer.ID())
 					res.Done <- errors.New("required block mismatch")
 					return
 				}
@@ -469,18 +491,18 @@ func (h *handler) unregisterPeer(id string) {
 
 // GetAllPeers returns all connected peers
 func (h *handler) GetAllPeers() map[string]*ethPeer {
-    if h.peers == nil {
-        return nil
-    }
-    return h.peers.GetAllPeers()
+	if h.peers == nil {
+		return nil
+	}
+	return h.peers.GetAllPeers()
 }
 
 // GetPeer returns a specific peer by ID
 func (h *handler) GetPeer(id string) *ethPeer {
-    if h.peers == nil {
-        return nil
-    }
-    return h.peers.GetPeer(id)
+	if h.peers == nil {
+		return nil
+	}
+	return h.peers.GetPeer(id)
 }
 
 func (h *handler) Start(maxPeers int) {
