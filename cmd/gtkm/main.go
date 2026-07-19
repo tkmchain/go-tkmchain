@@ -366,6 +366,7 @@ func geth(ctx *cli.Context) error {
 	}()
 
 	startNode(ctx, stack, false)
+	log.Info("Gtkm node is running; waiting for shutdown signal", "ipc", stack.IPCEndpoint(), "http", stack.HTTPEndpoint(), "ws", stack.WSEndpoint())
 	stack.Wait()
 	return nil
 }
