@@ -1007,10 +1007,13 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		Time:       uint64(timestamp),
 	}
 	if w.coinbase == (common.Address{}) {
-		log.Error("Refusing to generate mining work without etherbase", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
-		return
+		if w.isRunning() {
+			log.Error("Refusing to generate mining work without etherbase", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+			return
+		}
+	} else {
+		header.Coinbase = w.coinbase
 	}
-	header.Coinbase = w.coinbase
 	if err := w.engine.Prepare(w.chain, header); err != nil {
 		log.Error("Failed to prepare header for mining", "err", err)
 		return
