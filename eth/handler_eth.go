@@ -94,7 +94,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 
 	case *eth.CheckpointUpdatePacket:
 		if h.checkpointUpdate != nil {
-			h.checkpointUpdate(packet.Number, packet.Hash, peer.ID())
+			h.checkpointUpdate(packet.Number, packet.Hash, packet.Signature, peer.ID())
 		}
 		return nil
 

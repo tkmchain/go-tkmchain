@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -267,8 +269,21 @@ func (api *KingAPI) AddCheckpoint(number hexutil.Uint64, hash common.Hash) (bool
 	if err := api.e.addCheckpoint(uint64(number), hash); err != nil {
 		return false, err
 	}
-	api.e.broadcastCheckpoint(uint64(number), hash)
 	return true, nil
+}
+
+// AddSignedCheckpoint adds and broadcasts a checkpoint signed by the main king address.
+func (api *KingAPI) AddSignedCheckpoint(number hexutil.Uint64, hash common.Hash, signature hexutil.Bytes) (bool, error) {
+	if err := api.e.addSignedCheckpoint(uint64(number), hash, []byte(signature)); err != nil {
+		return false, err
+	}
+	api.e.broadcastCheckpoint(uint64(number), hash, []byte(signature))
+	return true, nil
+}
+
+// CheckpointSigningHash returns the 32-byte digest the main king must sign for a checkpoint.
+func (api *KingAPI) CheckpointSigningHash(number hexutil.Uint64, hash common.Hash) common.Hash {
+	return api.e.checkpointSigningHash(uint64(number), hash)
 }
 
 // Add registers an address as rotating king if stake requirement is met.
@@ -486,6 +501,17 @@ func (s *Ethereum) addCheckpoint(number uint64, hash common.Hash) error {
 	if s.config.Miner.Etherbase != mainKing {
 		return fmt.Errorf("checkpoint can only be added by the main king wallet %s", mainKing.Hex())
 	}
+	return s.validateAndStoreCheckpoint(number, hash)
+}
+
+func (s *Ethereum) addSignedCheckpoint(number uint64, hash common.Hash, signature []byte) error {
+	if err := s.verifyCheckpointSignature(number, hash, signature); err != nil {
+		return err
+	}
+	return s.validateAndStoreCheckpoint(number, hash)
+}
+
+func (s *Ethereum) validateAndStoreCheckpoint(number uint64, hash common.Hash) error {
 	block := s.blockchain.GetBlockByNumber(number)
 	if block == nil {
 		return fmt.Errorf("block %d is not available locally", number)
@@ -496,43 +522,120 @@ func (s *Ethereum) addCheckpoint(number uint64, hash common.Hash) error {
 	return s.storeCheckpoint(number, hash)
 }
 
-func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, peerID string) {
+func (s *Ethereum) checkpointSigningHash(number uint64, hash common.Hash) common.Hash {
+	chainID := (*big.Int)(nil)
+	if s.blockchain != nil && s.blockchain.Config() != nil {
+		chainID = s.blockchain.Config().ChainID
+	}
+	return checkpointSigningHash(chainID, number, hash)
+}
+
+func checkpointSigningHash(chainID *big.Int, number uint64, hash common.Hash) common.Hash {
+	chainBytes := []byte(nil)
+	if chainID != nil {
+		chainBytes = chainID.Bytes()
+	}
+	payload := make([]byte, 0, len("TKMCHAIN_SIGNED_CHECKPOINT_V1")+2+len(chainBytes)+8+common.HashLength)
+	payload = append(payload, []byte("TKMCHAIN_SIGNED_CHECKPOINT_V1")...)
+	var chainLen [2]byte
+	binary.BigEndian.PutUint16(chainLen[:], uint16(len(chainBytes)))
+	payload = append(payload, chainLen[:]...)
+	payload = append(payload, chainBytes...)
+	var numberBytes [8]byte
+	binary.BigEndian.PutUint64(numberBytes[:], number)
+	payload = append(payload, numberBytes[:]...)
+	payload = append(payload, hash.Bytes()...)
+	return crypto.Keccak256Hash(payload)
+}
+
+func (s *Ethereum) verifyCheckpointSignature(number uint64, hash common.Hash, signature []byte) error {
+	mainKing := s.GetMainKingAddress()
+	if mainKing == (common.Address{}) {
+		return fmt.Errorf("main king address is not configured")
+	}
+	if len(signature) != crypto.SignatureLength {
+		return fmt.Errorf("checkpoint signature must be %d bytes", crypto.SignatureLength)
+	}
+	sig := append([]byte(nil), signature...)
+	if sig[crypto.RecoveryIDOffset] >= 27 {
+		sig[crypto.RecoveryIDOffset] -= 27
+	}
+	if sig[crypto.RecoveryIDOffset] > 1 {
+		return fmt.Errorf("invalid checkpoint signature recovery id %d", sig[crypto.RecoveryIDOffset])
+	}
+	chainID := (*big.Int)(nil)
+	if s.blockchain != nil && s.blockchain.Config() != nil {
+		chainID = s.blockchain.Config().ChainID
+	}
+	digest := checkpointSigningHash(chainID, number, hash)
+	if signer, err := recoverCheckpointSigner(digest, sig); err == nil && signer == mainKing {
+		return nil
+	}
+	prefixed := crypto.Keccak256Hash([]byte("\x19Ethereum Signed Message:\n32"), digest.Bytes())
+	signer, err := recoverCheckpointSigner(prefixed, sig)
+	if err != nil {
+		return fmt.Errorf("invalid checkpoint signature: %w", err)
+	}
+	if signer != mainKing {
+		return fmt.Errorf("checkpoint signed by %s, want main king %s", signer.Hex(), mainKing.Hex())
+	}
+	return nil
+}
+
+func recoverCheckpointSigner(digest common.Hash, signature []byte) (common.Address, error) {
+	pub, err := crypto.SigToPub(digest.Bytes(), signature)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return crypto.PubkeyToAddress(*pub), nil
+}
+
+func (s *Ethereum) banCheckpointPeer(peerID string, duration time.Duration) {
+	if s.handler == nil {
+		return
+	}
+	if s.handler.downloader != nil {
+		s.handler.downloader.BanPeer(peerID, duration)
+	}
+	s.handler.removePeer(peerID)
+}
+
+func (s *Ethereum) noteCheckpointFromPeer(number uint64, hash common.Hash, signature []byte, peerID string) {
+	if existing, ok := params.GetCheckpoint(number); ok {
+		if existing != hash {
+			log.Warn("Banning peer for conflicting checkpoint", "number", number, "hash", hash, "existing", existing, "peer", peerID)
+			s.banCheckpointPeer(peerID, 365*24*time.Hour)
+		}
+		return
+	}
+	if err := s.verifyCheckpointSignature(number, hash, signature); err != nil {
+		log.Warn("Banning peer for invalid signed checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
+		s.banCheckpointPeer(peerID, 365*24*time.Hour)
+		return
+	}
 	block := s.blockchain.GetBlockByNumber(number)
 	if block == nil {
-		log.Warn("Ignoring checkpoint for unavailable block", "number", number, "hash", hash, "peer", peerID)
+		log.Warn("Ignoring signed checkpoint for unavailable block", "number", number, "hash", hash, "peer", peerID)
 		return
 	}
 	if block.Hash() != hash {
-		log.Warn("Disconnecting peer for checkpoint with mismatched local block hash", "number", number, "announced", hash, "local", block.Hash(), "peer", peerID)
-		if s.handler != nil {
-			s.handler.removePeer(peerID)
-		}
-		return
-	}
-	if existing, ok := params.GetCheckpoint(number); ok {
-		if existing != hash {
-			log.Warn("Disconnecting peer for conflicting checkpoint", "number", number, "hash", hash, "existing", existing, "peer", peerID)
-			if s.handler != nil {
-				s.handler.removePeer(peerID)
-			}
-		}
+		log.Warn("Banning peer for checkpoint with mismatched local block hash", "number", number, "announced", hash, "local", block.Hash(), "peer", peerID)
+		s.banCheckpointPeer(peerID, 365*24*time.Hour)
 		return
 	}
 	if err := s.storeCheckpoint(number, hash); err != nil {
-		log.Warn("Disconnecting peer for conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
-		if s.handler != nil {
-			s.handler.removePeer(peerID)
-		}
+		log.Warn("Banning peer for conflicting checkpoint", "number", number, "hash", hash, "peer", peerID, "err", err)
+		s.banCheckpointPeer(peerID, 365*24*time.Hour)
 		return
 	}
-	s.broadcastCheckpointExcept(number, hash, peerID)
+	s.broadcastCheckpointExcept(number, hash, signature, peerID)
 }
 
-func (s *Ethereum) broadcastCheckpoint(number uint64, hash common.Hash) {
-	s.broadcastCheckpointExcept(number, hash, "")
+func (s *Ethereum) broadcastCheckpoint(number uint64, hash common.Hash, signature []byte) {
+	s.broadcastCheckpointExcept(number, hash, signature, "")
 }
 
-func (s *Ethereum) broadcastCheckpointExcept(number uint64, hash common.Hash, skip string) {
+func (s *Ethereum) broadcastCheckpointExcept(number uint64, hash common.Hash, signature []byte, skip string) {
 	if s.handler == nil {
 		return
 	}
@@ -540,7 +643,7 @@ func (s *Ethereum) broadcastCheckpointExcept(number uint64, hash common.Hash, sk
 	if len(peers) == 0 {
 		return
 	}
-	msg := ethproto.CheckpointUpdatePacket{Number: number, Hash: hash}
+	msg := ethproto.CheckpointUpdatePacket{Number: number, Hash: hash, Signature: append([]byte(nil), signature...)}
 	for _, peer := range peers {
 		if skip != "" && peer.ID() == skip {
 			continue

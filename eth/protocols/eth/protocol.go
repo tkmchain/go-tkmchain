@@ -298,8 +298,9 @@ type RotatingKingUpdatePacket struct {
 
 // CheckpointUpdatePacket announces a newly accepted immutable checkpoint.
 type CheckpointUpdatePacket struct {
-	Number uint64
-	Hash   common.Hash
+	Number    uint64
+	Hash      common.Hash
+	Signature []byte `rlp:"optional"`
 }
 
 func (*StatusPacket) Name() string { return "Status" }

@@ -112,7 +112,7 @@ type handlerConfig struct {
 	BloomCache         uint64                 // Megabytes to alloc for snap sync bloom
 	RequiredBlocks     map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 	RotatingKingUpdate func(common.Address, time.Time, string)
-	CheckpointUpdate   func(uint64, common.Hash, string)
+	CheckpointUpdate   func(uint64, common.Hash, []byte, string)
 }
 
 type downloaderBlockChain struct {
@@ -171,7 +171,7 @@ type handler struct {
 
 	requiredBlocks     map[uint64]common.Hash
 	rotatingKingUpdate func(common.Address, time.Time, string)
-	checkpointUpdate   func(uint64, common.Hash, string)
+	checkpointUpdate   func(uint64, common.Hash, []byte, string)
 
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
@@ -199,6 +199,12 @@ func checkpointRequiredBlocks(required map[uint64]common.Hash) map[uint64]common
 		merged[checkpoint.Number] = checkpoint.Hash
 	}
 	return merged
+}
+
+func (h *handler) banPeer(id string, duration time.Duration) {
+	if h.downloader != nil {
+		h.downloader.BanPeer(id, duration)
+	}
 }
 
 // newHandler returns a handler for all Ethereum chain management protocol.
@@ -398,7 +404,8 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 					return
 				}
 				if headers[0].Number.Uint64() != number || headers[0].Hash() != hash {
-					peer.Log().Info("Required block mismatch, dropping peer", "number", number, "hash", headers[0].Hash(), "expected", hash)
+					peer.Log().Info("Required block mismatch, banning peer", "number", number, "hash", headers[0].Hash(), "expected", hash)
+					h.banPeer(peer.ID(), 365*24*time.Hour)
 					h.removePeer(peer.ID())
 					res.Done <- errors.New("required block mismatch")
 					return
