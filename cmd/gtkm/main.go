@@ -253,6 +253,8 @@ func init() {
 		snapshotCommand,
 		// See bintrie_convert.go
 		bintrieCommand,
+		// See tkmphonecmd.go
+		tkmPhoneCommand,
 	}
 	if logTestCommand != nil {
 		app.Commands = append(app.Commands, logTestCommand)

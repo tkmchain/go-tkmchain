@@ -85,6 +85,11 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'bucketPrice',
+			call: 'tkmphone_bucketPrice',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'mainKingNumberPrice',
 			call: 'tkmphone_mainKingNumberPrice',
 			params: 0
@@ -98,6 +103,11 @@ web3._extend({
 			name: 'bucketGenerationHash',
 			call: 'tkmphone_bucketGenerationHash',
 			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'nextBucketRound',
+			call: 'tkmphone_nextBucketRound',
+			params: 0
 		}),
 		new web3._extend.Method({
 			name: 'generateBuckets',
@@ -133,6 +143,11 @@ web3._extend({
 			name: 'openBucket',
 			call: 'tkmphone_openBucket',
 			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'openBucketHash',
+			call: 'tkmphone_openBucketHash',
+			params: 2
 		}),
 		new web3._extend.Method({
 			name: 'operatorInventory',

@@ -72,7 +72,31 @@ web3.tkmphone.sendEncryptedMessageWithExpiry(fromNumber, toNumber, nonceHex, cip
 web3.currentProvider.send({jsonrpc: "2.0", id: 1, method: "tkmphone_newMessages", params: []})
 ```
 
-Use the added management APIs from web3 as `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `openBucket`, `operatorInventory`, `sellNumber`, `mainKingNumberPrice`, `numberSalePrice`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
+Use the added management APIs from web3 as `bucketPrice`, `operatorKeyPrice`, `mainKingNumberPrice`, `numberSalePrice`, `nextBucketRound`, `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `openBucketHash`, `openBucket`, `operatorInventory`, `sellNumber`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
+
+### TKM Phone CLI Examples
+
+The `gtkm tkmphone` command attaches to the local IPC endpoint by default, or to the endpoint passed as the last argument. MainKing can generate the next batch of five signed buckets with an unlocked account:
+
+```bash
+./build/bin/gtkm tkmphone prices
+./build/bin/gtkm tkmphone next-round
+./build/bin/gtkm tkmphone generate-buckets --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+./build/bin/gtkm tkmphone buckets
+```
+
+For offline signing, get the digest first and pass the resulting signature manually:
+
+```bash
+./build/bin/gtkm tkmphone bucket-hash --seed 0x1111111111111111111111111111111111111111111111111111111111111111
+./build/bin/gtkm tkmphone generate-buckets --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --signature 0xSignature
+```
+
+Operators can open only their assigned bucket; if the operator account is unlocked, the CLI signs `tkmphone_openBucketHash` automatically:
+
+```bash
+./build/bin/gtkm tkmphone open-bucket --operator 0xOperator --bucket 1
+```
 
 ## Mining Notes
 

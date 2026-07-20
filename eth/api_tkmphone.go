@@ -304,6 +304,10 @@ func (api *TkmPhoneAPI) OperatorKeyPrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneOperatorKeyPrice))
 }
 
+func (api *TkmPhoneAPI) BucketPrice() *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneOperatorKeyPrice))
+}
+
 func (api *TkmPhoneAPI) MainKingNumberPrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneMainKingNumberPrice))
 }
@@ -314,6 +318,10 @@ func (api *TkmPhoneAPI) NumberSalePrice() *hexutil.Big {
 
 func (api *TkmPhoneAPI) BucketGenerationHash(round hexutil.Uint64, seed common.Hash) common.Hash {
 	return api.service.bucketGenerationHash(uint64(round), seed)
+}
+
+func (api *TkmPhoneAPI) NextBucketRound() hexutil.Uint64 {
+	return hexutil.Uint64(api.service.NextBucketRound())
 }
 
 func (api *TkmPhoneAPI) GenerateBuckets(seed common.Hash, signature hexutil.Bytes) ([]PhoneNumberBucket, error) {
@@ -336,6 +344,10 @@ func (api *TkmPhoneAPI) GenerateNumber(operator common.Address, owner common.Add
 
 func (api *TkmPhoneAPI) OpenBucket(operator common.Address, bucketID hexutil.Uint64, signature hexutil.Bytes) ([]PhoneNumber, error) {
 	return api.service.OpenBucket(operator, uint64(bucketID), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) OpenBucketHash(operator common.Address, bucketID hexutil.Uint64) common.Hash {
+	return api.service.openBucketHash(operator, uint64(bucketID))
 }
 
 func (api *TkmPhoneAPI) OperatorInventory(operator common.Address, bucketID hexutil.Uint64, signature hexutil.Bytes) ([]PhoneNumber, error) {
@@ -631,6 +643,12 @@ func (svc *TkmPhoneService) Buckets() []PhoneNumberBucket {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func (svc *TkmPhoneService) NextBucketRound() uint64 {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	return svc.nextBucket/tkmPhoneBucketBatchSize + 1
 }
 
 func (svc *TkmPhoneService) OpenBucket(operator common.Address, bucketID uint64, signature []byte) ([]PhoneNumber, error) {
@@ -1767,6 +1785,10 @@ func (svc *TkmPhoneService) bucketGenerationHash(round uint64, seed common.Hash)
 
 func (svc *TkmPhoneService) operatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash) common.Hash {
 	return svc.randomXServiceHash("operator-grant", operator.Bytes(), keyHash.Bytes(), tkmPhoneUint64Bytes(expiresAt), paymentTx.Bytes(), tkmPhoneOperatorKeyPrice.Bytes())
+}
+
+func (svc *TkmPhoneService) openBucketHash(operator common.Address, bucketID uint64) common.Hash {
+	return svc.randomXServiceHash("open-bucket-payload", operator.Bytes(), tkmPhoneUint64Bytes(bucketID))
 }
 
 func (svc *TkmPhoneService) messageKey(from string, to string, nonce []byte) common.Hash {
