@@ -28,12 +28,14 @@ import (
 )
 
 var (
-	tkmPhoneOperatorKeyPrice = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
-	tkmPhoneDefaultChainID   = big.NewInt(8979)
-	tkmPhoneStateKey         = []byte("tkmphone-state-v1")
-	tkmPhoneMaxPayloadSize   = 64 * 1024
-	tkmPhoneMessageRateLimit = 20
-	tkmPhoneCallRateLimit    = 10
+	tkmPhoneOperatorKeyPrice              = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
+	tkmPhoneDefaultNumberSalePrice        = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
+	tkmPhoneOperatorNumberGrant    uint64 = 50
+	tkmPhoneDefaultChainID                = big.NewInt(8979)
+	tkmPhoneStateKey                      = []byte("tkmphone-state-v1")
+	tkmPhoneMaxPayloadSize                = 64 * 1024
+	tkmPhoneMessageRateLimit              = 20
+	tkmPhoneCallRateLimit                 = 10
 )
 
 type TkmPhoneAPI struct {
@@ -97,15 +99,19 @@ type PhoneOperatorKey struct {
 	Paid      *hexutil.Big   `json:"paid"`
 	ExpiresAt hexutil.Uint64 `json:"expiresAt"`
 	Active    bool           `json:"active"`
+	Numbers   hexutil.Uint64 `json:"numbers"`
 }
 
 type PhoneNumber struct {
-	Number    string         `json:"number"`
-	Owner     common.Address `json:"owner"`
-	Operator  common.Address `json:"operator"`
-	RandomX   common.Hash    `json:"randomxHash"`
-	CreatedAt hexutil.Uint64 `json:"createdAt"`
-	Active    bool           `json:"active"`
+	Number        string         `json:"number"`
+	Owner         common.Address `json:"owner"`
+	Operator      common.Address `json:"operator"`
+	RandomX       common.Hash    `json:"randomxHash"`
+	CreatedAt     hexutil.Uint64 `json:"createdAt"`
+	Active        bool           `json:"active"`
+	SalePrice     *hexutil.Big   `json:"salePrice"`
+	SalePaymentTx common.Hash    `json:"salePaymentTx"`
+	SoldAt        hexutil.Uint64 `json:"soldAt"`
 }
 
 type PhoneCipher struct {
@@ -273,6 +279,10 @@ func (api *TkmPhoneAPI) OperatorKeyPrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneOperatorKeyPrice))
 }
 
+func (api *TkmPhoneAPI) NumberSalePrice() *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneDefaultNumberSalePrice))
+}
+
 func (api *TkmPhoneAPI) OperatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt hexutil.Uint64, paymentTx common.Hash) common.Hash {
 	return api.service.operatorGrantHash(operator, keyHash, uint64(expiresAt), paymentTx)
 }
@@ -283,6 +293,14 @@ func (api *TkmPhoneAPI) RegisterOperatorKey(operator common.Address, keyHash com
 
 func (api *TkmPhoneAPI) GenerateNumber(operator common.Address, owner common.Address, label string) (PhoneNumber, error) {
 	return api.service.GenerateNumber(operator, owner, label)
+}
+
+func (api *TkmPhoneAPI) OperatorInventory(operator common.Address) ([]PhoneNumber, error) {
+	return api.service.OperatorInventory(operator)
+}
+
+func (api *TkmPhoneAPI) SellNumber(operator common.Address, number string, buyer common.Address, price hexutil.Big, paymentTx common.Hash) (PhoneNumber, error) {
+	return api.service.SellNumber(operator, number, buyer, (*big.Int)(&price), paymentTx)
 }
 
 func (api *TkmPhoneAPI) Number(number string) (PhoneNumber, error) {
@@ -473,11 +491,20 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 		Paid:      (*hexutil.Big)(new(big.Int).Set(paid)),
 		ExpiresAt: hexutil.Uint64(expiresAt),
 		Active:    true,
+		Numbers:   hexutil.Uint64(tkmPhoneOperatorNumberGrant),
 	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
+	if existing, ok := svc.operators[operator]; ok && existing.Active && uint64(existing.ExpiresAt) > now {
+		return PhoneOperatorKey{}, errors.New("operator key is already active")
+	}
 	svc.operators[operator] = key
 	svc.addPropagationLocked("operator-key", 0, keyHash, now, key)
+	for i := uint64(0); i < tkmPhoneOperatorNumberGrant; i++ {
+		if _, err := svc.generateNumberLocked(operator, operator, fmt.Sprintf("operator-allocation-%02d", i+1), now); err != nil {
+			return PhoneOperatorKey{}, err
+		}
+	}
 	if err := svc.saveLocked(); err != nil {
 		return PhoneOperatorKey{}, err
 	}
@@ -495,7 +522,70 @@ func (svc *TkmPhoneService) GenerateNumber(operator common.Address, owner common
 	if !ok || !key.Active || uint64(key.ExpiresAt) <= now {
 		return PhoneNumber{}, errors.New("operator key is not active")
 	}
+	return svc.generateNumberLocked(operator, owner, label, now)
+}
 
+func (svc *TkmPhoneService) OperatorInventory(operator common.Address) ([]PhoneNumber, error) {
+	now := uint64(time.Now().Unix())
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	key, ok := svc.operators[operator]
+	if !ok || !key.Active || uint64(key.ExpiresAt) <= now {
+		return nil, errors.New("operator key is not active")
+	}
+	out := make([]PhoneNumber, 0)
+	for _, number := range svc.numbers {
+		if number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
+			out = append(out, number)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
+}
+
+func (svc *TkmPhoneService) SellNumber(operator common.Address, number string, buyer common.Address, price *big.Int, paymentTx common.Hash) (PhoneNumber, error) {
+	if buyer == (common.Address{}) {
+		return PhoneNumber{}, errors.New("buyer address is required")
+	}
+	if price == nil || price.Cmp(tkmPhoneDefaultNumberSalePrice) != 0 {
+		return PhoneNumber{}, errors.New("phone number sale requires exactly 10000 TKM")
+	}
+	if paymentTx == (common.Hash{}) {
+		return PhoneNumber{}, errors.New("phone number sale payment transaction is required")
+	}
+	if err := svc.validateNumberSalePayment(operator, buyer, price, paymentTx); err != nil {
+		return PhoneNumber{}, err
+	}
+	now := uint64(time.Now().Unix())
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	key, ok := svc.operators[operator]
+	if !ok || !key.Active || uint64(key.ExpiresAt) <= now {
+		return PhoneNumber{}, errors.New("operator key is not active")
+	}
+	record, ok := svc.numbers[number]
+	if !ok || !record.Active {
+		return PhoneNumber{}, errors.New("number not found")
+	}
+	if record.Operator != operator {
+		return PhoneNumber{}, errors.New("number is not assigned to operator")
+	}
+	if record.Owner != operator || uint64(record.SoldAt) != 0 {
+		return PhoneNumber{}, errors.New("number is already sold")
+	}
+	record.Owner = buyer
+	record.SalePrice = (*hexutil.Big)(new(big.Int).Set(price))
+	record.SalePaymentTx = paymentTx
+	record.SoldAt = hexutil.Uint64(now)
+	svc.numbers[number] = record
+	svc.addPropagationLocked("number-sold", 0, svc.randomXServiceHash("number-sold", []byte(number), buyer.Bytes(), price.Bytes(), paymentTx.Bytes()), now, record)
+	if err := svc.saveLocked(); err != nil {
+		return PhoneNumber{}, err
+	}
+	return record, nil
+}
+
+func (svc *TkmPhoneService) generateNumberLocked(operator common.Address, owner common.Address, label string, now uint64) (PhoneNumber, error) {
 	for {
 		svc.nextID++
 		rxh := svc.randomXServiceHash("number", operator.Bytes(), owner.Bytes(), []byte(label), tkmPhoneUint64Bytes(svc.nextID))
@@ -506,9 +596,6 @@ func (svc *TkmPhoneService) GenerateNumber(operator common.Address, owner common
 		record := PhoneNumber{Number: number, Owner: owner, Operator: operator, RandomX: rxh, CreatedAt: hexutil.Uint64(now), Active: true}
 		svc.numbers[number] = record
 		svc.addPropagationLocked("number", svc.nextID, rxh, now, record)
-		if err := svc.saveLocked(); err != nil {
-			return PhoneNumber{}, err
-		}
 		return record, nil
 	}
 }
@@ -1238,6 +1325,32 @@ func (svc *TkmPhoneService) validateOperatorPayment(operator common.Address, pay
 	return nil
 }
 
+func (svc *TkmPhoneService) validateNumberSalePayment(operator common.Address, buyer common.Address, price *big.Int, paymentTx common.Hash) error {
+	if svc.eth == nil || svc.eth.blockchain == nil {
+		return nil
+	}
+	_, tx := svc.eth.blockchain.GetCanonicalTransaction(paymentTx)
+	if tx == nil {
+		return errors.New("phone number sale payment transaction is not canonical or indexed")
+	}
+	to := tx.To()
+	if to == nil || *to != operator {
+		return errors.New("phone number sale payment must be sent to operator")
+	}
+	if tx.Value().Cmp(price) != 0 {
+		return errors.New("phone number sale payment transaction must be exactly 10000 TKM")
+	}
+	config := svc.eth.blockchain.Config()
+	signer, err := types.Sender(types.LatestSigner(config), tx)
+	if err != nil {
+		return fmt.Errorf("phone number sale payment sender unavailable: %w", err)
+	}
+	if signer != buyer {
+		return fmt.Errorf("phone number sale payment sent by %s, want %s", signer.Hex(), buyer.Hex())
+	}
+	return nil
+}
+
 func (svc *TkmPhoneService) verifyNumberOwnerSignature(number string, action string, payload common.Hash, signature []byte) error {
 	svc.lock.RLock()
 	record, ok := svc.numbers[number]
@@ -1328,7 +1441,7 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 			return errors.New("invalid propagated operator key")
 		}
 		svc.operators[key.Operator] = key
-	case "number", "number-transferred", "number-revoked":
+	case "number", "number-sold", "number-transferred", "number-revoked":
 		var number PhoneNumber
 		if err := json.Unmarshal(prop.Payload, &number); err != nil {
 			return err

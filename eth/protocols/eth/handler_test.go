@@ -76,32 +76,29 @@ func newTestBackend(blocks int) *testBackend {
 func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generator func(int, *core.BlockGen)) *testBackend {
 	var (
 		// Create a database pre-initialize with a genesis block
-		db     = rawdb.NewMemoryDatabase()
-		config = params.TestChainConfig
-		engine = randomx.NewFaker()
+		db         = rawdb.NewMemoryDatabase()
+		configCopy = *params.TestChainConfig
+		config     = &configCopy
+		engine     = randomx.NewFullFaker()
 	)
 	if shanghai {
 		config = &params.ChainConfig{
-			ChainID:                 big.NewInt(1),
-			HomesteadBlock:          big.NewInt(0),
-			DAOForkBlock:            nil,
-			DAOForkSupport:          true,
-			EIP150Block:             big.NewInt(0),
-			EIP155Block:             big.NewInt(0),
-			EIP158Block:             big.NewInt(0),
-			ByzantiumBlock:          big.NewInt(0),
-			ConstantinopleBlock:     big.NewInt(0),
-			PetersburgBlock:         big.NewInt(0),
-			IstanbulBlock:           big.NewInt(0),
-			MuirGlacierBlock:        big.NewInt(0),
-			BerlinBlock:             big.NewInt(0),
-			LondonBlock:             big.NewInt(0),
-			ArrowGlacierBlock:       big.NewInt(0),
-			GrayGlacierBlock:        big.NewInt(0),
-			MergeNetsplitBlock:      big.NewInt(0),
-			ShanghaiTime:            u64(0),
-			TerminalTotalDifficulty: big.NewInt(0),
-			Ethash:                  new(params.EthashConfig),
+			ChainID:             big.NewInt(1),
+			HomesteadBlock:      big.NewInt(0),
+			DAOForkBlock:        nil,
+			DAOForkSupport:      true,
+			EIP150Block:         big.NewInt(0),
+			EIP155Block:         big.NewInt(0),
+			EIP158Block:         big.NewInt(0),
+			ByzantiumBlock:      big.NewInt(0),
+			ConstantinopleBlock: big.NewInt(0),
+			PetersburgBlock:     big.NewInt(0),
+			IstanbulBlock:       big.NewInt(0),
+			BerlinBlock:         big.NewInt(0),
+			LondonBlock:         big.NewInt(0),
+			ArrowGlacierBlock:   big.NewInt(0),
+			GrayGlacierBlock:    big.NewInt(0),
+			ShanghaiTime:        u64(0),
 		}
 	}
 
@@ -150,7 +147,6 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generat
 // close tears down the transaction pool and chain behind the mock backend.
 func (b *testBackend) close() {
 	b.txpool.Close()
-	b.chain.Stop()
 }
 
 func (b *testBackend) Chain() *core.BlockChain { return b.chain }
@@ -570,13 +566,10 @@ func testGetBlockReceipts(t *testing.T, protocol uint) {
 			block.SetCoinbase(acc2Addr)
 			block.SetExtra([]byte("yeehaw"))
 		case 3:
-			// Block 4 includes blocks 2 and 3 as uncle headers (with modified extra data).
-			b2 := block.PrevBlock(1).Header()
-			b2.Extra = []byte("foo")
-			block.AddUncle(b2)
-			b3 := block.PrevBlock(2).Header()
-			b3.Extra = []byte("foo")
-			block.AddUncle(b3)
+			// Block 4 is intentionally left without uncles. The RandomX test
+			// engine rejects uncle headers, and receipt serving does not depend
+			// on uncle contents.
+			block.SetExtra([]byte("receipts"))
 		}
 	}
 	// Assemble the test environment

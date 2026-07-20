@@ -85,6 +85,11 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'numberSalePrice',
+			call: 'tkmphone_numberSalePrice',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'operatorGrantHash',
 			call: 'tkmphone_operatorGrantHash',
 			params: 4
@@ -103,6 +108,16 @@ web3._extend({
 			name: 'generateNumber',
 			call: 'tkmphone_generateNumber',
 			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'operatorInventory',
+			call: 'tkmphone_operatorInventory',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'sellNumber',
+			call: 'tkmphone_sellNumber',
+			params: 5
 		}),
 		new web3._extend.Method({
 			name: 'number',

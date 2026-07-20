@@ -79,8 +79,34 @@ func TestTkmPhoneOperatorKeyRequiresMainKingSignatureAndPrice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("signed operator key rejected: %v", err)
 	}
-	if !key.Active || key.Operator != operator || key.Paid.ToInt().Cmp(tkmPhoneOperatorKeyPrice) != 0 {
+	if !key.Active || key.Operator != operator || key.Paid.ToInt().Cmp(tkmPhoneOperatorKeyPrice) != 0 || uint64(key.Numbers) != tkmPhoneOperatorNumberGrant {
 		t.Fatalf("bad operator key record: %#v", key)
+	}
+	inventory, err := svc.OperatorInventory(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) != int(tkmPhoneOperatorNumberGrant) {
+		t.Fatalf("operator inventory = %d, want %d", len(inventory), tkmPhoneOperatorNumberGrant)
+	}
+	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	saleTx := crypto.Keccak256Hash([]byte("10000-tkm-sale-payment"))
+	sold, err := svc.SellNumber(operator, inventory[0].Number, buyer, tkmPhoneDefaultNumberSalePrice, saleTx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sold.Owner != buyer || sold.Operator != operator || sold.SalePrice.ToInt().Cmp(tkmPhoneDefaultNumberSalePrice) != 0 || sold.SalePaymentTx != saleTx || uint64(sold.SoldAt) == 0 {
+		t.Fatalf("bad sold number: %#v", sold)
+	}
+	if _, err := svc.SellNumber(operator, sold.Number, common.HexToAddress("0x1000000000000000000000000000000000000002"), tkmPhoneDefaultNumberSalePrice, crypto.Keccak256Hash([]byte("second-sale"))); err == nil {
+		t.Fatal("resold an already sold number")
+	}
+	inventory, err = svc.OperatorInventory(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) != int(tkmPhoneOperatorNumberGrant)-1 {
+		t.Fatalf("operator inventory after sale = %d, want %d", len(inventory), int(tkmPhoneOperatorNumberGrant)-1)
 	}
 }
 
