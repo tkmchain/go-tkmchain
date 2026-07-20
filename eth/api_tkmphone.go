@@ -38,6 +38,7 @@ var (
 	tkmPhoneMaxPayloadSize                = 64 * 1024
 	tkmPhoneMessageRateLimit              = 20
 	tkmPhoneCallRateLimit                 = 10
+	tkmPhoneCallCandidateRateLimit        = 120
 )
 
 type TkmPhoneAPI struct {
@@ -45,57 +46,60 @@ type TkmPhoneAPI struct {
 }
 
 type TkmPhoneService struct {
-	lock       sync.RWMutex
-	eth        *Ethereum
-	mainKing   common.Address
-	chainID    *big.Int
-	db         ethdb.KeyValueStore
-	nextID     uint64
-	nextMsg    uint64
-	nextCall   uint64
-	nextNotif  uint64
-	nextBucket uint64
-	operators  map[common.Address]PhoneOperatorKey
-	buckets    map[uint64]PhoneNumberBucket
-	numbers    map[string]PhoneNumber
-	messages   map[uint64]PhoneMessage
-	calls      map[uint64]PhoneCall
-	devices    map[string][]PhoneDeviceKey
-	notifs     map[uint64]PhoneNotification
-	rate       map[string][]uint64
-	contacts   map[string][]PhoneContact
-	blocked    map[string]map[string]bool
-	recovery   map[string]common.Address
-	reports    map[uint64]PhoneFraudReport
-	prop       map[uint64]PhonePropagation
-	nextReport uint64
-	nextProp   uint64
-	msgFeed    event.Feed
-	callFeed   event.Feed
-	notifFeed  event.Feed
+	lock           sync.RWMutex
+	eth            *Ethereum
+	mainKing       common.Address
+	chainID        *big.Int
+	db             ethdb.KeyValueStore
+	nextID         uint64
+	nextMsg        uint64
+	nextCall       uint64
+	nextNotif      uint64
+	nextBucket     uint64
+	operators      map[common.Address]PhoneOperatorKey
+	buckets        map[uint64]PhoneNumberBucket
+	numbers        map[string]PhoneNumber
+	messages       map[uint64]PhoneMessage
+	calls          map[uint64]PhoneCall
+	callSignals    map[uint64][]PhoneCallSignal
+	devices        map[string][]PhoneDeviceKey
+	notifs         map[uint64]PhoneNotification
+	rate           map[string][]uint64
+	contacts       map[string][]PhoneContact
+	blocked        map[string]map[string]bool
+	recovery       map[string]common.Address
+	reports        map[uint64]PhoneFraudReport
+	prop           map[uint64]PhonePropagation
+	nextReport     uint64
+	nextProp       uint64
+	msgFeed        event.Feed
+	callFeed       event.Feed
+	callSignalFeed event.Feed
+	notifFeed      event.Feed
 }
 
 type tkmPhoneSnapshot struct {
-	NextID     uint64
-	NextMsg    uint64
-	NextCall   uint64
-	NextNotif  uint64
-	NextBucket uint64
-	Operators  map[common.Address]PhoneOperatorKey
-	Buckets    map[uint64]PhoneNumberBucket
-	Numbers    map[string]PhoneNumber
-	Messages   map[uint64]PhoneMessage
-	Calls      map[uint64]PhoneCall
-	Devices    map[string][]PhoneDeviceKey
-	Notifs     map[uint64]PhoneNotification
-	Rate       map[string][]uint64
-	Contacts   map[string][]PhoneContact
-	Blocked    map[string]map[string]bool
-	Recovery   map[string]common.Address
-	Reports    map[uint64]PhoneFraudReport
-	Prop       map[uint64]PhonePropagation
-	NextReport uint64
-	NextProp   uint64
+	NextID      uint64
+	NextMsg     uint64
+	NextCall    uint64
+	NextNotif   uint64
+	NextBucket  uint64
+	Operators   map[common.Address]PhoneOperatorKey
+	Buckets     map[uint64]PhoneNumberBucket
+	Numbers     map[string]PhoneNumber
+	Messages    map[uint64]PhoneMessage
+	Calls       map[uint64]PhoneCall
+	CallSignals map[uint64][]PhoneCallSignal
+	Devices     map[string][]PhoneDeviceKey
+	Notifs      map[uint64]PhoneNotification
+	Rate        map[string][]uint64
+	Contacts    map[string][]PhoneContact
+	Blocked     map[string]map[string]bool
+	Recovery    map[string]common.Address
+	Reports     map[uint64]PhoneFraudReport
+	Prop        map[uint64]PhonePropagation
+	NextReport  uint64
+	NextProp    uint64
 }
 
 type PhoneOperatorKey struct {
@@ -250,6 +254,17 @@ type PhoneCall struct {
 	ExpiresAt         hexutil.Uint64 `json:"expiresAt"`
 }
 
+type PhoneCallSignal struct {
+	CallID      hexutil.Uint64 `json:"callId"`
+	From        string         `json:"from"`
+	To          string         `json:"to"`
+	Kind        string         `json:"kind"`
+	Ciphertext  hexutil.Bytes  `json:"ciphertext"`
+	Nonce       hexutil.Bytes  `json:"nonce"`
+	RandomXHash common.Hash    `json:"randomxHash"`
+	CreatedAt   hexutil.Uint64 `json:"createdAt"`
+}
+
 func NewTkmPhoneAPI(e *Ethereum) *TkmPhoneAPI {
 	return &TkmPhoneAPI{service: e.tkmPhoneService()}
 }
@@ -263,23 +278,24 @@ func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big
 		chainID = tkmPhoneDefaultChainID
 	}
 	svc := &TkmPhoneService{
-		eth:       e,
-		mainKing:  mainKing,
-		chainID:   new(big.Int).Set(chainID),
-		db:        db,
-		operators: make(map[common.Address]PhoneOperatorKey),
-		buckets:   make(map[uint64]PhoneNumberBucket),
-		numbers:   make(map[string]PhoneNumber),
-		messages:  make(map[uint64]PhoneMessage),
-		calls:     make(map[uint64]PhoneCall),
-		devices:   make(map[string][]PhoneDeviceKey),
-		notifs:    make(map[uint64]PhoneNotification),
-		rate:      make(map[string][]uint64),
-		contacts:  make(map[string][]PhoneContact),
-		blocked:   make(map[string]map[string]bool),
-		recovery:  make(map[string]common.Address),
-		reports:   make(map[uint64]PhoneFraudReport),
-		prop:      make(map[uint64]PhonePropagation),
+		eth:         e,
+		mainKing:    mainKing,
+		chainID:     new(big.Int).Set(chainID),
+		db:          db,
+		operators:   make(map[common.Address]PhoneOperatorKey),
+		buckets:     make(map[uint64]PhoneNumberBucket),
+		numbers:     make(map[string]PhoneNumber),
+		messages:    make(map[uint64]PhoneMessage),
+		calls:       make(map[uint64]PhoneCall),
+		callSignals: make(map[uint64][]PhoneCallSignal),
+		devices:     make(map[string][]PhoneDeviceKey),
+		notifs:      make(map[uint64]PhoneNotification),
+		rate:        make(map[string][]uint64),
+		contacts:    make(map[string][]PhoneContact),
+		blocked:     make(map[string]map[string]bool),
+		recovery:    make(map[string]common.Address),
+		reports:     make(map[uint64]PhoneFraudReport),
+		prop:        make(map[uint64]PhonePropagation),
 	}
 	if err := svc.load(); err != nil {
 		log.Warn("Failed to load TKM phone service state", "err", err)
@@ -386,6 +402,22 @@ func (api *TkmPhoneAPI) EndCall(id hexutil.Uint64, number string, signature hexu
 	return api.service.EndCallSigned(uint64(id), number, []byte(signature))
 }
 
+func (api *TkmPhoneAPI) CallCandidateHash(id hexutil.Uint64, number string, nonce hexutil.Bytes, ciphertext hexutil.Bytes) common.Hash {
+	return api.service.callCandidateHash(uint64(id), number, []byte(nonce), []byte(ciphertext))
+}
+
+func (api *TkmPhoneAPI) CallCandidateListHash(id hexutil.Uint64, number string) common.Hash {
+	return api.service.callCandidateListHash(uint64(id), number)
+}
+
+func (api *TkmPhoneAPI) AddCallCandidate(id hexutil.Uint64, number string, ciphertext hexutil.Bytes, nonce hexutil.Bytes, signature hexutil.Bytes) (PhoneCallSignal, error) {
+	return api.service.AddCallCandidateSigned(uint64(id), number, []byte(ciphertext), []byte(nonce), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) CallCandidates(id hexutil.Uint64, number string, signature hexutil.Bytes) ([]PhoneCallSignal, error) {
+	return api.service.CallCandidatesSigned(uint64(id), number, []byte(signature))
+}
+
 func (api *TkmPhoneAPI) OwnerActionHash(number string, action string, payload common.Hash) common.Hash {
 	return api.service.ownerActionHash(number, action, payload)
 }
@@ -465,6 +497,9 @@ func (api *TkmPhoneAPI) NewMessages(ctx context.Context) (*rpc.Subscription, err
 }
 func (api *TkmPhoneAPI) CallUpdates(ctx context.Context) (*rpc.Subscription, error) {
 	return api.service.subscribe(ctx, "call")
+}
+func (api *TkmPhoneAPI) CallSignals(ctx context.Context) (*rpc.Subscription, error) {
+	return api.service.subscribe(ctx, "call-signal")
 }
 func (api *TkmPhoneAPI) NewNotifications(ctx context.Context) (*rpc.Subscription, error) {
 	return api.service.subscribe(ctx, "notification")
@@ -916,6 +951,62 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	return call, nil
 }
 
+func (svc *TkmPhoneService) AddCallCandidate(id uint64, number string, ciphertext []byte, nonce []byte) (PhoneCallSignal, error) {
+	if len(ciphertext) == 0 || len(nonce) == 0 {
+		return PhoneCallSignal{}, errors.New("encrypted call candidate and nonce are required")
+	}
+	if len(ciphertext) > tkmPhoneMaxPayloadSize {
+		return PhoneCallSignal{}, errors.New("call candidate exceeds maximum payload size")
+	}
+	now := uint64(time.Now().Unix())
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	call, ok := svc.calls[id]
+	if !ok {
+		return PhoneCallSignal{}, errors.New("call not found")
+	}
+	if call.State == PhoneCallEnded {
+		return PhoneCallSignal{}, errors.New("call already ended")
+	}
+	peer := ""
+	switch number {
+	case call.From:
+		peer = call.To
+	case call.To:
+		peer = call.From
+	default:
+		return PhoneCallSignal{}, errors.New("number is not a call participant")
+	}
+	if err := svc.checkRateLocked("call-candidate:"+number, now, tkmPhoneCallCandidateRateLimit); err != nil {
+		return PhoneCallSignal{}, err
+	}
+	signal := PhoneCallSignal{CallID: hexutil.Uint64(id), From: number, To: peer, Kind: "ice", Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), RandomXHash: svc.messageKey(number, peer, nonce), CreatedAt: hexutil.Uint64(now)}
+	svc.callSignals[id] = append(svc.callSignals[id], signal)
+	svc.addNotificationLocked(peer, "call-candidate", id, now)
+	svc.addPropagationLocked("call-candidate", id, signal.RandomXHash, now, signal)
+	svc.callSignalFeed.Send(signal)
+	if err := svc.saveLocked(); err != nil {
+		return PhoneCallSignal{}, err
+	}
+	return signal, nil
+}
+
+func (svc *TkmPhoneService) CallCandidates(id uint64, number string) ([]PhoneCallSignal, error) {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	call, ok := svc.calls[id]
+	if !ok {
+		return nil, errors.New("call not found")
+	}
+	if number != call.From && number != call.To {
+		return nil, errors.New("number is not a call participant")
+	}
+	signals := svc.callSignals[id]
+	out := make([]PhoneCallSignal, len(signals))
+	copy(out, signals)
+	return out, nil
+}
+
 func (svc *TkmPhoneService) SendEncryptedMessageSigned(from string, to string, ciphertext []byte, nonce []byte, signature []byte) (PhoneMessage, error) {
 	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
 	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
@@ -961,6 +1052,22 @@ func (svc *TkmPhoneService) EndCallSigned(id uint64, number string, signature []
 		return PhoneCall{}, err
 	}
 	return svc.EndCall(id)
+}
+
+func (svc *TkmPhoneService) AddCallCandidateSigned(id uint64, number string, ciphertext []byte, nonce []byte, signature []byte) (PhoneCallSignal, error) {
+	payload := svc.callCandidateHash(id, number, nonce, ciphertext)
+	if err := svc.verifyNumberOwnerSignature(number, "add-call-candidate", payload, signature); err != nil {
+		return PhoneCallSignal{}, err
+	}
+	return svc.AddCallCandidate(id, number, ciphertext, nonce)
+}
+
+func (svc *TkmPhoneService) CallCandidatesSigned(id uint64, number string, signature []byte) ([]PhoneCallSignal, error) {
+	payload := svc.callCandidateListHash(id, number)
+	if err := svc.verifyNumberOwnerSignature(number, "list-call-candidates", payload, signature); err != nil {
+		return nil, err
+	}
+	return svc.CallCandidates(id, number)
 }
 
 func (svc *TkmPhoneService) MessagesForNumber(number string) ([]PhoneMessage, error) {
@@ -1118,6 +1225,7 @@ func (svc *TkmPhoneService) Prune(retentionSeconds uint64, maxMessages int, maxC
 	for id, call := range svc.calls {
 		if (cutoff > 0 && uint64(call.StartedAt) < cutoff) || (call.ExpiresAt != 0 && uint64(call.ExpiresAt) <= uint64(time.Now().Unix())) {
 			delete(svc.calls, id)
+			delete(svc.callSignals, id)
 		}
 	}
 	for maxMessages > 0 && len(svc.messages) > maxMessages {
@@ -1339,6 +1447,8 @@ func (svc *TkmPhoneService) subscribe(ctx context.Context, kind string) (*rpc.Su
 		evsub = svc.msgFeed.Subscribe(ch)
 	case "call":
 		evsub = svc.callFeed.Subscribe(ch)
+	case "call-signal":
+		evsub = svc.callSignalFeed.Subscribe(ch)
 	default:
 		evsub = svc.notifFeed.Subscribe(ch)
 	}
@@ -1390,6 +1500,9 @@ func (svc *TkmPhoneService) load() error {
 	if snap.Calls != nil {
 		svc.calls = snap.Calls
 	}
+	if snap.CallSignals != nil {
+		svc.callSignals = snap.CallSignals
+	}
 	if snap.Devices != nil {
 		svc.devices = snap.Devices
 	}
@@ -1424,26 +1537,27 @@ func (svc *TkmPhoneService) saveLocked() error {
 		return nil
 	}
 	snap := tkmPhoneSnapshot{
-		NextID:     svc.nextID,
-		NextMsg:    svc.nextMsg,
-		NextCall:   svc.nextCall,
-		NextNotif:  svc.nextNotif,
-		NextBucket: svc.nextBucket,
-		Operators:  svc.operators,
-		Buckets:    svc.buckets,
-		Numbers:    svc.numbers,
-		Messages:   svc.messages,
-		Calls:      svc.calls,
-		Devices:    svc.devices,
-		Notifs:     svc.notifs,
-		Rate:       svc.rate,
-		Contacts:   svc.contacts,
-		Blocked:    svc.blocked,
-		Recovery:   svc.recovery,
-		Reports:    svc.reports,
-		Prop:       svc.prop,
-		NextReport: svc.nextReport,
-		NextProp:   svc.nextProp,
+		NextID:      svc.nextID,
+		NextMsg:     svc.nextMsg,
+		NextCall:    svc.nextCall,
+		NextNotif:   svc.nextNotif,
+		NextBucket:  svc.nextBucket,
+		Operators:   svc.operators,
+		Buckets:     svc.buckets,
+		Numbers:     svc.numbers,
+		Messages:    svc.messages,
+		Calls:       svc.calls,
+		CallSignals: svc.callSignals,
+		Devices:     svc.devices,
+		Notifs:      svc.notifs,
+		Rate:        svc.rate,
+		Contacts:    svc.contacts,
+		Blocked:     svc.blocked,
+		Recovery:    svc.recovery,
+		Reports:     svc.reports,
+		Prop:        svc.prop,
+		NextReport:  svc.nextReport,
+		NextProp:    svc.nextProp,
 	}
 	data, err := json.Marshal(&snap)
 	if err != nil {
@@ -1691,6 +1805,23 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 			svc.nextCall = id
 		}
 		svc.callFeed.Send(call)
+	case "call-candidate":
+		var signal PhoneCallSignal
+		if err := json.Unmarshal(prop.Payload, &signal); err != nil {
+			return err
+		}
+		id := uint64(signal.CallID)
+		if id == 0 || signal.RandomXHash != prop.Hash || signal.From == "" || signal.To == "" {
+			return errors.New("invalid propagated call candidate")
+		}
+		existing := svc.callSignals[id]
+		for _, have := range existing {
+			if have.RandomXHash == signal.RandomXHash && bytes.Equal(have.Nonce, signal.Nonce) {
+				return nil
+			}
+		}
+		svc.callSignals[id] = append(existing, signal)
+		svc.callSignalFeed.Send(signal)
 	case "contact":
 		var contact PhoneContact
 		if err := json.Unmarshal(prop.Payload, &contact); err != nil {
@@ -1789,6 +1920,14 @@ func (svc *TkmPhoneService) operatorGrantHash(operator common.Address, keyHash c
 
 func (svc *TkmPhoneService) openBucketHash(operator common.Address, bucketID uint64) common.Hash {
 	return svc.randomXServiceHash("open-bucket-payload", operator.Bytes(), tkmPhoneUint64Bytes(bucketID))
+}
+
+func (svc *TkmPhoneService) callCandidateHash(id uint64, number string, nonce []byte, ciphertext []byte) common.Hash {
+	return svc.randomXServiceHash("call-candidate-payload", tkmPhoneUint64Bytes(id), []byte(number), nonce, ciphertext)
+}
+
+func (svc *TkmPhoneService) callCandidateListHash(id uint64, number string) common.Hash {
+	return svc.randomXServiceHash("list-call-candidates-payload", tkmPhoneUint64Bytes(id), []byte(number))
 }
 
 func (svc *TkmPhoneService) messageKey(from string, to string, nonce []byte) common.Hash {

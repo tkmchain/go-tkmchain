@@ -274,6 +274,39 @@ func TestTkmPhoneMessageAndCallWork(t *testing.T) {
 	if call.State != PhoneCallActive || call.AnswerRandomXHash == (common.Hash{}) {
 		t.Fatalf("bad accepted call: %#v", call)
 	}
+	aliceCandidate, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("alice-ice001"), []byte("candidate:alice udp 10.0.0.1:40000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceSignal, err := svc.AddCallCandidate(uint64(call.ID), aliceNumber.Number, aliceCandidate.Ciphertext, aliceCandidate.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliceSignal.From != aliceNumber.Number || aliceSignal.To != bobNumber.Number || aliceSignal.Kind != "ice" {
+		t.Fatalf("bad caller ICE signal: %#v", aliceSignal)
+	}
+	bobCandidate, err := svc.EncryptPayload(bobNumber.Number, aliceNumber.Number, []byte("bob-ice00001"), []byte("candidate:bob udp 10.0.0.2:40000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobSignal, err := svc.AddCallCandidate(uint64(call.ID), bobNumber.Number, bobCandidate.Ciphertext, bobCandidate.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalsForAlice, err := svc.CallCandidates(uint64(call.ID), aliceNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signalsForAlice) != 2 {
+		t.Fatalf("candidate count = %d, want 2", len(signalsForAlice))
+	}
+	openedBobCandidate, err := svc.DecryptPayload(bobSignal.From, bobSignal.To, bobSignal.Nonce, bobSignal.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(openedBobCandidate) != "candidate:bob udp 10.0.0.2:40000" {
+		t.Fatalf("decrypted bob candidate = %q", openedBobCandidate)
+	}
 	call, err = svc.EndCall(uint64(call.ID))
 	if err != nil {
 		t.Fatal(err)
@@ -490,6 +523,24 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 	}
 	if len(aliceCalls) != 1 || aliceCalls[0].ID != call.ID {
 		t.Fatalf("alice calls = %#v", aliceCalls)
+	}
+	candidate, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("signed-ice01"), []byte("candidate:signed-alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidatePayload := svc.callCandidateHash(uint64(call.ID), aliceNumber.Number, candidate.Nonce, candidate.Ciphertext)
+	candidateSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "add-call-candidate", candidatePayload)
+	if _, err := svc.AddCallCandidateSigned(uint64(call.ID), aliceNumber.Number, candidate.Ciphertext, candidate.Nonce, candidateSig); err != nil {
+		t.Fatal(err)
+	}
+	listPayload := svc.callCandidateListHash(uint64(call.ID), bobNumber.Number)
+	listSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "list-call-candidates", listPayload)
+	signals, err := svc.CallCandidatesSigned(uint64(call.ID), bobNumber.Number, listSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(signals) != 1 || signals[0].From != aliceNumber.Number || signals[0].To != bobNumber.Number {
+		t.Fatalf("signed call signals = %#v", signals)
 	}
 	endPayload := svc.randomXServiceHash("end-call-payload", tkmPhoneUint64Bytes(uint64(call.ID)))
 	endSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "end-call", endPayload)

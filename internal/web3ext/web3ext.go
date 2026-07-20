@@ -240,6 +240,26 @@ web3._extend({
 			params: 3
 		}),
 		new web3._extend.Method({
+			name: 'callCandidateHash',
+			call: 'tkmphone_callCandidateHash',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'callCandidateListHash',
+			call: 'tkmphone_callCandidateListHash',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'addCallCandidate',
+			call: 'tkmphone_addCallCandidate',
+			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'callCandidates',
+			call: 'tkmphone_callCandidates',
+			params: 3
+		}),
+		new web3._extend.Method({
 			name: 'notifications',
 			call: 'tkmphone_notifications',
 			params: 1
