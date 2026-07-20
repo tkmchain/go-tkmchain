@@ -95,6 +95,11 @@ web3._extend({
 			params: 6
 		}),
 		new web3._extend.Method({
+			name: 'ownerActionHash',
+			call: 'tkmphone_ownerActionHash',
+			params: 3
+		}),
+		new web3._extend.Method({
 			name: 'generateNumber',
 			call: 'tkmphone_generateNumber',
 			params: 3
@@ -103,6 +108,31 @@ web3._extend({
 			name: 'number',
 			call: 'tkmphone_number',
 			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'messagesForNumber',
+			call: 'tkmphone_messagesForNumber',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'callsForNumber',
+			call: 'tkmphone_callsForNumber',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'registerDeviceKey',
+			call: 'tkmphone_registerDeviceKey',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'transferNumber',
+			call: 'tkmphone_transferNumber',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'revokeNumber',
+			call: 'tkmphone_revokeNumber',
+			params: 2
 		}),
 		new web3._extend.Method({
 			name: 'encryptPayload',
@@ -117,22 +147,37 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'sendEncryptedMessage',
 			call: 'tkmphone_sendEncryptedMessage',
-			params: 4
+			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'ackMessage',
+			call: 'tkmphone_ackMessage',
+			params: 3
 		}),
 		new web3._extend.Method({
 			name: 'startCall',
 			call: 'tkmphone_startCall',
-			params: 4
+			params: 5
 		}),
 		new web3._extend.Method({
 			name: 'acceptCall',
 			call: 'tkmphone_acceptCall',
-			params: 3
+			params: 4
 		}),
 		new web3._extend.Method({
 			name: 'endCall',
 			call: 'tkmphone_endCall',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'notifications',
+			call: 'tkmphone_notifications',
 			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'prune',
+			call: 'tkmphone_prune',
+			params: 3
 		})
 	]
 });

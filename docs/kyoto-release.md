@@ -39,6 +39,15 @@ The block subsidy is `200 TKM` before the first halving and is split as:
 
 Pool software should distribute only the miner share. The Main King and Rotating King rewards are separate block reward outputs handled by the chain.
 
+## TKM Phone Service
+
+- Added native `tkmphone` RPC and web3 extension support for encrypted number-based messaging and call sessions.
+- Operator keys require a `5000 TKM` payment record and a Main King signed operator grant. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `5000 TKM`.
+- Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
+- Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
+- Encrypted payload helpers use a RandomX-seed-derived service hash as the AES-256-GCM key, with nonce and route-bound authenticated data.
+- TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, and counters survive daemon restart.
+
 ## Mining Notes
 
 Mining work requires an etherbase. If you see:

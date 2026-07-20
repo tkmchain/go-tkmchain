@@ -2,6 +2,7 @@ package eth
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"math/big"
 	"strings"
 	"testing"
@@ -245,5 +246,180 @@ func TestTkmPhoneStatePersistsAcrossServiceRestart(t *testing.T) {
 	}
 	if next.Number == aliceNumber.Number || next.Number == bobNumber.Number {
 		t.Fatal("reloaded service reused an existing number")
+	}
+}
+
+func signTkmPhoneDigest(t *testing.T, key *ecdsa.PrivateKey, digest common.Hash) []byte {
+	t.Helper()
+	sig, err := crypto.Sign(digest.Bytes(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sig
+}
+
+func signTkmPhoneOwnerAction(t *testing.T, svc *TkmPhoneService, key *ecdsa.PrivateKey, number string, action string, payload common.Hash) []byte {
+	t.Helper()
+	return signTkmPhoneDigest(t, key, svc.ownerActionHash(number, action, payload))
+}
+
+func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t *testing.T) {
+	mainKingKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainKing := crypto.PubkeyToAddress(mainKingKey.PublicKey)
+	operator := crypto.PubkeyToAddress(operatorKey.PublicKey)
+	alice := crypto.PubkeyToAddress(aliceKey.PublicKey)
+	bob := crypto.PubkeyToAddress(bobKey.PublicKey)
+	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+
+	keyHash := crypto.Keccak256Hash([]byte("operator-key-signed-actions"))
+	paymentTx := crypto.Keccak256Hash([]byte("operator-payment-signed-actions"))
+	expiresAt := uint64(time.Now().Add(24 * time.Hour).Unix())
+	grantSig := signTkmPhoneDigest(t, mainKingKey, svc.operatorGrantHash(operator, keyHash, expiresAt, paymentTx))
+	if _, err := svc.RegisterOperatorKey(operator, keyHash, expiresAt, paymentTx, tkmPhoneOperatorKeyPrice, grantSig); err != nil {
+		t.Fatal(err)
+	}
+
+	aliceNumber, err := svc.GenerateNumber(operator, alice, "alice-lagos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobNumber, err := svc.GenerateNumber(operator, bob, "bob-abuja")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(aliceNumber.Number), []byte("alice-phone"), []byte("alice-device-public-key"))
+	deviceSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "register-device", devicePayload)
+	device, err := svc.RegisterDeviceKey(aliceNumber.Number, "alice-phone", []byte("alice-device-public-key"), deviceSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !device.Active || device.Number != aliceNumber.Number {
+		t.Fatalf("bad device key: %#v", device)
+	}
+
+	cipher, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("signed-msg01"), []byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SendEncryptedMessageSigned(aliceNumber.Number, bobNumber.Number, cipher.Ciphertext, cipher.Nonce, nil); err == nil {
+		t.Fatal("accepted unsigned message")
+	}
+	msgPayload := svc.randomXServiceHash("send-message-payload", []byte(aliceNumber.Number), []byte(bobNumber.Number), cipher.Nonce, cipher.Ciphertext)
+	msgSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "send-message", msgPayload)
+	msg, err := svc.SendEncryptedMessageSigned(aliceNumber.Number, bobNumber.Number, cipher.Ciphertext, cipher.Nonce, msgSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Status != PhoneMessageSent {
+		t.Fatalf("message status = %s, want sent", msg.Status)
+	}
+	bobMessages, err := svc.MessagesForNumber(bobNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bobMessages) != 1 || bobMessages[0].ID != msg.ID {
+		t.Fatalf("bob inbox = %#v", bobMessages)
+	}
+	bobNotifications, err := svc.Notifications(bobNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bobNotifications) != 1 || bobNotifications[0].Kind != "message" {
+		t.Fatalf("bob notifications = %#v", bobNotifications)
+	}
+
+	ackPayload := svc.randomXServiceHash("ack-message-payload", tkmPhoneUint64Bytes(uint64(msg.ID)), []byte(PhoneMessageDelivered))
+	ackSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "ack-message", ackPayload)
+	acked, err := svc.AckMessage(uint64(msg.ID), PhoneMessageDelivered, ackSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acked.Status != PhoneMessageDelivered {
+		t.Fatalf("acked status = %s", acked.Status)
+	}
+
+	offer, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("signed-call1"), []byte("call offer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	callPayload := svc.randomXServiceHash("start-call-payload", []byte(aliceNumber.Number), []byte(bobNumber.Number), offer.Nonce, offer.Ciphertext)
+	callSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "start-call", callPayload)
+	call, err := svc.StartCallSigned(aliceNumber.Number, bobNumber.Number, offer.Ciphertext, offer.Nonce, callSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := svc.EncryptPayload(bobNumber.Number, aliceNumber.Number, []byte("signed-answ1"), []byte("call answer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptPayload := svc.randomXServiceHash("accept-call-payload", tkmPhoneUint64Bytes(uint64(call.ID)), answer.Nonce, answer.Ciphertext)
+	acceptSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "accept-call", acceptPayload)
+	call, err = svc.AcceptCallSigned(uint64(call.ID), answer.Ciphertext, answer.Nonce, acceptSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.State != PhoneCallActive {
+		t.Fatalf("call state = %s", call.State)
+	}
+	aliceCalls, err := svc.CallsForNumber(aliceNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliceCalls) != 1 || aliceCalls[0].ID != call.ID {
+		t.Fatalf("alice calls = %#v", aliceCalls)
+	}
+	endPayload := svc.randomXServiceHash("end-call-payload", tkmPhoneUint64Bytes(uint64(call.ID)))
+	endSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "end-call", endPayload)
+	call, err = svc.EndCallSigned(uint64(call.ID), aliceNumber.Number, endSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.State != PhoneCallEnded {
+		t.Fatalf("call state = %s", call.State)
+	}
+
+	transferPayload := svc.randomXServiceHash("transfer-number-payload", []byte(aliceNumber.Number), bob.Bytes())
+	transferSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "transfer-number", transferPayload)
+	transferred, err := svc.TransferNumber(aliceNumber.Number, bob, transferSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transferred.Owner != bob {
+		t.Fatalf("transferred owner = %s, want %s", transferred.Owner, bob)
+	}
+	revokePayload := svc.randomXServiceHash("revoke-number-payload", []byte(aliceNumber.Number))
+	revokeSig := signTkmPhoneOwnerAction(t, svc, bobKey, aliceNumber.Number, "revoke-number", revokePayload)
+	revoked, err := svc.RevokeNumber(aliceNumber.Number, revokeSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Active {
+		t.Fatal("revoked number is still active")
+	}
+
+	if err := svc.Prune(0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.messages) != 1 || len(svc.calls) != 1 {
+		t.Fatalf("unbounded prune removed records")
+	}
+	if err := svc.Prune(0, 0, 0); err != nil {
+		t.Fatal(err)
 	}
 }
