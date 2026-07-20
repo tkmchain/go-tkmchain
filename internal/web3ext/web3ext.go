@@ -145,9 +145,19 @@ web3._extend({
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'encryptPayloadForDevices',
+			call: 'tkmphone_encryptPayloadForDevices',
+			params: 4
+		}),
+		new web3._extend.Method({
 			name: 'sendEncryptedMessage',
 			call: 'tkmphone_sendEncryptedMessage',
 			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'sendEncryptedMessageWithExpiry',
+			call: 'tkmphone_sendEncryptedMessageWithExpiry',
+			params: 6
 		}),
 		new web3._extend.Method({
 			name: 'ackMessage',
@@ -158,6 +168,11 @@ web3._extend({
 			name: 'startCall',
 			call: 'tkmphone_startCall',
 			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'startCallWithExpiry',
+			call: 'tkmphone_startCallWithExpiry',
+			params: 6
 		}),
 		new web3._extend.Method({
 			name: 'acceptCall',
@@ -172,6 +187,56 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'notifications',
 			call: 'tkmphone_notifications',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'listOperators',
+			call: 'tkmphone_listOperators',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'reportOperator',
+			call: 'tkmphone_reportOperator',
+			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'addContact',
+			call: 'tkmphone_addContact',
+			params: 5
+		}),
+		new web3._extend.Method({
+			name: 'contacts',
+			call: 'tkmphone_contacts',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'blockNumber',
+			call: 'tkmphone_blockNumber',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'unblockNumber',
+			call: 'tkmphone_unblockNumber',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'registerRecovery',
+			call: 'tkmphone_registerRecovery',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'recoverNumber',
+			call: 'tkmphone_recoverNumber',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'propagationQueue',
+			call: 'tkmphone_propagationQueue',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'importPropagation',
+			call: 'tkmphone_importPropagation',
 			params: 1
 		}),
 		new web3._extend.Method({

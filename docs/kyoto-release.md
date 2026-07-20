@@ -45,8 +45,34 @@ Pool software should distribute only the miner share. The Main King and Rotating
 - Operator keys require a `5000 TKM` payment record and a Main King signed operator grant. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `5000 TKM`.
 - Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
 - Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
+- Added WebSocket subscription support for new message, call update, and notification events.
+- Added P2P-ready propagation records with export/import RPCs so phone messages, call lifecycle changes, acknowledgements, contacts, blocks, recovery updates, and operator reports can be relayed between nodes or gateway services.
+- Added multi-device encryption helpers that produce one RandomX-seed-derived AES-256-GCM envelope per registered recipient device key.
+- Added operator marketplace listing and signed fraud-report records for operator accountability.
+- Added message and call expiry timestamps, plus pruning that removes expired communication state.
+- Added encrypted contact records, per-number blocking/unblocking, and recovery-key registration so a recovery address can move a number to a new owner.
 - Encrypted payload helpers use a RandomX-seed-derived service hash as the AES-256-GCM key, with nonce and route-bound authenticated data.
-- TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, and counters survive daemon restart.
+- TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, contacts, blocked-number lists, recovery keys, reports, propagation records, and counters survive daemon restart.
+
+### TKM Phone Web3 Examples
+
+Generate an owner-signed action digest before sending a message:
+
+```javascript
+const digest = web3.tkmphone.ownerActionHash(fromNumber, "send-message", payloadHex)
+const signature = await wallet.signMessage(web3.utils.hexToBytes(digest))
+const msg = web3.tkmphone.sendEncryptedMessage(fromNumber, toNumber, nonceHex, ciphertextHex, signature)
+```
+
+Send an expiring message and watch events over WebSocket RPC:
+
+```javascript
+const expiresAt = Math.floor(Date.now() / 1000) + 3600
+web3.tkmphone.sendEncryptedMessageWithExpiry(fromNumber, toNumber, nonceHex, ciphertextHex, signature, expiresAt)
+web3.currentProvider.send({jsonrpc: "2.0", id: 1, method: "tkmphone_newMessages", params: []})
+```
+
+Use the added management APIs from web3 as `listOperators`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
 
 ## Mining Notes
 

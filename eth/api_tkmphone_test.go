@@ -423,3 +423,97 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 		t.Fatal(err)
 	}
 }
+
+func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *testing.T) {
+	mainKingKey, _ := crypto.GenerateKey()
+	operatorKey, _ := crypto.GenerateKey()
+	aliceKey, _ := crypto.GenerateKey()
+	bobKey, _ := crypto.GenerateKey()
+	recoveryKey, _ := crypto.GenerateKey()
+	mainKing := crypto.PubkeyToAddress(mainKingKey.PublicKey)
+	operator := crypto.PubkeyToAddress(operatorKey.PublicKey)
+	alice := crypto.PubkeyToAddress(aliceKey.PublicKey)
+	bob := crypto.PubkeyToAddress(bobKey.PublicKey)
+	recovery := crypto.PubkeyToAddress(recoveryKey.PublicKey)
+	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	keyHash := crypto.Keccak256Hash([]byte("market-key"))
+	paymentTx := crypto.Keccak256Hash([]byte("market-payment"))
+	expiresAt := uint64(time.Now().Add(time.Hour).Unix())
+	grantSig := signTkmPhoneDigest(t, mainKingKey, svc.operatorGrantHash(operator, keyHash, expiresAt, paymentTx))
+	if _, err := svc.RegisterOperatorKey(operator, keyHash, expiresAt, paymentTx, tkmPhoneOperatorKeyPrice, grantSig); err != nil {
+		t.Fatal(err)
+	}
+	if ops := svc.ListOperators(); len(ops) != 1 || ops[0].Operator != operator {
+		t.Fatalf("operators = %#v", ops)
+	}
+	aliceNumber, _ := svc.GenerateNumber(operator, alice, "a")
+	bobNumber, _ := svc.GenerateNumber(operator, bob, "b")
+	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(bobNumber.Number), []byte("bob-phone"), []byte("bob-pub"))
+	deviceSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "register-device", devicePayload)
+	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-pub"), deviceSig); err != nil {
+		t.Fatal(err)
+	}
+	env, err := svc.EncryptPayloadForDevices(aliceNumber.Number, bobNumber.Number, []byte("device-nonce"), []byte("hello device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env[0].Device != "bob-phone" {
+		t.Fatalf("device envelopes = %#v", env)
+	}
+	contactCipher, _ := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("contact-nonc"), []byte("Bob"))
+	contactPayload := svc.randomXServiceHash("add-contact-payload", []byte(aliceNumber.Number), []byte(bobNumber.Number), contactCipher.Nonce, contactCipher.Ciphertext)
+	contactSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "add-contact", contactPayload)
+	if _, err := svc.AddContact(aliceNumber.Number, bobNumber.Number, contactCipher.Ciphertext, contactCipher.Nonce, contactSig); err != nil {
+		t.Fatal(err)
+	}
+	if contacts, _ := svc.Contacts(aliceNumber.Number); len(contacts) != 1 {
+		t.Fatalf("contacts = %#v", contacts)
+	}
+	blockPayload := svc.randomXServiceHash("block-number-payload", []byte(bobNumber.Number), []byte(aliceNumber.Number))
+	blockSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "block-number", blockPayload)
+	if err := svc.BlockNumber(bobNumber.Number, aliceNumber.Number, blockSig); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("blocked-nonc"), []byte("blocked")); err == nil {
+		t.Fatal("blocked sender was allowed")
+	}
+	unblockPayload := svc.randomXServiceHash("unblock-number-payload", []byte(bobNumber.Number), []byte(aliceNumber.Number))
+	unblockSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "unblock-number", unblockPayload)
+	if err := svc.UnblockNumber(bobNumber.Number, aliceNumber.Number, unblockSig); err != nil {
+		t.Fatal(err)
+	}
+	msgCipher, _ := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("expiry-nonce"), []byte("expires"))
+	msgPayload := svc.randomXServiceHash("send-message-payload", []byte(aliceNumber.Number), []byte(bobNumber.Number), msgCipher.Nonce, msgCipher.Ciphertext)
+	msgSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "send-message", msgPayload)
+	if _, err := svc.SendEncryptedMessageWithExpiry(aliceNumber.Number, bobNumber.Number, msgCipher.Ciphertext, msgCipher.Nonce, uint64(time.Now().Add(-time.Second).Unix()), msgSig); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.PropagationQueue()) == 0 {
+		t.Fatal("missing propagation envelope")
+	}
+	if err := svc.Prune(0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.messages) != 0 {
+		t.Fatal("expired message was not pruned")
+	}
+	recoveryPayload := svc.randomXServiceHash("register-recovery-payload", []byte(aliceNumber.Number), recovery.Bytes())
+	recoverySig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "register-recovery", recoveryPayload)
+	if err := svc.RegisterRecovery(aliceNumber.Number, recovery, recoverySig); err != nil {
+		t.Fatal(err)
+	}
+	recoverPayload := svc.randomXServiceHash("recover-number-payload", []byte(aliceNumber.Number), bob.Bytes())
+	recoverSig := signTkmPhoneDigest(t, recoveryKey, recoverPayload)
+	recovered, err := svc.RecoverNumber(aliceNumber.Number, bob, recoverSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Owner != bob {
+		t.Fatalf("recovered owner = %s", recovered.Owner)
+	}
+	reportPayload := svc.randomXServiceHash("report-operator-payload", operator.Bytes(), []byte(aliceNumber.Number), []byte("duplicate"), common.Hash{}.Bytes())
+	reportSig := signTkmPhoneOwnerAction(t, svc, bobKey, aliceNumber.Number, "report-operator", reportPayload)
+	if _, err := svc.ReportOperator(operator, aliceNumber.Number, "duplicate", common.Hash{}, reportSig); err != nil {
+		t.Fatal(err)
+	}
+}

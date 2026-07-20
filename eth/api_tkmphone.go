@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
@@ -16,9 +17,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 var (
@@ -35,36 +38,53 @@ type TkmPhoneAPI struct {
 }
 
 type TkmPhoneService struct {
-	lock      sync.RWMutex
-	eth       *Ethereum
-	mainKing  common.Address
-	chainID   *big.Int
-	db        ethdb.KeyValueStore
-	nextID    uint64
-	nextMsg   uint64
-	nextCall  uint64
-	nextNotif uint64
-	operators map[common.Address]PhoneOperatorKey
-	numbers   map[string]PhoneNumber
-	messages  map[uint64]PhoneMessage
-	calls     map[uint64]PhoneCall
-	devices   map[string][]PhoneDeviceKey
-	notifs    map[uint64]PhoneNotification
-	rate      map[string][]uint64
+	lock       sync.RWMutex
+	eth        *Ethereum
+	mainKing   common.Address
+	chainID    *big.Int
+	db         ethdb.KeyValueStore
+	nextID     uint64
+	nextMsg    uint64
+	nextCall   uint64
+	nextNotif  uint64
+	operators  map[common.Address]PhoneOperatorKey
+	numbers    map[string]PhoneNumber
+	messages   map[uint64]PhoneMessage
+	calls      map[uint64]PhoneCall
+	devices    map[string][]PhoneDeviceKey
+	notifs     map[uint64]PhoneNotification
+	rate       map[string][]uint64
+	contacts   map[string][]PhoneContact
+	blocked    map[string]map[string]bool
+	recovery   map[string]common.Address
+	reports    map[uint64]PhoneFraudReport
+	prop       map[uint64]PhonePropagation
+	nextReport uint64
+	nextProp   uint64
+	msgFeed    event.Feed
+	callFeed   event.Feed
+	notifFeed  event.Feed
 }
 
 type tkmPhoneSnapshot struct {
-	NextID    uint64
-	NextMsg   uint64
-	NextCall  uint64
-	NextNotif uint64
-	Operators map[common.Address]PhoneOperatorKey
-	Numbers   map[string]PhoneNumber
-	Messages  map[uint64]PhoneMessage
-	Calls     map[uint64]PhoneCall
-	Devices   map[string][]PhoneDeviceKey
-	Notifs    map[uint64]PhoneNotification
-	Rate      map[string][]uint64
+	NextID     uint64
+	NextMsg    uint64
+	NextCall   uint64
+	NextNotif  uint64
+	Operators  map[common.Address]PhoneOperatorKey
+	Numbers    map[string]PhoneNumber
+	Messages   map[uint64]PhoneMessage
+	Calls      map[uint64]PhoneCall
+	Devices    map[string][]PhoneDeviceKey
+	Notifs     map[uint64]PhoneNotification
+	Rate       map[string][]uint64
+	Contacts   map[string][]PhoneContact
+	Blocked    map[string]map[string]bool
+	Recovery   map[string]common.Address
+	Reports    map[uint64]PhoneFraudReport
+	Prop       map[uint64]PhonePropagation
+	NextReport uint64
+	NextProp   uint64
 }
 
 type PhoneOperatorKey struct {
@@ -100,6 +120,7 @@ type PhoneMessage struct {
 	RandomXHash common.Hash        `json:"randomxHash"`
 	CreatedAt   hexutil.Uint64     `json:"createdAt"`
 	Status      PhoneMessageStatus `json:"status"`
+	ExpiresAt   hexutil.Uint64     `json:"expiresAt"`
 }
 
 type PhoneMessageStatus string
@@ -126,6 +147,37 @@ type PhoneNotification struct {
 	CreatedAt hexutil.Uint64 `json:"createdAt"`
 }
 
+type PhoneDeviceEnvelope struct {
+	Device     string        `json:"device"`
+	Ciphertext hexutil.Bytes `json:"ciphertext"`
+	Nonce      hexutil.Bytes `json:"nonce"`
+}
+
+type PhoneContact struct {
+	OwnerNumber string         `json:"ownerNumber"`
+	PeerNumber  string         `json:"peerNumber"`
+	Ciphertext  hexutil.Bytes  `json:"ciphertext"`
+	Nonce       hexutil.Bytes  `json:"nonce"`
+	CreatedAt   hexutil.Uint64 `json:"createdAt"`
+}
+
+type PhoneFraudReport struct {
+	ID        hexutil.Uint64 `json:"id"`
+	Operator  common.Address `json:"operator"`
+	Reporter  string         `json:"reporter"`
+	Reason    string         `json:"reason"`
+	Evidence  common.Hash    `json:"evidence"`
+	CreatedAt hexutil.Uint64 `json:"createdAt"`
+}
+
+type PhonePropagation struct {
+	ID        hexutil.Uint64 `json:"id"`
+	Kind      string         `json:"kind"`
+	RefID     hexutil.Uint64 `json:"refId"`
+	Hash      common.Hash    `json:"hash"`
+	CreatedAt hexutil.Uint64 `json:"createdAt"`
+}
+
 type PhoneCallState string
 
 const (
@@ -148,6 +200,7 @@ type PhoneCall struct {
 	StartedAt         hexutil.Uint64 `json:"startedAt"`
 	AnsweredAt        hexutil.Uint64 `json:"answeredAt"`
 	EndedAt           hexutil.Uint64 `json:"endedAt"`
+	ExpiresAt         hexutil.Uint64 `json:"expiresAt"`
 }
 
 func NewTkmPhoneAPI(e *Ethereum) *TkmPhoneAPI {
@@ -174,6 +227,11 @@ func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big
 		devices:   make(map[string][]PhoneDeviceKey),
 		notifs:    make(map[uint64]PhoneNotification),
 		rate:      make(map[string][]uint64),
+		contacts:  make(map[string][]PhoneContact),
+		blocked:   make(map[string]map[string]bool),
+		recovery:  make(map[string]common.Address),
+		reports:   make(map[uint64]PhoneFraudReport),
+		prop:      make(map[uint64]PhonePropagation),
 	}
 	if err := svc.load(); err != nil {
 		log.Warn("Failed to load TKM phone service state", "err", err)
@@ -272,6 +330,54 @@ func (api *TkmPhoneAPI) Notifications(number string) ([]PhoneNotification, error
 
 func (api *TkmPhoneAPI) Prune(retentionSeconds hexutil.Uint64, maxMessages hexutil.Uint64, maxCalls hexutil.Uint64) (bool, error) {
 	return true, api.service.Prune(uint64(retentionSeconds), int(maxMessages), int(maxCalls))
+}
+
+func (api *TkmPhoneAPI) SendEncryptedMessageWithExpiry(from string, to string, ciphertext hexutil.Bytes, nonce hexutil.Bytes, expiresAt hexutil.Uint64, signature hexutil.Bytes) (PhoneMessage, error) {
+	return api.service.SendEncryptedMessageWithExpiry(from, to, []byte(ciphertext), []byte(nonce), uint64(expiresAt), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) StartCallWithExpiry(from string, to string, offerCiphertext hexutil.Bytes, offerNonce hexutil.Bytes, expiresAt hexutil.Uint64, signature hexutil.Bytes) (PhoneCall, error) {
+	return api.service.StartCallWithExpiry(from, to, []byte(offerCiphertext), []byte(offerNonce), uint64(expiresAt), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) EncryptPayloadForDevices(from string, to string, nonce hexutil.Bytes, plaintext hexutil.Bytes) ([]PhoneDeviceEnvelope, error) {
+	return api.service.EncryptPayloadForDevices(from, to, []byte(nonce), []byte(plaintext))
+}
+
+func (api *TkmPhoneAPI) ListOperators() []PhoneOperatorKey { return api.service.ListOperators() }
+func (api *TkmPhoneAPI) ReportOperator(operator common.Address, reporter string, reason string, evidence common.Hash, signature hexutil.Bytes) (PhoneFraudReport, error) {
+	return api.service.ReportOperator(operator, reporter, reason, evidence, []byte(signature))
+}
+func (api *TkmPhoneAPI) AddContact(ownerNumber string, peerNumber string, ciphertext hexutil.Bytes, nonce hexutil.Bytes, signature hexutil.Bytes) (PhoneContact, error) {
+	return api.service.AddContact(ownerNumber, peerNumber, []byte(ciphertext), []byte(nonce), []byte(signature))
+}
+func (api *TkmPhoneAPI) Contacts(number string) ([]PhoneContact, error) {
+	return api.service.Contacts(number)
+}
+func (api *TkmPhoneAPI) BlockNumber(ownerNumber string, blockedNumber string, signature hexutil.Bytes) (bool, error) {
+	return true, api.service.BlockNumber(ownerNumber, blockedNumber, []byte(signature))
+}
+func (api *TkmPhoneAPI) UnblockNumber(ownerNumber string, blockedNumber string, signature hexutil.Bytes) (bool, error) {
+	return true, api.service.UnblockNumber(ownerNumber, blockedNumber, []byte(signature))
+}
+func (api *TkmPhoneAPI) RegisterRecovery(number string, recovery common.Address, signature hexutil.Bytes) (bool, error) {
+	return true, api.service.RegisterRecovery(number, recovery, []byte(signature))
+}
+func (api *TkmPhoneAPI) RecoverNumber(number string, newOwner common.Address, signature hexutil.Bytes) (PhoneNumber, error) {
+	return api.service.RecoverNumber(number, newOwner, []byte(signature))
+}
+func (api *TkmPhoneAPI) PropagationQueue() []PhonePropagation { return api.service.PropagationQueue() }
+func (api *TkmPhoneAPI) ImportPropagation(prop PhonePropagation) (bool, error) {
+	return true, api.service.ImportPropagation(prop)
+}
+func (api *TkmPhoneAPI) NewMessages(ctx context.Context) (*rpc.Subscription, error) {
+	return api.service.subscribe(ctx, "message")
+}
+func (api *TkmPhoneAPI) CallUpdates(ctx context.Context) (*rpc.Subscription, error) {
+	return api.service.subscribe(ctx, "call")
+}
+func (api *TkmPhoneAPI) NewNotifications(ctx context.Context) (*rpc.Subscription, error) {
+	return api.service.subscribe(ctx, "notification")
 }
 
 func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash, paid *big.Int, signature []byte) (PhoneOperatorKey, error) {
@@ -401,6 +507,8 @@ func (svc *TkmPhoneService) SendEncryptedMessage(from string, to string, ciphert
 	msg := PhoneMessage{ID: hexutil.Uint64(svc.nextMsg), From: from, To: to, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), RandomXHash: svc.messageKey(from, to, nonce), CreatedAt: hexutil.Uint64(now), Status: PhoneMessageSent}
 	svc.messages[svc.nextMsg] = msg
 	svc.addNotificationLocked(to, "message", svc.nextMsg, now)
+	svc.addPropagationLocked("message", svc.nextMsg, msg.RandomXHash, now)
+	svc.msgFeed.Send(msg)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneMessage{}, err
 	}
@@ -427,6 +535,8 @@ func (svc *TkmPhoneService) StartCall(from string, to string, offerCiphertext []
 	call := PhoneCall{ID: hexutil.Uint64(svc.nextCall), From: from, To: to, OfferCiphertext: append([]byte(nil), offerCiphertext...), OfferNonce: append([]byte(nil), offerNonce...), OfferRandomXHash: svc.messageKey(from, to, offerNonce), State: PhoneCallRinging, StartedAt: hexutil.Uint64(now)}
 	svc.calls[svc.nextCall] = call
 	svc.addNotificationLocked(to, "call", svc.nextCall, now)
+	svc.addPropagationLocked("call", svc.nextCall, call.OfferRandomXHash, now)
+	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
 	}
@@ -456,6 +566,8 @@ func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answe
 	call.AnsweredAt = hexutil.Uint64(time.Now().Unix())
 	svc.calls[id] = call
 	svc.addNotificationLocked(call.From, "call-accepted", id, uint64(call.AnsweredAt))
+	svc.addPropagationLocked("call-accepted", id, call.AnswerRandomXHash, uint64(call.AnsweredAt))
+	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
 	}
@@ -477,6 +589,8 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	svc.calls[id] = call
 	svc.addNotificationLocked(call.From, "call-ended", id, uint64(call.EndedAt))
 	svc.addNotificationLocked(call.To, "call-ended", id, uint64(call.EndedAt))
+	svc.addPropagationLocked("call-ended", id, svc.randomXServiceHash("call-ended", tkmPhoneUint64Bytes(id)), uint64(call.EndedAt))
+	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
 	}
@@ -642,6 +756,7 @@ func (svc *TkmPhoneService) AckMessage(id uint64, status PhoneMessageStatus, sig
 	msg.Status = status
 	svc.messages[id] = msg
 	svc.addNotificationLocked(msg.From, "message-"+string(status), id, uint64(time.Now().Unix()))
+	svc.msgFeed.Send(msg)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneMessage{}, err
 	}
@@ -674,12 +789,12 @@ func (svc *TkmPhoneService) Prune(retentionSeconds uint64, maxMessages int, maxC
 		}
 	}
 	for id, msg := range svc.messages {
-		if cutoff > 0 && uint64(msg.CreatedAt) < cutoff {
+		if (cutoff > 0 && uint64(msg.CreatedAt) < cutoff) || (msg.ExpiresAt != 0 && uint64(msg.ExpiresAt) <= uint64(time.Now().Unix())) {
 			delete(svc.messages, id)
 		}
 	}
 	for id, call := range svc.calls {
-		if cutoff > 0 && uint64(call.StartedAt) < cutoff {
+		if (cutoff > 0 && uint64(call.StartedAt) < cutoff) || (call.ExpiresAt != 0 && uint64(call.ExpiresAt) <= uint64(time.Now().Unix())) {
 			delete(svc.calls, id)
 		}
 	}
@@ -690,6 +805,199 @@ func (svc *TkmPhoneService) Prune(retentionSeconds uint64, maxMessages int, maxC
 		delete(svc.calls, oldestCallID(svc.calls))
 	}
 	return svc.saveLocked()
+}
+
+func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to string, ciphertext []byte, nonce []byte, expiresAt uint64, signature []byte) (PhoneMessage, error) {
+	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
+	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
+		return PhoneMessage{}, err
+	}
+	msg, err := svc.SendEncryptedMessage(from, to, ciphertext, nonce)
+	if err != nil {
+		return PhoneMessage{}, err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	msg.ExpiresAt = hexutil.Uint64(expiresAt)
+	svc.messages[uint64(msg.ID)] = msg
+	return msg, svc.saveLocked()
+}
+func (svc *TkmPhoneService) StartCallWithExpiry(from string, to string, offerCiphertext []byte, offerNonce []byte, expiresAt uint64, signature []byte) (PhoneCall, error) {
+	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
+	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
+		return PhoneCall{}, err
+	}
+	call, err := svc.StartCall(from, to, offerCiphertext, offerNonce)
+	if err != nil {
+		return PhoneCall{}, err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	call.ExpiresAt = hexutil.Uint64(expiresAt)
+	svc.calls[uint64(call.ID)] = call
+	return call, svc.saveLocked()
+}
+func (svc *TkmPhoneService) EncryptPayloadForDevices(from string, to string, nonce []byte, plaintext []byte) ([]PhoneDeviceEnvelope, error) {
+	if err := svc.requireNumbers(from, to); err != nil {
+		return nil, err
+	}
+	svc.lock.RLock()
+	devices := append([]PhoneDeviceKey(nil), svc.devices[to]...)
+	svc.lock.RUnlock()
+	out := make([]PhoneDeviceEnvelope, 0, len(devices))
+	for _, dev := range devices {
+		if !dev.Active {
+			continue
+		}
+		key := svc.randomXServiceHash("device-message-key", []byte(from), []byte(to), []byte(dev.Device), dev.PublicKey, nonce)
+		ct, err := tkmPhoneSeal(key, nonce, plaintext, []byte(from+"->"+to+":"+dev.Device))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, PhoneDeviceEnvelope{Device: dev.Device, Ciphertext: ct, Nonce: append([]byte(nil), nonce...)})
+	}
+	return out, nil
+}
+func (svc *TkmPhoneService) ListOperators() []PhoneOperatorKey {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	out := make([]PhoneOperatorKey, 0, len(svc.operators))
+	for _, op := range svc.operators {
+		out = append(out, op)
+	}
+	return out
+}
+func (svc *TkmPhoneService) ReportOperator(operator common.Address, reporter string, reason string, evidence common.Hash, signature []byte) (PhoneFraudReport, error) {
+	payload := svc.randomXServiceHash("report-operator-payload", operator.Bytes(), []byte(reporter), []byte(reason), evidence.Bytes())
+	if err := svc.verifyNumberOwnerSignature(reporter, "report-operator", payload, signature); err != nil {
+		return PhoneFraudReport{}, err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	svc.nextReport++
+	r := PhoneFraudReport{ID: hexutil.Uint64(svc.nextReport), Operator: operator, Reporter: reporter, Reason: reason, Evidence: evidence, CreatedAt: hexutil.Uint64(time.Now().Unix())}
+	svc.reports[svc.nextReport] = r
+	return r, svc.saveLocked()
+}
+func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ciphertext []byte, nonce []byte, signature []byte) (PhoneContact, error) {
+	payload := svc.randomXServiceHash("add-contact-payload", []byte(ownerNumber), []byte(peerNumber), nonce, ciphertext)
+	if err := svc.verifyNumberOwnerSignature(ownerNumber, "add-contact", payload, signature); err != nil {
+		return PhoneContact{}, err
+	}
+	c := PhoneContact{OwnerNumber: ownerNumber, PeerNumber: peerNumber, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), CreatedAt: hexutil.Uint64(time.Now().Unix())}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	svc.contacts[ownerNumber] = append(svc.contacts[ownerNumber], c)
+	return c, svc.saveLocked()
+}
+func (svc *TkmPhoneService) Contacts(number string) ([]PhoneContact, error) {
+	if _, err := svc.Number(number); err != nil {
+		return nil, err
+	}
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	return append([]PhoneContact(nil), svc.contacts[number]...), nil
+}
+func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
+	payload := svc.randomXServiceHash("block-number-payload", []byte(ownerNumber), []byte(blockedNumber))
+	if err := svc.verifyNumberOwnerSignature(ownerNumber, "block-number", payload, signature); err != nil {
+		return err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	if svc.blocked[ownerNumber] == nil {
+		svc.blocked[ownerNumber] = make(map[string]bool)
+	}
+	svc.blocked[ownerNumber][blockedNumber] = true
+	return svc.saveLocked()
+}
+func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
+	payload := svc.randomXServiceHash("unblock-number-payload", []byte(ownerNumber), []byte(blockedNumber))
+	if err := svc.verifyNumberOwnerSignature(ownerNumber, "unblock-number", payload, signature); err != nil {
+		return err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	if svc.blocked[ownerNumber] != nil {
+		delete(svc.blocked[ownerNumber], blockedNumber)
+	}
+	return svc.saveLocked()
+}
+func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Address, signature []byte) error {
+	payload := svc.randomXServiceHash("register-recovery-payload", []byte(number), recovery.Bytes())
+	if err := svc.verifyNumberOwnerSignature(number, "register-recovery", payload, signature); err != nil {
+		return err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	svc.recovery[number] = recovery
+	return svc.saveLocked()
+}
+func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address, signature []byte) (PhoneNumber, error) {
+	svc.lock.RLock()
+	recovery := svc.recovery[number]
+	svc.lock.RUnlock()
+	payload := svc.randomXServiceHash("recover-number-payload", []byte(number), newOwner.Bytes())
+	if err := verifyPhoneAddressSignature(recovery, payload, signature); err != nil {
+		return PhoneNumber{}, err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	rec, ok := svc.numbers[number]
+	if !ok {
+		return PhoneNumber{}, errors.New("number not found")
+	}
+	rec.Owner = newOwner
+	rec.Active = true
+	svc.numbers[number] = rec
+	return rec, svc.saveLocked()
+}
+func (svc *TkmPhoneService) PropagationQueue() []PhonePropagation {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	out := make([]PhonePropagation, 0, len(svc.prop))
+	for _, p := range svc.prop {
+		out = append(out, p)
+	}
+	return out
+}
+func (svc *TkmPhoneService) ImportPropagation(prop PhonePropagation) error {
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	if uint64(prop.ID) == 0 {
+		return errors.New("propagation id is required")
+	}
+	svc.prop[uint64(prop.ID)] = prop
+	return svc.saveLocked()
+}
+func (svc *TkmPhoneService) subscribe(ctx context.Context, kind string) (*rpc.Subscription, error) {
+	notifier, ok := rpc.NotifierFromContext(ctx)
+	if !ok {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+	sub := notifier.CreateSubscription()
+	ch := make(chan interface{}, 16)
+	var evsub event.Subscription
+	switch kind {
+	case "message":
+		evsub = svc.msgFeed.Subscribe(ch)
+	case "call":
+		evsub = svc.callFeed.Subscribe(ch)
+	default:
+		evsub = svc.notifFeed.Subscribe(ch)
+	}
+	go func() {
+		defer evsub.Unsubscribe()
+		for {
+			select {
+			case ev := <-ch:
+				notifier.Notify(sub.ID, ev)
+			case <-sub.Err():
+				return
+			}
+		}
+	}()
+	return sub, nil
 }
 
 func (svc *TkmPhoneService) load() error {
@@ -731,6 +1039,23 @@ func (svc *TkmPhoneService) load() error {
 	if snap.Rate != nil {
 		svc.rate = snap.Rate
 	}
+	if snap.Contacts != nil {
+		svc.contacts = snap.Contacts
+	}
+	if snap.Blocked != nil {
+		svc.blocked = snap.Blocked
+	}
+	if snap.Recovery != nil {
+		svc.recovery = snap.Recovery
+	}
+	if snap.Reports != nil {
+		svc.reports = snap.Reports
+	}
+	if snap.Prop != nil {
+		svc.prop = snap.Prop
+	}
+	svc.nextReport = snap.NextReport
+	svc.nextProp = snap.NextProp
 	return nil
 }
 
@@ -739,17 +1064,24 @@ func (svc *TkmPhoneService) saveLocked() error {
 		return nil
 	}
 	snap := tkmPhoneSnapshot{
-		NextID:    svc.nextID,
-		NextMsg:   svc.nextMsg,
-		NextCall:  svc.nextCall,
-		NextNotif: svc.nextNotif,
-		Operators: svc.operators,
-		Numbers:   svc.numbers,
-		Messages:  svc.messages,
-		Calls:     svc.calls,
-		Devices:   svc.devices,
-		Notifs:    svc.notifs,
-		Rate:      svc.rate,
+		NextID:     svc.nextID,
+		NextMsg:    svc.nextMsg,
+		NextCall:   svc.nextCall,
+		NextNotif:  svc.nextNotif,
+		Operators:  svc.operators,
+		Numbers:    svc.numbers,
+		Messages:   svc.messages,
+		Calls:      svc.calls,
+		Devices:    svc.devices,
+		Notifs:     svc.notifs,
+		Rate:       svc.rate,
+		Contacts:   svc.contacts,
+		Blocked:    svc.blocked,
+		Recovery:   svc.recovery,
+		Reports:    svc.reports,
+		Prop:       svc.prop,
+		NextReport: svc.nextReport,
+		NextProp:   svc.nextProp,
 	}
 	data, err := json.Marshal(&snap)
 	if err != nil {
@@ -771,6 +1103,9 @@ func (svc *TkmPhoneService) requireNumbers(from string, to string) error {
 	toNumber, ok := svc.numbers[to]
 	if !ok || !toNumber.Active {
 		return errors.New("to number not found")
+	}
+	if blockedByRecipient := svc.blocked[to]; blockedByRecipient != nil && blockedByRecipient[from] {
+		return errors.New("sender is blocked by recipient")
 	}
 	return nil
 }
@@ -862,7 +1197,14 @@ func (svc *TkmPhoneService) checkRateLocked(key string, now uint64, limit int) e
 
 func (svc *TkmPhoneService) addNotificationLocked(number string, kind string, refID uint64, now uint64) {
 	svc.nextNotif++
-	svc.notifs[svc.nextNotif] = PhoneNotification{ID: hexutil.Uint64(svc.nextNotif), Number: number, Kind: kind, RefID: hexutil.Uint64(refID), CreatedAt: hexutil.Uint64(now)}
+	notif := PhoneNotification{ID: hexutil.Uint64(svc.nextNotif), Number: number, Kind: kind, RefID: hexutil.Uint64(refID), CreatedAt: hexutil.Uint64(now)}
+	svc.notifs[svc.nextNotif] = notif
+	svc.notifFeed.Send(notif)
+}
+
+func (svc *TkmPhoneService) addPropagationLocked(kind string, refID uint64, hash common.Hash, now uint64) {
+	svc.nextProp++
+	svc.prop[svc.nextProp] = PhonePropagation{ID: hexutil.Uint64(svc.nextProp), Kind: kind, RefID: hexutil.Uint64(refID), Hash: hash, CreatedAt: hexutil.Uint64(now)}
 }
 
 func oldestMessageID(messages map[uint64]PhoneMessage) uint64 {
