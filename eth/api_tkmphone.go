@@ -30,7 +30,8 @@ import (
 var (
 	tkmPhoneOperatorKeyPrice              = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
 	tkmPhoneDefaultNumberSalePrice        = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
-	tkmPhoneOperatorNumberGrant    uint64 = 50
+	tkmPhoneBucketSize             uint64 = 50
+	tkmPhoneBucketBatchSize        uint64 = 5
 	tkmPhoneDefaultChainID                = big.NewInt(8979)
 	tkmPhoneStateKey                      = []byte("tkmphone-state-v1")
 	tkmPhoneMaxPayloadSize                = 64 * 1024
@@ -52,7 +53,9 @@ type TkmPhoneService struct {
 	nextMsg    uint64
 	nextCall   uint64
 	nextNotif  uint64
+	nextBucket uint64
 	operators  map[common.Address]PhoneOperatorKey
+	buckets    map[uint64]PhoneNumberBucket
 	numbers    map[string]PhoneNumber
 	messages   map[uint64]PhoneMessage
 	calls      map[uint64]PhoneCall
@@ -76,7 +79,9 @@ type tkmPhoneSnapshot struct {
 	NextMsg    uint64
 	NextCall   uint64
 	NextNotif  uint64
+	NextBucket uint64
 	Operators  map[common.Address]PhoneOperatorKey
+	Buckets    map[uint64]PhoneNumberBucket
 	Numbers    map[string]PhoneNumber
 	Messages   map[uint64]PhoneMessage
 	Calls      map[uint64]PhoneCall
@@ -100,18 +105,36 @@ type PhoneOperatorKey struct {
 	ExpiresAt hexutil.Uint64 `json:"expiresAt"`
 	Active    bool           `json:"active"`
 	Numbers   hexutil.Uint64 `json:"numbers"`
+	BucketID  hexutil.Uint64 `json:"bucketId"`
 }
 
 type PhoneNumber struct {
-	Number        string         `json:"number"`
-	Owner         common.Address `json:"owner"`
-	Operator      common.Address `json:"operator"`
-	RandomX       common.Hash    `json:"randomxHash"`
-	CreatedAt     hexutil.Uint64 `json:"createdAt"`
-	Active        bool           `json:"active"`
-	SalePrice     *hexutil.Big   `json:"salePrice"`
-	SalePaymentTx common.Hash    `json:"salePaymentTx"`
-	SoldAt        hexutil.Uint64 `json:"soldAt"`
+	Number         string         `json:"number"`
+	Owner          common.Address `json:"owner"`
+	Operator       common.Address `json:"operator"`
+	RandomX        common.Hash    `json:"randomxHash"`
+	CreatedAt      hexutil.Uint64 `json:"createdAt"`
+	Active         bool           `json:"active"`
+	SalePrice      *hexutil.Big   `json:"salePrice"`
+	SalePaymentTx  common.Hash    `json:"salePaymentTx"`
+	SoldAt         hexutil.Uint64 `json:"soldAt"`
+	BucketID       hexutil.Uint64 `json:"bucketId"`
+	BucketHash     common.Hash    `json:"bucketHash"`
+	MainKingIssued bool           `json:"mainKingIssued"`
+}
+
+type PhoneNumberBucket struct {
+	ID         hexutil.Uint64 `json:"id"`
+	Round      hexutil.Uint64 `json:"round"`
+	Index      hexutil.Uint64 `json:"index"`
+	Hash       common.Hash    `json:"hash"`
+	Seed       common.Hash    `json:"seed"`
+	MainKing   common.Address `json:"mainKing"`
+	Operator   common.Address `json:"operator"`
+	PaymentTx  common.Hash    `json:"paymentTx"`
+	CreatedAt  hexutil.Uint64 `json:"createdAt"`
+	AssignedAt hexutil.Uint64 `json:"assignedAt"`
+	Signature  hexutil.Bytes  `json:"signature"`
 }
 
 type PhoneCipher struct {
@@ -244,6 +267,7 @@ func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big
 		chainID:   new(big.Int).Set(chainID),
 		db:        db,
 		operators: make(map[common.Address]PhoneOperatorKey),
+		buckets:   make(map[uint64]PhoneNumberBucket),
 		numbers:   make(map[string]PhoneNumber),
 		messages:  make(map[uint64]PhoneMessage),
 		calls:     make(map[uint64]PhoneCall),
@@ -282,6 +306,16 @@ func (api *TkmPhoneAPI) OperatorKeyPrice() *hexutil.Big {
 func (api *TkmPhoneAPI) NumberSalePrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneDefaultNumberSalePrice))
 }
+
+func (api *TkmPhoneAPI) BucketGenerationHash(round hexutil.Uint64, seed common.Hash) common.Hash {
+	return api.service.bucketGenerationHash(uint64(round), seed)
+}
+
+func (api *TkmPhoneAPI) GenerateBuckets(seed common.Hash, signature hexutil.Bytes) ([]PhoneNumberBucket, error) {
+	return api.service.GenerateBuckets(seed, []byte(signature))
+}
+
+func (api *TkmPhoneAPI) Buckets() []PhoneNumberBucket { return api.service.Buckets() }
 
 func (api *TkmPhoneAPI) OperatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt hexutil.Uint64, paymentTx common.Hash) common.Hash {
 	return api.service.operatorGrantHash(operator, keyHash, uint64(expiresAt), paymentTx)
@@ -491,20 +525,20 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 		Paid:      (*hexutil.Big)(new(big.Int).Set(paid)),
 		ExpiresAt: hexutil.Uint64(expiresAt),
 		Active:    true,
-		Numbers:   hexutil.Uint64(tkmPhoneOperatorNumberGrant),
+		Numbers:   hexutil.Uint64(tkmPhoneBucketSize),
 	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	if existing, ok := svc.operators[operator]; ok && existing.Active && uint64(existing.ExpiresAt) > now {
 		return PhoneOperatorKey{}, errors.New("operator key is already active")
 	}
+	bucket, err := svc.assignNextBucketLocked(operator, paymentTx, now)
+	if err != nil {
+		return PhoneOperatorKey{}, err
+	}
+	key.BucketID = bucket.ID
 	svc.operators[operator] = key
 	svc.addPropagationLocked("operator-key", 0, keyHash, now, key)
-	for i := uint64(0); i < tkmPhoneOperatorNumberGrant; i++ {
-		if _, err := svc.generateNumberLocked(operator, operator, fmt.Sprintf("operator-allocation-%02d", i+1), now); err != nil {
-			return PhoneOperatorKey{}, err
-		}
-	}
 	if err := svc.saveLocked(); err != nil {
 		return PhoneOperatorKey{}, err
 	}
@@ -512,17 +546,82 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 }
 
 func (svc *TkmPhoneService) GenerateNumber(operator common.Address, owner common.Address, label string) (PhoneNumber, error) {
-	if owner == (common.Address{}) {
-		return PhoneNumber{}, errors.New("number owner is required")
+	return PhoneNumber{}, errors.New("phone numbers can only be generated by main king bucket issuance")
+}
+
+func (svc *TkmPhoneService) assignNextBucketLocked(operator common.Address, paymentTx common.Hash, now uint64) (PhoneNumberBucket, error) {
+	ids := make([]uint64, 0, len(svc.buckets))
+	for id := range svc.buckets {
+		ids = append(ids, id)
 	}
-	now := uint64(time.Now().Unix())
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		bucket := svc.buckets[id]
+		if uint64(bucket.AssignedAt) != 0 {
+			continue
+		}
+		bucket.Operator = operator
+		bucket.PaymentTx = paymentTx
+		bucket.AssignedAt = hexutil.Uint64(now)
+		svc.buckets[id] = bucket
+		for number, record := range svc.numbers {
+			if record.BucketID == bucket.ID && record.Owner == svc.mainKing && record.MainKingIssued {
+				record.Owner = operator
+				record.Operator = operator
+				svc.numbers[number] = record
+			}
+		}
+		svc.addPropagationLocked("bucket-assigned", id, bucket.Hash, now, bucket)
+		return bucket, nil
+	}
+	return PhoneNumberBucket{}, errors.New("no unsold main king phone-number bucket is available")
+}
+
+func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, signature []byte) ([]PhoneNumberBucket, error) {
+	if seed == (common.Hash{}) {
+		return nil, errors.New("bucket seed is required")
+	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
-	key, ok := svc.operators[operator]
-	if !ok || !key.Active || uint64(key.ExpiresAt) <= now {
-		return PhoneNumber{}, errors.New("operator key is not active")
+	for _, bucket := range svc.buckets {
+		if uint64(bucket.AssignedAt) == 0 {
+			return nil, errors.New("existing bucket batch is not completely bought")
+		}
 	}
-	return svc.generateNumberLocked(operator, owner, label, now)
+	round := svc.nextBucket/tkmPhoneBucketBatchSize + 1
+	if err := svc.verifyMainKingSignature(svc.bucketGenerationHash(round, seed), signature); err != nil {
+		return nil, err
+	}
+	now := uint64(time.Now().Unix())
+	out := make([]PhoneNumberBucket, 0, tkmPhoneBucketBatchSize)
+	for i := uint64(0); i < tkmPhoneBucketBatchSize; i++ {
+		svc.nextBucket++
+		bucketHash := svc.randomXServiceHash("phone-bucket", svc.mainKing.Bytes(), seed.Bytes(), tkmPhoneUint64Bytes(round), tkmPhoneUint64Bytes(i+1), tkmPhoneUint64Bytes(svc.nextBucket))
+		bucket := PhoneNumberBucket{ID: hexutil.Uint64(svc.nextBucket), Round: hexutil.Uint64(round), Index: hexutil.Uint64(i + 1), Hash: bucketHash, Seed: seed, MainKing: svc.mainKing, CreatedAt: hexutil.Uint64(now), Signature: append([]byte(nil), signature...)}
+		svc.buckets[svc.nextBucket] = bucket
+		svc.addPropagationLocked("bucket", svc.nextBucket, bucketHash, now, bucket)
+		for n := uint64(0); n < tkmPhoneBucketSize; n++ {
+			if _, err := svc.generateNumberLocked(bucket, n+1, now); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, bucket)
+	}
+	if err := svc.saveLocked(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (svc *TkmPhoneService) Buckets() []PhoneNumberBucket {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	out := make([]PhoneNumberBucket, 0, len(svc.buckets))
+	for _, bucket := range svc.buckets {
+		out = append(out, bucket)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 func (svc *TkmPhoneService) OperatorInventory(operator common.Address) ([]PhoneNumber, error) {
@@ -567,6 +666,13 @@ func (svc *TkmPhoneService) SellNumber(operator common.Address, number string, b
 	if !ok || !record.Active {
 		return PhoneNumber{}, errors.New("number not found")
 	}
+	if !record.MainKingIssued || uint64(record.BucketID) == 0 || record.BucketHash == (common.Hash{}) {
+		return PhoneNumber{}, errors.New("number was not issued by main king bucket")
+	}
+	bucket, ok := svc.buckets[uint64(record.BucketID)]
+	if !ok || bucket.Hash != record.BucketHash || bucket.Operator != operator || uint64(bucket.AssignedAt) == 0 {
+		return PhoneNumber{}, errors.New("number bucket is not assigned to operator")
+	}
 	if record.Operator != operator {
 		return PhoneNumber{}, errors.New("number is not assigned to operator")
 	}
@@ -585,15 +691,15 @@ func (svc *TkmPhoneService) SellNumber(operator common.Address, number string, b
 	return record, nil
 }
 
-func (svc *TkmPhoneService) generateNumberLocked(operator common.Address, owner common.Address, label string, now uint64) (PhoneNumber, error) {
+func (svc *TkmPhoneService) generateNumberLocked(bucket PhoneNumberBucket, index uint64, now uint64) (PhoneNumber, error) {
 	for {
 		svc.nextID++
-		rxh := svc.randomXServiceHash("number", operator.Bytes(), owner.Bytes(), []byte(label), tkmPhoneUint64Bytes(svc.nextID))
+		rxh := svc.randomXServiceHash("number", bucket.Hash.Bytes(), tkmPhoneUint64Bytes(index), tkmPhoneUint64Bytes(svc.nextID))
 		number := fmt.Sprintf("+8979%011d", new(big.Int).SetBytes(rxh.Bytes()).Uint64()%100000000000)
 		if _, exists := svc.numbers[number]; exists {
 			continue
 		}
-		record := PhoneNumber{Number: number, Owner: owner, Operator: operator, RandomX: rxh, CreatedAt: hexutil.Uint64(now), Active: true}
+		record := PhoneNumber{Number: number, Owner: svc.mainKing, RandomX: rxh, CreatedAt: hexutil.Uint64(now), Active: true, BucketID: bucket.ID, BucketHash: bucket.Hash, MainKingIssued: true}
 		svc.numbers[number] = record
 		svc.addPropagationLocked("number", svc.nextID, rxh, now, record)
 		return record, nil
@@ -1207,8 +1313,12 @@ func (svc *TkmPhoneService) load() error {
 	svc.nextMsg = snap.NextMsg
 	svc.nextCall = snap.NextCall
 	svc.nextNotif = snap.NextNotif
+	svc.nextBucket = snap.NextBucket
 	if snap.Operators != nil {
 		svc.operators = snap.Operators
+	}
+	if snap.Buckets != nil {
+		svc.buckets = snap.Buckets
 	}
 	if snap.Numbers != nil {
 		svc.numbers = snap.Numbers
@@ -1257,7 +1367,9 @@ func (svc *TkmPhoneService) saveLocked() error {
 		NextMsg:    svc.nextMsg,
 		NextCall:   svc.nextCall,
 		NextNotif:  svc.nextNotif,
+		NextBucket: svc.nextBucket,
 		Operators:  svc.operators,
+		Buckets:    svc.buckets,
 		Numbers:    svc.numbers,
 		Messages:   svc.messages,
 		Calls:      svc.calls,
@@ -1432,6 +1544,28 @@ func (svc *TkmPhoneService) addPropagationLocked(kind string, refID uint64, hash
 
 func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error {
 	switch prop.Kind {
+	case "bucket", "bucket-assigned":
+		var bucket PhoneNumberBucket
+		if err := json.Unmarshal(prop.Payload, &bucket); err != nil {
+			return err
+		}
+		id := uint64(bucket.ID)
+		if id == 0 || bucket.Hash != prop.Hash || bucket.MainKing != svc.mainKing {
+			return errors.New("invalid propagated bucket")
+		}
+		svc.buckets[id] = bucket
+		if prop.Kind == "bucket-assigned" {
+			for number, record := range svc.numbers {
+				if record.BucketID == bucket.ID && record.Owner == svc.mainKing && record.MainKingIssued {
+					record.Owner = bucket.Operator
+					record.Operator = bucket.Operator
+					svc.numbers[number] = record
+				}
+			}
+		}
+		if id > svc.nextBucket {
+			svc.nextBucket = id
+		}
 	case "operator-key":
 		var key PhoneOperatorKey
 		if err := json.Unmarshal(prop.Payload, &key); err != nil {
@@ -1582,6 +1716,10 @@ func oldestCallID(calls map[uint64]PhoneCall) uint64 {
 		}
 	}
 	return oldest
+}
+
+func (svc *TkmPhoneService) bucketGenerationHash(round uint64, seed common.Hash) common.Hash {
+	return svc.randomXServiceHash("bucket-generation", svc.mainKing.Bytes(), tkmPhoneUint64Bytes(round), seed.Bytes(), tkmPhoneUint64Bytes(tkmPhoneBucketBatchSize), tkmPhoneUint64Bytes(tkmPhoneBucketSize))
 }
 
 func (svc *TkmPhoneService) operatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash) common.Hash {

@@ -3,6 +3,7 @@ package eth
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -48,8 +49,37 @@ func signTkmPhoneGrant(t *testing.T, svc *TkmPhoneService, mainKingD *big.Int, o
 	return sig
 }
 
+func generateTestTkmPhoneBuckets(t *testing.T, svc *TkmPhoneService, mainKingD *big.Int, seedLabel string) []PhoneNumberBucket {
+	t.Helper()
+	key, err := crypto.ToECDSA(mainKingD.FillBytes(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := crypto.Keccak256Hash([]byte(seedLabel))
+	round := svc.nextBucket/tkmPhoneBucketBatchSize + 1
+	sig, err := crypto.Sign(svc.bucketGenerationHash(round, seed).Bytes(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buckets, err := svc.GenerateBuckets(seed, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buckets
+}
+
 func registerTestTkmPhoneOperator(t *testing.T, svc *TkmPhoneService, mainKingD *big.Int, operator common.Address) PhoneOperatorKey {
 	t.Helper()
+	hasOpenBucket := false
+	for _, bucket := range svc.Buckets() {
+		if uint64(bucket.AssignedAt) == 0 {
+			hasOpenBucket = true
+			break
+		}
+	}
+	if !hasOpenBucket {
+		generateTestTkmPhoneBuckets(t, svc, mainKingD, fmt.Sprintf("buckets-%d", len(svc.Buckets())+1))
+	}
 	keyHash := crypto.Keccak256Hash([]byte("operator-key"))
 	paymentTx := crypto.Keccak256Hash([]byte("5000-tkm-payment"))
 	expiresAt := uint64(time.Now().Add(24 * time.Hour).Unix())
@@ -61,11 +91,28 @@ func registerTestTkmPhoneOperator(t *testing.T, svc *TkmPhoneService, mainKingD 
 	return key
 }
 
+func sellTestTkmPhoneNumber(t *testing.T, svc *TkmPhoneService, operator common.Address, buyer common.Address, label string) PhoneNumber {
+	t.Helper()
+	inventory, err := svc.OperatorInventory(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) == 0 {
+		t.Fatal("operator inventory is empty")
+	}
+	number, err := svc.SellNumber(operator, inventory[0].Number, buyer, tkmPhoneDefaultNumberSalePrice, crypto.Keccak256Hash([]byte(label)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return number
+}
+
 func TestTkmPhoneOperatorKeyRequiresMainKingSignatureAndPrice(t *testing.T) {
 	svc, _, operator, _, mainKingD := newTestTkmPhoneService(t)
 	keyHash := crypto.Keccak256Hash([]byte("operator-key"))
 	paymentTx := crypto.Keccak256Hash([]byte("payment"))
 	expiresAt := uint64(time.Now().Add(time.Hour).Unix())
+	generateTestTkmPhoneBuckets(t, svc, mainKingD, "operator-key-test-buckets")
 
 	if _, err := svc.RegisterOperatorKey(operator, keyHash, expiresAt, paymentTx, big.NewInt(1), nil); err == nil || !strings.Contains(err.Error(), "5000 TKM") {
 		t.Fatalf("wrong price error = %v, want 5000 TKM rejection", err)
@@ -79,15 +126,15 @@ func TestTkmPhoneOperatorKeyRequiresMainKingSignatureAndPrice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("signed operator key rejected: %v", err)
 	}
-	if !key.Active || key.Operator != operator || key.Paid.ToInt().Cmp(tkmPhoneOperatorKeyPrice) != 0 || uint64(key.Numbers) != tkmPhoneOperatorNumberGrant {
+	if !key.Active || key.Operator != operator || key.Paid.ToInt().Cmp(tkmPhoneOperatorKeyPrice) != 0 || uint64(key.Numbers) != tkmPhoneBucketSize {
 		t.Fatalf("bad operator key record: %#v", key)
 	}
 	inventory, err := svc.OperatorInventory(operator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != int(tkmPhoneOperatorNumberGrant) {
-		t.Fatalf("operator inventory = %d, want %d", len(inventory), tkmPhoneOperatorNumberGrant)
+	if len(inventory) != int(tkmPhoneBucketSize) {
+		t.Fatalf("operator inventory = %d, want %d", len(inventory), tkmPhoneBucketSize)
 	}
 	buyer := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	saleTx := crypto.Keccak256Hash([]byte("10000-tkm-sale-payment"))
@@ -105,8 +152,57 @@ func TestTkmPhoneOperatorKeyRequiresMainKingSignatureAndPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inventory) != int(tkmPhoneOperatorNumberGrant)-1 {
-		t.Fatalf("operator inventory after sale = %d, want %d", len(inventory), int(tkmPhoneOperatorNumberGrant)-1)
+	if len(inventory) != int(tkmPhoneBucketSize)-1 {
+		t.Fatalf("operator inventory after sale = %d, want %d", len(inventory), int(tkmPhoneBucketSize)-1)
+	}
+}
+
+func TestTkmPhoneMainKingBucketsGateNumberIssuance(t *testing.T) {
+	mainKingKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainKing := crypto.PubkeyToAddress(mainKingKey.PublicKey)
+	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	operatorKey, _ := crypto.GenerateKey()
+	operator := crypto.PubkeyToAddress(operatorKey.PublicKey)
+	keyHash := crypto.Keccak256Hash([]byte("bucket-gated-operator"))
+	paymentTx := crypto.Keccak256Hash([]byte("bucket-gated-payment"))
+	expiresAt := uint64(time.Now().Add(time.Hour).Unix())
+	grantSig := signTkmPhoneDigest(t, mainKingKey, svc.operatorGrantHash(operator, keyHash, expiresAt, paymentTx))
+	if _, err := svc.RegisterOperatorKey(operator, keyHash, expiresAt, paymentTx, tkmPhoneOperatorKeyPrice, grantSig); err == nil || !strings.Contains(err.Error(), "no unsold main king") {
+		t.Fatalf("operator registered without bucket: %v", err)
+	}
+	if _, err := svc.GenerateNumber(operator, operator, "fake"); err == nil {
+		t.Fatal("direct forged number generation was allowed")
+	}
+
+	buckets := generateTestTkmPhoneBuckets(t, svc, mainKingKey.D, "limited-buckets")
+	if len(buckets) != int(tkmPhoneBucketBatchSize) {
+		t.Fatalf("bucket batch = %d, want %d", len(buckets), tkmPhoneBucketBatchSize)
+	}
+	if _, err := svc.GenerateBuckets(crypto.Keccak256Hash([]byte("too-soon")), signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, crypto.Keccak256Hash([]byte("too-soon"))))); err == nil || !strings.Contains(err.Error(), "not completely bought") {
+		t.Fatalf("generated new buckets before sellout: %v", err)
+	}
+
+	for i := uint64(0); i < tkmPhoneBucketBatchSize; i++ {
+		opKey, _ := crypto.GenerateKey()
+		op := crypto.PubkeyToAddress(opKey.PublicKey)
+		kh := crypto.Keccak256Hash([]byte(fmt.Sprintf("operator-%d", i)))
+		ptx := crypto.Keccak256Hash([]byte(fmt.Sprintf("operator-payment-%d", i)))
+		sig := signTkmPhoneDigest(t, mainKingKey, svc.operatorGrantHash(op, kh, expiresAt, ptx))
+		key, err := svc.RegisterOperatorKey(op, kh, expiresAt, ptx, tkmPhoneOperatorKeyPrice, sig)
+		if err != nil {
+			t.Fatalf("register operator %d: %v", i, err)
+		}
+		if key.BucketID == 0 {
+			t.Fatalf("operator %d missing bucket id", i)
+		}
+	}
+	seed := crypto.Keccak256Hash([]byte("second-batch"))
+	sig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(2, seed))
+	if next, err := svc.GenerateBuckets(seed, sig); err != nil || len(next) != int(tkmPhoneBucketBatchSize) {
+		t.Fatalf("second bucket batch = %#v err=%v", next, err)
 	}
 }
 
@@ -115,14 +211,8 @@ func TestTkmPhoneMessageAndCallWork(t *testing.T) {
 	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
 	bob := common.HexToAddress("0x2000000000000000000000000000000000000002")
 
-	aliceNumber, err := svc.GenerateNumber(operator, alice, "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bobNumber, err := svc.GenerateNumber(operator, bob, "bob")
-	if err != nil {
-		t.Fatal(err)
-	}
+	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, alice, "alice-number-sale")
+	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, bob, "bob-number-sale")
 	if aliceNumber.Number == bobNumber.Number {
 		t.Fatal("generated duplicate phone numbers")
 	}
@@ -187,14 +277,8 @@ func TestTkmPhoneSendsHelloToPersonBInDifferentLocation(t *testing.T) {
 	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
 	personB := common.HexToAddress("0x5000000000000000000000000000000000000005")
 
-	personANumber, err := svc.GenerateNumber(operator, personA, "person-a-location-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	personBNumber, err := svc.GenerateNumber(operator, personB, "person-b-location-2")
-	if err != nil {
-		t.Fatal(err)
-	}
+	personANumber := sellTestTkmPhoneNumber(t, svc, operator, personA, "person-a-number-sale")
+	personBNumber := sellTestTkmPhoneNumber(t, svc, operator, personB, "person-b-number-sale")
 	if personANumber.Number == personBNumber.Number {
 		t.Fatal("different-location users received the same number")
 	}
@@ -232,14 +316,8 @@ func TestTkmPhoneStatePersistsAcrossServiceRestart(t *testing.T) {
 	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
 	bob := common.HexToAddress("0x3000000000000000000000000000000000000003")
 
-	aliceNumber, err := svc.GenerateNumber(operator, alice, "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bobNumber, err := svc.GenerateNumber(operator, bob, "bob")
-	if err != nil {
-		t.Fatal(err)
-	}
+	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, alice, "alice-number-sale")
+	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, bob, "bob-number-sale")
 	cipher, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("persist-msg1"), []byte("persistent hello"))
 	if err != nil {
 		t.Fatal(err)
@@ -266,10 +344,7 @@ func TestTkmPhoneStatePersistsAcrossServiceRestart(t *testing.T) {
 	if len(reloaded.operators) != 1 || len(reloaded.messages) != 1 || len(reloaded.calls) != 1 {
 		t.Fatalf("reloaded state sizes: operators=%d messages=%d calls=%d", len(reloaded.operators), len(reloaded.messages), len(reloaded.calls))
 	}
-	next, err := reloaded.GenerateNumber(operator, common.HexToAddress("0x4000000000000000000000000000000000000004"), "charlie")
-	if err != nil {
-		t.Fatal(err)
-	}
+	next := sellTestTkmPhoneNumber(t, reloaded, operator, common.HexToAddress("0x4000000000000000000000000000000000000004"), "charlie-number-sale")
 	if next.Number == aliceNumber.Number || next.Number == bobNumber.Number {
 		t.Fatal("reloaded service reused an existing number")
 	}
@@ -311,6 +386,7 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 	alice := crypto.PubkeyToAddress(aliceKey.PublicKey)
 	bob := crypto.PubkeyToAddress(bobKey.PublicKey)
 	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	generateTestTkmPhoneBuckets(t, svc, mainKingKey.D, "signed-actions-buckets")
 
 	keyHash := crypto.Keccak256Hash([]byte("operator-key-signed-actions"))
 	paymentTx := crypto.Keccak256Hash([]byte("operator-payment-signed-actions"))
@@ -320,14 +396,8 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 		t.Fatal(err)
 	}
 
-	aliceNumber, err := svc.GenerateNumber(operator, alice, "alice-lagos")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bobNumber, err := svc.GenerateNumber(operator, bob, "bob-abuja")
-	if err != nil {
-		t.Fatal(err)
-	}
+	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, alice, "alice-number-sale")
+	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, bob, "bob-number-sale")
 
 	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(aliceNumber.Number), []byte("alice-phone"), []byte("alice-device-public-key"))
 	deviceSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "register-device", devicePayload)
@@ -462,6 +532,7 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	bob := crypto.PubkeyToAddress(bobKey.PublicKey)
 	recovery := crypto.PubkeyToAddress(recoveryKey.PublicKey)
 	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	generateTestTkmPhoneBuckets(t, svc, mainKingKey.D, "market-buckets")
 	keyHash := crypto.Keccak256Hash([]byte("market-key"))
 	paymentTx := crypto.Keccak256Hash([]byte("market-payment"))
 	expiresAt := uint64(time.Now().Add(time.Hour).Unix())
@@ -472,8 +543,8 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	if ops := svc.ListOperators(); len(ops) != 1 || ops[0].Operator != operator {
 		t.Fatalf("operators = %#v", ops)
 	}
-	aliceNumber, _ := svc.GenerateNumber(operator, alice, "a")
-	bobNumber, _ := svc.GenerateNumber(operator, bob, "b")
+	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, alice, "market-alice-number-sale")
+	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, bob, "market-bob-number-sale")
 	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(bobNumber.Number), []byte("bob-phone"), []byte("bob-pub"))
 	deviceSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "register-device", devicePayload)
 	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-pub"), deviceSig); err != nil {

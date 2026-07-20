@@ -90,6 +90,21 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'bucketGenerationHash',
+			call: 'tkmphone_bucketGenerationHash',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'generateBuckets',
+			call: 'tkmphone_generateBuckets',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'buckets',
+			call: 'tkmphone_buckets',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'operatorGrantHash',
 			call: 'tkmphone_operatorGrantHash',
 			params: 4
