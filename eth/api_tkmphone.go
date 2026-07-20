@@ -28,9 +28,10 @@ import (
 )
 
 var (
-	tkmPhoneOperatorKeyPrice              = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
+	tkmPhoneMainKingNumberPrice           = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
+	tkmPhoneOperatorKeyPrice              = new(big.Int).Mul(big.NewInt(25000), big.NewInt(params.Ether))
 	tkmPhoneDefaultNumberSalePrice        = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
-	tkmPhoneBucketSize             uint64 = 50
+	tkmPhoneBucketSize             uint64 = 5
 	tkmPhoneBucketBatchSize        uint64 = 5
 	tkmPhoneDefaultChainID                = big.NewInt(8979)
 	tkmPhoneStateKey                      = []byte("tkmphone-state-v1")
@@ -303,6 +304,10 @@ func (api *TkmPhoneAPI) OperatorKeyPrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneOperatorKeyPrice))
 }
 
+func (api *TkmPhoneAPI) MainKingNumberPrice() *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneMainKingNumberPrice))
+}
+
 func (api *TkmPhoneAPI) NumberSalePrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneDefaultNumberSalePrice))
 }
@@ -329,8 +334,12 @@ func (api *TkmPhoneAPI) GenerateNumber(operator common.Address, owner common.Add
 	return api.service.GenerateNumber(operator, owner, label)
 }
 
-func (api *TkmPhoneAPI) OperatorInventory(operator common.Address) ([]PhoneNumber, error) {
-	return api.service.OperatorInventory(operator)
+func (api *TkmPhoneAPI) OpenBucket(operator common.Address, bucketID hexutil.Uint64, signature hexutil.Bytes) ([]PhoneNumber, error) {
+	return api.service.OpenBucket(operator, uint64(bucketID), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) OperatorInventory(operator common.Address, bucketID hexutil.Uint64, signature hexutil.Bytes) ([]PhoneNumber, error) {
+	return api.service.OpenBucket(operator, uint64(bucketID), []byte(signature))
 }
 
 func (api *TkmPhoneAPI) SellNumber(operator common.Address, number string, buyer common.Address, price hexutil.Big, paymentTx common.Hash) (PhoneNumber, error) {
@@ -505,7 +514,7 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 		return PhoneOperatorKey{}, errors.New("operator key payment transaction is required")
 	}
 	if paid == nil || paid.Cmp(tkmPhoneOperatorKeyPrice) != 0 {
-		return PhoneOperatorKey{}, errors.New("operator key requires exactly 5000 TKM")
+		return PhoneOperatorKey{}, errors.New("operator bucket purchase requires exactly 25000 TKM")
 	}
 	now := uint64(time.Now().Unix())
 	if expiresAt <= now {
@@ -624,7 +633,17 @@ func (svc *TkmPhoneService) Buckets() []PhoneNumberBucket {
 	return out
 }
 
-func (svc *TkmPhoneService) OperatorInventory(operator common.Address) ([]PhoneNumber, error) {
+func (svc *TkmPhoneService) OpenBucket(operator common.Address, bucketID uint64, signature []byte) ([]PhoneNumber, error) {
+	if operator == (common.Address{}) {
+		return nil, errors.New("operator address is required")
+	}
+	if bucketID == 0 {
+		return nil, errors.New("bucket id is required")
+	}
+	payload := svc.randomXServiceHash("open-bucket-payload", operator.Bytes(), tkmPhoneUint64Bytes(bucketID))
+	if err := verifyPhoneAddressSignature(operator, payload, signature); err != nil {
+		return nil, err
+	}
 	now := uint64(time.Now().Unix())
 	svc.lock.RLock()
 	defer svc.lock.RUnlock()
@@ -632,9 +651,33 @@ func (svc *TkmPhoneService) OperatorInventory(operator common.Address) ([]PhoneN
 	if !ok || !key.Active || uint64(key.ExpiresAt) <= now {
 		return nil, errors.New("operator key is not active")
 	}
-	out := make([]PhoneNumber, 0)
+	if uint64(key.BucketID) != bucketID {
+		return nil, errors.New("bucket is not assigned to operator")
+	}
+	bucket, ok := svc.buckets[bucketID]
+	if !ok || bucket.Operator != operator || uint64(bucket.AssignedAt) == 0 {
+		return nil, errors.New("bucket is not assigned to operator")
+	}
+	out := make([]PhoneNumber, 0, tkmPhoneBucketSize)
 	for _, number := range svc.numbers {
-		if number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
+		if uint64(number.BucketID) == bucketID && number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
+			out = append(out, number)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
+}
+
+func (svc *TkmPhoneService) operatorInventoryForTest(operator common.Address) ([]PhoneNumber, error) {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	key, ok := svc.operators[operator]
+	if !ok || !key.Active {
+		return nil, errors.New("operator key is not active")
+	}
+	out := make([]PhoneNumber, 0, tkmPhoneBucketSize)
+	for _, number := range svc.numbers {
+		if uint64(number.BucketID) == uint64(key.BucketID) && number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
 			out = append(out, number)
 		}
 	}
@@ -1421,10 +1464,10 @@ func (svc *TkmPhoneService) validateOperatorPayment(operator common.Address, pay
 	}
 	to := tx.To()
 	if to == nil || *to != svc.mainKing {
-		return errors.New("operator payment must be sent to main king")
+		return errors.New("operator bucket payment must be sent to main king")
 	}
 	if tx.Value().Cmp(tkmPhoneOperatorKeyPrice) != 0 {
-		return errors.New("operator payment transaction must be exactly 5000 TKM")
+		return errors.New("operator bucket payment transaction must be exactly 25000 TKM")
 	}
 	config := svc.eth.blockchain.Config()
 	signer, err := types.Sender(types.LatestSigner(config), tx)

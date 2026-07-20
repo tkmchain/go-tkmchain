@@ -85,6 +85,11 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'mainKingNumberPrice',
+			call: 'tkmphone_mainKingNumberPrice',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'numberSalePrice',
 			call: 'tkmphone_numberSalePrice',
 			params: 0
@@ -125,9 +130,14 @@ web3._extend({
 			params: 3
 		}),
 		new web3._extend.Method({
+			name: 'openBucket',
+			call: 'tkmphone_openBucket',
+			params: 3
+		}),
+		new web3._extend.Method({
 			name: 'operatorInventory',
 			call: 'tkmphone_operatorInventory',
-			params: 1
+			params: 3
 		}),
 		new web3._extend.Method({
 			name: 'sellNumber',

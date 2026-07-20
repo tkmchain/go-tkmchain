@@ -42,13 +42,13 @@ Pool software should distribute only the miner share. The Main King and Rotating
 ## TKM Phone Service
 
 - Added native `tkmphone` RPC and web3 extension support for encrypted number-based messaging and call sessions.
-- Operator keys require a `5000 TKM` payment record and a Main King signed operator grant. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `5000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 50 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 50 active numbers.
+- Operator bucket keys require a `25000 TKM` payment record and a Main King signed operator grant. The `25000 TKM` bucket price is 5 numbers at `5000 TKM` each. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `25000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 5 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 5 active numbers.
 - Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
 - Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
 - Added WebSocket subscription support for new message, call update, and notification events.
 - Added eth-protocol TKM Phone propagation gossip plus export/import RPCs. Peers now relay encrypted payload records for operator keys, generated numbers, device keys, phone messages, call lifecycle updates, contacts, blocked-number updates, recovery changes, and operator reports.
 - Added multi-device encryption helpers that produce one RandomX-seed-derived AES-256-GCM envelope per registered recipient device key.
-- Added Main King bucket listing/generation APIs, operator marketplace listing, operator inventory lookup, `10000 TKM` phone-number sale validation, and signed fraud-report records for operator accountability. A sold number moves from operator ownership to the buyer only after the canonical sale payment transaction is verified as buyer -> operator for exactly `10000 TKM`. Sale validation rejects forged numbers unless they carry Main King bucket provenance and belong to the operator bucket.
+- Added Main King bucket listing/generation APIs, operator marketplace listing, signed operator-only bucket opening, `10000 TKM` phone-number sale validation, and signed fraud-report records for operator accountability. A sold number moves from operator ownership to the buyer only after the canonical sale payment transaction is verified as buyer -> operator for exactly `10000 TKM`. Sale validation rejects forged numbers unless they carry Main King bucket provenance and belong to the operator bucket.
 - Added message and call expiry timestamps, plus pruning that removes expired communication state.
 - Added encrypted contact records, per-number blocking/unblocking, and recovery-key registration so a recovery address can move a number to a new owner.
 - Encrypted payload helpers use a RandomX-seed-derived service hash as the AES-256-GCM key, with nonce and route-bound authenticated data.
@@ -72,7 +72,7 @@ web3.tkmphone.sendEncryptedMessageWithExpiry(fromNumber, toNumber, nonceHex, cip
 web3.currentProvider.send({jsonrpc: "2.0", id: 1, method: "tkmphone_newMessages", params: []})
 ```
 
-Use the added management APIs from web3 as `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `operatorInventory`, `sellNumber`, `numberSalePrice`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
+Use the added management APIs from web3 as `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `openBucket`, `operatorInventory`, `sellNumber`, `mainKingNumberPrice`, `numberSalePrice`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
 
 ## Mining Notes
 
