@@ -235,6 +235,21 @@ web3._extend({
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'rejectCall',
+			call: 'tkmphone_rejectCall',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'expireRingingCalls',
+			call: 'tkmphone_expireRingingCalls',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'webRTCConfig',
+			call: 'tkmphone_webRTCConfig',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'endCall',
 			call: 'tkmphone_endCall',
 			params: 3

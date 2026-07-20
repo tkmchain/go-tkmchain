@@ -232,9 +232,11 @@ type phoneRecoveryRecord struct {
 type PhoneCallState string
 
 const (
-	PhoneCallRinging PhoneCallState = "ringing"
-	PhoneCallActive  PhoneCallState = "active"
-	PhoneCallEnded   PhoneCallState = "ended"
+	PhoneCallRinging  PhoneCallState = "ringing"
+	PhoneCallActive   PhoneCallState = "active"
+	PhoneCallEnded    PhoneCallState = "ended"
+	PhoneCallRejected PhoneCallState = "rejected"
+	PhoneCallMissed   PhoneCallState = "missed"
 )
 
 type PhoneCall struct {
@@ -248,10 +250,30 @@ type PhoneCall struct {
 	AnswerNonce       hexutil.Bytes  `json:"answerNonce"`
 	AnswerRandomXHash common.Hash    `json:"answerRandomXHash"`
 	State             PhoneCallState `json:"state"`
+	EndReason         string         `json:"endReason"`
 	StartedAt         hexutil.Uint64 `json:"startedAt"`
 	AnsweredAt        hexutil.Uint64 `json:"answeredAt"`
 	EndedAt           hexutil.Uint64 `json:"endedAt"`
 	ExpiresAt         hexutil.Uint64 `json:"expiresAt"`
+}
+
+type PhoneICEServer struct {
+	URLs       []string `json:"urls"`
+	Username   string   `json:"username"`
+	Credential string   `json:"credential"`
+}
+
+type PhoneWebRTCConfig struct {
+	AudioOnly              bool             `json:"audioOnly"`
+	RequiredEncryption     bool             `json:"requiredEncryption"`
+	OfferAction            string           `json:"offerAction"`
+	AnswerAction           string           `json:"answerAction"`
+	CandidateAction        string           `json:"candidateAction"`
+	CandidateListAction    string           `json:"candidateListAction"`
+	MaxSignalBytes         hexutil.Uint64   `json:"maxSignalBytes"`
+	CandidateRateLimit     hexutil.Uint64   `json:"candidateRateLimitPerMinute"`
+	RecommendedRingSeconds hexutil.Uint64   `json:"recommendedRingSeconds"`
+	ICEServers             []PhoneICEServer `json:"iceServers"`
 }
 
 type PhoneCallSignal struct {
@@ -396,6 +418,18 @@ func (api *TkmPhoneAPI) StartCall(from string, to string, offerCiphertext hexuti
 
 func (api *TkmPhoneAPI) AcceptCall(id hexutil.Uint64, answerCiphertext hexutil.Bytes, answerNonce hexutil.Bytes, signature hexutil.Bytes) (PhoneCall, error) {
 	return api.service.AcceptCallSigned(uint64(id), []byte(answerCiphertext), []byte(answerNonce), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) RejectCall(id hexutil.Uint64, number string, reason string, signature hexutil.Bytes) (PhoneCall, error) {
+	return api.service.RejectCallSigned(uint64(id), number, reason, []byte(signature))
+}
+
+func (api *TkmPhoneAPI) ExpireRingingCalls(timeoutSeconds hexutil.Uint64) ([]PhoneCall, error) {
+	return api.service.ExpireRingingCalls(uint64(timeoutSeconds))
+}
+
+func (api *TkmPhoneAPI) WebRTCConfig() PhoneWebRTCConfig {
+	return api.service.WebRTCConfig()
 }
 
 func (api *TkmPhoneAPI) EndCall(id hexutil.Uint64, number string, signature hexutil.Bytes) (PhoneCall, error) {
@@ -928,6 +962,83 @@ func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answe
 	return call, nil
 }
 
+func (svc *TkmPhoneService) RejectCall(id uint64, number string, reason string) (PhoneCall, error) {
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	call, ok := svc.calls[id]
+	if !ok {
+		return PhoneCall{}, errors.New("call not found")
+	}
+	if call.State != PhoneCallRinging {
+		return PhoneCall{}, errors.New("call is not ringing")
+	}
+	if number != call.To && number != call.From {
+		return PhoneCall{}, errors.New("number is not in call")
+	}
+	now := uint64(time.Now().Unix())
+	call.State = PhoneCallRejected
+	call.EndReason = reason
+	call.EndedAt = hexutil.Uint64(now)
+	svc.calls[id] = call
+	svc.addNotificationLocked(call.From, "call-rejected", id, now)
+	svc.addNotificationLocked(call.To, "call-rejected", id, now)
+	svc.addPropagationLocked("call-rejected", id, svc.randomXServiceHash("call-rejected", tkmPhoneUint64Bytes(id), []byte(reason)), now, call)
+	svc.callFeed.Send(call)
+	if err := svc.saveLocked(); err != nil {
+		return PhoneCall{}, err
+	}
+	return call, nil
+}
+
+func (svc *TkmPhoneService) ExpireRingingCalls(timeoutSeconds uint64) ([]PhoneCall, error) {
+	if timeoutSeconds == 0 {
+		timeoutSeconds = 60
+	}
+	now := uint64(time.Now().Unix())
+	cutoff := uint64(0)
+	if now > timeoutSeconds {
+		cutoff = now - timeoutSeconds
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	expired := make([]PhoneCall, 0)
+	for id, call := range svc.calls {
+		if call.State != PhoneCallRinging || uint64(call.StartedAt) > cutoff {
+			continue
+		}
+		call.State = PhoneCallMissed
+		call.EndReason = "timeout"
+		call.EndedAt = hexutil.Uint64(now)
+		svc.calls[id] = call
+		expired = append(expired, call)
+		svc.addNotificationLocked(call.From, "call-missed", id, now)
+		svc.addNotificationLocked(call.To, "call-missed", id, now)
+		svc.addPropagationLocked("call-missed", id, svc.randomXServiceHash("call-missed", tkmPhoneUint64Bytes(id)), now, call)
+		svc.callFeed.Send(call)
+	}
+	if len(expired) == 0 {
+		return expired, nil
+	}
+	return expired, svc.saveLocked()
+}
+
+func (svc *TkmPhoneService) WebRTCConfig() PhoneWebRTCConfig {
+	return PhoneWebRTCConfig{
+		AudioOnly:              true,
+		RequiredEncryption:     true,
+		OfferAction:            "start-call",
+		AnswerAction:           "accept-call",
+		CandidateAction:        "add-call-candidate",
+		CandidateListAction:    "list-call-candidates",
+		MaxSignalBytes:         hexutil.Uint64(tkmPhoneMaxPayloadSize),
+		CandidateRateLimit:     hexutil.Uint64(tkmPhoneCallCandidateRateLimit),
+		RecommendedRingSeconds: hexutil.Uint64(60),
+		ICEServers: []PhoneICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302"}},
+		},
+	}
+}
+
 func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
@@ -935,7 +1046,7 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	if !ok {
 		return PhoneCall{}, errors.New("call not found")
 	}
-	if call.State == PhoneCallEnded {
+	if call.State == PhoneCallEnded || call.State == PhoneCallRejected || call.State == PhoneCallMissed {
 		return PhoneCall{}, errors.New("call already ended")
 	}
 	call.State = PhoneCallEnded
@@ -1035,6 +1146,23 @@ func (svc *TkmPhoneService) AcceptCallSigned(id uint64, answerCiphertext []byte,
 		return PhoneCall{}, err
 	}
 	return svc.AcceptCall(id, answerCiphertext, answerNonce)
+}
+
+func (svc *TkmPhoneService) RejectCallSigned(id uint64, number string, reason string, signature []byte) (PhoneCall, error) {
+	svc.lock.RLock()
+	call, ok := svc.calls[id]
+	svc.lock.RUnlock()
+	if !ok {
+		return PhoneCall{}, errors.New("call not found")
+	}
+	if number != call.From && number != call.To {
+		return PhoneCall{}, errors.New("number is not in call")
+	}
+	payload := svc.randomXServiceHash("reject-call-payload", tkmPhoneUint64Bytes(id), []byte(reason))
+	if err := svc.verifyNumberOwnerSignature(number, "reject-call", payload, signature); err != nil {
+		return PhoneCall{}, err
+	}
+	return svc.RejectCall(id, number, reason)
 }
 
 func (svc *TkmPhoneService) EndCallSigned(id uint64, number string, signature []byte) (PhoneCall, error) {
@@ -1791,7 +1919,7 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 			svc.nextMsg = id
 		}
 		svc.msgFeed.Send(msg)
-	case "call", "call-accepted", "call-ended":
+	case "call", "call-accepted", "call-ended", "call-rejected", "call-missed":
 		var call PhoneCall
 		if err := json.Unmarshal(prop.Payload, &call); err != nil {
 			return err

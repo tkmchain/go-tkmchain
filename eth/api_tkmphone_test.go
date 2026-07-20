@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -307,12 +308,60 @@ func TestTkmPhoneMessageAndCallWork(t *testing.T) {
 	if string(openedBobCandidate) != "candidate:bob udp 10.0.0.2:40000" {
 		t.Fatalf("decrypted bob candidate = %q", openedBobCandidate)
 	}
+	config := svc.WebRTCConfig()
+	if !config.AudioOnly || !config.RequiredEncryption || config.MaxSignalBytes == 0 || len(config.ICEServers) == 0 {
+		t.Fatalf("bad WebRTC config: %#v", config)
+	}
 	call, err = svc.EndCall(uint64(call.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if call.State != PhoneCallEnded {
 		t.Fatalf("call state = %s, want ended", call.State)
+	}
+}
+
+func TestTkmPhoneVoiceCallRejectAndMissedWork(t *testing.T) {
+	svc, _, operator, alice, mainKingD, operatorKey := newTestTkmPhoneService(t)
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	bob := common.HexToAddress("0x2000000000000000000000000000000000000002")
+	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, alice, "reject-alice-number-sale")
+	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, bob, "reject-bob-number-sale")
+
+	offer, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("reject-offer"), []byte("voice-offer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := svc.StartCall(aliceNumber.Number, bobNumber.Number, offer.Ciphertext, offer.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected, err := svc.RejectCall(uint64(call.ID), bobNumber.Number, "busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.State != PhoneCallRejected || rejected.EndReason != "busy" {
+		t.Fatalf("rejected call = %#v", rejected)
+	}
+
+	missedOffer, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("missed-offer"), []byte("voice-offer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missedCall, err := svc.StartCall(aliceNumber.Number, bobNumber.Number, missedOffer.Ciphertext, missedOffer.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.lock.Lock()
+	missedCall.StartedAt = hexutil.Uint64(uint64(time.Now().Unix()) - 120)
+	svc.calls[uint64(missedCall.ID)] = missedCall
+	svc.lock.Unlock()
+	expired, err := svc.ExpireRingingCalls(60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired) != 1 || expired[0].State != PhoneCallMissed || expired[0].EndReason != "timeout" {
+		t.Fatalf("expired calls = %#v", expired)
 	}
 }
 
