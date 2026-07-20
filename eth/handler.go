@@ -103,16 +103,17 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	NodeID             enode.ID               // P2P node ID used for tx propagation topology
-	Database           ethdb.Database         // Database for direct sync insertions
-	Chain              *core.BlockChain       // Blockchain to serve data from
-	TxPool             txPool                 // Transaction pool to propagate from
-	Network            uint64                 // Network identifier to advertise
-	Sync               ethconfig.SyncMode     // Whether to snap or full sync
-	BloomCache         uint64                 // Megabytes to alloc for snap sync bloom
-	RequiredBlocks     map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
-	RotatingKingUpdate func(common.Address, time.Time, string)
-	CheckpointUpdate   func(uint64, common.Hash, []byte, string)
+	NodeID              enode.ID               // P2P node ID used for tx propagation topology
+	Database            ethdb.Database         // Database for direct sync insertions
+	Chain               *core.BlockChain       // Blockchain to serve data from
+	TxPool              txPool                 // Transaction pool to propagate from
+	Network             uint64                 // Network identifier to advertise
+	Sync                ethconfig.SyncMode     // Whether to snap or full sync
+	BloomCache          uint64                 // Megabytes to alloc for snap sync bloom
+	RequiredBlocks      map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
+	RotatingKingUpdate  func(common.Address, time.Time, string)
+	CheckpointUpdate    func(uint64, common.Hash, []byte, string)
+	TkmPhonePropagation func(eth.TkmPhonePropagationPacket, string)
 }
 
 type downloaderBlockChain struct {
@@ -169,9 +170,10 @@ type handler struct {
 	txsSub     event.Subscription
 	blockRange *blockRangeState
 
-	requiredBlocks     map[uint64]common.Hash
-	rotatingKingUpdate func(common.Address, time.Time, string)
-	checkpointUpdate   func(uint64, common.Hash, []byte, string)
+	requiredBlocks      map[uint64]common.Hash
+	rotatingKingUpdate  func(common.Address, time.Time, string)
+	checkpointUpdate    func(uint64, common.Hash, []byte, string)
+	tkmPhonePropagation func(eth.TkmPhonePropagationPacket, string)
 
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
@@ -210,19 +212,20 @@ func (h *handler) banPeer(id string, duration time.Duration) {
 // newHandler returns a handler for all Ethereum chain management protocol.
 func newHandler(config *handlerConfig) (*handler, error) {
 	h := &handler{
-		nodeID:             config.NodeID,
-		networkID:          config.Network,
-		database:           config.Database,
-		txpool:             config.TxPool,
-		chain:              config.Chain,
-		peers:              newPeerSet(),
-		txBroadcastKey:     newBroadcastChoiceKey(),
-		requiredBlocks:     checkpointRequiredBlocks(config.RequiredBlocks),
-		rotatingKingUpdate: config.RotatingKingUpdate,
-		checkpointUpdate:   config.CheckpointUpdate,
-		quitSync:           make(chan struct{}),
-		handlerDoneCh:      make(chan struct{}),
-		handlerStartCh:     make(chan struct{}),
+		nodeID:              config.NodeID,
+		networkID:           config.Network,
+		database:            config.Database,
+		txpool:              config.TxPool,
+		chain:               config.Chain,
+		peers:               newPeerSet(),
+		txBroadcastKey:      newBroadcastChoiceKey(),
+		requiredBlocks:      checkpointRequiredBlocks(config.RequiredBlocks),
+		rotatingKingUpdate:  config.RotatingKingUpdate,
+		checkpointUpdate:    config.CheckpointUpdate,
+		tkmPhonePropagation: config.TkmPhonePropagation,
+		quitSync:            make(chan struct{}),
+		handlerDoneCh:       make(chan struct{}),
+		handlerStartCh:      make(chan struct{}),
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Sync, 0, config.Database, nil, downloaderBlockChain{h.chain}, nil, h.removePeer)

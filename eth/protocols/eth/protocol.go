@@ -43,7 +43,7 @@ var ProtocolVersions = []uint{ETH70, ETH69}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH69: 20, ETH70: 20}
+var protocolLengths = map[uint]uint64{ETH69: 21, ETH70: 21}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -68,6 +68,7 @@ const (
 	BlockRangeUpdateMsg           = 0x11
 	RotatingKingUpdateMsg         = 0x12
 	CheckpointUpdateMsg           = 0x13
+	TkmPhonePropagationMsg        = 0x14
 )
 
 var (
@@ -303,6 +304,16 @@ type CheckpointUpdatePacket struct {
 	Signature []byte `rlp:"optional"`
 }
 
+// TkmPhonePropagationPacket relays encrypted phone-service records between peers.
+type TkmPhonePropagationPacket struct {
+	ID        uint64
+	Type      string
+	RefID     uint64
+	Hash      common.Hash
+	CreatedAt uint64
+	Payload   []byte
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -347,3 +358,6 @@ func (*RotatingKingUpdatePacket) Kind() byte   { return RotatingKingUpdateMsg }
 
 func (*CheckpointUpdatePacket) Name() string { return "CheckpointUpdate" }
 func (*CheckpointUpdatePacket) Kind() byte   { return CheckpointUpdateMsg }
+
+func (*TkmPhonePropagationPacket) Name() string { return "TkmPhonePropagation" }
+func (*TkmPhonePropagationPacket) Kind() byte   { return TkmPhonePropagationMsg }

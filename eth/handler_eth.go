@@ -98,6 +98,12 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return nil
 
+	case *eth.TkmPhonePropagationPacket:
+		if h.tkmPhonePropagation != nil {
+			h.tkmPhonePropagation(*packet, peer.ID())
+		}
+		return nil
+
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
 	}

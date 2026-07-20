@@ -437,16 +437,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Create network handler
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
-		NodeID:             eth.p2pServer.Self().ID(),
-		Database:           chainDb,
-		Chain:              eth.blockchain,
-		TxPool:             eth.txPool,
-		Network:            networkID,
-		Sync:               config.SyncMode,
-		BloomCache:         uint64(cacheLimit),
-		RequiredBlocks:     config.RequiredBlocks,
-		RotatingKingUpdate: eth.noteRotatingKingFromPeer,
-		CheckpointUpdate:   eth.noteCheckpointFromPeer,
+		NodeID:              eth.p2pServer.Self().ID(),
+		Database:            chainDb,
+		Chain:               eth.blockchain,
+		TxPool:              eth.txPool,
+		Network:             networkID,
+		Sync:                config.SyncMode,
+		BloomCache:          uint64(cacheLimit),
+		RequiredBlocks:      config.RequiredBlocks,
+		RotatingKingUpdate:  eth.noteRotatingKingFromPeer,
+		CheckpointUpdate:    eth.noteCheckpointFromPeer,
+		TkmPhonePropagation: eth.noteTkmPhonePropagationFromPeer,
 	}); err != nil {
 		return nil, err
 	}

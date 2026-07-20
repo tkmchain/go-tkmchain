@@ -46,7 +46,7 @@ Pool software should distribute only the miner share. The Main King and Rotating
 - Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
 - Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
 - Added WebSocket subscription support for new message, call update, and notification events.
-- Added P2P-ready propagation records with export/import RPCs so phone messages, call lifecycle changes, acknowledgements, contacts, blocks, recovery updates, and operator reports can be relayed between nodes or gateway services.
+- Added eth-protocol TKM Phone propagation gossip plus export/import RPCs. Peers now relay encrypted payload records for operator keys, generated numbers, device keys, phone messages, call lifecycle updates, contacts, blocked-number updates, recovery changes, and operator reports.
 - Added multi-device encryption helpers that produce one RandomX-seed-derived AES-256-GCM envelope per registered recipient device key.
 - Added operator marketplace listing and signed fraud-report records for operator accountability.
 - Added message and call expiry timestamps, plus pruning that removes expired communication state.

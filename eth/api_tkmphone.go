@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -175,6 +178,20 @@ type PhonePropagation struct {
 	Kind      string         `json:"kind"`
 	RefID     hexutil.Uint64 `json:"refId"`
 	Hash      common.Hash    `json:"hash"`
+	CreatedAt hexutil.Uint64 `json:"createdAt"`
+	Payload   hexutil.Bytes  `json:"payload"`
+}
+
+type phoneBlockRecord struct {
+	OwnerNumber   string         `json:"ownerNumber"`
+	BlockedNumber string         `json:"blockedNumber"`
+	CreatedAt     hexutil.Uint64 `json:"createdAt"`
+}
+
+type phoneRecoveryRecord struct {
+	Number    string         `json:"number"`
+	Recovery  common.Address `json:"recovery"`
+	NewOwner  common.Address `json:"newOwner"`
 	CreatedAt hexutil.Uint64 `json:"createdAt"`
 }
 
@@ -380,6 +397,51 @@ func (api *TkmPhoneAPI) NewNotifications(ctx context.Context) (*rpc.Subscription
 	return api.service.subscribe(ctx, "notification")
 }
 
+func (s *Ethereum) broadcastTkmPhonePropagation(prop PhonePropagation) {
+	s.broadcastTkmPhonePropagationExcept(prop, "")
+}
+
+func (s *Ethereum) broadcastTkmPhonePropagationExcept(prop PhonePropagation, skip string) {
+	if s == nil || s.handler == nil {
+		return
+	}
+	if len(prop.Payload) > tkmPhoneMaxPayloadSize {
+		return
+	}
+	peers := s.handler.peers.all()
+	if len(peers) == 0 {
+		return
+	}
+	packet := phonePropagationPacket(prop)
+	for _, peer := range peers {
+		if skip != "" && peer.ID() == skip {
+			continue
+		}
+		if err := peer.SendTkmPhonePropagation(packet); err != nil {
+			log.Debug("Failed to announce TKM Phone propagation", "peer", peer.ID(), "kind", prop.Kind, "id", uint64(prop.ID), "err", err)
+		}
+	}
+}
+
+func (s *Ethereum) noteTkmPhonePropagationFromPeer(packet ethproto.TkmPhonePropagationPacket, peerID string) {
+	if s == nil {
+		return
+	}
+	svc := s.tkmPhoneService()
+	if svc == nil {
+		return
+	}
+	prop := phonePropagationFromPacket(packet)
+	if svc.hasPropagation(prop.ID, prop.Hash) {
+		return
+	}
+	if err := svc.ImportPropagation(prop); err != nil {
+		log.Debug("Rejected TKM Phone propagation", "peer", peerID, "kind", prop.Kind, "id", uint64(prop.ID), "err", err)
+		return
+	}
+	s.broadcastTkmPhonePropagationExcept(prop, peerID)
+}
+
 func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash, paid *big.Int, signature []byte) (PhoneOperatorKey, error) {
 	if operator == (common.Address{}) {
 		return PhoneOperatorKey{}, errors.New("operator address is required")
@@ -393,7 +455,8 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 	if paid == nil || paid.Cmp(tkmPhoneOperatorKeyPrice) != 0 {
 		return PhoneOperatorKey{}, errors.New("operator key requires exactly 5000 TKM")
 	}
-	if expiresAt <= uint64(time.Now().Unix()) {
+	now := uint64(time.Now().Unix())
+	if expiresAt <= now {
 		return PhoneOperatorKey{}, errors.New("operator key is expired")
 	}
 	if err := svc.validateOperatorPayment(operator, paymentTx); err != nil {
@@ -414,6 +477,7 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.operators[operator] = key
+	svc.addPropagationLocked("operator-key", 0, keyHash, now, key)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneOperatorKey{}, err
 	}
@@ -441,6 +505,7 @@ func (svc *TkmPhoneService) GenerateNumber(operator common.Address, owner common
 		}
 		record := PhoneNumber{Number: number, Owner: owner, Operator: operator, RandomX: rxh, CreatedAt: hexutil.Uint64(now), Active: true}
 		svc.numbers[number] = record
+		svc.addPropagationLocked("number", svc.nextID, rxh, now, record)
 		if err := svc.saveLocked(); err != nil {
 			return PhoneNumber{}, err
 		}
@@ -507,7 +572,7 @@ func (svc *TkmPhoneService) SendEncryptedMessage(from string, to string, ciphert
 	msg := PhoneMessage{ID: hexutil.Uint64(svc.nextMsg), From: from, To: to, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), RandomXHash: svc.messageKey(from, to, nonce), CreatedAt: hexutil.Uint64(now), Status: PhoneMessageSent}
 	svc.messages[svc.nextMsg] = msg
 	svc.addNotificationLocked(to, "message", svc.nextMsg, now)
-	svc.addPropagationLocked("message", svc.nextMsg, msg.RandomXHash, now)
+	svc.addPropagationLocked("message", svc.nextMsg, msg.RandomXHash, now, msg)
 	svc.msgFeed.Send(msg)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneMessage{}, err
@@ -535,7 +600,7 @@ func (svc *TkmPhoneService) StartCall(from string, to string, offerCiphertext []
 	call := PhoneCall{ID: hexutil.Uint64(svc.nextCall), From: from, To: to, OfferCiphertext: append([]byte(nil), offerCiphertext...), OfferNonce: append([]byte(nil), offerNonce...), OfferRandomXHash: svc.messageKey(from, to, offerNonce), State: PhoneCallRinging, StartedAt: hexutil.Uint64(now)}
 	svc.calls[svc.nextCall] = call
 	svc.addNotificationLocked(to, "call", svc.nextCall, now)
-	svc.addPropagationLocked("call", svc.nextCall, call.OfferRandomXHash, now)
+	svc.addPropagationLocked("call", svc.nextCall, call.OfferRandomXHash, now, call)
 	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
@@ -566,7 +631,7 @@ func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answe
 	call.AnsweredAt = hexutil.Uint64(time.Now().Unix())
 	svc.calls[id] = call
 	svc.addNotificationLocked(call.From, "call-accepted", id, uint64(call.AnsweredAt))
-	svc.addPropagationLocked("call-accepted", id, call.AnswerRandomXHash, uint64(call.AnsweredAt))
+	svc.addPropagationLocked("call-accepted", id, call.AnswerRandomXHash, uint64(call.AnsweredAt), call)
 	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
@@ -589,7 +654,7 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	svc.calls[id] = call
 	svc.addNotificationLocked(call.From, "call-ended", id, uint64(call.EndedAt))
 	svc.addNotificationLocked(call.To, "call-ended", id, uint64(call.EndedAt))
-	svc.addPropagationLocked("call-ended", id, svc.randomXServiceHash("call-ended", tkmPhoneUint64Bytes(id)), uint64(call.EndedAt))
+	svc.addPropagationLocked("call-ended", id, svc.randomXServiceHash("call-ended", tkmPhoneUint64Bytes(id)), uint64(call.EndedAt), call)
 	svc.callFeed.Send(call)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneCall{}, err
@@ -689,6 +754,7 @@ func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publ
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.devices[number] = append(svc.devices[number], key)
+	svc.addPropagationLocked("device-key", uint64(len(svc.devices[number])), svc.randomXServiceHash("device-key", []byte(number), []byte(device), publicKey), uint64(key.CreatedAt), key)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneDeviceKey{}, err
 	}
@@ -711,6 +777,7 @@ func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Addres
 	}
 	record.Owner = newOwner
 	svc.numbers[number] = record
+	svc.addPropagationLocked("number-transferred", 0, svc.randomXServiceHash("number-transferred", []byte(number), newOwner.Bytes()), uint64(time.Now().Unix()), record)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneNumber{}, err
 	}
@@ -730,6 +797,7 @@ func (svc *TkmPhoneService) RevokeNumber(number string, signature []byte) (Phone
 	}
 	record.Active = false
 	svc.numbers[number] = record
+	svc.addPropagationLocked("number-revoked", 0, svc.randomXServiceHash("number-revoked", []byte(number)), uint64(time.Now().Unix()), record)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneNumber{}, err
 	}
@@ -877,6 +945,7 @@ func (svc *TkmPhoneService) ReportOperator(operator common.Address, reporter str
 	svc.nextReport++
 	r := PhoneFraudReport{ID: hexutil.Uint64(svc.nextReport), Operator: operator, Reporter: reporter, Reason: reason, Evidence: evidence, CreatedAt: hexutil.Uint64(time.Now().Unix())}
 	svc.reports[svc.nextReport] = r
+	svc.addPropagationLocked("operator-report", svc.nextReport, svc.randomXServiceHash("operator-report", operator.Bytes(), []byte(reporter), []byte(reason), evidence.Bytes()), uint64(r.CreatedAt), r)
 	return r, svc.saveLocked()
 }
 func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ciphertext []byte, nonce []byte, signature []byte) (PhoneContact, error) {
@@ -888,6 +957,7 @@ func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ci
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.contacts[ownerNumber] = append(svc.contacts[ownerNumber], c)
+	svc.addPropagationLocked("contact", uint64(len(svc.contacts[ownerNumber])), svc.randomXServiceHash("contact", []byte(ownerNumber), []byte(peerNumber), nonce, ciphertext), uint64(c.CreatedAt), c)
 	return c, svc.saveLocked()
 }
 func (svc *TkmPhoneService) Contacts(number string) ([]PhoneContact, error) {
@@ -909,6 +979,9 @@ func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string
 		svc.blocked[ownerNumber] = make(map[string]bool)
 	}
 	svc.blocked[ownerNumber][blockedNumber] = true
+	now := uint64(time.Now().Unix())
+	record := phoneBlockRecord{OwnerNumber: ownerNumber, BlockedNumber: blockedNumber, CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("blocked", 0, svc.randomXServiceHash("blocked", []byte(ownerNumber), []byte(blockedNumber)), now, record)
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
@@ -931,6 +1004,9 @@ func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Addr
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.recovery[number] = recovery
+	now := uint64(time.Now().Unix())
+	record := phoneRecoveryRecord{Number: number, Recovery: recovery, CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("recovery", 0, svc.randomXServiceHash("recovery", []byte(number), recovery.Bytes()), now, record)
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address, signature []byte) (PhoneNumber, error) {
@@ -950,6 +1026,9 @@ func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address
 	rec.Owner = newOwner
 	rec.Active = true
 	svc.numbers[number] = rec
+	now := uint64(time.Now().Unix())
+	record := phoneRecoveryRecord{Number: number, Recovery: recovery, NewOwner: newOwner, CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("number-recovered", 0, svc.randomXServiceHash("number-recovered", []byte(number), newOwner.Bytes()), now, record)
 	return rec, svc.saveLocked()
 }
 func (svc *TkmPhoneService) PropagationQueue() []PhonePropagation {
@@ -959,15 +1038,38 @@ func (svc *TkmPhoneService) PropagationQueue() []PhonePropagation {
 	for _, p := range svc.prop {
 		out = append(out, p)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+func (svc *TkmPhoneService) hasPropagation(id hexutil.Uint64, hash common.Hash) bool {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	existing, ok := svc.prop[uint64(id)]
+	return ok && existing.Hash == hash
+}
+
 func (svc *TkmPhoneService) ImportPropagation(prop PhonePropagation) error {
-	svc.lock.Lock()
-	defer svc.lock.Unlock()
 	if uint64(prop.ID) == 0 {
 		return errors.New("propagation id is required")
 	}
+	if prop.Kind == "" {
+		return errors.New("propagation kind is required")
+	}
+	if len(prop.Payload) > tkmPhoneMaxPayloadSize {
+		return errors.New("propagation payload exceeds maximum size")
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	if existing, ok := svc.prop[uint64(prop.ID)]; ok && existing.Hash != prop.Hash {
+		return errors.New("conflicting propagation record")
+	}
+	if err := svc.importPropagationLocked(prop); err != nil {
+		return err
+	}
 	svc.prop[uint64(prop.ID)] = prop
+	if uint64(prop.ID) > svc.nextProp {
+		svc.nextProp = uint64(prop.ID)
+	}
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) subscribe(ctx context.Context, kind string) (*rpc.Subscription, error) {
@@ -1202,9 +1304,147 @@ func (svc *TkmPhoneService) addNotificationLocked(number string, kind string, re
 	svc.notifFeed.Send(notif)
 }
 
-func (svc *TkmPhoneService) addPropagationLocked(kind string, refID uint64, hash common.Hash, now uint64) {
+func (svc *TkmPhoneService) addPropagationLocked(kind string, refID uint64, hash common.Hash, now uint64, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil || len(data) > tkmPhoneMaxPayloadSize {
+		return
+	}
 	svc.nextProp++
-	svc.prop[svc.nextProp] = PhonePropagation{ID: hexutil.Uint64(svc.nextProp), Kind: kind, RefID: hexutil.Uint64(refID), Hash: hash, CreatedAt: hexutil.Uint64(now)}
+	prop := PhonePropagation{ID: hexutil.Uint64(svc.nextProp), Kind: kind, RefID: hexutil.Uint64(refID), Hash: hash, CreatedAt: hexutil.Uint64(now), Payload: data}
+	svc.prop[svc.nextProp] = prop
+	if svc.eth != nil {
+		go svc.eth.broadcastTkmPhonePropagation(prop)
+	}
+}
+
+func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error {
+	switch prop.Kind {
+	case "operator-key":
+		var key PhoneOperatorKey
+		if err := json.Unmarshal(prop.Payload, &key); err != nil {
+			return err
+		}
+		if key.Operator == (common.Address{}) || key.KeyHash != prop.Hash {
+			return errors.New("invalid propagated operator key")
+		}
+		svc.operators[key.Operator] = key
+	case "number", "number-transferred", "number-revoked":
+		var number PhoneNumber
+		if err := json.Unmarshal(prop.Payload, &number); err != nil {
+			return err
+		}
+		if number.Number == "" {
+			return errors.New("invalid propagated number")
+		}
+		svc.numbers[number.Number] = number
+		if uint64(prop.RefID) > svc.nextID {
+			svc.nextID = uint64(prop.RefID)
+		}
+	case "device-key":
+		var key PhoneDeviceKey
+		if err := json.Unmarshal(prop.Payload, &key); err != nil {
+			return err
+		}
+		if key.Number == "" || key.Device == "" {
+			return errors.New("invalid propagated device key")
+		}
+		keys := svc.devices[key.Number]
+		for _, existing := range keys {
+			if existing.Device == key.Device && bytes.Equal(existing.PublicKey, key.PublicKey) {
+				return nil
+			}
+		}
+		svc.devices[key.Number] = append(keys, key)
+	case "message":
+		var msg PhoneMessage
+		if err := json.Unmarshal(prop.Payload, &msg); err != nil {
+			return err
+		}
+		id := uint64(msg.ID)
+		if id == 0 || msg.RandomXHash != prop.Hash {
+			return errors.New("invalid propagated message")
+		}
+		svc.messages[id] = msg
+		if id > svc.nextMsg {
+			svc.nextMsg = id
+		}
+		svc.msgFeed.Send(msg)
+	case "call", "call-accepted", "call-ended":
+		var call PhoneCall
+		if err := json.Unmarshal(prop.Payload, &call); err != nil {
+			return err
+		}
+		id := uint64(call.ID)
+		if id == 0 {
+			return errors.New("invalid propagated call")
+		}
+		svc.calls[id] = call
+		if id > svc.nextCall {
+			svc.nextCall = id
+		}
+		svc.callFeed.Send(call)
+	case "contact":
+		var contact PhoneContact
+		if err := json.Unmarshal(prop.Payload, &contact); err != nil {
+			return err
+		}
+		contacts := svc.contacts[contact.OwnerNumber]
+		for _, existing := range contacts {
+			if existing.PeerNumber == contact.PeerNumber && bytes.Equal(existing.Ciphertext, contact.Ciphertext) {
+				return nil
+			}
+		}
+		svc.contacts[contact.OwnerNumber] = append(contacts, contact)
+	case "blocked", "unblocked":
+		var record phoneBlockRecord
+		if err := json.Unmarshal(prop.Payload, &record); err != nil {
+			return err
+		}
+		if svc.blocked[record.OwnerNumber] == nil {
+			svc.blocked[record.OwnerNumber] = make(map[string]bool)
+		}
+		if prop.Kind == "blocked" {
+			svc.blocked[record.OwnerNumber][record.BlockedNumber] = true
+		} else {
+			delete(svc.blocked[record.OwnerNumber], record.BlockedNumber)
+		}
+	case "recovery", "number-recovered":
+		var record phoneRecoveryRecord
+		if err := json.Unmarshal(prop.Payload, &record); err != nil {
+			return err
+		}
+		if record.Recovery != (common.Address{}) {
+			svc.recovery[record.Number] = record.Recovery
+		}
+		if record.NewOwner != (common.Address{}) {
+			number := svc.numbers[record.Number]
+			number.Owner = record.NewOwner
+			number.Active = true
+			svc.numbers[record.Number] = number
+		}
+	case "operator-report":
+		var report PhoneFraudReport
+		if err := json.Unmarshal(prop.Payload, &report); err != nil {
+			return err
+		}
+		id := uint64(report.ID)
+		if id == 0 {
+			return errors.New("invalid propagated report")
+		}
+		svc.reports[id] = report
+		if id > svc.nextReport {
+			svc.nextReport = id
+		}
+	}
+	return nil
+}
+
+func phonePropagationPacket(prop PhonePropagation) ethproto.TkmPhonePropagationPacket {
+	return ethproto.TkmPhonePropagationPacket{ID: uint64(prop.ID), Type: prop.Kind, RefID: uint64(prop.RefID), Hash: prop.Hash, CreatedAt: uint64(prop.CreatedAt), Payload: append([]byte(nil), prop.Payload...)}
+}
+
+func phonePropagationFromPacket(packet ethproto.TkmPhonePropagationPacket) PhonePropagation {
+	return PhonePropagation{ID: hexutil.Uint64(packet.ID), Kind: packet.Type, RefID: hexutil.Uint64(packet.RefID), Hash: packet.Hash, CreatedAt: hexutil.Uint64(packet.CreatedAt), Payload: append([]byte(nil), packet.Payload...)}
 }
 
 func oldestMessageID(messages map[uint64]PhoneMessage) uint64 {

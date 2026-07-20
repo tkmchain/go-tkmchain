@@ -516,4 +516,23 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	if _, err := svc.ReportOperator(operator, aliceNumber.Number, "duplicate", common.Hash{}, reportSig); err != nil {
 		t.Fatal(err)
 	}
+
+	remote := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	for _, prop := range svc.PropagationQueue() {
+		if err := remote.ImportPropagation(prop); err != nil {
+			t.Fatalf("import propagation %s/%d: %v", prop.Kind, uint64(prop.ID), err)
+		}
+	}
+	if got, err := remote.Number(bobNumber.Number); err != nil || got.Owner != bob {
+		t.Fatalf("remote bob number = %#v err=%v", got, err)
+	}
+	if got, err := remote.Number(aliceNumber.Number); err != nil || got.Owner != bob {
+		t.Fatalf("remote recovered alice number = %#v err=%v", got, err)
+	}
+	if contacts, err := remote.Contacts(aliceNumber.Number); err != nil || len(contacts) != 1 {
+		t.Fatalf("remote contacts = %#v err=%v", contacts, err)
+	}
+	if reports := remote.reports; len(reports) != 1 {
+		t.Fatalf("remote reports = %#v", reports)
+	}
 }

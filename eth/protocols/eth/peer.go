@@ -596,6 +596,14 @@ func (p *Peer) SendCheckpointUpdate(msg CheckpointUpdatePacket) error {
 	return p2p.Send(p.rw, CheckpointUpdateMsg, &msg)
 }
 
+// SendTkmPhonePropagation sends an encrypted phone-service propagation record to the peer.
+func (p *Peer) SendTkmPhonePropagation(msg TkmPhonePropagationPacket) error {
+	if p.version < ETH69 {
+		return nil
+	}
+	return p2p.Send(p.rw, TkmPhonePropagationMsg, &msg)
+}
+
 // knownCache is a cache for known hashes.
 type knownCache struct {
 	hashes mapset.Set[common.Hash]

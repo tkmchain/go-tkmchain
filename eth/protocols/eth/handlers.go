@@ -681,3 +681,20 @@ func handleCheckpointUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	}
 	return backend.Handle(peer, &update)
 }
+
+func handleTkmPhonePropagation(backend Backend, msg Decoder, peer *Peer) error {
+	var prop TkmPhonePropagationPacket
+	if err := msg.Decode(&prop); err != nil {
+		return fmt.Errorf("msg %v: %w", prop.Name(), err)
+	}
+	if prop.ID == 0 {
+		return fmt.Errorf("msg %v: missing propagation id", prop.Name())
+	}
+	if prop.Type == "" {
+		return fmt.Errorf("msg %v: missing propagation kind", prop.Name())
+	}
+	if len(prop.Payload) > 64*1024 {
+		return fmt.Errorf("msg %v: payload too large", prop.Name())
+	}
+	return backend.Handle(peer, &prop)
+}
