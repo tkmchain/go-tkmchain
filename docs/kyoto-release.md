@@ -18,6 +18,17 @@ Kyoto is the RandomX hardfork that makes post-fork proof validation strict and d
 - Before Kyoto, historical RandomX compatibility paths remain enabled so old blocks can sync.
 - At and after Kyoto, RandomX seal verification accepts only the canonical proof format.
 
+## Network Security
+
+- Added mandatory RandomX checkpoints at blocks `2370`, `6000`, and `7165` to protect nodes from syncing onto known-bad forks.
+- Local startup now verifies every configured checkpoint that is already below the local head and stops the daemon if the canonical hash does not match.
+- Peer connections now use the configured checkpoints as network required-block challenges. A peer that serves a different hash for a listed checkpoint is banned for 365 days and disconnected.
+- Checkpoint announcements are now signed network messages. New checkpoints broadcast over the peer network must include a signature from the configured Main King address.
+- Added `king_checkpointSigningHash(number, hash)` so operators can get the exact checkpoint digest to sign. The digest is bound to the TKMChain checkpoint domain, chain ID, block number, and block hash.
+- Added `king_addSignedCheckpoint(number, hash, signature)` to verify, store, and broadcast a signed checkpoint. Signatures are accepted as either raw digest signatures or standard Ethereum signed-message signatures over the digest.
+- Unsigned `king_addCheckpoint(number, hash)` remains local-only and no longer broadcasts unsigned checkpoint messages.
+- Peers that announce conflicting, unsigned, badly signed, or locally impossible checkpoints are banned for 365 days and disconnected.
+
 ## Reward Split
 
 The block subsidy is `200 TKM` before the first halving and is split as:
