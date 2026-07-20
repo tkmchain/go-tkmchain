@@ -76,12 +76,13 @@ Use the added management APIs from web3 as `bucketPrice`, `operatorKeyPrice`, `m
 
 ### TKM Phone CLI Examples
 
-The `gtkm tkmphone` command attaches to the local IPC endpoint by default, or to the endpoint passed as the last argument. MainKing can generate the next batch of five signed buckets with an unlocked account:
+The `gtkm tkmphone` command attaches to the local IPC endpoint by default, or to the endpoint passed as the last argument. The `--seed` value is a fresh 32-byte random value chosen by MainKing for each bucket generation round. It is not the chain RandomX seed. Generate one with `openssl rand -hex 32` and prefix it with `0x`. MainKing can generate the next batch of five signed buckets with an unlocked account:
 
 ```bash
 ./build/bin/gtkm tkmphone prices
 ./build/bin/gtkm tkmphone next-round
-./build/bin/gtkm tkmphone generate-buckets --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+SEED=0x$(openssl rand -hex 32)
+./build/bin/gtkm tkmphone generate-buckets --seed $SEED --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
 ./build/bin/gtkm tkmphone buckets
 ```
 
