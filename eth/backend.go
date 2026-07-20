@@ -133,6 +133,7 @@ type Ethereum struct {
 	rkLocks            map[common.Address]rkLockInfo
 	miningStartPending bool
 	miningStartPool    bool
+	phoneService       *TkmPhoneService
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -553,6 +554,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		{
 			Namespace: "tkm",
 			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
+		},
+		{
+			Namespace: "tkmphone",
+			Service:   NewTkmPhoneAPI(s),
 		},
 		{
 			Namespace: "admin",
