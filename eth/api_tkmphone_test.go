@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -151,5 +152,98 @@ func TestTkmPhoneMessageAndCallWork(t *testing.T) {
 	}
 	if call.State != PhoneCallEnded {
 		t.Fatalf("call state = %s, want ended", call.State)
+	}
+}
+
+func TestTkmPhoneSendsHelloToPersonBInDifferentLocation(t *testing.T) {
+	svc, _, operator, personA, mainKingD := newTestTkmPhoneService(t)
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	personB := common.HexToAddress("0x5000000000000000000000000000000000000005")
+
+	personANumber, err := svc.GenerateNumber(operator, personA, "person-a-location-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	personBNumber, err := svc.GenerateNumber(operator, personB, "person-b-location-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personANumber.Number == personBNumber.Number {
+		t.Fatal("different-location users received the same number")
+	}
+	if personANumber.RandomX == personBNumber.RandomX {
+		t.Fatal("different-location numbers received the same RandomX hash")
+	}
+
+	cipher, err := svc.EncryptPayload(personANumber.Number, personBNumber.Number, []byte("hello-nonce1"), []byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := svc.SendEncryptedMessage(personANumber.Number, personBNumber.Number, cipher.Ciphertext, cipher.Nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.From != personANumber.Number || message.To != personBNumber.Number {
+		t.Fatalf("message route = %s -> %s, want %s -> %s", message.From, message.To, personANumber.Number, personBNumber.Number)
+	}
+	if bytes.Equal(message.Ciphertext, []byte("hello")) {
+		t.Fatal("stored message is not encrypted")
+	}
+	opened, err := svc.DecryptPayload(personANumber.Number, personBNumber.Number, message.Nonce, message.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(opened) != "hello" {
+		t.Fatalf("decrypted message = %q, want hello", opened)
+	}
+}
+
+func TestTkmPhoneStatePersistsAcrossServiceRestart(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	svc, mainKing, operator, alice, mainKingD := newTestTkmPhoneService(t)
+	svc.db = db
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	bob := common.HexToAddress("0x3000000000000000000000000000000000000003")
+
+	aliceNumber, err := svc.GenerateNumber(operator, alice, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobNumber, err := svc.GenerateNumber(operator, bob, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("persist-msg1"), []byte("persistent hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SendEncryptedMessage(aliceNumber.Number, bobNumber.Number, cipher.Ciphertext, cipher.Nonce); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("persist-call"), []byte("persistent call"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartCall(aliceNumber.Number, bobNumber.Number, offer.Ciphertext, offer.Nonce); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := NewTkmPhoneServiceWithDB(nil, mainKing, big.NewInt(8979), db)
+	got, err := reloaded.Number(aliceNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Owner != alice || got.Operator != operator {
+		t.Fatalf("reloaded number mismatch: %#v", got)
+	}
+	if len(reloaded.operators) != 1 || len(reloaded.messages) != 1 || len(reloaded.calls) != 1 {
+		t.Fatalf("reloaded state sizes: operators=%d messages=%d calls=%d", len(reloaded.operators), len(reloaded.messages), len(reloaded.calls))
+	}
+	next, err := reloaded.GenerateNumber(operator, common.HexToAddress("0x4000000000000000000000000000000000000004"), "charlie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Number == aliceNumber.Number || next.Number == bobNumber.Number {
+		t.Fatal("reloaded service reused an existing number")
 	}
 }

@@ -23,6 +23,7 @@ var Modules = map[string]string{
 	"debug":    DebugJs,
 	"eth":      EthJs,
 	"tkm":      EthJs,
+	"tkmphone": TkmPhoneJs,
 	"miner":    MinerJs,
 	"net":      NetJs,
 	"rpc":      RpcJs,
@@ -69,6 +70,69 @@ web3._extend({
 			name: 'addCheckpoint',
 			call: 'mainking_addCheckpoint',
 			params: 2
+		})
+	]
+});
+`
+
+const TkmPhoneJs = `
+web3._extend({
+	property: 'tkmphone',
+	methods: [
+		new web3._extend.Method({
+			name: 'operatorKeyPrice',
+			call: 'tkmphone_operatorKeyPrice',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'operatorGrantHash',
+			call: 'tkmphone_operatorGrantHash',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'registerOperatorKey',
+			call: 'tkmphone_registerOperatorKey',
+			params: 6
+		}),
+		new web3._extend.Method({
+			name: 'generateNumber',
+			call: 'tkmphone_generateNumber',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'number',
+			call: 'tkmphone_number',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'encryptPayload',
+			call: 'tkmphone_encryptPayload',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'decryptPayload',
+			call: 'tkmphone_decryptPayload',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'sendEncryptedMessage',
+			call: 'tkmphone_sendEncryptedMessage',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'startCall',
+			call: 'tkmphone_startCall',
+			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'acceptCall',
+			call: 'tkmphone_acceptCall',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'endCall',
+			call: 'tkmphone_endCall',
+			params: 1
 		})
 	]
 });

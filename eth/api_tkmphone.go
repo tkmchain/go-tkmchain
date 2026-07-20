@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -13,6 +14,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -20,6 +23,7 @@ import (
 var (
 	tkmPhoneOperatorKeyPrice = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
 	tkmPhoneDefaultChainID   = big.NewInt(8979)
+	tkmPhoneStateKey         = []byte("tkmphone-state-v1")
 )
 
 type TkmPhoneAPI struct {
@@ -31,6 +35,7 @@ type TkmPhoneService struct {
 	eth       *Ethereum
 	mainKing  common.Address
 	chainID   *big.Int
+	db        ethdb.KeyValueStore
 	nextID    uint64
 	nextMsg   uint64
 	nextCall  uint64
@@ -38,6 +43,16 @@ type TkmPhoneService struct {
 	numbers   map[string]PhoneNumber
 	messages  map[uint64]PhoneMessage
 	calls     map[uint64]PhoneCall
+}
+
+type tkmPhoneSnapshot struct {
+	NextID    uint64
+	NextMsg   uint64
+	NextCall  uint64
+	Operators map[common.Address]PhoneOperatorKey
+	Numbers   map[string]PhoneNumber
+	Messages  map[uint64]PhoneMessage
+	Calls     map[uint64]PhoneCall
 }
 
 type PhoneOperatorKey struct {
@@ -103,18 +118,27 @@ func NewTkmPhoneAPI(e *Ethereum) *TkmPhoneAPI {
 }
 
 func NewTkmPhoneService(e *Ethereum, mainKing common.Address, chainID *big.Int) *TkmPhoneService {
+	return NewTkmPhoneServiceWithDB(e, mainKing, chainID, nil)
+}
+
+func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big.Int, db ethdb.KeyValueStore) *TkmPhoneService {
 	if chainID == nil {
 		chainID = tkmPhoneDefaultChainID
 	}
-	return &TkmPhoneService{
+	svc := &TkmPhoneService{
 		eth:       e,
 		mainKing:  mainKing,
 		chainID:   new(big.Int).Set(chainID),
+		db:        db,
 		operators: make(map[common.Address]PhoneOperatorKey),
 		numbers:   make(map[string]PhoneNumber),
 		messages:  make(map[uint64]PhoneMessage),
 		calls:     make(map[uint64]PhoneCall),
 	}
+	if err := svc.load(); err != nil {
+		log.Warn("Failed to load TKM phone service state", "err", err)
+	}
+	return svc
 }
 
 func (s *Ethereum) tkmPhoneService() *TkmPhoneService {
@@ -125,7 +149,7 @@ func (s *Ethereum) tkmPhoneService() *TkmPhoneService {
 		if s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().ChainID != nil {
 			chainID = s.blockchain.Config().ChainID
 		}
-		s.phoneService = NewTkmPhoneService(s, s.GetMainKingAddress(), chainID)
+		s.phoneService = NewTkmPhoneServiceWithDB(s, s.GetMainKingAddress(), chainID, s.chainDb)
 	}
 	return s.phoneService
 }
@@ -205,6 +229,9 @@ func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.operators[operator] = key
+	if err := svc.saveLocked(); err != nil {
+		return PhoneOperatorKey{}, err
+	}
 	return key, nil
 }
 
@@ -229,6 +256,9 @@ func (svc *TkmPhoneService) GenerateNumber(operator common.Address, owner common
 		}
 		record := PhoneNumber{Number: number, Owner: owner, Operator: operator, RandomX: rxh, CreatedAt: hexutil.Uint64(now), Active: true}
 		svc.numbers[number] = record
+		if err := svc.saveLocked(); err != nil {
+			return PhoneNumber{}, err
+		}
 		return record, nil
 	}
 }
@@ -285,6 +315,9 @@ func (svc *TkmPhoneService) SendEncryptedMessage(from string, to string, ciphert
 	svc.nextMsg++
 	msg := PhoneMessage{ID: hexutil.Uint64(svc.nextMsg), From: from, To: to, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), RandomXHash: svc.messageKey(from, to, nonce), CreatedAt: hexutil.Uint64(now)}
 	svc.messages[svc.nextMsg] = msg
+	if err := svc.saveLocked(); err != nil {
+		return PhoneMessage{}, err
+	}
 	return msg, nil
 }
 
@@ -301,6 +334,9 @@ func (svc *TkmPhoneService) StartCall(from string, to string, offerCiphertext []
 	svc.nextCall++
 	call := PhoneCall{ID: hexutil.Uint64(svc.nextCall), From: from, To: to, OfferCiphertext: append([]byte(nil), offerCiphertext...), OfferNonce: append([]byte(nil), offerNonce...), OfferRandomXHash: svc.messageKey(from, to, offerNonce), State: PhoneCallRinging, StartedAt: hexutil.Uint64(now)}
 	svc.calls[svc.nextCall] = call
+	if err := svc.saveLocked(); err != nil {
+		return PhoneCall{}, err
+	}
 	return call, nil
 }
 
@@ -323,6 +359,9 @@ func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answe
 	call.State = PhoneCallActive
 	call.AnsweredAt = hexutil.Uint64(time.Now().Unix())
 	svc.calls[id] = call
+	if err := svc.saveLocked(); err != nil {
+		return PhoneCall{}, err
+	}
 	return call, nil
 }
 
@@ -340,6 +379,61 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 	call.EndedAt = hexutil.Uint64(time.Now().Unix())
 	svc.calls[id] = call
 	return call, nil
+}
+
+func (svc *TkmPhoneService) load() error {
+	if svc.db == nil {
+		return nil
+	}
+	data, err := svc.db.Get(tkmPhoneStateKey)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var snap tkmPhoneSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	svc.nextID = snap.NextID
+	svc.nextMsg = snap.NextMsg
+	svc.nextCall = snap.NextCall
+	if snap.Operators != nil {
+		svc.operators = snap.Operators
+	}
+	if snap.Numbers != nil {
+		svc.numbers = snap.Numbers
+	}
+	if snap.Messages != nil {
+		svc.messages = snap.Messages
+	}
+	if snap.Calls != nil {
+		svc.calls = snap.Calls
+	}
+	return nil
+}
+
+func (svc *TkmPhoneService) saveLocked() error {
+	if svc.db == nil {
+		return nil
+	}
+	snap := tkmPhoneSnapshot{
+		NextID:    svc.nextID,
+		NextMsg:   svc.nextMsg,
+		NextCall:  svc.nextCall,
+		Operators: svc.operators,
+		Numbers:   svc.numbers,
+		Messages:  svc.messages,
+		Calls:     svc.calls,
+	}
+	data, err := json.Marshal(&snap)
+	if err != nil {
+		return err
+	}
+	if err := svc.db.Put(tkmPhoneStateKey, data); err != nil {
+		return err
+	}
+	return svc.db.SyncKeyValue()
 }
 
 func (svc *TkmPhoneService) requireNumbers(from string, to string) error {
