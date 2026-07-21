@@ -606,11 +606,13 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
 		return fmt.Errorf("invalid proof: non-positive difficulty")
 	}
-	if header.MixDigest == (common.Hash{}) {
-		return fmt.Errorf("invalid proof: empty mix digest")
-	}
-	if header.Nonce == (types.BlockNonce{}) {
-		return fmt.Errorf("invalid proof: empty nonce")
+	if requiresStrictSealFields(num) {
+		if header.MixDigest == (common.Hash{}) {
+			return fmt.Errorf("invalid proof: empty mix digest")
+		}
+		if header.Nonce == (types.BlockNonce{}) {
+			return fmt.Errorf("invalid proof: empty nonce")
+		}
 	}
 
 	epoch := rx.epochForBlock(chain, num)
@@ -684,6 +686,12 @@ func (rx *RandomX) validProofWithNonceVariants(header *types.Header, vm *VM, tar
 	}
 	result, _ := rx.randomXHash(legacyHeader, vm)
 	return result.Cmp(target) <= 0
+}
+
+const strictRandomXSealFieldsFromBlock = uint64(7888)
+
+func requiresStrictSealFields(number uint64) bool {
+	return number >= strictRandomXSealFieldsFromBlock
 }
 
 const kyotoStoredMixDigestCompatUntil = uint64(8192)

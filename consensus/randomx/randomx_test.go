@@ -51,7 +51,16 @@ func TestVerifySealSkipsPreRandomXTxBlock(t *testing.T) {
 	}
 }
 
-func TestVerifySealRejectsEmptyRandomXSealFieldsAfterActivation(t *testing.T) {
+func TestStrictSealFieldCutoff(t *testing.T) {
+	if requiresStrictSealFields(strictRandomXSealFieldsFromBlock - 1) {
+		t.Fatalf("block before strict seal cutoff should remain historical-compatible")
+	}
+	if !requiresStrictSealFields(strictRandomXSealFieldsFromBlock) {
+		t.Fatalf("strict seal cutoff block should require non-empty nonce and mix digest")
+	}
+}
+
+func TestVerifySealRejectsEmptyRandomXSealFieldsFromStrictCutoff(t *testing.T) {
 	rx := &RandomX{}
 	config := *params.RandomXChainConfig
 	config.RandomXTxBlock = big.NewInt(1)
@@ -63,12 +72,12 @@ func TestVerifySealRejectsEmptyRandomXSealFieldsAfterActivation(t *testing.T) {
 	}{
 		{
 			name:   "empty mix digest",
-			header: &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty, Nonce: types.EncodeNonce(1)},
+			header: &types.Header{Number: new(big.Int).SetUint64(strictRandomXSealFieldsFromBlock), Difficulty: GenesisDifficulty, Nonce: types.EncodeNonce(1)},
 			want:   "empty mix digest",
 		},
 		{
 			name:   "empty nonce",
-			header: &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty, MixDigest: common.HexToHash("0x01")},
+			header: &types.Header{Number: new(big.Int).SetUint64(strictRandomXSealFieldsFromBlock), Difficulty: GenesisDifficulty, MixDigest: common.HexToHash("0x01")},
 			want:   "empty nonce",
 		},
 	}
