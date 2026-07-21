@@ -26,7 +26,7 @@ const (
 	MinGasLimit                     uint64 = 21000              // Minimum the gas limit may ever be.
 	MaxGasLimit                     uint64 = 0x7fffffffffffffff // Maximum the gas limit (2^63-1).
 	GenesisGasLimit                 uint64 = 134217728
-	DeploymentGasLimitRecoveryFloor uint64 = 1000000
+	DeploymentGasLimitRecoveryFloor uint64 = 5000000
 
 	MaxTxGas uint64 = 1 << 24 // Maximum transaction gas limit after eip-7825 (16,777,216).
 
