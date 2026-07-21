@@ -180,6 +180,12 @@ func CalcGasLimit(parentGasLimit, desiredLimit uint64) uint64 {
 	if desiredLimit < params.MinGasLimit {
 		desiredLimit = params.MinGasLimit
 	}
+	// If a historical chain segment got stuck with a very low gas limit,
+	// recover quickly enough to allow contract deployment instead of waiting
+	// thousands of empty blocks.
+	if limit < params.DeploymentGasLimitRecoveryFloor && desiredLimit >= params.DeploymentGasLimitRecoveryFloor {
+		return params.DeploymentGasLimitRecoveryFloor
+	}
 	// If we're outside our allowed gas range, we try to hone towards them
 	if limit < desiredLimit {
 		limit = parentGasLimit + delta

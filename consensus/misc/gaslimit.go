@@ -28,6 +28,9 @@ func VerifyGaslimit(parentGasLimit, headerGasLimit uint64) error {
 	if parentGasLimit < params.MinGasLimit && headerGasLimit == params.MinGasLimit {
 		return nil
 	}
+	if parentGasLimit < params.DeploymentGasLimitRecoveryFloor && headerGasLimit == params.DeploymentGasLimitRecoveryFloor {
+		return nil
+	}
 	// Verify that the gas limit remains within allowed bounds
 	diff := int64(parentGasLimit) - int64(headerGasLimit)
 	if diff < 0 {

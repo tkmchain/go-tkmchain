@@ -37,6 +37,12 @@ func TestHeaderVerification(t *testing.T) {
 	testHeaderVerification(t, rawdb.PathScheme)
 }
 
+func TestCalcGasLimitRecoversDeploymentGasFloor(t *testing.T) {
+	if have, want := CalcGasLimit(105832, params.GenesisGasLimit), params.DeploymentGasLimitRecoveryFloor; have != want {
+		t.Fatalf("deployment gas recovery = %d, want %d", have, want)
+	}
+}
+
 func testHeaderVerification(t *testing.T, scheme string) {
 	// Create a simple chain to verify
 	var (
