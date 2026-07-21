@@ -287,7 +287,14 @@ func applyRandomXMinerConfig(ctx *cli.Context, cfg *gethConfig) {
         if cfg.RandomX.Enabled {
                 cfg.Eth.Miner.Enabled = true
                 if cfg.RandomX.Etherbase != "" {
-                        cfg.Eth.Miner.Etherbase = common.HexToAddress(cfg.RandomX.Etherbase)
+                        if !common.IsHexAddress(cfg.RandomX.Etherbase) {
+                                utils.Fatalf("invalid --%s address %q", utils.MinerEtherbaseFlag.Name, cfg.RandomX.Etherbase)
+                        }
+                        etherbase := common.HexToAddress(cfg.RandomX.Etherbase)
+                        if etherbase == (common.Address{}) {
+                                utils.Fatalf("--%s cannot be the zero address", utils.MinerEtherbaseFlag.Name)
+                        }
+                        cfg.Eth.Miner.Etherbase = etherbase
                 }
                 if cfg.RandomX.ExtraData != "" {
                         cfg.Eth.Miner.ExtraData = []byte(cfg.RandomX.ExtraData)

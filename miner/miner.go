@@ -69,6 +69,10 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 
 // Start begins the RandomX mining process.
 func (miner *Miner) Start(coinbase common.Address) {
+	if coinbase == (common.Address{}) {
+		log.Error("Refusing to start miner with zero etherbase", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+		return
+	}
 	miner.SetEtherbase(coinbase)
 	miner.worker.setExternalOnly(false)
 	miner.worker.start()
@@ -143,6 +147,10 @@ func (miner *Miner) PendingBlock() *types.Block {
 
 // SetEtherbase sets the address that will receive mining rewards.
 func (miner *Miner) SetEtherbase(addr common.Address) {
+	if addr == (common.Address{}) {
+		log.Error("Refusing to set zero etherbase", "hint", "miners must use a non-zero reward address")
+		return
+	}
 	miner.coinbase = addr
 	miner.worker.setEtherbase(addr)
 	if miner.worker.isRunning() {
@@ -155,6 +163,10 @@ func (miner *Miner) SetEtherbase(addr common.Address) {
 // GetWork returns the current mining work for external miners (XMRig).
 // Returns: [headerHash, seedHash, target, blockHeight]
 func (miner *Miner) GetWork() ([4]string, error) {
+	if miner.coinbase == (common.Address{}) {
+		return [4]string{}, errors.New("refusing to provide mining work with empty coinbase")
+	}
+
 	// Get the current pending block
 	block, state := miner.worker.pending()
 	if block == nil || state == nil {
@@ -162,6 +174,9 @@ func (miner *Miner) GetWork() ([4]string, error) {
 	}
 
 	header := block.Header()
+	if header.Coinbase == (common.Address{}) {
+		return [4]string{}, errors.New("refusing to provide mining work with empty coinbase")
+	}
 
 	// Calculate the seed hash for the pending block's epoch. The seed selects
 	// the RandomX cache, while the seal hash is the data miners must hash.
@@ -237,6 +252,10 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	}
 
 	header := task.block.Header()
+	if header.Coinbase == (common.Address{}) {
+		log.Warn("Rejecting submitted work with empty coinbase", "headerHash", hash.Hex())
+		return false
+	}
 	log.Info("Pending work header",
 		"number", header.Number,
 		"difficulty", header.Difficulty,
@@ -340,6 +359,10 @@ func reverseHashBytes(hash common.Hash) common.Hash {
 // StartExternal begins work generation for external miners without local sealing.
 // StartExternal begins work generation for external miners without local sealing.
 func (miner *Miner) StartExternal(coinbase common.Address) {
+	if coinbase == (common.Address{}) {
+		log.Error("Refusing to start external miner with zero etherbase", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+		return
+	}
 	miner.SetEtherbase(coinbase)
 	miner.worker.setExternalOnly(true)
 	miner.worker.start()

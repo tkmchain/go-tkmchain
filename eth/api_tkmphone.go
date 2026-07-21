@@ -412,6 +412,14 @@ func (api *TkmPhoneAPI) SendEncryptedMessage(from string, to string, ciphertext 
 	return api.service.SendEncryptedMessageSigned(from, to, []byte(ciphertext), []byte(nonce), []byte(signature))
 }
 
+func (api *TkmPhoneAPI) SendMessageSigningHash(from string, to string, nonce hexutil.Bytes, ciphertext hexutil.Bytes) common.Hash {
+	return api.service.sendMessageSigningHash(from, to, []byte(nonce), []byte(ciphertext))
+}
+
+func (api *TkmPhoneAPI) StartCallSigningHash(from string, to string, offerNonce hexutil.Bytes, offerCiphertext hexutil.Bytes) common.Hash {
+	return api.service.startCallSigningHash(from, to, []byte(offerNonce), []byte(offerCiphertext))
+}
+
 func (api *TkmPhoneAPI) StartCall(from string, to string, offerCiphertext hexutil.Bytes, offerNonce hexutil.Bytes, signature hexutil.Bytes) (PhoneCall, error) {
 	return api.service.StartCallSigned(from, to, []byte(offerCiphertext), []byte(offerNonce), []byte(signature))
 }
@@ -420,8 +428,16 @@ func (api *TkmPhoneAPI) AcceptCall(id hexutil.Uint64, answerCiphertext hexutil.B
 	return api.service.AcceptCallSigned(uint64(id), []byte(answerCiphertext), []byte(answerNonce), []byte(signature))
 }
 
+func (api *TkmPhoneAPI) AcceptCallSigningHash(id hexutil.Uint64, answerNonce hexutil.Bytes, answerCiphertext hexutil.Bytes) (common.Hash, error) {
+	return api.service.acceptCallSigningHash(uint64(id), []byte(answerNonce), []byte(answerCiphertext))
+}
+
 func (api *TkmPhoneAPI) RejectCall(id hexutil.Uint64, number string, reason string, signature hexutil.Bytes) (PhoneCall, error) {
 	return api.service.RejectCallSigned(uint64(id), number, reason, []byte(signature))
+}
+
+func (api *TkmPhoneAPI) RejectCallSigningHash(id hexutil.Uint64, number string, reason string) common.Hash {
+	return api.service.rejectCallSigningHash(uint64(id), number, reason)
 }
 
 func (api *TkmPhoneAPI) ExpireRingingCalls(timeoutSeconds hexutil.Uint64) ([]PhoneCall, error) {
@@ -436,12 +452,24 @@ func (api *TkmPhoneAPI) EndCall(id hexutil.Uint64, number string, signature hexu
 	return api.service.EndCallSigned(uint64(id), number, []byte(signature))
 }
 
+func (api *TkmPhoneAPI) EndCallSigningHash(id hexutil.Uint64, number string) common.Hash {
+	return api.service.endCallSigningHash(uint64(id), number)
+}
+
 func (api *TkmPhoneAPI) CallCandidateHash(id hexutil.Uint64, number string, nonce hexutil.Bytes, ciphertext hexutil.Bytes) common.Hash {
 	return api.service.callCandidateHash(uint64(id), number, []byte(nonce), []byte(ciphertext))
 }
 
+func (api *TkmPhoneAPI) CallCandidateSigningHash(id hexutil.Uint64, number string, nonce hexutil.Bytes, ciphertext hexutil.Bytes) common.Hash {
+	return api.service.callCandidateSigningHash(uint64(id), number, []byte(nonce), []byte(ciphertext))
+}
+
 func (api *TkmPhoneAPI) CallCandidateListHash(id hexutil.Uint64, number string) common.Hash {
 	return api.service.callCandidateListHash(uint64(id), number)
+}
+
+func (api *TkmPhoneAPI) CallCandidateListSigningHash(id hexutil.Uint64, number string) common.Hash {
+	return api.service.callCandidateListSigningHash(uint64(id), number)
 }
 
 func (api *TkmPhoneAPI) AddCallCandidate(id hexutil.Uint64, number string, ciphertext hexutil.Bytes, nonce hexutil.Bytes, signature hexutil.Bytes) (PhoneCallSignal, error) {
@@ -468,8 +496,16 @@ func (api *TkmPhoneAPI) RegisterDeviceKey(number string, device string, publicKe
 	return api.service.RegisterDeviceKey(number, device, []byte(publicKey), []byte(signature))
 }
 
+func (api *TkmPhoneAPI) DeviceKeySigningHash(number string, device string, publicKey hexutil.Bytes) common.Hash {
+	return api.service.deviceKeySigningHash(number, device, []byte(publicKey))
+}
+
 func (api *TkmPhoneAPI) TransferNumber(number string, newOwner common.Address, signature hexutil.Bytes) (PhoneNumber, error) {
 	return api.service.TransferNumber(number, newOwner, []byte(signature))
+}
+
+func (api *TkmPhoneAPI) TransferNumberSigningHash(number string, newOwner common.Address) common.Hash {
+	return api.service.transferNumberSigningHash(number, newOwner)
 }
 
 func (api *TkmPhoneAPI) RevokeNumber(number string, signature hexutil.Bytes) (PhoneNumber, error) {
@@ -1235,7 +1271,7 @@ func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publ
 	if len(publicKey) == 0 {
 		return PhoneDeviceKey{}, errors.New("public key is required")
 	}
-	payload := svc.randomXServiceHash("device-key-payload", []byte(number), []byte(device), publicKey)
+	payload := svc.deviceKeyPayloadHash(number, device, publicKey)
 	if err := svc.verifyNumberOwnerSignature(number, "register-device", payload, signature); err != nil {
 		return PhoneDeviceKey{}, err
 	}
@@ -1254,7 +1290,7 @@ func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Addres
 	if newOwner == (common.Address{}) {
 		return PhoneNumber{}, errors.New("new owner is required")
 	}
-	payload := svc.randomXServiceHash("transfer-number-payload", []byte(number), newOwner.Bytes())
+	payload := svc.transferNumberPayloadHash(number, newOwner)
 	if err := svc.verifyNumberOwnerSignature(number, "transfer-number", payload, signature); err != nil {
 		return PhoneNumber{}, err
 	}
@@ -1780,6 +1816,22 @@ func (svc *TkmPhoneService) ownerActionHash(number string, action string, payloa
 	return svc.randomXServiceHash("owner-action", []byte(number), []byte(action), payload.Bytes())
 }
 
+func (svc *TkmPhoneService) deviceKeyPayloadHash(number string, device string, publicKey []byte) common.Hash {
+	return svc.randomXServiceHash("device-key-payload", []byte(number), []byte(device), publicKey)
+}
+
+func (svc *TkmPhoneService) deviceKeySigningHash(number string, device string, publicKey []byte) common.Hash {
+	return svc.ownerActionHash(number, "register-device", svc.deviceKeyPayloadHash(number, device, publicKey))
+}
+
+func (svc *TkmPhoneService) transferNumberPayloadHash(number string, newOwner common.Address) common.Hash {
+	return svc.randomXServiceHash("transfer-number-payload", []byte(number), newOwner.Bytes())
+}
+
+func (svc *TkmPhoneService) transferNumberSigningHash(number string, newOwner common.Address) common.Hash {
+	return svc.ownerActionHash(number, "transfer-number", svc.transferNumberPayloadHash(number, newOwner))
+}
+
 func verifyPhoneAddressSignature(want common.Address, digest common.Hash, signature []byte) error {
 	if want == (common.Address{}) {
 		return errors.New("owner address is not configured")
@@ -2050,12 +2102,51 @@ func (svc *TkmPhoneService) openBucketHash(operator common.Address, bucketID uin
 	return svc.randomXServiceHash("open-bucket-payload", operator.Bytes(), tkmPhoneUint64Bytes(bucketID))
 }
 
+func (svc *TkmPhoneService) sendMessageSigningHash(from string, to string, nonce []byte, ciphertext []byte) common.Hash {
+	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
+	return svc.ownerActionHash(from, "send-message", payload)
+}
+
+func (svc *TkmPhoneService) startCallSigningHash(from string, to string, offerNonce []byte, offerCiphertext []byte) common.Hash {
+	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
+	return svc.ownerActionHash(from, "start-call", payload)
+}
+
+func (svc *TkmPhoneService) acceptCallSigningHash(id uint64, answerNonce []byte, answerCiphertext []byte) (common.Hash, error) {
+	svc.lock.RLock()
+	call, ok := svc.calls[id]
+	svc.lock.RUnlock()
+	if !ok {
+		return common.Hash{}, errors.New("call not found")
+	}
+	payload := svc.randomXServiceHash("accept-call-payload", tkmPhoneUint64Bytes(id), answerNonce, answerCiphertext)
+	return svc.ownerActionHash(call.To, "accept-call", payload), nil
+}
+
+func (svc *TkmPhoneService) rejectCallSigningHash(id uint64, number string, reason string) common.Hash {
+	payload := svc.randomXServiceHash("reject-call-payload", tkmPhoneUint64Bytes(id), []byte(reason))
+	return svc.ownerActionHash(number, "reject-call", payload)
+}
+
+func (svc *TkmPhoneService) endCallSigningHash(id uint64, number string) common.Hash {
+	payload := svc.randomXServiceHash("end-call-payload", tkmPhoneUint64Bytes(id))
+	return svc.ownerActionHash(number, "end-call", payload)
+}
+
 func (svc *TkmPhoneService) callCandidateHash(id uint64, number string, nonce []byte, ciphertext []byte) common.Hash {
 	return svc.randomXServiceHash("call-candidate-payload", tkmPhoneUint64Bytes(id), []byte(number), nonce, ciphertext)
 }
 
+func (svc *TkmPhoneService) callCandidateSigningHash(id uint64, number string, nonce []byte, ciphertext []byte) common.Hash {
+	return svc.ownerActionHash(number, "add-call-candidate", svc.callCandidateHash(id, number, nonce, ciphertext))
+}
+
 func (svc *TkmPhoneService) callCandidateListHash(id uint64, number string) common.Hash {
 	return svc.randomXServiceHash("list-call-candidates-payload", tkmPhoneUint64Bytes(id), []byte(number))
+}
+
+func (svc *TkmPhoneService) callCandidateListSigningHash(id uint64, number string) common.Hash {
+	return svc.ownerActionHash(number, "list-call-candidates", svc.callCandidateListHash(id, number))
 }
 
 func (svc *TkmPhoneService) messageKey(from string, to string, nonce []byte) common.Hash {

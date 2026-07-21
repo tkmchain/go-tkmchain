@@ -492,8 +492,8 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, alice, "alice-number-sale")
 	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, bob, "bob-number-sale")
 
-	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(aliceNumber.Number), []byte("alice-phone"), []byte("alice-device-public-key"))
-	deviceSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "register-device", devicePayload)
+	deviceHash := svc.deviceKeySigningHash(aliceNumber.Number, "alice-phone", []byte("alice-device-public-key"))
+	deviceSig := signTkmPhoneDigest(t, aliceKey, deviceHash)
 	device, err := svc.RegisterDeviceKey(aliceNumber.Number, "alice-phone", []byte("alice-device-public-key"), deviceSig)
 	if err != nil {
 		t.Fatal(err)
@@ -601,8 +601,7 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 		t.Fatalf("call state = %s", call.State)
 	}
 
-	transferPayload := svc.randomXServiceHash("transfer-number-payload", []byte(aliceNumber.Number), bob.Bytes())
-	transferSig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "transfer-number", transferPayload)
+	transferSig := signTkmPhoneDigest(t, aliceKey, svc.transferNumberSigningHash(aliceNumber.Number, bob))
 	transferred, err := svc.TransferNumber(aliceNumber.Number, bob, transferSig)
 	if err != nil {
 		t.Fatal(err)
@@ -656,8 +655,7 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	}
 	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, alice, "market-alice-number-sale")
 	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, bob, "market-bob-number-sale")
-	devicePayload := svc.randomXServiceHash("device-key-payload", []byte(bobNumber.Number), []byte("bob-phone"), []byte("bob-pub"))
-	deviceSig := signTkmPhoneOwnerAction(t, svc, bobKey, bobNumber.Number, "register-device", devicePayload)
+	deviceSig := signTkmPhoneDigest(t, bobKey, svc.deviceKeySigningHash(bobNumber.Number, "bob-phone", []byte("bob-pub")))
 	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-pub"), deviceSig); err != nil {
 		t.Fatal(err)
 	}

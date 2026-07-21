@@ -788,7 +788,8 @@ func (s *Ethereum) startMiningLocked(pool bool) error {
 	}
 
 	if s.config.Miner.Etherbase == (common.Address{}) {
-		log.Warn("RandomX mining work is disabled until etherbase is set", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+		log.Warn("RandomX mining is disabled because etherbase is zero", "hint", "start with --miner.etherbase 0x... or call miner_setEtherbase")
+		return fmt.Errorf("refusing to start miner with zero etherbase")
 	}
 
 	// Start the miner
@@ -1491,7 +1492,7 @@ func (s *Ethereum) SetMinerEtherbase(address common.Address) error {
 	defer s.lock.Unlock()
 
 	if address == (common.Address{}) {
-		return fmt.Errorf("invalid etherbase address")
+		return fmt.Errorf("invalid etherbase address: zero address is not allowed for mining")
 	}
 
 	s.config.Miner.Etherbase = address

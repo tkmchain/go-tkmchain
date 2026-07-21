@@ -1463,6 +1463,9 @@ func setEtherbase(ctx *cli.Context, cfg *ethconfig.Config) {
 			Fatalf("-%s: invalid etherbase address %q", MinerEtherbaseFlag.Name, addr)
 		}
 		parsed := common.HexToAddress(addr)
+		if parsed == (common.Address{}) {
+			Fatalf("-%s: zero etherbase address is not allowed", MinerEtherbaseFlag.Name)
+		}
 		cfg.Miner.Etherbase = parsed
 		cfg.Miner.PendingFeeRecipient = parsed
 	}

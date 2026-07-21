@@ -210,6 +210,11 @@ web3._extend({
 			params: 5
 		}),
 		new web3._extend.Method({
+			name: 'sendMessageSigningHash',
+			call: 'tkmphone_sendMessageSigningHash',
+			params: 4
+		}),
+		new web3._extend.Method({
 			name: 'sendEncryptedMessageWithExpiry',
 			call: 'tkmphone_sendEncryptedMessageWithExpiry',
 			params: 6
@@ -225,6 +230,11 @@ web3._extend({
 			params: 5
 		}),
 		new web3._extend.Method({
+			name: 'startCallSigningHash',
+			call: 'tkmphone_startCallSigningHash',
+			params: 4
+		}),
+		new web3._extend.Method({
 			name: 'startCallWithExpiry',
 			call: 'tkmphone_startCallWithExpiry',
 			params: 6
@@ -235,9 +245,19 @@ web3._extend({
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'acceptCallSigningHash',
+			call: 'tkmphone_acceptCallSigningHash',
+			params: 3
+		}),
+		new web3._extend.Method({
 			name: 'rejectCall',
 			call: 'tkmphone_rejectCall',
 			params: 4
+		}),
+		new web3._extend.Method({
+			name: 'rejectCallSigningHash',
+			call: 'tkmphone_rejectCallSigningHash',
+			params: 3
 		}),
 		new web3._extend.Method({
 			name: 'expireRingingCalls',
@@ -255,13 +275,28 @@ web3._extend({
 			params: 3
 		}),
 		new web3._extend.Method({
+			name: 'endCallSigningHash',
+			call: 'tkmphone_endCallSigningHash',
+			params: 2
+		}),
+		new web3._extend.Method({
 			name: 'callCandidateHash',
 			call: 'tkmphone_callCandidateHash',
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'callCandidateSigningHash',
+			call: 'tkmphone_callCandidateSigningHash',
+			params: 4
+		}),
+		new web3._extend.Method({
 			name: 'callCandidateListHash',
 			call: 'tkmphone_callCandidateListHash',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'callCandidateListSigningHash',
+			call: 'tkmphone_callCandidateListSigningHash',
 			params: 2
 		}),
 		new web3._extend.Method({

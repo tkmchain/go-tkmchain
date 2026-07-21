@@ -23,11 +23,13 @@ import (
 	"fmt"
 	gomath "math"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -1706,6 +1708,23 @@ func NewTKMPaymentAPI(b Backend, nonceLock *AddrLocker) *TKMPaymentAPI {
 	return &TKMPaymentAPI{b: b, nonceLock: nonceLock}
 }
 
+// NewAccountWithPassphrase creates a new keystore account encrypted by passphrase.
+func (api *TKMPaymentAPI) NewAccountWithPassphrase(passphrase string) (common.Address, error) {
+	backends := api.b.AccountManager().Backends(reflect.TypeOf(&keystore.KeyStore{}))
+	if len(backends) == 0 {
+		return common.Address{}, errors.New("keystore backend unavailable")
+	}
+	ks, ok := backends[0].(*keystore.KeyStore)
+	if !ok {
+		return common.Address{}, errors.New("keystore backend has unexpected type")
+	}
+	account, err := ks.NewAccount(passphrase)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return account.Address, nil
+}
+
 // SendTransactionWithPassphrase signs and submits a transaction using the supplied passphrase.
 func (api *TKMPaymentAPI) SendTransactionWithPassphrase(ctx context.Context, args TransactionArgs, passphrase string) (common.Hash, error) {
 	account := accounts.Account{Address: args.from()}
@@ -1729,6 +1748,20 @@ func (api *TKMPaymentAPI) SendTransactionWithPassphrase(ctx context.Context, arg
 		return common.Hash{}, err
 	}
 	return SubmitTransaction(ctx, api.b, signed)
+}
+
+// SignHashWithPassphrase signs a 32-byte digest using the supplied account passphrase.
+func (api *TKMPaymentAPI) SignHashWithPassphrase(ctx context.Context, addr common.Address, digest common.Hash, passphrase string) (hexutil.Bytes, error) {
+	account := accounts.Account{Address: addr}
+	wallet, err := api.b.AccountManager().Find(account)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := wallet.SignTextWithPassphrase(account, passphrase, digest.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	return hexutil.Bytes(sig), nil
 }
 
 // SubmitTransaction is a helper function that submits tx to txPool and logs a message.
