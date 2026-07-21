@@ -15,6 +15,6 @@ import "math/big"
 
 var (
 	GenesisDifficulty = big.NewInt(3)
-	MinDifficulty     = big.NewInt(3)
+	MinDifficulty     = big.NewInt(1310)
 	MaxDifficulty     = new(big.Int).Exp(big.NewInt(10), big.NewInt(30), nil)
 )

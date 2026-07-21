@@ -189,7 +189,11 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 		header.ReceiptHash = types.EmptyReceiptsHash
 	}
 	if header.Difficulty == nil || header.Difficulty.Sign() == 0 {
-		header.Difficulty = new(big.Int).Set(GenesisDifficulty)
+		if header.Number.Sign() == 0 {
+			header.Difficulty = new(big.Int).Set(GenesisDifficulty)
+		} else {
+			header.Difficulty = new(big.Int).Set(MinDifficulty)
+		}
 	}
 	return nil
 }
@@ -206,7 +210,7 @@ func (rx *RandomX) SealHash(header *types.Header) common.Hash { return header.Ha
 
 func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	if parent == nil {
-		return new(big.Int).Set(GenesisDifficulty)
+		return new(big.Int).Set(MinDifficulty)
 	}
 	return CalcDifficulty(nil, time, parent, nil)
 }

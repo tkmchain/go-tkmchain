@@ -44,22 +44,41 @@ func TestVerifySealSkipsPreRandomXTxBlock(t *testing.T) {
 	rx := &RandomX{}
 	config := *params.RandomXChainConfig
 	config.RandomXTxBlock = big.NewInt(2450)
-	header := &types.Header{Number: big.NewInt(1), Difficulty: GenesisDifficulty}
+	header := &types.Header{Number: big.NewInt(1), Difficulty: nil}
 
 	if err := rx.VerifySeal(verifySealTestChain{config: &config}, header); err != nil {
 		t.Fatalf("unexpected pre-RandomX seal rejection: %v", err)
 	}
 }
 
-func TestVerifySealRejectsZeroMixDigestAfterRandomXTxActivation(t *testing.T) {
+func TestVerifySealRejectsEmptyRandomXSealFieldsAfterActivation(t *testing.T) {
 	rx := &RandomX{}
 	config := *params.RandomXChainConfig
 	config.RandomXTxBlock = big.NewInt(1)
-	header := &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty}
 
-	err := rx.VerifySeal(verifySealTestChain{config: &config}, header)
-	if err == nil || !strings.Contains(err.Error(), "invalid proof") {
-		t.Fatalf("unexpected seal error: %v", err)
+	tests := []struct {
+		name   string
+		header *types.Header
+		want   string
+	}{
+		{
+			name:   "empty mix digest",
+			header: &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty, Nonce: types.EncodeNonce(1)},
+			want:   "empty mix digest",
+		},
+		{
+			name:   "empty nonce",
+			header: &types.Header{Number: big.NewInt(21), Difficulty: GenesisDifficulty, MixDigest: common.HexToHash("0x01")},
+			want:   "empty nonce",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rx.VerifySeal(verifySealTestChain{config: &config}, tt.header)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("unexpected seal error: %v", err)
+			}
+		})
 	}
 }
 
@@ -145,14 +164,17 @@ func TestFinalizeWritesRotatingKingWithoutCoinbase(t *testing.T) {
 	}
 }
 
-func TestPrepareWithoutParentFallsBackToGenesisDifficulty(t *testing.T) {
+func TestPrepareWithoutParentFallsBackToMinimumDifficulty(t *testing.T) {
 	rx := NewFaker()
-	header := &types.Header{Number: big.NewInt(1), Difficulty: GenesisDifficulty}
+	header := &types.Header{Number: big.NewInt(1)}
 	if err := rx.Prepare(nil, header); err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
-	if header.Difficulty == nil || header.Difficulty.Cmp(GenesisDifficulty) != 0 {
-		t.Fatalf("difficulty mismatch: have %v, want %v", header.Difficulty, GenesisDifficulty)
+	if MinDifficulty.Cmp(GenesisDifficulty) <= 0 {
+		t.Fatalf("minimum difficulty must stay above genesis difficulty: min %v genesis %v", MinDifficulty, GenesisDifficulty)
+	}
+	if header.Difficulty == nil || header.Difficulty.Cmp(MinDifficulty) != 0 {
+		t.Fatalf("difficulty mismatch: have %v, want %v", header.Difficulty, MinDifficulty)
 	}
 	if header.TxHash != types.EmptyTxsHash {
 		t.Fatalf("tx hash mismatch: have %s, want %s", header.TxHash, types.EmptyTxsHash)
@@ -420,16 +442,16 @@ func TestCalcDifficultyAppliesMainnetEDAForSkippedIntervals(t *testing.T) {
 	parent := &types.Header{
 		Number:     big.NewInt(1),
 		Time:       1_000,
-		Difficulty: big.NewInt(1024),
+		Difficulty: big.NewInt(4096),
 	}
 
 	oneStep := rx.CalcDifficulty(chain, parent.Time+EDAThreshold, parent)
-	if want := big.NewInt(768); oneStep.Cmp(want) != 0 {
+	if want := big.NewInt(3072); oneStep.Cmp(want) != 0 {
 		t.Fatalf("one EDA step difficulty = %v, want %v", oneStep, want)
 	}
 
 	longGap := rx.CalcDifficulty(chain, parent.Time+5*EDAThreshold, parent)
-	if want := big.NewInt(243); longGap.Cmp(want) != 0 {
+	if want := MinDifficulty; longGap.Cmp(want) != 0 {
 		t.Fatalf("long gap EDA difficulty = %v, want skipped interval reductions %v", longGap, want)
 	}
 }

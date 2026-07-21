@@ -700,6 +700,19 @@ func (w *worker) persistSealedTask(sealhash common.Hash, task *task, block *type
 		log.Warn("Dropping mined block without parent state", "number", block.Number(), "hash", hash, "parent", block.ParentHash())
 		return false
 	}
+	header := block.Header()
+	if header.Coinbase == (common.Address{}) {
+		log.Warn("Dropping sealed block with empty coinbase", "number", block.Number(), "hash", hash)
+		return false
+	}
+	if header.MixDigest == (common.Hash{}) || header.Nonce == (types.BlockNonce{}) {
+		log.Warn("Dropping unsealed RandomX block", "number", block.Number(), "hash", hash, "nonce", header.Nonce, "mixDigest", header.MixDigest)
+		return false
+	}
+	if err := w.engine.VerifyHeader(w.chain, header); err != nil {
+		log.Warn("Dropping locally sealed invalid block", "number", block.Number(), "hash", hash, "err", err)
+		return false
+	}
 	_, err := w.chain.InsertChain(types.Blocks{block})
 	if err != nil {
 		if errors.Is(err, consensus.ErrPrunedAncestor) {

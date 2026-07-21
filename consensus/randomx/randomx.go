@@ -603,6 +603,15 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 			return nil
 		}
 	}
+	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
+		return fmt.Errorf("invalid proof: non-positive difficulty")
+	}
+	if header.MixDigest == (common.Hash{}) {
+		return fmt.Errorf("invalid proof: empty mix digest")
+	}
+	if header.Nonce == (types.BlockNonce{}) {
+		return fmt.Errorf("invalid proof: empty nonce")
+	}
 
 	epoch := rx.epochForBlock(chain, num)
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
@@ -922,7 +931,7 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 				"new_difficulty", newDifficulty,
 				"block_time", header.Time-parentHeader.Time)
 		} else {
-			header.Difficulty = GenesisDifficulty
+			header.Difficulty = new(big.Int).Set(MinDifficulty)
 		}
 	}
 
