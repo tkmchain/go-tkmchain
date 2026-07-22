@@ -501,6 +501,24 @@ func TestTkmPhoneSignedActionsInboxNotificationsDevicesTransferRevokeAndPrune(t 
 	if !device.Active || device.Number != aliceNumber.Number {
 		t.Fatalf("bad device key: %#v", device)
 	}
+	registered, err := svc.RegisteredNumber(aliceNumber.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registered.Registered || registered.DeviceCount != 1 || len(registered.Devices) != 1 || registered.Devices[0].Device != "alice-phone" {
+		t.Fatalf("registered number = %#v", registered)
+	}
+	if keys, err := svc.DeviceKeys(aliceNumber.Number); err != nil || len(keys) != 1 {
+		t.Fatalf("device keys = %#v err=%v", keys, err)
+	}
+	if all := svc.RegisteredNumbers(); len(all) != 1 || all[0].Number.Number != aliceNumber.Number {
+		t.Fatalf("registered numbers = %#v", all)
+	}
+	bobDeviceHash := svc.deviceKeySigningHash(bobNumber.Number, "bob-phone", []byte("bob-device-public-key"))
+	bobDeviceSig := signTkmPhoneDigest(t, bobKey, bobDeviceHash)
+	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-device-public-key"), bobDeviceSig); err != nil {
+		t.Fatal(err)
+	}
 
 	cipher, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("signed-msg01"), []byte("hello"))
 	if err != nil {
@@ -657,6 +675,10 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, bob, "market-bob-number-sale")
 	deviceSig := signTkmPhoneDigest(t, bobKey, svc.deviceKeySigningHash(bobNumber.Number, "bob-phone", []byte("bob-pub")))
 	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-pub"), deviceSig); err != nil {
+		t.Fatal(err)
+	}
+	aliceDeviceSig := signTkmPhoneDigest(t, aliceKey, svc.deviceKeySigningHash(aliceNumber.Number, "alice-phone", []byte("alice-pub")))
+	if _, err := svc.RegisterDeviceKey(aliceNumber.Number, "alice-phone", []byte("alice-pub"), aliceDeviceSig); err != nil {
 		t.Fatal(err)
 	}
 	env, err := svc.EncryptPayloadForDevices(aliceNumber.Number, bobNumber.Number, []byte("device-nonce"), []byte("hello device"))

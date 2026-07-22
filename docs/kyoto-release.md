@@ -152,3 +152,7 @@ After restart, check:
 - The daemon syncs historical pre-Kyoto blocks without `invalid proof` failures.
 - New post-Kyoto blocks are produced only by canonical RandomX proof validation.
 - Pool blocks credit `100 TKM` to the pool wallet, while chain reward outputs account for the additional `20 TKM` Main King and `80 TKM` Rotating King rewards.
+
+## TKM Phone Service
+
+Added network-aware phone-number registration, device-key inspection, encrypted message signaling, and WebRTC call signaling through the `tkmphone` RPC namespace. Full operational details are in [TKM Phone Service](./tkmphone.md).

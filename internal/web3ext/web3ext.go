@@ -180,6 +180,21 @@ web3._extend({
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'deviceKeys',
+			call: 'tkmphone_deviceKeys',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'registeredNumber',
+			call: 'tkmphone_registeredNumber',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'registeredNumbers',
+			call: 'tkmphone_registeredNumbers',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'transferNumber',
 			call: 'tkmphone_transferNumber',
 			params: 3

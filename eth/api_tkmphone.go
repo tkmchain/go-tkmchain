@@ -176,6 +176,13 @@ type PhoneDeviceKey struct {
 	Active    bool           `json:"active"`
 }
 
+type RegisteredPhoneNumber struct {
+	Number      PhoneNumber      `json:"number"`
+	Registered  bool             `json:"registered"`
+	DeviceCount hexutil.Uint64   `json:"deviceCount"`
+	Devices     []PhoneDeviceKey `json:"devices"`
+}
+
 type PhoneNotification struct {
 	ID        hexutil.Uint64 `json:"id"`
 	Number    string         `json:"number"`
@@ -494,6 +501,18 @@ func (api *TkmPhoneAPI) CallsForNumber(number string) ([]PhoneCall, error) {
 
 func (api *TkmPhoneAPI) RegisterDeviceKey(number string, device string, publicKey hexutil.Bytes, signature hexutil.Bytes) (PhoneDeviceKey, error) {
 	return api.service.RegisterDeviceKey(number, device, []byte(publicKey), []byte(signature))
+}
+
+func (api *TkmPhoneAPI) DeviceKeys(number string) ([]PhoneDeviceKey, error) {
+	return api.service.DeviceKeys(number)
+}
+
+func (api *TkmPhoneAPI) RegisteredNumber(number string) (RegisteredPhoneNumber, error) {
+	return api.service.RegisteredNumber(number)
+}
+
+func (api *TkmPhoneAPI) RegisteredNumbers() []RegisteredPhoneNumber {
+	return api.service.RegisteredNumbers()
 }
 
 func (api *TkmPhoneAPI) DeviceKeySigningHash(number string, device string, publicKey hexutil.Bytes) common.Hash {
@@ -1159,12 +1178,18 @@ func (svc *TkmPhoneService) SendEncryptedMessageSigned(from string, to string, c
 	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
 		return PhoneMessage{}, err
 	}
+	if err := svc.requireActiveDeviceKey(from); err != nil {
+		return PhoneMessage{}, err
+	}
 	return svc.SendEncryptedMessage(from, to, ciphertext, nonce)
 }
 
 func (svc *TkmPhoneService) StartCallSigned(from string, to string, offerCiphertext []byte, offerNonce []byte, signature []byte) (PhoneCall, error) {
 	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
 	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
+		return PhoneCall{}, err
+	}
+	if err := svc.requireActiveDeviceKey(from); err != nil {
 		return PhoneCall{}, err
 	}
 	return svc.StartCall(from, to, offerCiphertext, offerNonce)
@@ -1179,6 +1204,9 @@ func (svc *TkmPhoneService) AcceptCallSigned(id uint64, answerCiphertext []byte,
 	}
 	payload := svc.randomXServiceHash("accept-call-payload", tkmPhoneUint64Bytes(id), answerNonce, answerCiphertext)
 	if err := svc.verifyNumberOwnerSignature(call.To, "accept-call", payload, signature); err != nil {
+		return PhoneCall{}, err
+	}
+	if err := svc.requireActiveDeviceKey(call.To); err != nil {
 		return PhoneCall{}, err
 	}
 	return svc.AcceptCall(id, answerCiphertext, answerNonce)
@@ -1198,6 +1226,9 @@ func (svc *TkmPhoneService) RejectCallSigned(id uint64, number string, reason st
 	if err := svc.verifyNumberOwnerSignature(number, "reject-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
+	if err := svc.requireActiveDeviceKey(number); err != nil {
+		return PhoneCall{}, err
+	}
 	return svc.RejectCall(id, number, reason)
 }
 
@@ -1215,6 +1246,9 @@ func (svc *TkmPhoneService) EndCallSigned(id uint64, number string, signature []
 	if err := svc.verifyNumberOwnerSignature(number, "end-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
+	if err := svc.requireActiveDeviceKey(number); err != nil {
+		return PhoneCall{}, err
+	}
 	return svc.EndCall(id)
 }
 
@@ -1223,12 +1257,18 @@ func (svc *TkmPhoneService) AddCallCandidateSigned(id uint64, number string, cip
 	if err := svc.verifyNumberOwnerSignature(number, "add-call-candidate", payload, signature); err != nil {
 		return PhoneCallSignal{}, err
 	}
+	if err := svc.requireActiveDeviceKey(number); err != nil {
+		return PhoneCallSignal{}, err
+	}
 	return svc.AddCallCandidate(id, number, ciphertext, nonce)
 }
 
 func (svc *TkmPhoneService) CallCandidatesSigned(id uint64, number string, signature []byte) ([]PhoneCallSignal, error) {
 	payload := svc.callCandidateListHash(id, number)
 	if err := svc.verifyNumberOwnerSignature(number, "list-call-candidates", payload, signature); err != nil {
+		return nil, err
+	}
+	if err := svc.requireActiveDeviceKey(number); err != nil {
 		return nil, err
 	}
 	return svc.CallCandidates(id, number)
@@ -1262,6 +1302,51 @@ func (svc *TkmPhoneService) CallsForNumber(number string) ([]PhoneCall, error) {
 		}
 	}
 	return out, nil
+}
+
+func (svc *TkmPhoneService) DeviceKeys(number string) ([]PhoneDeviceKey, error) {
+	if _, err := svc.Number(number); err != nil {
+		return nil, err
+	}
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	keys := append([]PhoneDeviceKey(nil), svc.devices[number]...)
+	return keys, nil
+}
+
+func (svc *TkmPhoneService) RegisteredNumber(number string) (RegisteredPhoneNumber, error) {
+	num, err := svc.Number(number)
+	if err != nil {
+		return RegisteredPhoneNumber{}, err
+	}
+	keys, err := svc.DeviceKeys(number)
+	if err != nil {
+		return RegisteredPhoneNumber{}, err
+	}
+	active := make([]PhoneDeviceKey, 0, len(keys))
+	for _, key := range keys {
+		if key.Active {
+			active = append(active, key)
+		}
+	}
+	return RegisteredPhoneNumber{Number: num, Registered: len(active) > 0, DeviceCount: hexutil.Uint64(len(active)), Devices: active}, nil
+}
+
+func (svc *TkmPhoneService) RegisteredNumbers() []RegisteredPhoneNumber {
+	svc.lock.RLock()
+	numbers := make([]string, 0, len(svc.numbers))
+	for number := range svc.numbers {
+		numbers = append(numbers, number)
+	}
+	svc.lock.RUnlock()
+	out := make([]RegisteredPhoneNumber, 0, len(numbers))
+	for _, number := range numbers {
+		registered, err := svc.RegisteredNumber(number)
+		if err == nil && registered.Registered {
+			out = append(out, registered)
+		}
+	}
+	return out
 }
 
 func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publicKey []byte, signature []byte) (PhoneDeviceKey, error) {
@@ -1406,6 +1491,9 @@ func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to strin
 	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
 		return PhoneMessage{}, err
 	}
+	if err := svc.requireActiveDeviceKey(from); err != nil {
+		return PhoneMessage{}, err
+	}
 	msg, err := svc.SendEncryptedMessage(from, to, ciphertext, nonce)
 	if err != nil {
 		return PhoneMessage{}, err
@@ -1419,6 +1507,9 @@ func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to strin
 func (svc *TkmPhoneService) StartCallWithExpiry(from string, to string, offerCiphertext []byte, offerNonce []byte, expiresAt uint64, signature []byte) (PhoneCall, error) {
 	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
 	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
+		return PhoneCall{}, err
+	}
+	if err := svc.requireActiveDeviceKey(from); err != nil {
 		return PhoneCall{}, err
 	}
 	call, err := svc.StartCall(from, to, offerCiphertext, offerNonce)
@@ -1731,6 +1822,17 @@ func (svc *TkmPhoneService) saveLocked() error {
 		return err
 	}
 	return svc.db.SyncKeyValue()
+}
+
+func (svc *TkmPhoneService) requireActiveDeviceKey(number string) error {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	for _, key := range svc.devices[number] {
+		if key.Active {
+			return nil
+		}
+	}
+	return errors.New("registered device key required for phone number")
 }
 
 func (svc *TkmPhoneService) requireNumbers(from string, to string) error {
