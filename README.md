@@ -11,7 +11,7 @@ https://pkg.go.dev/badge/github.com/tkmchain/go-tkmchain
 [![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/vbJF7PrXF8)
 [![Twitter](https://img.shields.io/twitter/follow/go_tkmchain)](https://x.com/go_tkmchain)
 
-Automated builds are available for stable releases and the unstable master branch. Binary archives are published at https://gtkm.tkmchain.site/downloads/.
+Automated builds are available for stable releases and the unstable master branch. Binary archives are published at https://tkmchain.site/download.html.
 
 ---
 
