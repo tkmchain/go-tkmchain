@@ -51,6 +51,13 @@ they use the local IPC endpoint from --datadir. HTTP endpoints need the tkmphone
 RPC API enabled, and automatic signing needs eth_sign for an unlocked account.`,
 		Subcommands: []*cli.Command{
 			{
+				Name:      "status",
+				Usage:     "Show TKM Phone hardfork activation status",
+				ArgsUsage: "[endpoint]",
+				Flags:     tkmPhoneRPCFlags,
+				Action:    tkmPhoneStatus,
+			},
+			{
 				Name:      "prices",
 				Usage:     "Show MainKing bucket, per-number, and operator resale prices",
 				ArgsUsage: "[endpoint]",
@@ -112,6 +119,15 @@ type tkmPhonePriceView struct {
 	OperatorSalePriceWei   *hexutil.Big `json:"operatorSalePriceWei"`
 }
 
+type tkmPhoneStatusView struct {
+	Active              bool           `json:"active"`
+	ActivationTimestamp hexutil.Uint64 `json:"activationTimestamp"`
+	HeadNumber          hexutil.Uint64 `json:"headNumber"`
+	HeadTimestamp       hexutil.Uint64 `json:"headTimestamp"`
+	CurrentTimestamp    hexutil.Uint64 `json:"currentTimestamp"`
+	UsingChainHead      bool           `json:"usingChainHead"`
+}
+
 type tkmPhoneBucketHashView struct {
 	Round hexutil.Uint64 `json:"round"`
 	Seed  common.Hash    `json:"seed"`
@@ -124,6 +140,19 @@ type tkmPhoneSignatureView struct {
 	Hash      common.Hash    `json:"hash"`
 	Signer    common.Address `json:"signer"`
 	Signature hexutil.Bytes  `json:"signature"`
+}
+
+func tkmPhoneStatus(ctx *cli.Context) error {
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	var status tkmPhoneStatusView
+	if err := client.CallContext(context.Background(), &status, "tkmphone_status"); err != nil {
+		return err
+	}
+	return tkmPhonePrintJSON(status)
 }
 
 func tkmPhonePrices(ctx *cli.Context) error {

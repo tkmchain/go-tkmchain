@@ -124,6 +124,7 @@ func TestConfigRules(t *testing.T) {
 	c := &ChainConfig{
 		LondonBlock:  new(big.Int),
 		ShanghaiTime: newUint64(500),
+		PhoneTime:    newUint64(600),
 	}
 	var stamp uint64
 	if r := c.Rules(big.NewInt(0), true, stamp); r.IsShanghai {
@@ -136,6 +137,41 @@ func TestConfigRules(t *testing.T) {
 	stamp = math.MaxInt64
 	if r := c.Rules(big.NewInt(0), true, stamp); !r.IsShanghai {
 		t.Errorf("expected %v to be shanghai", stamp)
+	}
+	stamp = 599
+	if r := c.Rules(big.NewInt(0), true, stamp); r.IsPhone {
+		t.Errorf("expected %v to not be phone", stamp)
+	}
+	stamp = 600
+	if r := c.Rules(big.NewInt(0), true, stamp); !r.IsPhone {
+		t.Errorf("expected %v to be phone", stamp)
+	}
+}
+
+func TestPhoneTimestampCompatError(t *testing.T) {
+	stored := &ChainConfig{LondonBlock: new(big.Int), PhoneTime: newUint64(600)}
+	updated := &ChainConfig{LondonBlock: new(big.Int), PhoneTime: newUint64(700)}
+	if err := stored.CheckCompatible(updated, 0, 599); err != nil {
+		t.Fatalf("pre-phone fork config should be compatible: %v", err)
+	}
+	err := stored.CheckCompatible(updated, 0, 650)
+	if err == nil || err.What != "Phone fork timestamp" {
+		t.Fatalf("expected phone timestamp compatibility error, got %v", err)
+	}
+}
+
+func TestDefaultPhoneForkTimestamp(t *testing.T) {
+	want := uint64(1784701800)
+	configs := map[string]*ChainConfig{
+		"randomx": RandomXChainConfig,
+		"mainnet": MainnetChainConfig,
+	}
+	for name, config := range configs {
+		t.Run(name, func(t *testing.T) {
+			if config.PhoneTime == nil || *config.PhoneTime != want {
+				t.Fatalf("PhoneTime = %v, want %d", config.PhoneTime, want)
+			}
+		})
 	}
 }
 

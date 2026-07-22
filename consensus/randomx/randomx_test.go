@@ -434,8 +434,8 @@ func TestCalcDifficultyAppliesFastEDAOnEgypt(t *testing.T) {
 	}
 
 	manySteps := rx.CalcDifficulty(chain, parent.Time+6*EgyptEDAThreshold, parent)
-	if manySteps.Cmp(MinDifficulty) != 0 {
-		t.Fatalf("many Egypt EDA steps difficulty = %v, want min %v", manySteps, MinDifficulty)
+	if manySteps.Cmp(EDAMinDifficulty) != 0 {
+		t.Fatalf("many Egypt EDA steps difficulty = %v, want EDA min %v", manySteps, EDAMinDifficulty)
 	}
 }
 
@@ -460,7 +460,69 @@ func TestCalcDifficultyAppliesMainnetEDAForSkippedIntervals(t *testing.T) {
 	}
 
 	longGap := rx.CalcDifficulty(chain, parent.Time+5*EDAThreshold, parent)
-	if want := MinDifficulty; longGap.Cmp(want) != 0 {
+	if want := big.NewInt(972); longGap.Cmp(want) != 0 {
 		t.Fatalf("long gap EDA difficulty = %v, want skipped interval reductions %v", longGap, want)
+	}
+
+	stalledAtMinimum := &types.Header{
+		Number:     big.NewInt(2),
+		Time:       2_000,
+		Difficulty: new(big.Int).Set(MinDifficulty),
+	}
+	oneHour := rx.CalcDifficulty(chain, stalledAtMinimum.Time+3600, stalledAtMinimum)
+	if oneHour.Cmp(MinDifficulty) >= 0 {
+		t.Fatalf("one-hour EDA difficulty = %v, want below normal min %v", oneHour, MinDifficulty)
+	}
+	if oneHour.Cmp(EDAMinDifficulty) < 0 {
+		t.Fatalf("one-hour EDA difficulty = %v, want at least EDA min %v", oneHour, EDAMinDifficulty)
+	}
+}
+
+func TestCalcDifficultyEDAFloorStaysAboveGenesis(t *testing.T) {
+	if EDAMinDifficulty.Cmp(GenesisDifficulty) <= 0 {
+		t.Fatalf("EDA minimum difficulty must stay above genesis difficulty: eda min %v genesis %v", EDAMinDifficulty, GenesisDifficulty)
+	}
+	if EDAMinDifficulty.Cmp(MinDifficulty) >= 0 {
+		t.Fatalf("EDA minimum difficulty must be below normal minimum: eda min %v normal min %v", EDAMinDifficulty, MinDifficulty)
+	}
+}
+
+func TestCalcDifficultyUsesPhoneRuleAfterFork(t *testing.T) {
+	phoneTime := uint64(1_000)
+	config := &params.ChainConfig{ChainID: big.NewInt(8979), LondonBlock: big.NewInt(0), EDATime: new(uint64), PhoneTime: &phoneTime}
+	chain := edaTestChain{config: config}
+	rx := NewFaker()
+	parent := &types.Header{Number: big.NewInt(10), Time: phoneTime, Difficulty: new(big.Int).Set(MinDifficulty)}
+
+	stalled := rx.CalcDifficulty(chain, parent.Time+3600, parent)
+	if stalled.Cmp(MinDifficulty) >= 0 {
+		t.Fatalf("phone difficulty after one-hour stall = %v, want below normal min %v", stalled, MinDifficulty)
+	}
+	if stalled.Cmp(EDAMinDifficulty) < 0 {
+		t.Fatalf("phone difficulty after one-hour stall = %v, want at least EDA min %v", stalled, EDAMinDifficulty)
+	}
+
+	fastParent := &types.Header{Number: big.NewInt(11), Time: phoneTime + 3600, Difficulty: stalled}
+	fast := rx.CalcDifficulty(chain, fastParent.Time+30, fastParent)
+	if fast.Cmp(stalled) <= 0 {
+		t.Fatalf("phone difficulty after fast block = %v, want above %v", fast, stalled)
+	}
+	maxRise := new(big.Int).Add(stalled, new(big.Int).Div(stalled, big.NewInt(4)))
+	if fast.Cmp(maxRise) > 0 {
+		t.Fatalf("phone difficulty rise = %v, want capped at %v", fast, maxRise)
+	}
+}
+
+func TestCalcDifficultyKeepsLegacyEDABeforePhoneFork(t *testing.T) {
+	phoneTime := uint64(10_000)
+	edaTime := uint64(0)
+	config := &params.ChainConfig{ChainID: big.NewInt(8979), LondonBlock: big.NewInt(0), EDATime: &edaTime, PhoneTime: &phoneTime}
+	chain := edaTestChain{config: config}
+	rx := NewFaker()
+	parent := &types.Header{Number: big.NewInt(10), Time: 1_000, Difficulty: big.NewInt(4096)}
+
+	prePhone := rx.CalcDifficulty(chain, parent.Time+EDAThreshold, parent)
+	if want := big.NewInt(3072); prePhone.Cmp(want) != 0 {
+		t.Fatalf("pre-phone EDA difficulty = %v, want legacy EDA %v", prePhone, want)
 	}
 }

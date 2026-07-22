@@ -402,6 +402,181 @@ func TestTkmPhoneSendsHelloToPersonBInDifferentLocation(t *testing.T) {
 	}
 }
 
+func TestTkmPhoneAPIEncryptedMessageAndVoiceCallFlow(t *testing.T) {
+	mainKingKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainKing := crypto.PubkeyToAddress(mainKingKey.PublicKey)
+	operator := crypto.PubkeyToAddress(operatorKey.PublicKey)
+	alice := crypto.PubkeyToAddress(aliceKey.PublicKey)
+	bob := crypto.PubkeyToAddress(bobKey.PublicKey)
+
+	svc := NewTkmPhoneService(nil, mainKing, big.NewInt(8979))
+	api := &TkmPhoneAPI{service: svc}
+
+	status := api.Status()
+	if !status.Active {
+		t.Fatalf("test service phone fork should be active, status=%#v", status)
+	}
+	seed := crypto.Keccak256Hash([]byte("api-message-call-buckets"))
+	bucketSig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, seed))
+	if buckets, err := api.GenerateBuckets(seed, bucketSig); err != nil || len(buckets) != int(tkmPhoneBucketBatchSize) {
+		t.Fatalf("generate buckets via API = %#v err=%v", buckets, err)
+	}
+	keyHash := crypto.Keccak256Hash([]byte("api-operator-key"))
+	paymentTx := crypto.Keccak256Hash([]byte("api-operator-payment"))
+	expiresAt := uint64(time.Now().Add(24 * time.Hour).Unix())
+	grantHash := api.OperatorGrantHash(operator, keyHash, hexutil.Uint64(expiresAt), paymentTx)
+	grantSig := signTkmPhoneDigest(t, mainKingKey, grantHash)
+	operatorGrant, err := api.RegisterOperatorKey(operator, keyHash, hexutil.Uint64(expiresAt), paymentTx, hexutil.Big(*tkmPhoneOperatorKeyPrice), grantSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openHash := api.OpenBucketHash(operator, operatorGrant.BucketID)
+	openSig := signTkmPhoneDigest(t, operatorKey, openHash)
+	inventory, err := api.OpenBucket(operator, operatorGrant.BucketID, openSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory) < 2 {
+		t.Fatalf("inventory has %d numbers, want at least 2", len(inventory))
+	}
+
+	aliceNumber, err := api.SellNumber(operator, inventory[0].Number, alice, hexutil.Big(*tkmPhoneDefaultNumberSalePrice), crypto.Keccak256Hash([]byte("api-alice-payment")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobNumber, err := api.SellNumber(operator, inventory[1].Number, bob, hexutil.Big(*tkmPhoneDefaultNumberSalePrice), crypto.Keccak256Hash([]byte("api-bob-payment")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alicePub := hexutil.Bytes("alice-api-device-public-key")
+	aliceDeviceHash := api.DeviceKeySigningHash(aliceNumber.Number, "alice-api-phone", alicePub)
+	aliceDeviceSig := signTkmPhoneDigest(t, aliceKey, aliceDeviceHash)
+	if device, err := api.RegisterDeviceKey(aliceNumber.Number, "alice-api-phone", alicePub, aliceDeviceSig); err != nil || !device.Active {
+		t.Fatalf("register alice device = %#v err=%v", device, err)
+	}
+	bobPub := hexutil.Bytes("bob-api-device-public-key")
+	bobDeviceHash := api.DeviceKeySigningHash(bobNumber.Number, "bob-api-phone", bobPub)
+	bobDeviceSig := signTkmPhoneDigest(t, bobKey, bobDeviceHash)
+	if device, err := api.RegisterDeviceKey(bobNumber.Number, "bob-api-phone", bobPub, bobDeviceSig); err != nil || !device.Active {
+		t.Fatalf("register bob device = %#v err=%v", device, err)
+	}
+
+	msgCipher, err := api.EncryptPayload(aliceNumber.Number, bobNumber.Number, hexutil.Bytes("api-msg-0001"), hexutil.Bytes("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(msgCipher.Ciphertext, []byte("hello")) {
+		t.Fatal("API message ciphertext stored plaintext")
+	}
+	msgHash := api.SendMessageSigningHash(aliceNumber.Number, bobNumber.Number, msgCipher.Nonce, msgCipher.Ciphertext)
+	msgSig := signTkmPhoneDigest(t, aliceKey, msgHash)
+	message, err := api.SendEncryptedMessage(aliceNumber.Number, bobNumber.Number, msgCipher.Ciphertext, msgCipher.Nonce, msgSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := api.DecryptPayload(aliceNumber.Number, bobNumber.Number, message.Nonce, message.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(opened) != "hello" {
+		t.Fatalf("decrypted API message = %q, want hello", opened)
+	}
+	inbox, err := api.MessagesForNumber(bobNumber.Number)
+	if err != nil || len(inbox) != 1 || inbox[0].ID != message.ID {
+		t.Fatalf("bob API inbox = %#v err=%v", inbox, err)
+	}
+	notifications, err := api.Notifications(bobNumber.Number)
+	if err != nil || len(notifications) != 1 || notifications[0].Kind != "message" {
+		t.Fatalf("bob API notifications = %#v err=%v", notifications, err)
+	}
+
+	offer, err := api.EncryptPayload(aliceNumber.Number, bobNumber.Number, hexutil.Bytes("api-offr0001"), hexutil.Bytes("webrtc-audio-offer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	callHash := api.StartCallSigningHash(aliceNumber.Number, bobNumber.Number, offer.Nonce, offer.Ciphertext)
+	callSig := signTkmPhoneDigest(t, aliceKey, callHash)
+	call, err := api.StartCall(aliceNumber.Number, bobNumber.Number, offer.Ciphertext, offer.Nonce, callSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.State != PhoneCallRinging || call.OfferRandomXHash == (common.Hash{}) {
+		t.Fatalf("started API call = %#v", call)
+	}
+	answer, err := api.EncryptPayload(bobNumber.Number, aliceNumber.Number, hexutil.Bytes("api-ansr0001"), hexutil.Bytes("webrtc-audio-answer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptHash, err := api.AcceptCallSigningHash(call.ID, answer.Nonce, answer.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptSig := signTkmPhoneDigest(t, bobKey, acceptHash)
+	call, err = api.AcceptCall(call.ID, answer.Ciphertext, answer.Nonce, acceptSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.State != PhoneCallActive || call.AnswerRandomXHash == (common.Hash{}) {
+		t.Fatalf("accepted API call = %#v", call)
+	}
+
+	candidate, err := api.EncryptPayload(aliceNumber.Number, bobNumber.Number, hexutil.Bytes("api-ice-0001"), hexutil.Bytes("candidate:alice udp 192.0.2.10:40000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateHash := api.CallCandidateSigningHash(call.ID, aliceNumber.Number, candidate.Nonce, candidate.Ciphertext)
+	candidateSig := signTkmPhoneDigest(t, aliceKey, candidateHash)
+	signal, err := api.AddCallCandidate(call.ID, aliceNumber.Number, candidate.Ciphertext, candidate.Nonce, candidateSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.From != aliceNumber.Number || signal.To != bobNumber.Number || signal.Kind != "ice" {
+		t.Fatalf("API call signal = %#v", signal)
+	}
+	listHash := api.CallCandidateListSigningHash(call.ID, bobNumber.Number)
+	listSig := signTkmPhoneDigest(t, bobKey, listHash)
+	signals, err := api.CallCandidates(call.ID, bobNumber.Number, listSig)
+	if err != nil || len(signals) != 1 || signals[0].CallID != signal.CallID || signals[0].RandomXHash != signal.RandomXHash {
+		t.Fatalf("API call candidates = %#v err=%v", signals, err)
+	}
+	if got, err := api.DecryptPayload(signal.From, signal.To, signal.Nonce, signal.Ciphertext); err != nil || string(got) != "candidate:alice udp 192.0.2.10:40000" {
+		t.Fatalf("decrypted API ICE candidate = %q err=%v", got, err)
+	}
+	calls, err := api.CallsForNumber(bobNumber.Number)
+	if err != nil || len(calls) != 1 || calls[0].ID != call.ID {
+		t.Fatalf("bob API calls = %#v err=%v", calls, err)
+	}
+	webrtc := api.WebRTCConfig()
+	if !webrtc.AudioOnly || !webrtc.RequiredEncryption || len(webrtc.ICEServers) == 0 || webrtc.MaxSignalBytes == 0 {
+		t.Fatalf("API WebRTC config = %#v", webrtc)
+	}
+	endHash := api.EndCallSigningHash(call.ID, aliceNumber.Number)
+	endSig := signTkmPhoneDigest(t, aliceKey, endHash)
+	call, err = api.EndCall(call.ID, aliceNumber.Number, endSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.State != PhoneCallEnded {
+		t.Fatalf("ended API call state = %s, want %s", call.State, PhoneCallEnded)
+	}
+}
+
 func TestTkmPhoneStatePersistsAcrossServiceRestart(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	svc, mainKing, operator, alice, mainKingD, operatorKey := newTestTkmPhoneService(t)

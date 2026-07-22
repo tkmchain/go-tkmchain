@@ -963,11 +963,21 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 	targetTime := uint64(TargetBlockTime)
 	currentDiff := new(big.Int).Set(parent.Difficulty)
 	minDiff := MinDifficulty
+	edaMinDiff := EDAMinDifficulty
 
 	if config := chainConfig(chain); config != nil {
+		if config.IsPhone(new(big.Int).Add(parent.Number, big.NewInt(1)), time) {
+			newDiff := calcPhoneDifficulty(currentDiff, diff, targetTime, edaMinDiff)
+			log.Info("Phone hardfork difficulty adjustment",
+				"old", currentDiff,
+				"new", newDiff,
+				"block_time", diff,
+				"target_time", targetTime)
+			return newDiff
+		}
 		if isEgyptConfig(config) && diff >= EgyptEDAThreshold {
 			reductions := diff / EgyptEDAThreshold
-			newDiff := applyEDAReductions(currentDiff, reductions, minDiff)
+			newDiff := applyEDAReductions(currentDiff, reductions, edaMinDiff)
 			log.Info("Egypt emergency difficulty adjustment applied",
 				"old", currentDiff,
 				"new", newDiff,
@@ -978,7 +988,7 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 		}
 		if config.IsEDA(new(big.Int).Add(parent.Number, big.NewInt(1)), time) && diff >= EDAThreshold {
 			skippedIntervals := diff / EDAThreshold
-			newDiff := applyMainnetEDAReductions(currentDiff, skippedIntervals, minDiff)
+			newDiff := applyMainnetEDAReductions(currentDiff, skippedIntervals, edaMinDiff)
 			log.Info("Emergency difficulty adjustment applied",
 				"old", currentDiff,
 				"new", newDiff,
@@ -1048,6 +1058,60 @@ func chainConfig(chain consensus.ChainHeaderReader) *params.ChainConfig {
 
 func isEgyptConfig(config *params.ChainConfig) bool {
 	return config != nil && config.ChainID != nil && config.ChainID.Cmp(params.EgyptChainConfig.ChainID) == 0
+}
+
+func calcPhoneDifficulty(currentDiff *big.Int, blockTime uint64, targetTime uint64, minDiff *big.Int) *big.Int {
+	if currentDiff == nil || currentDiff.Sign() <= 0 {
+		return new(big.Int).Set(minDiff)
+	}
+	if blockTime == 0 {
+		return new(big.Int).Set(currentDiff)
+	}
+	if targetTime == 0 {
+		targetTime = uint64(TargetBlockTime)
+	}
+
+	newDiff := new(big.Int).Set(currentDiff)
+	if blockTime > targetTime {
+		delta := blockTime - targetTime
+		adjustment := new(big.Int).Mul(currentDiff, new(big.Int).SetUint64(delta))
+		adjustment.Div(adjustment, new(big.Int).SetUint64(targetTime*8))
+		maxDrop := new(big.Int).Div(currentDiff, big.NewInt(4))
+		if adjustment.Cmp(maxDrop) > 0 {
+			adjustment.Set(maxDrop)
+		}
+		if adjustment.Sign() == 0 {
+			adjustment.SetInt64(1)
+		}
+		newDiff.Sub(newDiff, adjustment)
+
+		if blockTime >= EDAThreshold {
+			reductions := blockTime / EDAThreshold
+			if reductions > 1 {
+				newDiff = applyMainnetEDAReductions(newDiff, reductions-1, minDiff)
+			}
+		}
+	} else if blockTime < targetTime {
+		delta := targetTime - blockTime
+		adjustment := new(big.Int).Mul(currentDiff, new(big.Int).SetUint64(delta))
+		adjustment.Div(adjustment, new(big.Int).SetUint64(targetTime*4))
+		maxRise := new(big.Int).Div(currentDiff, big.NewInt(4))
+		if adjustment.Cmp(maxRise) > 0 {
+			adjustment.Set(maxRise)
+		}
+		if adjustment.Sign() == 0 {
+			adjustment.SetInt64(1)
+		}
+		newDiff.Add(newDiff, adjustment)
+	}
+
+	if newDiff.Cmp(minDiff) < 0 {
+		return new(big.Int).Set(minDiff)
+	}
+	if newDiff.Cmp(MaxDifficulty) > 0 {
+		return new(big.Int).Set(MaxDifficulty)
+	}
+	return newDiff
 }
 
 func applyMainnetEDAReductions(currentDiff *big.Int, reductions uint64, minDiff *big.Int) *big.Int {

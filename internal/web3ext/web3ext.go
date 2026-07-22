@@ -80,6 +80,11 @@ web3._extend({
 	property: 'tkmphone',
 	methods: [
 		new web3._extend.Method({
+			name: 'status',
+			call: 'tkmphone_status',
+			params: 0
+		}),
+		new web3._extend.Method({
 			name: 'operatorKeyPrice',
 			call: 'tkmphone_operatorKeyPrice',
 			params: 0
@@ -180,6 +185,11 @@ web3._extend({
 			params: 4
 		}),
 		new web3._extend.Method({
+			name: 'deviceKeySigningHash',
+			call: 'tkmphone_deviceKeySigningHash',
+			params: 3
+		}),
+		new web3._extend.Method({
 			name: 'deviceKeys',
 			call: 'tkmphone_deviceKeys',
 			params: 1
@@ -198,6 +208,11 @@ web3._extend({
 			name: 'transferNumber',
 			call: 'tkmphone_transferNumber',
 			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'transferNumberSigningHash',
+			call: 'tkmphone_transferNumberSigningHash',
+			params: 2
 		}),
 		new web3._extend.Method({
 			name: 'revokeNumber',

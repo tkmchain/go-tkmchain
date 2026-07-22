@@ -77,6 +77,7 @@ var RandomXChainConfig = &ChainConfig{
 	UBTTime:                      nil,
 	EDATime:                      newUint64(0),
 	KyotoTime:                    newUint64(1784115119),
+	PhoneTime:                    newUint64(1784701800),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
@@ -149,6 +150,7 @@ type ChainConfig struct {
 	UBTTime       *uint64 `json:"ubtTime,omitempty"`
 	EDATime       *uint64 `json:"edaTime,omitempty"`
 	KyotoTime     *uint64 `json:"kyotoTime,omitempty"`
+	PhoneTime     *uint64 `json:"phoneTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -271,6 +273,7 @@ var MainnetChainConfig = &ChainConfig{
 	UBTTime:                      nil,
 	EDATime:                      newUint64(0),
 	KyotoTime:                    newUint64(1784115119),
+	PhoneTime:                    newUint64(1784701800),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
@@ -545,6 +548,11 @@ func (c *ChainConfig) IsKyoto(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.KyotoTime, time)
 }
 
+// IsPhone returns true if the TKM Phone hardfork is active.
+func (c *ChainConfig) IsPhone(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.PhoneTime, time)
+}
+
 // BaseFeeChangeDenominator bounds the amount the base fee can change between blocks.
 func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
 	return DefaultBaseFeeChangeDenominator
@@ -565,7 +573,7 @@ type Rules struct {
 	IsShanghai, IsCancun, IsPrague, IsOsaka                 bool
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
 	IsAmsterdam, IsUBT                                      bool
-	IsKyoto                                                 bool
+	IsKyoto, IsPhone                                        bool
 	IsEIP2929, IsEIP4762                                    bool
 	IsMerge                                                 bool // Always false for RandomX
 }
@@ -602,6 +610,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsAmsterdam:      c.IsAmsterdam(num, timestamp),
 		IsUBT:            c.IsUBT(num, timestamp),
 		IsKyoto:          c.IsKyoto(num, timestamp),
+		IsPhone:          c.IsPhone(num, timestamp),
 		IsEIP2929:        isEIP2929,
 		IsEIP4762:        isEIP4762,
 		IsMerge:          false, // RandomX chains always use proof-of-work consensus.
@@ -669,6 +678,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"ubtTime", c.UBTTime},
 		{"edaTime", c.EDATime},
 		{"kyotoTime", c.KyotoTime},
+		{"phoneTime", c.PhoneTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -850,6 +860,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.KyotoTime, newcfg.KyotoTime, headTimestamp) {
 		return newTimestampCompatError("Kyoto fork timestamp", c.KyotoTime, newcfg.KyotoTime)
+	}
+	if isForkTimestampIncompatible(c.PhoneTime, newcfg.PhoneTime, headTimestamp) {
+		return newTimestampCompatError("Phone fork timestamp", c.PhoneTime, newcfg.PhoneTime)
 	}
 	if c.MainKingAddress != newcfg.MainKingAddress {
 		return &ConfigCompatError{What: "main king address", RewindToBlock: 0}

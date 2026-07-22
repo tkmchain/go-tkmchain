@@ -45,6 +45,15 @@ type TkmPhoneAPI struct {
 	service *TkmPhoneService
 }
 
+type PhoneForkStatus struct {
+	Active              bool           `json:"active"`
+	ActivationTimestamp hexutil.Uint64 `json:"activationTimestamp"`
+	HeadNumber          hexutil.Uint64 `json:"headNumber"`
+	HeadTimestamp       hexutil.Uint64 `json:"headTimestamp"`
+	CurrentTimestamp    hexutil.Uint64 `json:"currentTimestamp"`
+	UsingChainHead      bool           `json:"usingChainHead"`
+}
+
 type TkmPhoneService struct {
 	lock           sync.RWMutex
 	eth            *Ethereum
@@ -361,6 +370,10 @@ func (api *TkmPhoneAPI) NumberSalePrice() *hexutil.Big {
 	return (*hexutil.Big)(new(big.Int).Set(tkmPhoneDefaultNumberSalePrice))
 }
 
+func (api *TkmPhoneAPI) Status() PhoneForkStatus {
+	return api.service.Status()
+}
+
 func (api *TkmPhoneAPI) BucketGenerationHash(round hexutil.Uint64, seed common.Hash) common.Hash {
 	return api.service.bucketGenerationHash(uint64(round), seed)
 }
@@ -620,6 +633,44 @@ func (s *Ethereum) broadcastTkmPhonePropagationExcept(prop PhonePropagation, ski
 	}
 }
 
+func (svc *TkmPhoneService) Status() PhoneForkStatus {
+	status := PhoneForkStatus{CurrentTimestamp: hexutil.Uint64(time.Now().Unix())}
+	if svc == nil || svc.eth == nil || svc.eth.blockchain == nil || svc.eth.blockchain.Config() == nil {
+		status.Active = true
+		return status
+	}
+	cfg := svc.eth.blockchain.Config()
+	if cfg.PhoneTime != nil {
+		status.ActivationTimestamp = hexutil.Uint64(*cfg.PhoneTime)
+	}
+	if head := svc.eth.blockchain.CurrentHeader(); head != nil {
+		status.HeadNumber = hexutil.Uint64(head.Number.Uint64())
+		status.HeadTimestamp = hexutil.Uint64(head.Time)
+		status.UsingChainHead = true
+		status.Active = cfg.IsPhone(head.Number, head.Time)
+		return status
+	}
+	status.Active = cfg.IsPhone(big.NewInt(0), uint64(status.CurrentTimestamp))
+	return status
+}
+
+func (svc *TkmPhoneService) requirePhoneForkActive() error {
+	if svc == nil {
+		return errors.New("tkm phone service is not available")
+	}
+	status := svc.Status()
+	if status.Active {
+		return nil
+	}
+	if status.ActivationTimestamp == 0 {
+		return errors.New("tkm phone hardfork is not configured")
+	}
+	if status.UsingChainHead {
+		return fmt.Errorf("tkm phone hardfork is not active yet: head timestamp %d, activation timestamp %d", status.HeadTimestamp, status.ActivationTimestamp)
+	}
+	return fmt.Errorf("tkm phone hardfork is not active yet: current timestamp %d, activation timestamp %d", status.CurrentTimestamp, status.ActivationTimestamp)
+}
+
 func (s *Ethereum) noteTkmPhonePropagationFromPeer(packet ethproto.TkmPhonePropagationPacket, peerID string) {
 	if s == nil {
 		return
@@ -640,6 +691,9 @@ func (s *Ethereum) noteTkmPhonePropagationFromPeer(packet ethproto.TkmPhonePropa
 }
 
 func (svc *TkmPhoneService) RegisterOperatorKey(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash, paid *big.Int, signature []byte) (PhoneOperatorKey, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneOperatorKey{}, err
+	}
 	if operator == (common.Address{}) {
 		return PhoneOperatorKey{}, errors.New("operator address is required")
 	}
@@ -723,6 +777,9 @@ func (svc *TkmPhoneService) assignNextBucketLocked(operator common.Address, paym
 }
 
 func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, signature []byte) ([]PhoneNumberBucket, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return nil, err
+	}
 	if seed == (common.Hash{}) {
 		return nil, errors.New("bucket seed is required")
 	}
@@ -776,6 +833,9 @@ func (svc *TkmPhoneService) NextBucketRound() uint64 {
 }
 
 func (svc *TkmPhoneService) OpenBucket(operator common.Address, bucketID uint64, signature []byte) ([]PhoneNumber, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return nil, err
+	}
 	if operator == (common.Address{}) {
 		return nil, errors.New("operator address is required")
 	}
@@ -828,6 +888,9 @@ func (svc *TkmPhoneService) operatorInventoryForTest(operator common.Address) ([
 }
 
 func (svc *TkmPhoneService) SellNumber(operator common.Address, number string, buyer common.Address, price *big.Int, paymentTx common.Hash) (PhoneNumber, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneNumber{}, err
+	}
 	if buyer == (common.Address{}) {
 		return PhoneNumber{}, errors.New("buyer address is required")
 	}
@@ -928,6 +991,9 @@ func (svc *TkmPhoneService) DecryptPayload(from string, to string, nonce []byte,
 }
 
 func (svc *TkmPhoneService) SendEncryptedMessage(from string, to string, ciphertext []byte, nonce []byte) (PhoneMessage, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneMessage{}, err
+	}
 	if len(ciphertext) == 0 {
 		return PhoneMessage{}, errors.New("ciphertext is required")
 	}
@@ -959,6 +1025,9 @@ func (svc *TkmPhoneService) SendEncryptedMessage(from string, to string, ciphert
 }
 
 func (svc *TkmPhoneService) StartCall(from string, to string, offerCiphertext []byte, offerNonce []byte) (PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCall{}, err
+	}
 	if len(offerCiphertext) == 0 || len(offerNonce) == 0 {
 		return PhoneCall{}, errors.New("encrypted call offer and nonce are required")
 	}
@@ -987,6 +1056,9 @@ func (svc *TkmPhoneService) StartCall(from string, to string, offerCiphertext []
 }
 
 func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answerNonce []byte) (PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCall{}, err
+	}
 	if len(answerCiphertext) == 0 || len(answerNonce) == 0 {
 		return PhoneCall{}, errors.New("encrypted call answer and nonce are required")
 	}
@@ -1018,6 +1090,9 @@ func (svc *TkmPhoneService) AcceptCall(id uint64, answerCiphertext []byte, answe
 }
 
 func (svc *TkmPhoneService) RejectCall(id uint64, number string, reason string) (PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCall{}, err
+	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	call, ok := svc.calls[id]
@@ -1046,6 +1121,9 @@ func (svc *TkmPhoneService) RejectCall(id uint64, number string, reason string) 
 }
 
 func (svc *TkmPhoneService) ExpireRingingCalls(timeoutSeconds uint64) ([]PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return nil, err
+	}
 	if timeoutSeconds == 0 {
 		timeoutSeconds = 60
 	}
@@ -1095,6 +1173,9 @@ func (svc *TkmPhoneService) WebRTCConfig() PhoneWebRTCConfig {
 }
 
 func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCall{}, err
+	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	call, ok := svc.calls[id]
@@ -1118,6 +1199,9 @@ func (svc *TkmPhoneService) EndCall(id uint64) (PhoneCall, error) {
 }
 
 func (svc *TkmPhoneService) AddCallCandidate(id uint64, number string, ciphertext []byte, nonce []byte) (PhoneCallSignal, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCallSignal{}, err
+	}
 	if len(ciphertext) == 0 || len(nonce) == 0 {
 		return PhoneCallSignal{}, errors.New("encrypted call candidate and nonce are required")
 	}
@@ -1350,6 +1434,9 @@ func (svc *TkmPhoneService) RegisteredNumbers() []RegisteredPhoneNumber {
 }
 
 func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publicKey []byte, signature []byte) (PhoneDeviceKey, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneDeviceKey{}, err
+	}
 	if device == "" {
 		return PhoneDeviceKey{}, errors.New("device is required")
 	}
@@ -1372,6 +1459,9 @@ func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publ
 }
 
 func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Address, signature []byte) (PhoneNumber, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneNumber{}, err
+	}
 	if newOwner == (common.Address{}) {
 		return PhoneNumber{}, errors.New("new owner is required")
 	}
@@ -1395,6 +1485,9 @@ func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Addres
 }
 
 func (svc *TkmPhoneService) RevokeNumber(number string, signature []byte) (PhoneNumber, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneNumber{}, err
+	}
 	payload := svc.randomXServiceHash("revoke-number-payload", []byte(number))
 	if err := svc.verifyNumberOwnerSignature(number, "revoke-number", payload, signature); err != nil {
 		return PhoneNumber{}, err
@@ -1415,6 +1508,9 @@ func (svc *TkmPhoneService) RevokeNumber(number string, signature []byte) (Phone
 }
 
 func (svc *TkmPhoneService) AckMessage(id uint64, status PhoneMessageStatus, signature []byte) (PhoneMessage, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneMessage{}, err
+	}
 	if status != PhoneMessageDelivered && status != PhoneMessageRead {
 		return PhoneMessage{}, errors.New("invalid message status")
 	}
@@ -1457,6 +1553,9 @@ func (svc *TkmPhoneService) Notifications(number string) ([]PhoneNotification, e
 }
 
 func (svc *TkmPhoneService) Prune(retentionSeconds uint64, maxMessages int, maxCalls int) error {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return err
+	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	cutoff := uint64(0)
@@ -1487,6 +1586,9 @@ func (svc *TkmPhoneService) Prune(retentionSeconds uint64, maxMessages int, maxC
 }
 
 func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to string, ciphertext []byte, nonce []byte, expiresAt uint64, signature []byte) (PhoneMessage, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneMessage{}, err
+	}
 	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
 	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
 		return PhoneMessage{}, err
@@ -1505,6 +1607,9 @@ func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to strin
 	return msg, svc.saveLocked()
 }
 func (svc *TkmPhoneService) StartCallWithExpiry(from string, to string, offerCiphertext []byte, offerNonce []byte, expiresAt uint64, signature []byte) (PhoneCall, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneCall{}, err
+	}
 	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
 	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
 		return PhoneCall{}, err
@@ -1523,6 +1628,9 @@ func (svc *TkmPhoneService) StartCallWithExpiry(from string, to string, offerCip
 	return call, svc.saveLocked()
 }
 func (svc *TkmPhoneService) EncryptPayloadForDevices(from string, to string, nonce []byte, plaintext []byte) ([]PhoneDeviceEnvelope, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return nil, err
+	}
 	if err := svc.requireNumbers(from, to); err != nil {
 		return nil, err
 	}
@@ -1553,6 +1661,9 @@ func (svc *TkmPhoneService) ListOperators() []PhoneOperatorKey {
 	return out
 }
 func (svc *TkmPhoneService) ReportOperator(operator common.Address, reporter string, reason string, evidence common.Hash, signature []byte) (PhoneFraudReport, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneFraudReport{}, err
+	}
 	payload := svc.randomXServiceHash("report-operator-payload", operator.Bytes(), []byte(reporter), []byte(reason), evidence.Bytes())
 	if err := svc.verifyNumberOwnerSignature(reporter, "report-operator", payload, signature); err != nil {
 		return PhoneFraudReport{}, err
@@ -1566,6 +1677,9 @@ func (svc *TkmPhoneService) ReportOperator(operator common.Address, reporter str
 	return r, svc.saveLocked()
 }
 func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ciphertext []byte, nonce []byte, signature []byte) (PhoneContact, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneContact{}, err
+	}
 	payload := svc.randomXServiceHash("add-contact-payload", []byte(ownerNumber), []byte(peerNumber), nonce, ciphertext)
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "add-contact", payload, signature); err != nil {
 		return PhoneContact{}, err
@@ -1586,6 +1700,9 @@ func (svc *TkmPhoneService) Contacts(number string) ([]PhoneContact, error) {
 	return append([]PhoneContact(nil), svc.contacts[number]...), nil
 }
 func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return err
+	}
 	payload := svc.randomXServiceHash("block-number-payload", []byte(ownerNumber), []byte(blockedNumber))
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "block-number", payload, signature); err != nil {
 		return err
@@ -1602,6 +1719,9 @@ func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return err
+	}
 	payload := svc.randomXServiceHash("unblock-number-payload", []byte(ownerNumber), []byte(blockedNumber))
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "unblock-number", payload, signature); err != nil {
 		return err
@@ -1614,6 +1734,9 @@ func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber stri
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Address, signature []byte) error {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return err
+	}
 	payload := svc.randomXServiceHash("register-recovery-payload", []byte(number), recovery.Bytes())
 	if err := svc.verifyNumberOwnerSignature(number, "register-recovery", payload, signature); err != nil {
 		return err
@@ -1627,6 +1750,9 @@ func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Addr
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address, signature []byte) (PhoneNumber, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneNumber{}, err
+	}
 	svc.lock.RLock()
 	recovery := svc.recovery[number]
 	svc.lock.RUnlock()
@@ -1666,6 +1792,9 @@ func (svc *TkmPhoneService) hasPropagation(id hexutil.Uint64, hash common.Hash) 
 }
 
 func (svc *TkmPhoneService) ImportPropagation(prop PhonePropagation) error {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return err
+	}
 	if uint64(prop.ID) == 0 {
 		return errors.New("propagation id is required")
 	}

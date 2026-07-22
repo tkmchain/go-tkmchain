@@ -42,6 +42,8 @@ Pool software should distribute only the miner share. The Main King and Rotating
 ## TKM Phone Service
 
 - Added native `tkmphone` RPC and web3 extension support for encrypted number-based messaging and call sessions.
+- Added `PhoneTime` hardfork activation at timestamp `1784701800` (`2026-07-22T06:30:00Z`, requested 12:00pm local activation). TKM Phone write RPCs are rejected before this timestamp so historical state is not reinterpreted by phone registration, bucket, device-key, message, call, contact, recovery, report, or propagation rules. Added `tkmphone_status` for activation inspection.
+- Added a permanent post-PhoneTime difficulty rule: deterministic integer adjustment, 25% per-block rise/drop caps, skipped-interval reductions for long stalls, and an EDA floor above genesis difficulty so the chain can recover without falling back to difficulty `3`.
 - Operator bucket keys require a `25000 TKM` payment record and a Main King signed operator grant. The `25000 TKM` bucket price is 5 numbers at `5000 TKM` each. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `25000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 5 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 5 active numbers.
 - Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
 - Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
@@ -62,18 +64,18 @@ Generate an owner-signed action digest before sending a message:
 ```javascript
 const digest = web3.tkmphone.ownerActionHash(fromNumber, "send-message", payloadHex)
 const signature = await wallet.signMessage(web3.utils.hexToBytes(digest))
-const msg = web3.tkmphone.sendEncryptedMessage(fromNumber, toNumber, nonceHex, ciphertextHex, signature)
+const msg = web3.tkmphone.sendEncryptedMessage(fromNumber, toNumber, ciphertextHex, nonceHex, signature)
 ```
 
 Send an expiring message and watch events over WebSocket RPC:
 
 ```javascript
 const expiresAt = Math.floor(Date.now() / 1000) + 3600
-web3.tkmphone.sendEncryptedMessageWithExpiry(fromNumber, toNumber, nonceHex, ciphertextHex, signature, expiresAt)
+web3.tkmphone.sendEncryptedMessageWithExpiry(fromNumber, toNumber, ciphertextHex, nonceHex, expiresAt, signature)
 web3.currentProvider.send({jsonrpc: "2.0", id: 1, method: "tkmphone_newMessages", params: []})
 ```
 
-Use the added management APIs from web3 as `bucketPrice`, `operatorKeyPrice`, `mainKingNumberPrice`, `numberSalePrice`, `nextBucketRound`, `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `openBucketHash`, `openBucket`, `operatorInventory`, `sellNumber`, `webRTCConfig`, `rejectCall`, `expireRingingCalls`, `callCandidateHash`, `callCandidateListHash`, `addCallCandidate`, `callCandidates`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
+Use the added management APIs from web3 as `status`, `bucketPrice`, `operatorKeyPrice`, `mainKingNumberPrice`, `numberSalePrice`, `nextBucketRound`, `bucketGenerationHash`, `generateBuckets`, `buckets`, `listOperators`, `openBucketHash`, `openBucket`, `operatorInventory`, `sellNumber`, `deviceKeySigningHash`, `transferNumberSigningHash`, `webRTCConfig`, `rejectCall`, `expireRingingCalls`, `callCandidateHash`, `callCandidateSigningHash`, `callCandidateListHash`, `callCandidateListSigningHash`, `addCallCandidate`, `callCandidates`, `reportOperator`, `addContact`, `contacts`, `blockNumber`, `unblockNumber`, `registerRecovery`, `recoverNumber`, `propagationQueue`, and `importPropagation`.
 
 ### TKM Phone CLI Examples
 
@@ -99,6 +101,22 @@ Operators can open only their assigned bucket; if the operator account is unlock
 ```bash
 ./build/bin/gtkm tkmphone open-bucket --operator 0xOperator --bucket 1
 ```
+
+### TKM Phone Tests
+
+Run the focused phone regression suite with:
+
+```bash
+go test ./eth -run TkmPhone -count=1
+```
+
+The client-facing Web3/RPC message and voice-call path is covered directly by:
+
+```bash
+go test ./eth -run TestTkmPhoneAPIEncryptedMessageAndVoiceCallFlow -count=1 -v
+```
+
+This test exercises MainKing bucket generation, operator bucket opening, number sale, device-key registration, encrypted message delivery, private inbox/notification lookup, encrypted WebRTC offer/answer signaling, ICE candidate exchange, call listing, WebRTC config checks, and signed call termination.
 
 ## Mining Notes
 

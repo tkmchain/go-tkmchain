@@ -2,6 +2,30 @@
 
 TKM Phone is the phone-number, encrypted messaging, and WebRTC call-signaling service exposed by `gtkm` through the `tkmphone` JSON-RPC namespace. It is designed for the phone marketplace web app, but the state lives in `gtkm` so other Web3 clients can inspect and use registered numbers.
 
+## Hardfork Activation
+
+TKM Phone write features are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784701800`, which is `2026-07-22T06:30:00Z` and corresponds to the requested 12:00pm local activation time.
+
+Before `PhoneTime`, read-only helper RPCs such as `tkmphone_status`, prices, signing hashes, bucket listing, registered-number inspection, and WebRTC configuration remain available. State-changing phone RPCs reject with `tkm phone hardfork is not active yet`, including bucket generation, operator registration, bucket opening, number sale/transfer/revocation, device-key registration, encrypted messages, call signaling, contacts, blocking, recovery, pruning, fraud reports, and propagation import.
+
+This keeps historical blocks and older node state from being reinterpreted by the phone feature set while letting upgraded nodes activate together at the scheduled fork time. When attached to a chain, write RPCs use the canonical head timestamp to decide activation.
+
+Check activation with:
+
+```sh
+./build/bin/gtkm tkmphone status
+```
+
+or over HTTP:
+
+```sh
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tkmphone_status","params":[]}'
+```
+
+Web3 clients can also call `web3.tkmphone.status()`.
+
 ## Enable RPC
 
 Run a node with the `tkmphone` and `tkm` APIs enabled. The `tkm` namespace is needed by the web app for passphrase signing and wallet transactions.
@@ -71,6 +95,8 @@ The Web3 extension also exposes:
 - `web3.tkmphone.registeredNumber(number)`
 - `web3.tkmphone.registeredNumbers()`
 - `web3.tkmphone.deviceKeys(number)`
+- `web3.tkmphone.deviceKeySigningHash(number, device, publicKey)`
+- `web3.tkmphone.transferNumberSigningHash(number, newOwner)`
 
 ## SIM Slots and Import
 
@@ -119,4 +145,12 @@ The phone service is covered by focused tests:
 go test ./eth -run TkmPhone -count=1
 ```
 
-These tests cover bucket issuance, number sales, messages, calls, registered device keys, registered-number inspection, persistence, propagation, and signed action checks.
+For the public Web3/RPC message and call path, run:
+
+```sh
+go test ./eth -run TestTkmPhoneAPIEncryptedMessageAndVoiceCallFlow -count=1 -v
+```
+
+That regression test covers the complete client-facing flow: MainKing bucket generation, operator registration, bucket opening, number sales, device-key registration, encrypted `hello` delivery to the recipient inbox, notification creation, encrypted WebRTC offer/answer signaling, ICE candidate exchange, call listing, WebRTC config validation, and signed call termination.
+
+The broader `TkmPhone` test group also covers bucket issuance, number sales, messages, calls, registered device keys, registered-number inspection, persistence, propagation, and signed action checks.
