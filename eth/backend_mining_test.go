@@ -29,13 +29,13 @@ func TestReadyToMineEgyptDoesNotWaitForPeers(t *testing.T) {
 	}
 }
 
-func TestReadyToMineOtherRandomXNetworksWaitForPeers(t *testing.T) {
+func TestReadyToMineOtherRandomXNetworksRequireSyncService(t *testing.T) {
 	eth := newReadyToMineTestEthereum(t, params.TestChainConfig)
 	ready, reason, _, _ := eth.readyToMine()
 	if ready {
-		t.Fatal("non-Egypt readyToMine = true without peers")
+		t.Fatal("non-Egypt readyToMine = true without sync service")
 	}
-	if reason != "waiting for peers" {
-		t.Fatalf("non-Egypt readyToMine reason = %q, want waiting for peers", reason)
+	if reason != "sync service unavailable" {
+		t.Fatalf("non-Egypt readyToMine reason = %q, want sync service unavailable", reason)
 	}
 }

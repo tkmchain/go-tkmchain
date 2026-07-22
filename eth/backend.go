@@ -743,7 +743,18 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 		return true, "", localHeight, localHeight
 	}
 
-	if s.handler == nil || s.handler.peers.len() == 0 {
+	if s.handler == nil || s.handler.downloader == nil {
+		return false, "sync service unavailable", localHeight, localHeight
+	}
+	if s.handler.downloader.Synchronising() {
+		progress := s.handler.downloader.Progress()
+		highest := progress.HighestBlock
+		if highest < localHeight {
+			highest = localHeight
+		}
+		return false, "sync in progress before mining", localHeight, highest
+	}
+	if s.handler.peers.len() == 0 {
 		return false, "waiting for peers", localHeight, localHeight
 	}
 
@@ -762,9 +773,15 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 	if !checked {
 		return false, "waiting for peer head check", localHeight, highest
 	}
-
 	if highest > localHeight {
 		return false, "syncing before mining", localHeight, highest
+	}
+	if !s.handler.synced.Load() {
+		return false, "waiting for sync completion before mining", localHeight, highest
+	}
+	progress := s.handler.downloader.Progress()
+	if progress.HighestBlock > localHeight {
+		return false, "downloader target ahead before mining", localHeight, progress.HighestBlock
 	}
 	return true, "", localHeight, highest
 }

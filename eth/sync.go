@@ -63,8 +63,11 @@ func (h *handler) synchroniseWithBestPeer() {
 		}
 	}
 	if best == nil {
-		if len(peers) > 0 {
-			h.enableSyncedFeatures()
+		for _, peer := range peers {
+			if br := peer.BlockRange(); br != nil && br.LatestBlock <= local.Number.Uint64() {
+				h.enableSyncedFeatures()
+				return
+			}
 		}
 		return
 	}
