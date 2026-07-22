@@ -84,6 +84,124 @@ curl -s http://127.0.0.1:8545 \
 
 ---
 
+## TKM Phone Numbers, Messages, and Calls
+
+TKM Phone is a network-native phone-number system built into `gtkm`. It adds MainKing-signed phone-number buckets, operator sales, registered SIM/device keys, encrypted number-to-number messages, and WebRTC voice-call signaling through the `tkmphone` RPC namespace.
+
+Public apps:
+
+| App | URL | Purpose |
+|-----|-----|---------|
+| Phone market | https://phone.tkmchain.site | Buy buckets, open operator inventory, sell numbers, register SIM slots, send messages, and start calls. |
+| Explorer | https://block.tkmchain.site | Inspect phone buckets, registered numbers, transactions, blocks, and addresses. |
+| Wallet | https://wallet.tkmchain.site | Create wallets and send TKM payments through the public RPC. |
+| Swap | https://swap.tkmchain.site | Use the ANTD/TKM swap surface. |
+
+### Phone Hardfork
+
+Phone write operations are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784709000` (`2026-07-22T08:30:00Z`). Before activation, read-only helpers such as status, price, bucket listing, signing-hash, and WebRTC configuration calls are available, but state-changing phone calls are rejected.
+
+Check activation:
+
+```shell
+./build/bin/gtkm tkmphone status
+
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tkmphone_status","params":[]}'
+```
+
+### Bucket Economics
+
+- MainKing creates phone numbers only as signed buckets.
+- One bucket contains **5 phone numbers**.
+- One number price is **5,000 TKM**, so one bucket costs **25,000 TKM**.
+- MainKing can publish only **5 unsold buckets** at a time.
+- MainKing can generate the next 5-bucket round only after all current buckets are bought.
+- Operators buy a bucket from MainKing, open it, and receive 5 numbers.
+- Operators can sell one number to a buyer for **10,000 TKM**.
+- Bucket creation, operator purchase, bucket opening, and number sale all carry transaction/provenance hashes.
+- Forged numbers are rejected unless they come from a MainKing-signed bucket and belong to the selling operator.
+
+### MainKing Bucket Generation
+
+MainKing bucket generation should be done from a private `gtkm` node. Do not put the MainKing password or key inside a public website. A hosted phone marketplace should display public bucket/order state and let MainKing approve operator purchases from the private node.
+
+The `--seed` value is a fresh 32-byte random value for the bucket round. It is not the RandomX mining seed.
+
+```shell
+SEED=0x$(openssl rand -hex 32)
+CREATION_TX=0xYourMinedMainKingCreationTransactionHash
+
+./build/bin/gtkm tkmphone prices
+./build/bin/gtkm tkmphone next-round
+./build/bin/gtkm tkmphone bucket-hash --seed $SEED --creation-tx $CREATION_TX
+./build/bin/gtkm tkmphone generate-buckets \
+  --seed $SEED \
+  --creation-tx $CREATION_TX \
+  --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+./build/bin/gtkm tkmphone buckets
+```
+
+For offline signing, sign the digest returned by `bucket-hash` and pass it explicitly:
+
+```shell
+./build/bin/gtkm tkmphone generate-buckets \
+  --seed $SEED \
+  --creation-tx $CREATION_TX \
+  --signature 0xMainKingSignature
+```
+
+### RPC and Web3
+
+Enable the phone RPC namespace on nodes that serve phone apps:
+
+```shell
+./build/bin/gtkm \
+  --http --http.addr 0.0.0.0 --http.port 8545 \
+  --http.api eth,net,web3,tkm,tkmphone,mainking,miner \
+  --http.vhosts '*' --http.corsdomain '*'
+```
+
+Do not expose password-capable RPC methods to untrusted networks.
+
+Common phone RPC methods:
+
+| Method | Purpose |
+|--------|---------|
+| `tkmphone_status` | Returns phone fork activation and head status. |
+| `tkmphone_buckets` | Lists generated buckets and assignment/payment metadata. |
+| `tkmphone_listOperators` | Lists approved operators and bucket assignments. |
+| `tkmphone_openBucket` | Lets an approved operator open their assigned bucket. |
+| `tkmphone_sellNumber` | Transfers a sold number after canonical buyer payment validation. |
+| `tkmphone_registeredNumbers` | Lists numbers with active registered device keys. |
+| `tkmphone_registerDeviceKey` | Registers a SIM/device key for an owned number. |
+| `tkmphone_sendEncryptedMessage` | Stores and propagates an encrypted message. |
+| `tkmphone_startCall`, `tkmphone_acceptCall`, `tkmphone_endCall` | Store and propagate signed WebRTC call signaling. |
+| `tkmphone_webRTCConfig` | Returns audio-only WebRTC signaling limits and STUN hints. |
+
+The Web3 extension exposes the same workflow through `web3.tkmphone.*`, including bucket status, operator inventory, registered-number inspection, device-key signing hashes, encrypted messages, call signaling, contacts, blocked numbers, recovery, reports, propagation queue, and import propagation.
+
+### SIM Registration and Privacy
+
+A number can send messages or calls only after its owner registers an active device key. Website SIM slots are local client profiles for owned numbers; the chain validates the registered number, owner signature, and active device key before accepting sensitive actions.
+
+The message and call payloads stored by `gtkm` are encrypted. Inbox, outbox, notification, and call views should be shown only to the owning user or selected SIM slot in client applications.
+
+### State Persistence
+
+`gtkm` persists authoritative phone state in the node database and writes a readable mirror under the instance datadir:
+
+```text
+~/.tkmchain/gtkm/phone/state.json
+```
+
+The mirror includes buckets, bucket `creationTx`, operator `paymentTx`, generated numbers, number `salePaymentTx`, messages, calls, device keys, notifications, contacts, recovery records, reports, propagation records, and counters.
+
+For the full operational guide, see [docs/tkmphone.md](./docs/tkmphone.md). Release-level hardfork notes are in [docs/kyoto-release.md](./docs/kyoto-release.md).
+
+---
+
 ## ⛏️ RandomX (RX) Mining
 
 Tkmchain uses **RandomX PoW** - an ASIC-resistant mining algorithm optimized for CPUs:
