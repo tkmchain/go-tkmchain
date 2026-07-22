@@ -3,8 +3,11 @@ package eth
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,12 +60,13 @@ func generateTestTkmPhoneBuckets(t *testing.T, svc *TkmPhoneService, mainKingD *
 		t.Fatal(err)
 	}
 	seed := crypto.Keccak256Hash([]byte(seedLabel))
+	creationTx := crypto.Keccak256Hash([]byte("bucket-creation-" + seedLabel))
 	round := svc.nextBucket/tkmPhoneBucketBatchSize + 1
-	sig, err := crypto.Sign(svc.bucketGenerationHash(round, seed).Bytes(), key)
+	sig, err := crypto.Sign(svc.bucketGenerationHash(round, seed, creationTx).Bytes(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buckets, err := svc.GenerateBuckets(seed, sig)
+	buckets, err := svc.GenerateBuckets(seed, creationTx, sig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +197,7 @@ func TestTkmPhoneMainKingBucketsGateNumberIssuance(t *testing.T) {
 	if len(buckets) != int(tkmPhoneBucketBatchSize) {
 		t.Fatalf("bucket batch = %d, want %d", len(buckets), tkmPhoneBucketBatchSize)
 	}
-	if _, err := svc.GenerateBuckets(crypto.Keccak256Hash([]byte("too-soon")), signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, crypto.Keccak256Hash([]byte("too-soon"))))); err == nil || !strings.Contains(err.Error(), "not completely bought") {
+	if _, err := svc.GenerateBuckets(crypto.Keccak256Hash([]byte("too-soon")), crypto.Keccak256Hash([]byte("too-soon-tx")), signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, crypto.Keccak256Hash([]byte("too-soon")), crypto.Keccak256Hash([]byte("too-soon-tx"))))); err == nil || !strings.Contains(err.Error(), "not completely bought") {
 		t.Fatalf("generated new buckets before sellout: %v", err)
 	}
 
@@ -212,10 +216,80 @@ func TestTkmPhoneMainKingBucketsGateNumberIssuance(t *testing.T) {
 		}
 	}
 	seed := crypto.Keccak256Hash([]byte("second-batch"))
-	sig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(2, seed))
-	if next, err := svc.GenerateBuckets(seed, sig); err != nil || len(next) != int(tkmPhoneBucketBatchSize) {
+	creationTx := crypto.Keccak256Hash([]byte("second-batch-tx"))
+	sig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(2, seed, creationTx))
+	if next, err := svc.GenerateBuckets(seed, creationTx, sig); err != nil || len(next) != int(tkmPhoneBucketBatchSize) {
 		t.Fatalf("second bucket batch = %#v err=%v", next, err)
 	}
+}
+
+func TestTkmPhoneBucketAndNumberTransactionProvenancePersistToPhoneDir(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	phoneDir := t.TempDir()
+	svc, mainKing, operator, buyer, mainKingD, operatorKey := newTestTkmPhoneService(t)
+	svc = NewTkmPhoneServiceWithDBAndDir(nil, mainKing, big.NewInt(8979), db, phoneDir)
+	seed := crypto.Keccak256Hash([]byte("provenance-buckets"))
+	if _, err := svc.GenerateBuckets(seed, common.Hash{}, nil); err == nil || !strings.Contains(err.Error(), "bucket creation transaction hash is required") {
+		t.Fatalf("GenerateBuckets without creation tx error = %v, want required creation tx", err)
+	}
+	creationTx := crypto.Keccak256Hash([]byte("provenance-bucket-creation-tx"))
+	sig := signTkmPhoneDigest(t, mustTkmPhoneKey(t, mainKingD), svc.bucketGenerationHash(1, seed, creationTx))
+	buckets, err := svc.GenerateBuckets(seed, creationTx, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != int(tkmPhoneBucketBatchSize) {
+		t.Fatalf("buckets = %d, want %d", len(buckets), tkmPhoneBucketBatchSize)
+	}
+	for _, bucket := range buckets {
+		if bucket.CreationTx != creationTx {
+			t.Fatalf("bucket %d creation tx = %s, want %s", bucket.ID, bucket.CreationTx, creationTx)
+		}
+	}
+
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	inventory := openTestTkmPhoneBucket(t, svc, operator, operatorKey)
+	saleTx := crypto.Keccak256Hash([]byte("provenance-number-sale-tx"))
+	sold, err := svc.SellNumber(operator, inventory[0].Number, buyer, tkmPhoneDefaultNumberSalePrice, saleTx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sold.SalePaymentTx != saleTx {
+		t.Fatalf("sale tx = %s, want %s", sold.SalePaymentTx, saleTx)
+	}
+
+	data, err := os.ReadFile(filepath.Join(phoneDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap tkmPhoneSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Buckets) != int(tkmPhoneBucketBatchSize) {
+		t.Fatalf("persisted bucket count = %d", len(snap.Buckets))
+	}
+	for _, bucket := range snap.Buckets {
+		if bucket.CreationTx != creationTx {
+			t.Fatalf("persisted bucket %d creation tx = %s, want %s", bucket.ID, bucket.CreationTx, creationTx)
+		}
+	}
+	persisted, ok := snap.Numbers[sold.Number]
+	if !ok {
+		t.Fatalf("sold number %s missing from persisted phone state", sold.Number)
+	}
+	if persisted.SalePaymentTx != saleTx || persisted.Owner != buyer {
+		t.Fatalf("persisted sold number = %#v", persisted)
+	}
+}
+
+func mustTkmPhoneKey(t *testing.T, d *big.Int) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := crypto.ToECDSA(d.FillBytes(make([]byte, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 func TestTkmPhoneMessageAndCallWork(t *testing.T) {
@@ -432,8 +506,9 @@ func TestTkmPhoneAPIEncryptedMessageAndVoiceCallFlow(t *testing.T) {
 		t.Fatalf("test service phone fork should be active, status=%#v", status)
 	}
 	seed := crypto.Keccak256Hash([]byte("api-message-call-buckets"))
-	bucketSig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, seed))
-	if buckets, err := api.GenerateBuckets(seed, bucketSig); err != nil || len(buckets) != int(tkmPhoneBucketBatchSize) {
+	creationTx := crypto.Keccak256Hash([]byte("api-message-call-buckets-tx"))
+	bucketSig := signTkmPhoneDigest(t, mainKingKey, svc.bucketGenerationHash(1, seed, creationTx))
+	if buckets, err := api.GenerateBuckets(seed, creationTx, bucketSig); err != nil || len(buckets) != int(tkmPhoneBucketBatchSize) {
 		t.Fatalf("generate buckets via API = %#v err=%v", buckets, err)
 	}
 	keyHash := crypto.Keccak256Hash([]byte("api-operator-key"))

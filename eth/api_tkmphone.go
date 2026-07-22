@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -60,6 +62,7 @@ type TkmPhoneService struct {
 	mainKing       common.Address
 	chainID        *big.Int
 	db             ethdb.KeyValueStore
+	phoneDir       string
 	nextID         uint64
 	nextMsg        uint64
 	nextCall       uint64
@@ -146,6 +149,7 @@ type PhoneNumberBucket struct {
 	MainKing   common.Address `json:"mainKing"`
 	Operator   common.Address `json:"operator"`
 	PaymentTx  common.Hash    `json:"paymentTx"`
+	CreationTx common.Hash    `json:"creationTx"`
 	CreatedAt  hexutil.Uint64 `json:"createdAt"`
 	AssignedAt hexutil.Uint64 `json:"assignedAt"`
 	Signature  hexutil.Bytes  `json:"signature"`
@@ -312,6 +316,10 @@ func NewTkmPhoneService(e *Ethereum, mainKing common.Address, chainID *big.Int) 
 }
 
 func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big.Int, db ethdb.KeyValueStore) *TkmPhoneService {
+	return NewTkmPhoneServiceWithDBAndDir(e, mainKing, chainID, db, "")
+}
+
+func NewTkmPhoneServiceWithDBAndDir(e *Ethereum, mainKing common.Address, chainID *big.Int, db ethdb.KeyValueStore, phoneDir string) *TkmPhoneService {
 	if chainID == nil {
 		chainID = tkmPhoneDefaultChainID
 	}
@@ -320,6 +328,7 @@ func NewTkmPhoneServiceWithDB(e *Ethereum, mainKing common.Address, chainID *big
 		mainKing:    mainKing,
 		chainID:     new(big.Int).Set(chainID),
 		db:          db,
+		phoneDir:    phoneDir,
 		operators:   make(map[common.Address]PhoneOperatorKey),
 		buckets:     make(map[uint64]PhoneNumberBucket),
 		numbers:     make(map[string]PhoneNumber),
@@ -349,7 +358,7 @@ func (s *Ethereum) tkmPhoneService() *TkmPhoneService {
 		if s.blockchain != nil && s.blockchain.Config() != nil && s.blockchain.Config().ChainID != nil {
 			chainID = s.blockchain.Config().ChainID
 		}
-		s.phoneService = NewTkmPhoneServiceWithDB(s, s.GetMainKingAddress(), chainID, s.chainDb)
+		s.phoneService = NewTkmPhoneServiceWithDBAndDir(s, s.GetMainKingAddress(), chainID, s.chainDb, s.phoneDir)
 	}
 	return s.phoneService
 }
@@ -374,16 +383,16 @@ func (api *TkmPhoneAPI) Status() PhoneForkStatus {
 	return api.service.Status()
 }
 
-func (api *TkmPhoneAPI) BucketGenerationHash(round hexutil.Uint64, seed common.Hash) common.Hash {
-	return api.service.bucketGenerationHash(uint64(round), seed)
+func (api *TkmPhoneAPI) BucketGenerationHash(round hexutil.Uint64, seed common.Hash, creationTx common.Hash) common.Hash {
+	return api.service.bucketGenerationHash(uint64(round), seed, creationTx)
 }
 
 func (api *TkmPhoneAPI) NextBucketRound() hexutil.Uint64 {
 	return hexutil.Uint64(api.service.NextBucketRound())
 }
 
-func (api *TkmPhoneAPI) GenerateBuckets(seed common.Hash, signature hexutil.Bytes) ([]PhoneNumberBucket, error) {
-	return api.service.GenerateBuckets(seed, []byte(signature))
+func (api *TkmPhoneAPI) GenerateBuckets(seed common.Hash, creationTx common.Hash, signature hexutil.Bytes) ([]PhoneNumberBucket, error) {
+	return api.service.GenerateBuckets(seed, creationTx, []byte(signature))
 }
 
 func (api *TkmPhoneAPI) Buckets() []PhoneNumberBucket { return api.service.Buckets() }
@@ -776,12 +785,18 @@ func (svc *TkmPhoneService) assignNextBucketLocked(operator common.Address, paym
 	return PhoneNumberBucket{}, errors.New("no unsold main king phone-number bucket is available")
 }
 
-func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, signature []byte) ([]PhoneNumberBucket, error) {
+func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, creationTx common.Hash, signature []byte) ([]PhoneNumberBucket, error) {
 	if err := svc.requirePhoneForkActive(); err != nil {
 		return nil, err
 	}
 	if seed == (common.Hash{}) {
 		return nil, errors.New("bucket seed is required")
+	}
+	if creationTx == (common.Hash{}) {
+		return nil, errors.New("bucket creation transaction hash is required")
+	}
+	if err := svc.validateBucketCreationTx(creationTx); err != nil {
+		return nil, err
 	}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
@@ -791,15 +806,15 @@ func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, signature []byte) 
 		}
 	}
 	round := svc.nextBucket/tkmPhoneBucketBatchSize + 1
-	if err := svc.verifyMainKingSignature(svc.bucketGenerationHash(round, seed), signature); err != nil {
+	if err := svc.verifyMainKingSignature(svc.bucketGenerationHash(round, seed, creationTx), signature); err != nil {
 		return nil, err
 	}
 	now := uint64(time.Now().Unix())
 	out := make([]PhoneNumberBucket, 0, tkmPhoneBucketBatchSize)
 	for i := uint64(0); i < tkmPhoneBucketBatchSize; i++ {
 		svc.nextBucket++
-		bucketHash := svc.randomXServiceHash("phone-bucket", svc.mainKing.Bytes(), seed.Bytes(), tkmPhoneUint64Bytes(round), tkmPhoneUint64Bytes(i+1), tkmPhoneUint64Bytes(svc.nextBucket))
-		bucket := PhoneNumberBucket{ID: hexutil.Uint64(svc.nextBucket), Round: hexutil.Uint64(round), Index: hexutil.Uint64(i + 1), Hash: bucketHash, Seed: seed, MainKing: svc.mainKing, CreatedAt: hexutil.Uint64(now), Signature: append([]byte(nil), signature...)}
+		bucketHash := svc.randomXServiceHash("phone-bucket", svc.mainKing.Bytes(), seed.Bytes(), creationTx.Bytes(), tkmPhoneUint64Bytes(round), tkmPhoneUint64Bytes(i+1), tkmPhoneUint64Bytes(svc.nextBucket))
+		bucket := PhoneNumberBucket{ID: hexutil.Uint64(svc.nextBucket), Round: hexutil.Uint64(round), Index: hexutil.Uint64(i + 1), Hash: bucketHash, Seed: seed, MainKing: svc.mainKing, CreationTx: creationTx, CreatedAt: hexutil.Uint64(now), Signature: append([]byte(nil), signature...)}
 		svc.buckets[svc.nextBucket] = bucket
 		svc.addPropagationLocked("bucket", svc.nextBucket, bucketHash, now, bucket)
 		for n := uint64(0); n < tkmPhoneBucketSize; n++ {
@@ -1950,7 +1965,29 @@ func (svc *TkmPhoneService) saveLocked() error {
 	if err := svc.db.Put(tkmPhoneStateKey, data); err != nil {
 		return err
 	}
-	return svc.db.SyncKeyValue()
+	if err := svc.db.SyncKeyValue(); err != nil {
+		return err
+	}
+	return svc.writeFileSnapshotLocked(&snap)
+}
+
+func (svc *TkmPhoneService) writeFileSnapshotLocked(snap *tkmPhoneSnapshot) error {
+	if svc.phoneDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(svc.phoneDir, 0700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(svc.phoneDir, "state.json.tmp")
+	path := filepath.Join(svc.phoneDir, "state.json")
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (svc *TkmPhoneService) requireActiveDeviceKey(number string) error {
@@ -1977,6 +2014,25 @@ func (svc *TkmPhoneService) requireNumbers(from string, to string) error {
 	}
 	if blockedByRecipient := svc.blocked[to]; blockedByRecipient != nil && blockedByRecipient[from] {
 		return errors.New("sender is blocked by recipient")
+	}
+	return nil
+}
+
+func (svc *TkmPhoneService) validateBucketCreationTx(creationTx common.Hash) error {
+	if svc.eth == nil || svc.eth.blockchain == nil {
+		return nil
+	}
+	_, tx := svc.eth.blockchain.GetCanonicalTransaction(creationTx)
+	if tx == nil {
+		return errors.New("bucket creation transaction is not canonical or indexed")
+	}
+	config := svc.eth.blockchain.Config()
+	signer, err := types.Sender(types.LatestSigner(config), tx)
+	if err != nil {
+		return fmt.Errorf("bucket creation transaction sender unavailable: %w", err)
+	}
+	if signer != svc.mainKing {
+		return fmt.Errorf("bucket creation transaction sent by %s, want main king %s", signer.Hex(), svc.mainKing.Hex())
 	}
 	return nil
 }
@@ -2321,8 +2377,8 @@ func oldestCallID(calls map[uint64]PhoneCall) uint64 {
 	return oldest
 }
 
-func (svc *TkmPhoneService) bucketGenerationHash(round uint64, seed common.Hash) common.Hash {
-	return svc.randomXServiceHash("bucket-generation", svc.mainKing.Bytes(), tkmPhoneUint64Bytes(round), seed.Bytes(), tkmPhoneUint64Bytes(tkmPhoneBucketBatchSize), tkmPhoneUint64Bytes(tkmPhoneBucketSize))
+func (svc *TkmPhoneService) bucketGenerationHash(round uint64, seed common.Hash, creationTx common.Hash) common.Hash {
+	return svc.randomXServiceHash("bucket-generation", svc.mainKing.Bytes(), tkmPhoneUint64Bytes(round), seed.Bytes(), creationTx.Bytes(), tkmPhoneUint64Bytes(tkmPhoneBucketBatchSize), tkmPhoneUint64Bytes(tkmPhoneBucketSize))
 }
 
 func (svc *TkmPhoneService) operatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt uint64, paymentTx common.Hash) common.Hash {

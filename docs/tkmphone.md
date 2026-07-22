@@ -4,7 +4,7 @@ TKM Phone is the phone-number, encrypted messaging, and WebRTC call-signaling se
 
 ## Hardfork Activation
 
-TKM Phone write features are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784701800`, which is `2026-07-22T06:30:00Z` and corresponds to the requested 12:00pm local activation time.
+TKM Phone write features are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784709000`, which is `2026-07-22T08:30:00Z` and corresponds to the requested 2:00pm local activation time.
 
 Before `PhoneTime`, read-only helper RPCs such as `tkmphone_status`, prices, signing hashes, bucket listing, registered-number inspection, and WebRTC configuration remain available. State-changing phone RPCs reject with `tkm phone hardfork is not active yet`, including bucket generation, operator registration, bucket opening, number sale/transfer/revocation, device-key registration, encrypted messages, call signaling, contacts, blocking, recovery, pruning, fraud reports, and propagation import.
 
@@ -43,12 +43,30 @@ Do not expose password-capable RPC methods to untrusted networks.
 
 The network supports MainKing-generated phone-number buckets and operator sales:
 
-- MainKing generates signed number buckets.
+- MainKing generates signed number buckets with a required canonical bucket-creation transaction hash.
+- The MainKing signature covers the generation round, bucket seed, bucket sizes, and creation transaction hash.
 - Operators buy/open buckets and receive phone numbers.
+- Operator bucket purchases are transaction-based through `paymentTx` on the operator key.
 - Operators can sell single numbers to buyers.
+- Buyer number purchases are transaction-based through `salePaymentTx` on the phone number.
 - Buyers become the on-chain owner of the sold phone number through `tkmphone_sellNumber`.
 
 The website at `/home/mike/tkm-phone-market` adds SQLite bookkeeping for orders, listings, local wallets, SIM slots, and registered-number market status.
+
+`gtkm` persists the authoritative phone service state in the chain database and also writes a readable mirror to the node instance directory at `phone/state.json`. With the normal TKMChain datadir layout this is under `~/.tkmchain/gtkm/phone/state.json`. The mirror includes buckets, bucket `creationTx` hashes, operator bucket `paymentTx` hashes, generated numbers, number `salePaymentTx` hashes, messages, calls, device keys, notifications, contacts, recovery records, reports, and propagation records.
+
+## MainKing Bucket CLI
+
+MainKing must provide a canonical bucket-creation transaction hash when generating buckets. The digest and signature are bound to that hash.
+
+```sh
+SEED=0x$(openssl rand -hex 32)
+CREATION_TX=0xYourCanonicalMainKingCreationTransactionHash
+./build/bin/gtkm tkmphone bucket-hash --seed $SEED --creation-tx $CREATION_TX
+./build/bin/gtkm tkmphone generate-buckets --seed $SEED --creation-tx $CREATION_TX --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+```
+
+For offline signing, sign the hash returned by `bucket-hash`, then submit the signature with the same `--creation-tx` value.
 
 ## Registered Numbers
 

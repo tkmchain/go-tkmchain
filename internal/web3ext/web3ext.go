@@ -107,7 +107,7 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'bucketGenerationHash',
 			call: 'tkmphone_bucketGenerationHash',
-			params: 2
+			params: 3
 		}),
 		new web3._extend.Method({
 			name: 'nextBucketRound',
@@ -117,7 +117,7 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'generateBuckets',
 			call: 'tkmphone_generateBuckets',
-			params: 2
+			params: 3
 		}),
 		new web3._extend.Method({
 			name: 'buckets',

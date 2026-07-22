@@ -23,6 +23,10 @@ var (
 		Name:  "round",
 		Usage: "bucket generation round; defaults to tkmphone_nextBucketRound",
 	}
+	tkmPhoneCreationTxFlag = &cli.StringFlag{
+		Name:  "creation-tx",
+		Usage: "canonical MainKing transaction hash for bucket creation",
+	}
 	tkmPhoneSignatureFlag = &cli.StringFlag{
 		Name:  "signature",
 		Usage: "65-byte signature as 0x hex",
@@ -75,21 +79,21 @@ RPC API enabled, and automatic signing needs eth_sign for an unlocked account.`,
 				Name:      "bucket-hash",
 				Usage:     "Calculate the MainKing bucket generation hash to sign",
 				ArgsUsage: "[endpoint]",
-				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneRoundFlag),
+				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneCreationTxFlag, tkmPhoneRoundFlag),
 				Action:    tkmPhoneBucketHash,
 			},
 			{
 				Name:      "sign-bucket",
 				Usage:     "Sign a bucket generation hash with an unlocked MainKing account",
 				ArgsUsage: "[endpoint]",
-				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneRoundFlag, tkmPhoneMainKingFlag),
+				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneCreationTxFlag, tkmPhoneRoundFlag, tkmPhoneMainKingFlag),
 				Action:    tkmPhoneSignBucket,
 			},
 			{
 				Name:      "generate-buckets",
 				Usage:     "Generate the next batch of five MainKing buckets",
 				ArgsUsage: "[endpoint]",
-				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneRoundFlag, tkmPhoneSignatureFlag, tkmPhoneMainKingFlag),
+				Flags:     append(tkmPhoneRPCFlags, tkmPhoneSeedFlag, tkmPhoneCreationTxFlag, tkmPhoneRoundFlag, tkmPhoneSignatureFlag, tkmPhoneMainKingFlag),
 				Action:    tkmPhoneGenerateBuckets,
 			},
 			{
@@ -129,17 +133,19 @@ type tkmPhoneStatusView struct {
 }
 
 type tkmPhoneBucketHashView struct {
-	Round hexutil.Uint64 `json:"round"`
-	Seed  common.Hash    `json:"seed"`
-	Hash  common.Hash    `json:"hash"`
+	Round      hexutil.Uint64 `json:"round"`
+	Seed       common.Hash    `json:"seed"`
+	CreationTx common.Hash    `json:"creationTx"`
+	Hash       common.Hash    `json:"hash"`
 }
 
 type tkmPhoneSignatureView struct {
-	Round     hexutil.Uint64 `json:"round"`
-	Seed      common.Hash    `json:"seed"`
-	Hash      common.Hash    `json:"hash"`
-	Signer    common.Address `json:"signer"`
-	Signature hexutil.Bytes  `json:"signature"`
+	Round      hexutil.Uint64 `json:"round"`
+	Seed       common.Hash    `json:"seed"`
+	CreationTx common.Hash    `json:"creationTx"`
+	Hash       common.Hash    `json:"hash"`
+	Signer     common.Address `json:"signer"`
+	Signature  hexutil.Bytes  `json:"signature"`
 }
 
 func tkmPhoneStatus(ctx *cli.Context) error {
@@ -204,15 +210,19 @@ func tkmPhoneBucketHash(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	creationTx, err := tkmPhoneRequiredHashFlag(ctx, tkmPhoneCreationTxFlag.Name)
+	if err != nil {
+		return err
+	}
 	round, err := tkmPhoneRound(ctx, client)
 	if err != nil {
 		return err
 	}
-	digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed)
+	digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed, creationTx)
 	if err != nil {
 		return err
 	}
-	return tkmPhonePrintJSON(tkmPhoneBucketHashView{Round: hexutil.Uint64(round), Seed: seed, Hash: digest})
+	return tkmPhonePrintJSON(tkmPhoneBucketHashView{Round: hexutil.Uint64(round), Seed: seed, CreationTx: creationTx, Hash: digest})
 }
 
 func tkmPhoneSignBucket(ctx *cli.Context) error {
@@ -225,6 +235,10 @@ func tkmPhoneSignBucket(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	creationTx, err := tkmPhoneRequiredHashFlag(ctx, tkmPhoneCreationTxFlag.Name)
+	if err != nil {
+		return err
+	}
 	round, err := tkmPhoneRound(ctx, client)
 	if err != nil {
 		return err
@@ -233,7 +247,7 @@ func tkmPhoneSignBucket(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed)
+	digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed, creationTx)
 	if err != nil {
 		return err
 	}
@@ -241,7 +255,7 @@ func tkmPhoneSignBucket(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	return tkmPhonePrintJSON(tkmPhoneSignatureView{Round: hexutil.Uint64(round), Seed: seed, Hash: digest, Signer: signer, Signature: sig})
+	return tkmPhonePrintJSON(tkmPhoneSignatureView{Round: hexutil.Uint64(round), Seed: seed, CreationTx: creationTx, Hash: digest, Signer: signer, Signature: sig})
 }
 
 func tkmPhoneGenerateBuckets(ctx *cli.Context) error {
@@ -251,6 +265,10 @@ func tkmPhoneGenerateBuckets(ctx *cli.Context) error {
 	}
 	defer client.Close()
 	seed, err := tkmPhoneSeed(ctx)
+	if err != nil {
+		return err
+	}
+	creationTx, err := tkmPhoneRequiredHashFlag(ctx, tkmPhoneCreationTxFlag.Name)
 	if err != nil {
 		return err
 	}
@@ -267,7 +285,7 @@ func tkmPhoneGenerateBuckets(ctx *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("either --signature or --mainking is required: %w", err)
 		}
-		digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed)
+		digest, err := tkmPhoneBucketGenerationHash(context.Background(), client, round, seed, creationTx)
 		if err != nil {
 			return err
 		}
@@ -277,7 +295,7 @@ func tkmPhoneGenerateBuckets(ctx *cli.Context) error {
 		}
 	}
 	var buckets json.RawMessage
-	if err := client.CallContext(context.Background(), &buckets, "tkmphone_generateBuckets", seed, sig); err != nil {
+	if err := client.CallContext(context.Background(), &buckets, "tkmphone_generateBuckets", seed, creationTx, sig); err != nil {
 		return err
 	}
 	fmt.Println(string(buckets))
@@ -363,6 +381,22 @@ func tkmPhoneSeed(ctx *cli.Context) (common.Hash, error) {
 	return common.BytesToHash(seed), nil
 }
 
+func tkmPhoneRequiredHashFlag(ctx *cli.Context, name string) (common.Hash, error) {
+	value := ctx.String(name)
+	if value == "" {
+		return common.Hash{}, fmt.Errorf("--%s is required", name)
+	}
+	decoded, err := hexutil.Decode(value)
+	if err != nil || len(decoded) != common.HashLength {
+		return common.Hash{}, fmt.Errorf("--%s must be a 32-byte 0x hex value", name)
+	}
+	hash := common.BytesToHash(decoded)
+	if hash == (common.Hash{}) {
+		return common.Hash{}, fmt.Errorf("--%s cannot be zero", name)
+	}
+	return hash, nil
+}
+
 func tkmPhoneRound(ctx *cli.Context, client *rpc.Client) (uint64, error) {
 	if ctx.IsSet(tkmPhoneRoundFlag.Name) {
 		round := ctx.Uint64(tkmPhoneRoundFlag.Name)
@@ -382,9 +416,9 @@ func tkmPhoneNextBucketRound(ctx context.Context, client *rpc.Client) (uint64, e
 	return uint64(round), nil
 }
 
-func tkmPhoneBucketGenerationHash(ctx context.Context, client *rpc.Client, round uint64, seed common.Hash) (common.Hash, error) {
+func tkmPhoneBucketGenerationHash(ctx context.Context, client *rpc.Client, round uint64, seed common.Hash, creationTx common.Hash) (common.Hash, error) {
 	var digest common.Hash
-	if err := client.CallContext(ctx, &digest, "tkmphone_bucketGenerationHash", hexutil.Uint64(round), seed); err != nil {
+	if err := client.CallContext(ctx, &digest, "tkmphone_bucketGenerationHash", hexutil.Uint64(round), seed, creationTx); err != nil {
 		return common.Hash{}, err
 	}
 	return digest, nil

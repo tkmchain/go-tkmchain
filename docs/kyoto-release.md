@@ -42,9 +42,9 @@ Pool software should distribute only the miner share. The Main King and Rotating
 ## TKM Phone Service
 
 - Added native `tkmphone` RPC and web3 extension support for encrypted number-based messaging and call sessions.
-- Added `PhoneTime` hardfork activation at timestamp `1784701800` (`2026-07-22T06:30:00Z`, requested 12:00pm local activation). TKM Phone write RPCs are rejected before this timestamp so historical state is not reinterpreted by phone registration, bucket, device-key, message, call, contact, recovery, report, or propagation rules. Added `tkmphone_status` for activation inspection.
+- Added `PhoneTime` hardfork activation at timestamp `1784709000` (`2026-07-22T08:30:00Z`, requested 2:00pm local activation). TKM Phone write RPCs are rejected before this timestamp so historical state is not reinterpreted by phone registration, bucket, device-key, message, call, contact, recovery, report, or propagation rules. Added `tkmphone_status` for activation inspection.
 - Added a permanent post-PhoneTime difficulty rule: deterministic integer adjustment, 25% per-block rise/drop caps, skipped-interval reductions for long stalls, and an EDA floor above genesis difficulty so the chain can recover without falling back to difficulty `3`.
-- Operator bucket keys require a `25000 TKM` payment record and a Main King signed operator grant. The `25000 TKM` bucket price is 5 numbers at `5000 TKM` each. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `25000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 5 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 5 active numbers.
+- Main King bucket generation is now transaction-based. `tkmphone_generateBuckets(seed, creationTx, signature)` requires a non-zero canonical creation transaction hash, verifies that hash is signed by Main King, records it as `creationTx` on every generated bucket, and rejects missing or stale creation hashes. Operator bucket keys require a `25000 TKM` payment record and a Main King signed operator grant. The `25000 TKM` bucket price is 5 numbers at `5000 TKM` each. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `25000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 5 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 5 active numbers.
 - Number owners must sign sensitive actions: sending messages, starting calls, accepting calls, ending calls, registering device keys, transferring numbers, revoking numbers, and acknowledging delivery/read status.
 - Added inbox/outbox APIs for messages and calls, device-key registration, push-style notification records, delivery/read acknowledgement, spam rate limits, payload-size limits, pruning controls, number transfer, and number revocation.
 - Added WebSocket subscription support for new message, call update, call signaling, and notification events.
@@ -55,7 +55,7 @@ Pool software should distribute only the miner share. The Main King and Rotating
 - Added message and call expiry timestamps, plus pruning that removes expired communication state.
 - Added encrypted contact records, per-number blocking/unblocking, and recovery-key registration so a recovery address can move a number to a new owner.
 - Encrypted payload helpers use a RandomX-seed-derived service hash as the AES-256-GCM key, with nonce and route-bound authenticated data.
-- TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, contacts, blocked-number lists, recovery keys, reports, propagation records, and counters survive daemon restart.
+- TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, contacts, blocked-number lists, recovery keys, reports, propagation records, and counters survive daemon restart. The node also writes a readable mirror under the instance datadir at `phone/state.json` such as `~/.tkmchain/gtkm/phone/state.json`, including bucket `creationTx`, operator `paymentTx`, and number `salePaymentTx` provenance.
 
 ### TKM Phone Web3 Examples
 
@@ -85,15 +85,16 @@ The `gtkm tkmphone` command attaches to the local IPC endpoint by default, or to
 ./build/bin/gtkm tkmphone prices
 ./build/bin/gtkm tkmphone next-round
 SEED=0x$(openssl rand -hex 32)
-./build/bin/gtkm tkmphone generate-buckets --seed $SEED --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+CREATION_TX=0xYourCanonicalMainKingCreationTransactionHash
+./build/bin/gtkm tkmphone generate-buckets --seed $SEED --creation-tx $CREATION_TX --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
 ./build/bin/gtkm tkmphone buckets
 ```
 
 For offline signing, get the digest first and pass the resulting signature manually:
 
 ```bash
-./build/bin/gtkm tkmphone bucket-hash --seed 0x1111111111111111111111111111111111111111111111111111111111111111
-./build/bin/gtkm tkmphone generate-buckets --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --signature 0xSignature
+./build/bin/gtkm tkmphone bucket-hash --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --creation-tx 0xCreationTransactionHash
+./build/bin/gtkm tkmphone generate-buckets --seed 0x1111111111111111111111111111111111111111111111111111111111111111 --creation-tx 0xCreationTransactionHash --signature 0xSignature
 ```
 
 Operators can open only their assigned bucket; if the operator account is unlocked, the CLI signs `tkmphone_openBucketHash` automatically:
@@ -114,9 +115,10 @@ The client-facing Web3/RPC message and voice-call path is covered directly by:
 
 ```bash
 go test ./eth -run TestTkmPhoneAPIEncryptedMessageAndVoiceCallFlow -count=1 -v
+go test ./eth -run TestTkmPhoneBucketAndNumberTransactionProvenancePersistToPhoneDir -count=1 -v
 ```
 
-This test exercises MainKing bucket generation, operator bucket opening, number sale, device-key registration, encrypted message delivery, private inbox/notification lookup, encrypted WebRTC offer/answer signaling, ICE candidate exchange, call listing, WebRTC config checks, and signed call termination.
+These tests exercise transaction-based bucket creation provenance, `phone/state.json` persistence, MainKing bucket generation, operator bucket opening, number sale, device-key registration, encrypted message delivery, private inbox/notification lookup, encrypted WebRTC offer/answer signaling, ICE candidate exchange, call listing, WebRTC config checks, and signed call termination.
 
 ## Mining Notes
 

@@ -161,7 +161,7 @@ func TestPhoneTimestampCompatError(t *testing.T) {
 }
 
 func TestDefaultPhoneForkTimestamp(t *testing.T) {
-	want := uint64(1784701800)
+	want := uint64(1784709000)
 	configs := map[string]*ChainConfig{
 		"randomx": RandomXChainConfig,
 		"mainnet": MainnetChainConfig,
