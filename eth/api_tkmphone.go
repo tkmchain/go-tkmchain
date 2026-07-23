@@ -1274,7 +1274,7 @@ func (svc *TkmPhoneService) CallCandidates(id uint64, number string) ([]PhoneCal
 
 func (svc *TkmPhoneService) SendEncryptedMessageSigned(from string, to string, ciphertext []byte, nonce []byte, signature []byte) (PhoneMessage, error) {
 	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
-	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(from, "send-message", payload, signature); err != nil {
 		return PhoneMessage{}, err
 	}
 	if err := svc.requireActiveDeviceKey(from); err != nil {
@@ -1285,7 +1285,7 @@ func (svc *TkmPhoneService) SendEncryptedMessageSigned(from string, to string, c
 
 func (svc *TkmPhoneService) StartCallSigned(from string, to string, offerCiphertext []byte, offerNonce []byte, signature []byte) (PhoneCall, error) {
 	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
-	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(from, "start-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
 	if err := svc.requireActiveDeviceKey(from); err != nil {
@@ -1302,7 +1302,7 @@ func (svc *TkmPhoneService) AcceptCallSigned(id uint64, answerCiphertext []byte,
 		return PhoneCall{}, errors.New("call not found")
 	}
 	payload := svc.randomXServiceHash("accept-call-payload", tkmPhoneUint64Bytes(id), answerNonce, answerCiphertext)
-	if err := svc.verifyNumberOwnerSignature(call.To, "accept-call", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(call.To, "accept-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
 	if err := svc.requireActiveDeviceKey(call.To); err != nil {
@@ -1322,7 +1322,7 @@ func (svc *TkmPhoneService) RejectCallSigned(id uint64, number string, reason st
 		return PhoneCall{}, errors.New("number is not in call")
 	}
 	payload := svc.randomXServiceHash("reject-call-payload", tkmPhoneUint64Bytes(id), []byte(reason))
-	if err := svc.verifyNumberOwnerSignature(number, "reject-call", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(number, "reject-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
 	if err := svc.requireActiveDeviceKey(number); err != nil {
@@ -1342,7 +1342,7 @@ func (svc *TkmPhoneService) EndCallSigned(id uint64, number string, signature []
 		return PhoneCall{}, errors.New("number is not in call")
 	}
 	payload := svc.randomXServiceHash("end-call-payload", tkmPhoneUint64Bytes(id))
-	if err := svc.verifyNumberOwnerSignature(number, "end-call", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(number, "end-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
 	if err := svc.requireActiveDeviceKey(number); err != nil {
@@ -1353,7 +1353,7 @@ func (svc *TkmPhoneService) EndCallSigned(id uint64, number string, signature []
 
 func (svc *TkmPhoneService) AddCallCandidateSigned(id uint64, number string, ciphertext []byte, nonce []byte, signature []byte) (PhoneCallSignal, error) {
 	payload := svc.callCandidateHash(id, number, nonce, ciphertext)
-	if err := svc.verifyNumberOwnerSignature(number, "add-call-candidate", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(number, "add-call-candidate", payload, signature); err != nil {
 		return PhoneCallSignal{}, err
 	}
 	if err := svc.requireActiveDeviceKey(number); err != nil {
@@ -1364,7 +1364,7 @@ func (svc *TkmPhoneService) AddCallCandidateSigned(id uint64, number string, cip
 
 func (svc *TkmPhoneService) CallCandidatesSigned(id uint64, number string, signature []byte) ([]PhoneCallSignal, error) {
 	payload := svc.callCandidateListHash(id, number)
-	if err := svc.verifyNumberOwnerSignature(number, "list-call-candidates", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(number, "list-call-candidates", payload, signature); err != nil {
 		return nil, err
 	}
 	if err := svc.requireActiveDeviceKey(number); err != nil {
@@ -1605,7 +1605,7 @@ func (svc *TkmPhoneService) SendEncryptedMessageWithExpiry(from string, to strin
 		return PhoneMessage{}, err
 	}
 	payload := svc.randomXServiceHash("send-message-payload", []byte(from), []byte(to), nonce, ciphertext)
-	if err := svc.verifyNumberOwnerSignature(from, "send-message", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(from, "send-message", payload, signature); err != nil {
 		return PhoneMessage{}, err
 	}
 	if err := svc.requireActiveDeviceKey(from); err != nil {
@@ -1626,7 +1626,7 @@ func (svc *TkmPhoneService) StartCallWithExpiry(from string, to string, offerCip
 		return PhoneCall{}, err
 	}
 	payload := svc.randomXServiceHash("start-call-payload", []byte(from), []byte(to), offerNonce, offerCiphertext)
-	if err := svc.verifyNumberOwnerSignature(from, "start-call", payload, signature); err != nil {
+	if err := svc.verifyNumberDeviceOrOwnerSignature(from, "start-call", payload, signature); err != nil {
 		return PhoneCall{}, err
 	}
 	if err := svc.requireActiveDeviceKey(from); err != nil {
@@ -2099,6 +2099,38 @@ func (svc *TkmPhoneService) verifyNumberOwnerSignature(number string, action str
 	return verifyPhoneAddressSignature(record.Owner, svc.ownerActionHash(number, action, payload), signature)
 }
 
+func (svc *TkmPhoneService) verifyNumberDeviceOrOwnerSignature(number string, action string, payload common.Hash, signature []byte) error {
+	svc.lock.RLock()
+	record, ok := svc.numbers[number]
+	devices := append([]PhoneDeviceKey(nil), svc.devices[number]...)
+	svc.lock.RUnlock()
+	if !ok || !record.Active {
+		return errors.New("number not found")
+	}
+	digest := svc.ownerActionHash(number, action, payload)
+	if err := verifyPhoneAddressSignature(record.Owner, digest, signature); err == nil {
+		return nil
+	}
+	signer, err := recoverPhoneActionSigner(digest, signature)
+	if err != nil {
+		return fmt.Errorf("invalid phone action signature: %w", err)
+	}
+	for _, device := range devices {
+		if !device.Active {
+			continue
+		}
+		if len(device.PublicKey) == common.AddressLength && bytes.Equal(device.PublicKey, signer.Bytes()) {
+			return nil
+		}
+		if len(device.PublicKey) == 33 || len(device.PublicKey) == 65 {
+			if pub, err := crypto.UnmarshalPubkey(device.PublicKey); err == nil && crypto.PubkeyToAddress(*pub) == signer {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("phone action signed by %s, want owner %s or an active registered device key", signer.Hex(), record.Owner.Hex())
+}
+
 func (svc *TkmPhoneService) ownerActionHash(number string, action string, payload common.Hash) common.Hash {
 	return svc.randomXServiceHash("owner-action", []byte(number), []byte(action), payload.Bytes())
 }
@@ -2117,6 +2149,24 @@ func (svc *TkmPhoneService) transferNumberPayloadHash(number string, newOwner co
 
 func (svc *TkmPhoneService) transferNumberSigningHash(number string, newOwner common.Address) common.Hash {
 	return svc.ownerActionHash(number, "transfer-number", svc.transferNumberPayloadHash(number, newOwner))
+}
+
+func recoverPhoneActionSigner(digest common.Hash, signature []byte) (common.Address, error) {
+	if len(signature) != crypto.SignatureLength {
+		return common.Address{}, fmt.Errorf("signature must be %d bytes", crypto.SignatureLength)
+	}
+	sig := append([]byte(nil), signature...)
+	if sig[crypto.RecoveryIDOffset] >= 27 {
+		sig[crypto.RecoveryIDOffset] -= 27
+	}
+	if sig[crypto.RecoveryIDOffset] > 1 {
+		return common.Address{}, fmt.Errorf("invalid signature recovery id %d", sig[crypto.RecoveryIDOffset])
+	}
+	if signer, err := tkmPhoneRecoverSigner(digest, sig); err == nil {
+		return signer, nil
+	}
+	prefixed := crypto.Keccak256Hash([]byte("\x19Ethereum Signed Message:\n32"), digest.Bytes())
+	return tkmPhoneRecoverSigner(prefixed, sig)
 }
 
 func verifyPhoneAddressSignature(want common.Address, digest common.Hash, signature []byte) error {

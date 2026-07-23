@@ -923,13 +923,27 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	}
 	aliceNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, alice, "market-alice-number-sale")
 	bobNumber := sellTestTkmPhoneNumber(t, svc, operator, operatorKey, bob, "market-bob-number-sale")
-	deviceSig := signTkmPhoneDigest(t, bobKey, svc.deviceKeySigningHash(bobNumber.Number, "bob-phone", []byte("bob-pub")))
-	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", []byte("bob-pub"), deviceSig); err != nil {
+	bobDeviceKey, _ := crypto.GenerateKey()
+	bobDeviceAddress := crypto.PubkeyToAddress(bobDeviceKey.PublicKey).Bytes()
+	deviceSig := signTkmPhoneDigest(t, bobKey, svc.deviceKeySigningHash(bobNumber.Number, "bob-phone", bobDeviceAddress))
+	if _, err := svc.RegisterDeviceKey(bobNumber.Number, "bob-phone", bobDeviceAddress, deviceSig); err != nil {
 		t.Fatal(err)
 	}
-	aliceDeviceSig := signTkmPhoneDigest(t, aliceKey, svc.deviceKeySigningHash(aliceNumber.Number, "alice-phone", []byte("alice-pub")))
-	if _, err := svc.RegisterDeviceKey(aliceNumber.Number, "alice-phone", []byte("alice-pub"), aliceDeviceSig); err != nil {
+	aliceDeviceKey, _ := crypto.GenerateKey()
+	aliceDeviceAddress := crypto.PubkeyToAddress(aliceDeviceKey.PublicKey).Bytes()
+	aliceDeviceSig := signTkmPhoneDigest(t, aliceKey, svc.deviceKeySigningHash(aliceNumber.Number, "alice-phone", aliceDeviceAddress))
+	if _, err := svc.RegisterDeviceKey(aliceNumber.Number, "alice-phone", aliceDeviceAddress, aliceDeviceSig); err != nil {
 		t.Fatal(err)
+	}
+	chatCipher, err := svc.EncryptPayload(aliceNumber.Number, bobNumber.Number, []byte("chat-nonce12"), []byte("hello from device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatSig := signTkmPhoneDigest(t, aliceDeviceKey, svc.sendMessageSigningHash(aliceNumber.Number, bobNumber.Number, chatCipher.Nonce, chatCipher.Ciphertext))
+	if msg, err := svc.SendEncryptedMessageSigned(aliceNumber.Number, bobNumber.Number, chatCipher.Ciphertext, chatCipher.Nonce, chatSig); err != nil {
+		t.Fatalf("device signed message failed: %v", err)
+	} else if msg.From != aliceNumber.Number || msg.To != bobNumber.Number {
+		t.Fatalf("device signed message = %#v", msg)
 	}
 	env, err := svc.EncryptPayloadForDevices(aliceNumber.Number, bobNumber.Number, []byte("device-nonce"), []byte("hello device"))
 	if err != nil {
@@ -972,8 +986,8 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 	if err := svc.Prune(0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(svc.messages) != 0 {
-		t.Fatal("expired message was not pruned")
+	if len(svc.messages) != 1 {
+		t.Fatalf("expired message was not pruned, remaining messages=%d", len(svc.messages))
 	}
 	recoveryPayload := svc.randomXServiceHash("register-recovery-payload", []byte(aliceNumber.Number), recovery.Bytes())
 	recoverySig := signTkmPhoneOwnerAction(t, svc, aliceKey, aliceNumber.Number, "register-recovery", recoveryPayload)
