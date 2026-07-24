@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewEnvelope(t *testing.T) {
-	code := []byte{0x01, 0x02, 0x03}
+	code := []byte{OpReturnCodeHash}
 	metadata := []byte(`{"abi":[]}`)
 	envelope, err := NewEnvelope(code, metadata, Limits{MemoryPages: 1, StackSlots: 16, CallDepth: 4})
 	if err != nil {
@@ -61,6 +61,36 @@ func TestUnmarshalBinary(t *testing.T) {
 	}
 	if decoded.CodeHash != envelope.CodeHash || !bytes.Equal(decoded.Code, envelope.Code) {
 		t.Fatalf("decoded envelope mismatch")
+	}
+}
+
+func TestNewEnvelopeRejectsMalformedModule(t *testing.T) {
+	tests := [][]byte{
+		{0xff},
+		{OpReturnCodeHash, 0x01},
+		append([]byte{OpStorageLoad}, make([]byte, 31)...),
+		append([]byte{OpStorageStore}, make([]byte, 63)...),
+	}
+	for _, code := range tests {
+		if _, err := NewEnvelope(code, nil, Limits{MemoryPages: 1, StackSlots: 1, CallDepth: 1}); !errors.Is(err, ErrInvalidProgram) {
+			t.Fatalf("NewEnvelope(%x) error = %v, want %v", code, err, ErrInvalidProgram)
+		}
+	}
+}
+
+func TestUnmarshalBinaryRejectsTamperedModule(t *testing.T) {
+	envelope, err := NewEnvelope([]byte{OpReturnCodeHash}, nil, Limits{MemoryPages: 1, StackSlots: 1, CallDepth: 1})
+	if err != nil {
+		t.Fatalf("NewEnvelope failed: %v", err)
+	}
+	blob, err := envelope.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary failed: %v", err)
+	}
+	blob[len(blob)-1] = 0xff
+	_, err = UnmarshalBinary(blob)
+	if !errors.Is(err, ErrInvalidProgram) {
+		t.Fatalf("UnmarshalBinary error = %v, want %v", err, ErrInvalidProgram)
 	}
 }
 

@@ -29,7 +29,7 @@ func (b testTVMBackend) StateAndHeaderByNumberOrHash(context.Context, rpc.BlockN
 
 func TestTVMGetCodeDecodesEnvelope(t *testing.T) {
 	address := common.HexToAddress("0x0000000000000000000000000000000000001234")
-	module := []byte{tvm.OpReturnCodeHash, 0x01, 0x02}
+	module := []byte{tvm.OpReturnCodeHash}
 	metadata := []byte("contract metadata")
 	envelope, err := tvm.NewEnvelope(module, metadata, tvm.Limits{MemoryPages: 2, StackSlots: 16, CallDepth: 4})
 	if err != nil {

@@ -128,6 +128,19 @@ The TVM envelope contains:
 - resource limits;
 - module bytes and metadata bytes.
 
+### Deployment security checks
+
+Before a TVM envelope can be built, stored as contract code, or decoded through `tvm_getCode`, GTKM validates the module against the active deterministic instruction layout. The current `cpp-evm-v1` conformance target accepts only these exact forms:
+
+| Operation | Byte length | Purpose |
+| --- | ---: | --- |
+| `ReturnInput` | 1 | return call input unchanged |
+| `ReturnCodeHash` | 1 | return the committed module hash |
+| `StorageLoad` | 33 | opcode plus one 32-byte storage key |
+| `StorageStore` | 65 | opcode plus one 32-byte key and one 32-byte value |
+
+Unknown opcodes, trailing bytes, short storage operands, oversized modules, oversized metadata, invalid limits, bad hashes, wrong target, and wrong version are rejected before deployment. This is intentionally strict: future C++ templates should expand the accepted target deliberately, with tests, instead of allowing arbitrary native binaries or undefined instruction layouts.
+
 ### Step 1: build the deployment envelope
 
 Use `tvm_buildDeployment` to validate the module and wrap it in a deployable envelope. The `code` and `metadata` fields are hex bytes.

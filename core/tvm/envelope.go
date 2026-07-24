@@ -77,6 +77,9 @@ func NewEnvelope(code, metadata []byte, limits Limits) (*Envelope, error) {
 	if len(code) > MaxModuleSize || len(metadata) > MaxMetadataSize {
 		return nil, ErrModuleTooLarge
 	}
+	if err := ValidateModule(code); err != nil {
+		return nil, err
+	}
 	if err := ValidateLimits(limits); err != nil {
 		return nil, err
 	}
@@ -118,6 +121,9 @@ func (e *Envelope) MarshalBinary() ([]byte, error) {
 	}
 	if len(e.Code) > MaxModuleSize || len(e.Metadata) > MaxMetadataSize {
 		return nil, ErrModuleTooLarge
+	}
+	if err := ValidateModule(e.Code); err != nil {
+		return nil, err
 	}
 	if err := ValidateLimits(e.Limits); err != nil {
 		return nil, err
@@ -186,6 +192,9 @@ func UnmarshalBinary(blob []byte) (*Envelope, error) {
 	code := append([]byte(nil), blob[off:off+codeLen]...)
 	off += codeLen
 	metadata := append([]byte(nil), blob[off:off+metadataLen]...)
+	if err := ValidateModule(code); err != nil {
+		return nil, err
+	}
 	if crypto.Keccak256Hash(code) != codeHash || crypto.Keccak256Hash(metadata) != metadataHash {
 		return nil, errors.New("TVM envelope hash mismatch")
 	}
