@@ -297,3 +297,38 @@ If the data does not start with `TVM\0`, creation continues through the normal E
 4. Wait for a receipt with `status: "0x1"` and `contractAddress`.
 5. Confirm `eth_getCode(contractAddress, "latest")` returns bytes beginning with `0x54564d00`.
 6. Use `tvm_getCode` or `tvm_getWasm` to inspect the decoded TVM contract code.
+
+## C++ fixture deployment test
+
+The repository includes a deterministic C++ TVM fixture at `contracts/tvm/test_return_code_hash.cpp`. The current `cpp-evm-v1` runtime accepts bounded TVM module bytes, so this fixture emits the audited module payload for a contract that returns its own TVM code hash.
+
+Focused tests prove that the fixture can be wrapped, deployed through the normal contract-creation path, mined into account code, and read back without losing any bytes:
+
+```sh
+go test ./eth -run TestTVMCppFixtureDeployAndReadFullMinedCode
+go test ./core/vm/runtime -run TVM
+go test ./core/vm -run TVM
+```
+
+For a live node, start GTKM with the TVM RPC namespace enabled:
+
+```sh
+./build/bin/gtkm --http --http.addr 0.0.0.0 --http.api eth,net,web3,tvm
+```
+
+Then deploy the fixture from an unlocked funded account:
+
+```sh
+./scripts/deploy_tvm_cpp_fixture.py --rpc http://127.0.0.1:8545 --from 0xYourDeployerAddress
+```
+
+Or deploy without globally unlocking the account by using the password-based TKM signing helper already used by the pool:
+
+```sh
+./scripts/deploy_tvm_cpp_fixture.py --rpc http://127.0.0.1:8545 --pool-config /home/mike/pool/config.json
+```
+
+The script builds the TVM envelope with `tvm_buildDeployment`, sends a normal contract-creation transaction through either `eth_sendTransaction` or `tkm_sendTransactionWithPassphrase`, waits for the receipt, and verifies that both `eth_getCode` and `tvm_getCode` return the full stored deployment envelope after the transaction is mined. If the transaction is accepted but no block includes it before the timeout, the script reports the transaction hash, latest block, and pending status instead of submitting a duplicate.
+
+The main explorer recognizes these contracts on address pages and in Developer -> TVM C++ Reader. It displays the TVM target, version, code hash, metadata hash, resource limits, module bytes, metadata, and the full stored envelope.
+
