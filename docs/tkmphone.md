@@ -51,7 +51,7 @@ The network supports MainKing-generated phone-number buckets and operator sales:
 - Buyer number purchases are transaction-based through `salePaymentTx` on the phone number.
 - Buyers become the on-chain owner of the sold phone number through `tkmphone_sellNumber`.
 
-The website at `/home/mike/tkm-phone-market` adds SQLite bookkeeping for orders, listings, local wallets, SIM slots, and registered-number market status.
+The website at `https://phone.tkmchain.site` adds SQLite bookkeeping for orders, listings, local wallets, SIM slots, and registered-number market status.
 
 `gtkm` persists the authoritative phone service state in the chain database and also writes a readable mirror to the node instance directory at `phone/state.json`. With the normal TKMChain datadir layout this is under `~/.tkmchain/gtkm/phone/state.json`. The mirror includes buckets, bucket `creationTx` hashes, operator bucket `paymentTx` hashes, generated numbers, number `salePaymentTx` hashes, messages, calls, device keys, notifications, contacts, recovery records, reports, and propagation records.
 
@@ -112,6 +112,48 @@ curl -s "$RPC" -H 'content-type: application/json' \
 ```
 
 After this RPC succeeds, the website can detect the approval with `tkmphone_listOperators`. The operator then refreshes or opens their bucket; the website signs only with the operator wallet and calls `tkmphone_openBucket`.
+
+### Daemon-only pending approvals
+
+New bucket payments are self-describing. The wallet sends the `25000 TKM` bucket payment to MainKing with transaction data:
+
+```text
+TKMPHONE_BUCKET_V1 || operatorKeyHash || expiresAtUint64
+```
+
+This lets `gtkm` discover pending approvals from canonical chain data only. The website does not submit approval records and never handles MainKing credentials.
+
+MainKing can list pending operator bucket approvals from the daemon:
+
+```sh
+./build/bin/gtkm tkmphone pending-approvals --scan-blocks 20000
+```
+
+Each row includes the operator, key hash, payment transaction, expiry, and grant hash. To approve one pending payment with an unlocked MainKing account:
+
+```sh
+./build/bin/gtkm tkmphone approve-operator   --payment-tx 0xOperatorBucketPaymentTx   --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
+```
+
+For offline signing, sign the listed `grantHash`, then submit:
+
+```sh
+./build/bin/gtkm tkmphone approve-operator   --payment-tx 0xOperatorBucketPaymentTx   --signature 0xMainKingSignature
+```
+
+From `gtkm attach`, the same daemon-only data is visible through Web3:
+
+```js
+web3.tkmphone.pendingOperatorApprovals(20000)
+```
+
+If you sign manually in the console, pass the signature back to the daemon RPC:
+
+```js
+web3.tkmphone.approveOperatorPayment("0xOperatorBucketPaymentTx", "0xMainKingSignature")
+```
+
+After approval succeeds, operator wallets detect it with `tkmphone_listOperators` and auto-open the assigned bucket.
 
 ## Registered Numbers
 

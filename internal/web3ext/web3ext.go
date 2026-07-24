@@ -350,6 +350,16 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'pendingOperatorApprovals',
+			call: 'tkmphone_pendingOperatorApprovals',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'approveOperatorPayment',
+			call: 'tkmphone_approveOperatorPayment',
+			params: 2
+		}),
+		new web3._extend.Method({
 			name: 'reportOperator',
 			call: 'tkmphone_reportOperator',
 			params: 5

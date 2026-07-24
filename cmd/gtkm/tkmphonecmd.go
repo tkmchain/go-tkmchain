@@ -43,6 +43,15 @@ var (
 		Name:  "bucket",
 		Usage: "phone number bucket id",
 	}
+	tkmPhonePaymentTxFlag = &cli.StringFlag{
+		Name:  "payment-tx",
+		Usage: "canonical operator bucket payment transaction hash",
+	}
+	tkmPhoneScanBlocksFlag = &cli.Uint64Flag{
+		Name:  "scan-blocks",
+		Usage: "number of recent blocks to scan for pending operator payments",
+		Value: 20000,
+	}
 
 	tkmPhoneRPCFlags = []cli.Flag{utils.DataDirFlag, utils.HttpHeaderFlag}
 
@@ -104,6 +113,20 @@ RPC API enabled, and automatic signing needs eth_sign for an unlocked account.`,
 				Action:    tkmPhoneBuckets,
 			},
 			{
+				Name:      "pending-approvals",
+				Usage:     "List operator bucket payments waiting for MainKing approval",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(tkmPhoneRPCFlags, tkmPhoneScanBlocksFlag),
+				Action:    tkmPhonePendingApprovals,
+			},
+			{
+				Name:      "approve-operator",
+				Usage:     "Approve one pending operator bucket payment as MainKing",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(tkmPhoneRPCFlags, tkmPhonePaymentTxFlag, tkmPhoneSignatureFlag, tkmPhoneMainKingFlag, tkmPhoneScanBlocksFlag),
+				Action:    tkmPhoneApproveOperator,
+			},
+			{
 				Name:      "open-bucket",
 				Usage:     "Open an assigned bucket and reveal unsold numbers to its operator",
 				ArgsUsage: "[endpoint]",
@@ -146,6 +169,19 @@ type tkmPhoneSignatureView struct {
 	Hash       common.Hash    `json:"hash"`
 	Signer     common.Address `json:"signer"`
 	Signature  hexutil.Bytes  `json:"signature"`
+}
+
+type tkmPhonePendingApprovalView struct {
+	Operator  common.Address `json:"operator"`
+	KeyHash   common.Hash    `json:"keyHash"`
+	ExpiresAt hexutil.Uint64 `json:"expiresAt"`
+	PaymentTx common.Hash    `json:"paymentTx"`
+	Paid      *hexutil.Big   `json:"paid"`
+	GrantHash common.Hash    `json:"grantHash"`
+	Block     hexutil.Uint64 `json:"block"`
+	TxIndex   hexutil.Uint64 `json:"txIndex"`
+	Approved  bool           `json:"approved"`
+	Reason    string         `json:"reason,omitempty"`
 }
 
 func tkmPhoneStatus(ctx *cli.Context) error {
@@ -313,6 +349,65 @@ func tkmPhoneBuckets(ctx *cli.Context) error {
 		return err
 	}
 	fmt.Println(string(buckets))
+	return nil
+}
+
+func tkmPhonePendingApprovals(ctx *cli.Context) error {
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	var approvals []tkmPhonePendingApprovalView
+	if err := client.CallContext(context.Background(), &approvals, "tkmphone_pendingOperatorApprovals", hexutil.Uint64(ctx.Uint64(tkmPhoneScanBlocksFlag.Name))); err != nil {
+		return err
+	}
+	return tkmPhonePrintJSON(approvals)
+}
+
+func tkmPhoneApproveOperator(ctx *cli.Context) error {
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	paymentTx, err := tkmPhoneRequiredHashFlag(ctx, tkmPhonePaymentTxFlag.Name)
+	if err != nil {
+		return err
+	}
+	sig, err := tkmPhoneSignature(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sig) == 0 {
+		mainKing, err := tkmPhoneAddressFlag(ctx, tkmPhoneMainKingFlag.Name)
+		if err != nil {
+			return fmt.Errorf("either --signature or --mainking is required: %w", err)
+		}
+		var approvals []tkmPhonePendingApprovalView
+		if err := client.CallContext(context.Background(), &approvals, "tkmphone_pendingOperatorApprovals", hexutil.Uint64(ctx.Uint64(tkmPhoneScanBlocksFlag.Name))); err != nil {
+			return err
+		}
+		var grantHash common.Hash
+		for _, approval := range approvals {
+			if approval.PaymentTx == paymentTx {
+				grantHash = approval.GrantHash
+				break
+			}
+		}
+		if grantHash == (common.Hash{}) {
+			return errors.New("payment transaction is not in pending approvals")
+		}
+		sig, err = tkmPhoneSign(context.Background(), client, mainKing, grantHash)
+		if err != nil {
+			return err
+		}
+	}
+	var out json.RawMessage
+	if err := client.CallContext(context.Background(), &out, "tkmphone_approveOperatorPayment", paymentTx, sig); err != nil {
+		return err
+	}
+	fmt.Println(string(out))
 	return nil
 }
 

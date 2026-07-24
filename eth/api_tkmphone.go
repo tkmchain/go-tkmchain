@@ -38,10 +38,13 @@ var (
 	tkmPhoneDefaultChainID                = big.NewInt(8979)
 	tkmPhoneStateKey                      = []byte("tkmphone-state-v1")
 	tkmPhoneMaxPayloadSize                = 64 * 1024
+	tkmPhoneBucketPaymentScanLimit uint64 = 20000
 	tkmPhoneMessageRateLimit              = 20
 	tkmPhoneCallRateLimit                 = 10
 	tkmPhoneCallCandidateRateLimit        = 120
 )
+
+var tkmPhoneBucketPaymentDataPrefix = []byte("TKMPHONE_BUCKET_V1")
 
 type TkmPhoneAPI struct {
 	service *TkmPhoneService
@@ -123,6 +126,19 @@ type PhoneOperatorKey struct {
 	Active    bool           `json:"active"`
 	Numbers   hexutil.Uint64 `json:"numbers"`
 	BucketID  hexutil.Uint64 `json:"bucketId"`
+}
+
+type PhonePendingOperatorApproval struct {
+	Operator  common.Address `json:"operator"`
+	KeyHash   common.Hash    `json:"keyHash"`
+	ExpiresAt hexutil.Uint64 `json:"expiresAt"`
+	PaymentTx common.Hash    `json:"paymentTx"`
+	Paid      *hexutil.Big   `json:"paid"`
+	GrantHash common.Hash    `json:"grantHash"`
+	Block     hexutil.Uint64 `json:"block"`
+	TxIndex   hexutil.Uint64 `json:"txIndex"`
+	Approved  bool           `json:"approved"`
+	Reason    string         `json:"reason,omitempty"`
 }
 
 type PhoneNumber struct {
@@ -578,6 +594,12 @@ func (api *TkmPhoneAPI) EncryptPayloadForDevices(from string, to string, nonce h
 }
 
 func (api *TkmPhoneAPI) ListOperators() []PhoneOperatorKey { return api.service.ListOperators() }
+func (api *TkmPhoneAPI) PendingOperatorApprovals(scanBlocks hexutil.Uint64) []PhonePendingOperatorApproval {
+	return api.service.PendingOperatorApprovals(uint64(scanBlocks))
+}
+func (api *TkmPhoneAPI) ApproveOperatorPayment(paymentTx common.Hash, signature hexutil.Bytes) (PhoneOperatorKey, error) {
+	return api.service.ApproveOperatorPayment(paymentTx, []byte(signature))
+}
 func (api *TkmPhoneAPI) ReportOperator(operator common.Address, reporter string, reason string, evidence common.Hash, signature hexutil.Bytes) (PhoneFraudReport, error) {
 	return api.service.ReportOperator(operator, reporter, reason, evidence, []byte(signature))
 }
@@ -1666,6 +1688,113 @@ func (svc *TkmPhoneService) EncryptPayloadForDevices(from string, to string, non
 	}
 	return out, nil
 }
+func (svc *TkmPhoneService) PendingOperatorApprovals(scanBlocks uint64) []PhonePendingOperatorApproval {
+	if scanBlocks == 0 || scanBlocks > tkmPhoneBucketPaymentScanLimit {
+		scanBlocks = tkmPhoneBucketPaymentScanLimit
+	}
+	if svc == nil || svc.eth == nil || svc.eth.blockchain == nil {
+		return nil
+	}
+	head := svc.eth.blockchain.CurrentBlock()
+	if head == nil {
+		return nil
+	}
+	end := head.Number.Uint64()
+	start := uint64(0)
+	if end > scanBlocks {
+		start = end - scanBlocks
+	}
+	out := make([]PhonePendingOperatorApproval, 0)
+	seen := make(map[common.Hash]bool)
+	for n := end; ; n-- {
+		block := svc.eth.blockchain.GetBlockByNumber(n)
+		if block != nil {
+			for idx, tx := range block.Transactions() {
+				pending, ok := svc.pendingApprovalFromTx(tx, n, uint64(idx))
+				if !ok || seen[pending.PaymentTx] {
+					continue
+				}
+				seen[pending.PaymentTx] = true
+				out = append(out, pending)
+			}
+		}
+		if n == start || n == 0 {
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return uint64(out[i].Block) > uint64(out[j].Block) })
+	return out
+}
+
+func (svc *TkmPhoneService) ApproveOperatorPayment(paymentTx common.Hash, signature []byte) (PhoneOperatorKey, error) {
+	if paymentTx == (common.Hash{}) {
+		return PhoneOperatorKey{}, errors.New("operator payment transaction is required")
+	}
+	if svc == nil || svc.eth == nil || svc.eth.blockchain == nil {
+		return PhoneOperatorKey{}, errors.New("canonical chain is unavailable")
+	}
+	_, tx := svc.eth.blockchain.GetCanonicalTransaction(paymentTx)
+	if tx == nil {
+		return PhoneOperatorKey{}, errors.New("operator payment transaction is not canonical or indexed")
+	}
+	pending, ok := svc.pendingApprovalFromTx(tx, 0, 0)
+	if !ok {
+		return PhoneOperatorKey{}, errors.New("payment transaction is not a tkmphone bucket approval payment")
+	}
+	return svc.RegisterOperatorKey(pending.Operator, pending.KeyHash, uint64(pending.ExpiresAt), paymentTx, (*big.Int)(pending.Paid), signature)
+}
+
+func (svc *TkmPhoneService) pendingApprovalFromTx(tx *types.Transaction, blockNumber uint64, txIndex uint64) (PhonePendingOperatorApproval, bool) {
+	if tx == nil || tx.To() == nil || *tx.To() != svc.mainKing || tx.Value().Cmp(tkmPhoneOperatorKeyPrice) != 0 {
+		return PhonePendingOperatorApproval{}, false
+	}
+	keyHash, expiresAt, ok := tkmPhoneDecodeBucketPaymentData(tx.Data())
+	if !ok {
+		return PhonePendingOperatorApproval{}, false
+	}
+	signer, err := types.Sender(types.LatestSigner(svc.eth.blockchain.Config()), tx)
+	if err != nil {
+		return PhonePendingOperatorApproval{}, false
+	}
+	paymentTx := tx.Hash()
+	pending := PhonePendingOperatorApproval{
+		Operator:  signer,
+		KeyHash:   keyHash,
+		ExpiresAt: hexutil.Uint64(expiresAt),
+		PaymentTx: paymentTx,
+		Paid:      (*hexutil.Big)(new(big.Int).Set(tkmPhoneOperatorKeyPrice)),
+		GrantHash: svc.operatorGrantHash(signer, keyHash, expiresAt, paymentTx),
+		Block:     hexutil.Uint64(blockNumber),
+		TxIndex:   hexutil.Uint64(txIndex),
+	}
+	now := uint64(time.Now().Unix())
+	if expiresAt <= now {
+		pending.Reason = "expired"
+	}
+	svc.lock.RLock()
+	for _, op := range svc.operators {
+		if op.PaymentTx == paymentTx || (op.Operator == signer && op.KeyHash == keyHash && op.Active) {
+			pending.Approved = true
+			break
+		}
+	}
+	svc.lock.RUnlock()
+	return pending, true
+}
+
+func tkmPhoneDecodeBucketPaymentData(data []byte) (common.Hash, uint64, bool) {
+	want := len(tkmPhoneBucketPaymentDataPrefix) + common.HashLength + 8
+	if len(data) != want || !bytes.Equal(data[:len(tkmPhoneBucketPaymentDataPrefix)], tkmPhoneBucketPaymentDataPrefix) {
+		return common.Hash{}, 0, false
+	}
+	keyHash := common.BytesToHash(data[len(tkmPhoneBucketPaymentDataPrefix) : len(tkmPhoneBucketPaymentDataPrefix)+common.HashLength])
+	expiresAt := binary.BigEndian.Uint64(data[len(tkmPhoneBucketPaymentDataPrefix)+common.HashLength:])
+	if keyHash == (common.Hash{}) || expiresAt == 0 {
+		return common.Hash{}, 0, false
+	}
+	return keyHash, expiresAt, true
+}
+
 func (svc *TkmPhoneService) ListOperators() []PhoneOperatorKey {
 	svc.lock.RLock()
 	defer svc.lock.RUnlock()
