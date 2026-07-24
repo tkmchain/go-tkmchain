@@ -2,19 +2,20 @@
 
 Status date: July 2026
 
-Tkmchain is being developed as a practical, EVM-compatible execution network with three defining pillars: RandomX proof-of-work, Rotating Kings governance and rewards, and a secure TVM native-contract path for deterministic C++ modules. The goal is not to replace the EVM ecosystem, but to extend it with CPU-friendly mining, transparent reward participation, and a bounded native execution layer that keeps EVM accounts, storage, ABI, logs, and tooling intact.
+Tkmchain is being developed as a practical, EVM-compatible execution network with four defining pillars: RandomX proof-of-work, Rotating Kings governance and rewards, TKM Phone communications infrastructure, and a secure TVM native-contract path for deterministic C++ modules. The goal is not to replace the EVM ecosystem, but to extend it with CPU-friendly mining, transparent reward participation, network-native phone identity, and a bounded native execution layer that keeps EVM accounts, storage, ABI, logs, and tooling intact.
 
 ## Strategic direction
 
 Tkmchain should become a chain that ordinary operators can mine, validators and governance participants can monitor, and EVM developers can use without learning a new account model. Development should therefore prioritize consensus correctness, operational clarity, stable RPC surfaces, security review, and compatibility with wallets, indexers, miners, and contract tooling.
 
-The roadmap is organized around five workstreams:
+The roadmap is organized around six workstreams:
 
 1. Consensus and mining: harden RandomX sealing, seed handling, work submission, difficulty adjustment, and block reward finalization.
 2. Governance and rewards: turn Rotating Kings into a reliable operational governance system with clear eligibility, reward accounting, checkpointing, and monitoring duties.
-3. Developer platform: preserve EVM compatibility while adding TVM deployment helpers, precompile execution, and deterministic native-contract templates.
-4. Node operations: improve builds, releases, observability, external mining, configuration, documentation, and safe RPC defaults.
-5. Security and decentralization: expand tests, audits, generated-code checks, bad-dependency checks, fuzzing, economic simulations, and launch procedures.
+3. Phone infrastructure: build daemon-owned number issuance, bucket approvals, SIM/device keys, encrypted messaging, WebRTC call signaling, marketplace automation, and explorer visibility.
+4. Developer platform: preserve EVM compatibility while adding TVM deployment helpers, precompile execution, and deterministic native-contract templates.
+5. Node operations: improve builds, releases, observability, external mining, configuration, documentation, and safe RPC defaults.
+6. Security and decentralization: expand tests, audits, generated-code checks, bad-dependency checks, fuzzing, economic simulations, and launch procedures.
 
 ## Current foundation
 
@@ -26,6 +27,7 @@ The codebase already contains the core foundation for the Tkmchain identity:
 - Block reward logic starts at 200 TKM, targets 120-second blocks, halves over roughly four-year periods, and splits rewards 10 percent to Main King, 40 percent to Rotating King, and 50 percent to the miner.
 - Rotating King APIs expose registration, status, king lists, rotation history, current/next king views, and Main King checkpoint submission.
 - External miner integration exposes `miner_*` and `randomx_*` work APIs and a local stratum bridge path.
+- TKM Phone exposes bucket generation, pending operator approvals, number ownership, registered device keys, encrypted messages, call signaling, notifications, contacts, recovery, propagation, and a daemon-readable phone state mirror.
 - TVM has an initial secure deployment envelope, resource limits, hashes, RPC deployment helpers, and a stateful precompile at `0x00000000000000000000000000000000000000f2`.
 - Keeper provides a stateless execution validation command designed for zkVM guest environments.
 
@@ -88,7 +90,44 @@ Objective: move from implementation to measured network behavior with real opera
 - Provide SDK snippets using existing Ethereum clients where possible, avoiding Tkmchain-only wrappers unless they add real value.
 - Add compatibility matrices for wallets, block explorers, indexers, contract frameworks, and mining tools.
 
-## Phase 3: TVM developer preview
+
+## Phase 3: TKM Phone infrastructure
+
+Objective: make phone-number identity, messaging, and calls a first-class chain service while keeping Main King custody and approvals inside `gtkm`.
+
+### Bucket issuance and approvals
+
+- Keep phone-number supply bucket based: five numbers per bucket, five buckets per Main King batch, and no new batch until all current buckets are bought.
+- Require bucket generation to include a canonical Main King creation transaction hash and Main King signature.
+- Require operator bucket purchase transactions to pay exactly `25,000 TKM` to Main King.
+- Encode `TKMPHONE_BUCKET_V1`, operator key hash, and expiry in the bucket payment transaction data.
+- Let `gtkm` derive pending approvals from canonical chain data only, with no website-submitted approval records.
+- Maintain `gtkm tkmphone pending-approvals` for Main King review and `gtkm tkmphone approve-operator` for daemon-only approval.
+- Expose `tkmphone_pendingOperatorApprovals` and `tkmphone_approveOperatorPayment` for trusted daemon/console automation.
+
+### Number marketplace and ownership
+
+- Let operators open approved buckets with their own wallet signatures and reveal the five issued numbers.
+- Support operator sales of individual numbers at the default `10,000 TKM` price with canonical buyer-to-operator payment verification.
+- Transfer number ownership on successful sale and prevent sold/registered numbers from returning to the public market without explicit owner transfer.
+- Surface bucket, operator, number, sale, payment, and registration state in the explorer and wallet.
+
+### SIM, messaging, and calls
+
+- Require number owners to register active SIM/device keys before a number can send messages or participate in calls.
+- Store SIM exports with owner keystore metadata and device keystore material so browser/mobile clients can sign number actions correctly.
+- Use encrypted message payloads and expiry-aware message methods for private number-to-number messaging.
+- Use WebRTC for audio media and `gtkm` as encrypted signaling storage for offers, answers, and ICE candidates.
+- Add notifications for incoming/outgoing messages, calls, and device registration events.
+
+### Security and operations
+
+- Keep Main King passwords, approval signing, and operator approval registration out of public websites.
+- Document the private-node approval workflow for `gtkm attach`, CLI, and RPC-only operators.
+- Persist a readable phone-state mirror under `~/.tkmchain/gtkm/phone/state.json` for operations and incident recovery.
+- Add tests for bucket data decoding, pending approval scans, expired approvals, duplicate payments, number sales, device signatures, encrypted messages, and call signaling.
+
+## Phase 4: TVM developer preview
 
 Objective: prove native deterministic modules can coexist with EVM contracts without weakening consensus safety.
 
@@ -113,22 +152,23 @@ Objective: prove native deterministic modules can coexist with EVM contracts wit
 - Require conformance tests before accepting new runtime versions.
 - Require independent review before enabling production TVM contract deployment beyond constrained templates.
 
-## Phase 4: mainnet release candidate
+## Phase 5: mainnet release candidate
 
 Objective: make the network launchable and maintainable.
 
 - Freeze genesis, bootnodes, binaries, default config, RPC defaults, and chain parameters.
-- Complete third-party audits for RandomX consensus integration, reward accounting, Rotating Kings, TVM precompile surface, and release process.
+- Complete third-party audits for RandomX consensus integration, reward accounting, Rotating Kings, TKM Phone approvals/device signatures/message signaling, TVM precompile surface, and release process.
 - Run multi-week public testnet with stable metrics and published postmortems for any incidents.
 - Prepare exchange, explorer, wallet, miner, and infrastructure operator documentation.
 - Publish Main King and Rotating King operator keys, procedures, backup policies, and monitoring requirements.
 - Publish final economic parameters: premine, block reward, halving, fee handling, reward fallback, registration fee, stake lock, and governance scope.
 
-## Phase 5: post-mainnet expansion
+## Phase 6: post-mainnet expansion
 
 Objective: scale the ecosystem without compromising the consensus base.
 
 - Add more Rotating King automation: alerts, dashboards, rotation proofs, reward accounting exports, and historical reports.
+- Expand TKM Phone clients across wallet, mobile, explorer, marketplace, encrypted chat, and call interfaces while keeping daemon-only Main King approvals.
 - Add miner pool support, pool operator documentation, and share-accounting reference integrations.
 - Improve state growth controls, archival workflows, pruning guidance, and snapshot distribution.
 - Expand TVM from preview to production templates after audits and testnet validation.
@@ -143,6 +183,7 @@ The roadmap should be measured by concrete outcomes:
 - Mining: stable 120-second target behavior across changing hashrate conditions.
 - Decentralization: growing count of independent miners, nodes, RPC operators, and Rotating Kings.
 - Governance: clear rotation history, predictable rewards, and auditable checkpoint operations.
+- Phone infrastructure: pending bucket approvals are daemon-derived, number ownership is auditable, registered SIM/device keys work across clients, and encrypted messages/calls function without exposing plaintext.
 - Developer experience: standard EVM deployments work without custom account or ABI assumptions.
 - Security: release candidates pass full tests, lint, generated-code checks, bad-dependency checks, fuzz targets, and independent review.
 - Operations: operators can build, sync, mine, register, monitor, and recover nodes using published documentation.
@@ -154,6 +195,7 @@ The next development cycle should focus on the smallest set of work that turns t
 1. Reconcile parameters and documentation for Rotating King eligibility and RandomX difficulty.
 2. Expand consensus and reward tests around edge cases and fork boundaries.
 3. Publish a complete testnet operator guide with genesis, bootnodes, mining, RPC, and Rotating King registration.
-4. Add chain dashboards and structured metrics for RandomX, rewards, rotations, and RPC health.
-5. Run a public testnet with documented incidents, fixes, and measurable stability targets.
+4. Add chain dashboards and structured metrics for RandomX, rewards, rotations, phone buckets, pending approvals, and RPC health.
+5. Harden TKM Phone wallet automation, explorer views, SIM import/export, encrypted messaging, and call signaling tests.
+6. Run a public testnet with documented incidents, fixes, and measurable stability targets.
 
