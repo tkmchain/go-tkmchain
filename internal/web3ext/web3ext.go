@@ -170,6 +170,11 @@ web3._extend({
 			params: 1
 		}),
 		new web3._extend.Method({
+			name: 'numberOwnershipProof',
+			call: 'tkmphone_numberOwnershipProof',
+			params: 1
+		}),
+		new web3._extend.Method({
 			name: 'messagesForNumber',
 			call: 'tkmphone_messagesForNumber',
 			params: 1

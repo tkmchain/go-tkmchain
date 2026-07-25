@@ -57,6 +57,7 @@ Pool software should distribute only the miner share. The Main King and Rotating
 - Added encrypted contact records, per-number blocking/unblocking, and recovery-key registration so a recovery address can move a number to a new owner.
 - Encrypted payload helpers use a RandomX-seed-derived service hash as the AES-256-GCM key, with nonce and route-bound authenticated data.
 - TKM Phone state is persisted in the node database so operator keys, numbers, messages, calls, device keys, notifications, contacts, blocked-number lists, recovery keys, reports, propagation records, and counters survive daemon restart. The node also writes a readable mirror under the instance datadir at `phone/state.json` such as `~/.tkmchain/gtkm/phone/state.json`, including bucket `creationTx`, operator `paymentTx`, and number `salePaymentTx` provenance.
+- Added non-consensus ownership proof hashes for the TKM Phone marketplace flow. Buckets now carry stable issue/owner/assignment hashes, numbers carry stable issuance/transfer/owner hashes, and `tkmphone_numberOwnershipProof` returns the complete MainKing -> operator -> phone-user proof path for SIM export and client validation. This is RPC/state metadata only and does not change block validation or require a hardfork.
 
 ### TKM Phone Web3 Examples
 

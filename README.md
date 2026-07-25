@@ -174,6 +174,7 @@ Common phone RPC methods:
 | `tkmphone_listOperators` | Lists approved operators and bucket assignments. |
 | `tkmphone_openBucket` | Lets an approved operator open their assigned bucket. |
 | `tkmphone_sellNumber` | Transfers a sold number after canonical buyer payment validation. |
+| `tkmphone_numberOwnershipProof` | Returns stable MainKing -> operator -> user ownership proof hashes for a number. |
 | `tkmphone_registeredNumbers` | Lists numbers with active registered device keys. |
 | `tkmphone_registerDeviceKey` | Registers a SIM/device key for an owned number. |
 | `tkmphone_sendEncryptedMessage` | Stores and propagates an encrypted message. |
@@ -190,7 +191,7 @@ The message and call payloads stored by `gtkm` are encrypted. Inbox, outbox, not
 
 ### State Persistence
 
-`gtkm` persists authoritative phone state in the node database and writes a readable mirror under the instance datadir:
+`gtkm` persists authoritative phone state in the node database and writes a readable mirror under the instance datadir. Bucket and number records include stable ownership hashes (`issueHash`, `assignHash`, `transferHash`, and `ownerHash`) so marketplace, wallet, explorer, and chat clients can export SIM files for the correct current owner without exposing MainKing custody:
 
 ```text
 ~/.tkmchain/gtkm/phone/state.json

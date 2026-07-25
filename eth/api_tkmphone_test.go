@@ -1028,3 +1028,60 @@ func TestTkmPhoneMarketplaceContactsBlockingRecoveryExpiryAndPropagation(t *test
 		t.Fatalf("remote reports = %#v", reports)
 	}
 }
+
+func TestTkmPhoneOwnershipProofTracksBucketAndNumberTransfers(t *testing.T) {
+	svc, mainKing, operator, buyer, mainKingD, operatorKey := newTestTkmPhoneService(t)
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	inventory := openTestTkmPhoneBucket(t, svc, operator, operatorKey)
+	if len(inventory) == 0 {
+		t.Fatal("operator inventory is empty")
+	}
+	bucketID := uint64(inventory[0].BucketID)
+	bucket := svc.buckets[bucketID]
+	if bucket.Operator != operator || bucket.PaymentTx == (common.Hash{}) || bucket.AssignHash == (common.Hash{}) || bucket.OwnerHash == (common.Hash{}) {
+		t.Fatalf("bucket ownership transfer not recorded: %#v", bucket)
+	}
+	if inventory[0].Owner != operator || inventory[0].TransferHash == (common.Hash{}) || inventory[0].OwnerHash == (common.Hash{}) {
+		t.Fatalf("operator inventory ownership not recorded: %#v", inventory[0])
+	}
+
+	saleTx := crypto.Keccak256Hash([]byte("ownership-proof-sale-tx"))
+	sold, err := svc.SellNumber(operator, inventory[0].Number, buyer, tkmPhoneDefaultNumberSalePrice, saleTx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sold.Owner != buyer || sold.Operator != operator || sold.SalePaymentTx != saleTx || sold.TransferHash == (common.Hash{}) || sold.OwnerHash == (common.Hash{}) {
+		t.Fatalf("sold number ownership transfer not recorded: %#v", sold)
+	}
+
+	proof, err := svc.NumberOwnershipProof(sold.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.MainKing != mainKing || proof.Operator != operator || proof.CurrentOwner != buyer || proof.SalePaymentTx != saleTx {
+		t.Fatalf("bad ownership proof header: %#v", proof)
+	}
+	if proof.IssuanceHash != sold.IssuanceHash || proof.TransferHash != sold.TransferHash || proof.NumberOwnerHash != sold.OwnerHash || proof.BucketAssignHash != bucket.AssignHash {
+		t.Fatalf("proof hashes do not match records: proof=%#v sold=%#v bucket=%#v", proof, sold, bucket)
+	}
+	if proof.ProofHash == (common.Hash{}) || len(proof.Steps) != 3 {
+		t.Fatalf("bad ownership proof steps: %#v", proof)
+	}
+	if proof.Steps[0].Kind != "mainking-issue-number" || proof.Steps[0].From != mainKing || proof.Steps[0].To != mainKing {
+		t.Fatalf("bad issuance step: %#v", proof.Steps[0])
+	}
+	if proof.Steps[1].Kind != "mainking-transfer-bucket-to-operator" || proof.Steps[1].From != mainKing || proof.Steps[1].To != operator || proof.Steps[1].PaymentTx == (common.Hash{}) {
+		t.Fatalf("bad bucket transfer step: %#v", proof.Steps[1])
+	}
+	if proof.Steps[2].Kind != "operator-transfer-number-to-user" || proof.Steps[2].From != operator || proof.Steps[2].To != buyer || proof.Steps[2].PaymentTx != saleTx {
+		t.Fatalf("bad number transfer step: %#v", proof.Steps[2])
+	}
+
+	proofAgain, err := svc.NumberOwnershipProof(sold.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proofAgain.ProofHash != proof.ProofHash {
+		t.Fatalf("ownership proof hash changed without state change: first=%s second=%s", proof.ProofHash, proofAgain.ProofHash)
+	}
+}

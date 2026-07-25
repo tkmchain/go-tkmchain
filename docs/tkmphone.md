@@ -55,6 +55,8 @@ The website at `https://phone.tkmchain.site` adds SQLite bookkeeping for orders,
 
 `gtkm` persists the authoritative phone service state in the chain database and also writes a readable mirror to the node instance directory at `phone/state.json`. With the normal TKMChain datadir layout this is under `~/.tkmchain/gtkm/phone/state.json`. The mirror includes buckets, bucket `creationTx` hashes, operator bucket `paymentTx` hashes, generated numbers, number `salePaymentTx` hashes, messages, calls, device keys, notifications, contacts, recovery records, reports, and propagation records.
 
+Ownership handoff is explicit in the phone records without adding a consensus rule. Bucket creation records `issueHash`; bucket purchase approval records `assignHash` and moves ownership from MainKing to the operator; number purchase records `transferHash` and moves ownership from operator to the buyer. Clients should call `tkmphone_numberOwnershipProof(number)` before exporting a SIM or trusting a marketplace listing. The proof contains the MainKing issue step, MainKing-to-operator bucket transfer, operator-to-user number transfer, the payment transaction hashes, and a stable `proofHash`.
+
 ## MainKing Bucket and Approval CLI
 
 MainKing bucket generation and operator approval must be done from a private MainKing `gtkm` node, not from a public phone-market website. A hosted marketplace should only read `tkmphone_buckets`, record user payments, and display pending order data. This keeps the MainKing password and signing keys off the web server.
@@ -70,6 +72,7 @@ CREATION_TX=0xYourMinedMainKingCreationTransactionHash
 ./build/bin/gtkm tkmphone bucket-hash --seed $SEED --creation-tx $CREATION_TX
 ./build/bin/gtkm tkmphone generate-buckets --seed $SEED --creation-tx $CREATION_TX --mainking 0xc40F4A0b4df81F8f67A88B179a8b2271107a9ac2
 ./build/bin/gtkm tkmphone buckets
+./build/bin/gtkm tkmphone ownership-proof --number +8979...
 ```
 
 For offline signing, sign the hash returned by `bucket-hash`, then submit the signature with the same `--creation-tx` value:

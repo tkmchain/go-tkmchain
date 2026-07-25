@@ -153,6 +153,9 @@ type PhoneNumber struct {
 	SoldAt         hexutil.Uint64 `json:"soldAt"`
 	BucketID       hexutil.Uint64 `json:"bucketId"`
 	BucketHash     common.Hash    `json:"bucketHash"`
+	IssuanceHash   common.Hash    `json:"issuanceHash"`
+	TransferHash   common.Hash    `json:"transferHash"`
+	OwnerHash      common.Hash    `json:"ownerHash"`
 	MainKingIssued bool           `json:"mainKingIssued"`
 }
 
@@ -169,6 +172,38 @@ type PhoneNumberBucket struct {
 	CreatedAt  hexutil.Uint64 `json:"createdAt"`
 	AssignedAt hexutil.Uint64 `json:"assignedAt"`
 	Signature  hexutil.Bytes  `json:"signature"`
+	IssueHash  common.Hash    `json:"issueHash"`
+	OwnerHash  common.Hash    `json:"ownerHash"`
+	AssignHash common.Hash    `json:"assignHash"`
+}
+
+type PhoneOwnershipStep struct {
+	Kind      string         `json:"kind"`
+	From      common.Address `json:"from"`
+	To        common.Address `json:"to"`
+	PaymentTx common.Hash    `json:"paymentTx,omitempty"`
+	BucketID  hexutil.Uint64 `json:"bucketId,omitempty"`
+	Number    string         `json:"number,omitempty"`
+	Hash      common.Hash    `json:"hash"`
+	At        hexutil.Uint64 `json:"at,omitempty"`
+}
+
+type PhoneNumberOwnershipProof struct {
+	Number           string               `json:"number"`
+	BucketID         hexutil.Uint64       `json:"bucketId"`
+	BucketHash       common.Hash          `json:"bucketHash"`
+	CreationTx       common.Hash          `json:"creationTx"`
+	SalePaymentTx    common.Hash          `json:"salePaymentTx"`
+	MainKing         common.Address       `json:"mainKing"`
+	Operator         common.Address       `json:"operator"`
+	CurrentOwner     common.Address       `json:"currentOwner"`
+	IssuanceHash     common.Hash          `json:"issuanceHash"`
+	BucketOwnerHash  common.Hash          `json:"bucketOwnerHash"`
+	BucketAssignHash common.Hash          `json:"bucketAssignHash"`
+	NumberOwnerHash  common.Hash          `json:"numberOwnerHash"`
+	TransferHash     common.Hash          `json:"transferHash"`
+	ProofHash        common.Hash          `json:"proofHash"`
+	Steps            []PhoneOwnershipStep `json:"steps"`
 }
 
 type PhoneCipher struct {
@@ -443,6 +478,10 @@ func (api *TkmPhoneAPI) SellNumber(operator common.Address, number string, buyer
 
 func (api *TkmPhoneAPI) Number(number string) (PhoneNumber, error) {
 	return api.service.Number(number)
+}
+
+func (api *TkmPhoneAPI) NumberOwnershipProof(number string) (PhoneNumberOwnershipProof, error) {
+	return api.service.NumberOwnershipProof(number)
 }
 
 func (api *TkmPhoneAPI) EncryptPayload(from string, to string, nonce hexutil.Bytes, plaintext hexutil.Bytes) (PhoneCipher, error) {
@@ -793,6 +832,7 @@ func (svc *TkmPhoneService) assignNextBucketLocked(operator common.Address, paym
 		bucket.Operator = operator
 		bucket.PaymentTx = paymentTx
 		bucket.AssignedAt = hexutil.Uint64(now)
+		svc.refreshBucketOwnershipHashesLocked(&bucket)
 		svc.buckets[id] = bucket
 		for number, record := range svc.numbers {
 			if record.BucketID == bucket.ID && record.Owner == svc.mainKing && record.MainKingIssued {
@@ -837,6 +877,7 @@ func (svc *TkmPhoneService) GenerateBuckets(seed common.Hash, creationTx common.
 		svc.nextBucket++
 		bucketHash := svc.randomXServiceHash("phone-bucket", svc.mainKing.Bytes(), seed.Bytes(), creationTx.Bytes(), tkmPhoneUint64Bytes(round), tkmPhoneUint64Bytes(i+1), tkmPhoneUint64Bytes(svc.nextBucket))
 		bucket := PhoneNumberBucket{ID: hexutil.Uint64(svc.nextBucket), Round: hexutil.Uint64(round), Index: hexutil.Uint64(i + 1), Hash: bucketHash, Seed: seed, MainKing: svc.mainKing, CreationTx: creationTx, CreatedAt: hexutil.Uint64(now), Signature: append([]byte(nil), signature...)}
+		svc.refreshBucketOwnershipHashesLocked(&bucket)
 		svc.buckets[svc.nextBucket] = bucket
 		svc.addPropagationLocked("bucket", svc.nextBucket, bucketHash, now, bucket)
 		for n := uint64(0); n < tkmPhoneBucketSize; n++ {
@@ -857,6 +898,7 @@ func (svc *TkmPhoneService) Buckets() []PhoneNumberBucket {
 	defer svc.lock.RUnlock()
 	out := make([]PhoneNumberBucket, 0, len(svc.buckets))
 	for _, bucket := range svc.buckets {
+		svc.refreshBucketOwnershipHashesLocked(&bucket)
 		out = append(out, bucket)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -900,6 +942,7 @@ func (svc *TkmPhoneService) OpenBucket(operator common.Address, bucketID uint64,
 	out := make([]PhoneNumber, 0, tkmPhoneBucketSize)
 	for _, number := range svc.numbers {
 		if uint64(number.BucketID) == bucketID && number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
+			svc.refreshNumberOwnershipHashesLocked(&number)
 			out = append(out, number)
 		}
 	}
@@ -917,6 +960,7 @@ func (svc *TkmPhoneService) operatorInventoryForTest(operator common.Address) ([
 	out := make([]PhoneNumber, 0, tkmPhoneBucketSize)
 	for _, number := range svc.numbers {
 		if uint64(number.BucketID) == uint64(key.BucketID) && number.Operator == operator && number.Owner == operator && number.Active && uint64(number.SoldAt) == 0 {
+			svc.refreshNumberOwnershipHashesLocked(&number)
 			out = append(out, number)
 		}
 	}
@@ -968,6 +1012,7 @@ func (svc *TkmPhoneService) SellNumber(operator common.Address, number string, b
 	record.SalePrice = (*hexutil.Big)(new(big.Int).Set(price))
 	record.SalePaymentTx = paymentTx
 	record.SoldAt = hexutil.Uint64(now)
+	svc.refreshNumberOwnershipHashesLocked(&record)
 	svc.numbers[number] = record
 	svc.addPropagationLocked("number-sold", 0, svc.randomXServiceHash("number-sold", []byte(number), buyer.Bytes(), price.Bytes(), paymentTx.Bytes()), now, record)
 	if err := svc.saveLocked(); err != nil {
@@ -998,6 +1043,7 @@ func (svc *TkmPhoneService) Number(number string) (PhoneNumber, error) {
 	if !ok || !record.Active {
 		return PhoneNumber{}, errors.New("number not found")
 	}
+	svc.refreshNumberOwnershipHashesLocked(&record)
 	return record, nil
 }
 
@@ -1513,8 +1559,9 @@ func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Addres
 		return PhoneNumber{}, errors.New("number not found")
 	}
 	record.Owner = newOwner
+	svc.refreshNumberOwnershipHashesLocked(&record)
 	svc.numbers[number] = record
-	svc.addPropagationLocked("number-transferred", 0, svc.randomXServiceHash("number-transferred", []byte(number), newOwner.Bytes()), uint64(time.Now().Unix()), record)
+	svc.addPropagationLocked("number-transferred", 0, record.TransferHash, uint64(time.Now().Unix()), record)
 	if err := svc.saveLocked(); err != nil {
 		return PhoneNumber{}, err
 	}
@@ -1912,6 +1959,7 @@ func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address
 	}
 	rec.Owner = newOwner
 	rec.Active = true
+	svc.refreshNumberOwnershipHashesLocked(&rec)
 	svc.numbers[number] = rec
 	now := uint64(time.Now().Unix())
 	record := phoneRecoveryRecord{Number: number, Recovery: recovery, NewOwner: newOwner, CreatedAt: hexutil.Uint64(now)}
@@ -2057,6 +2105,7 @@ func (svc *TkmPhoneService) load() error {
 	}
 	svc.nextReport = snap.NextReport
 	svc.nextProp = snap.NextProp
+	svc.refreshOwnershipHashesLocked()
 	return nil
 }
 
@@ -2128,6 +2177,121 @@ func (svc *TkmPhoneService) requireActiveDeviceKey(number string) error {
 		}
 	}
 	return errors.New("registered device key required for phone number")
+}
+
+func (svc *TkmPhoneService) NumberOwnershipProof(number string) (PhoneNumberOwnershipProof, error) {
+	if err := svc.requirePhoneForkActive(); err != nil {
+		return PhoneNumberOwnershipProof{}, err
+	}
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	record, ok := svc.numbers[number]
+	if !ok || !record.Active {
+		return PhoneNumberOwnershipProof{}, errors.New("number not found")
+	}
+	bucket, ok := svc.buckets[uint64(record.BucketID)]
+	if !ok || bucket.Hash != record.BucketHash {
+		return PhoneNumberOwnershipProof{}, errors.New("number bucket proof not found")
+	}
+	svc.refreshBucketOwnershipHashesLocked(&bucket)
+	svc.refreshNumberOwnershipHashesLocked(&record)
+	steps := []PhoneOwnershipStep{
+		{
+			Kind:     "mainking-issue-number",
+			From:     svc.mainKing,
+			To:       svc.mainKing,
+			BucketID: record.BucketID,
+			Number:   record.Number,
+			Hash:     record.IssuanceHash,
+			At:       record.CreatedAt,
+		},
+	}
+	if bucket.Operator != (common.Address{}) && uint64(bucket.AssignedAt) != 0 {
+		steps = append(steps, PhoneOwnershipStep{
+			Kind:      "mainking-transfer-bucket-to-operator",
+			From:      svc.mainKing,
+			To:        bucket.Operator,
+			PaymentTx: bucket.PaymentTx,
+			BucketID:  bucket.ID,
+			Hash:      bucket.AssignHash,
+			At:        bucket.AssignedAt,
+		})
+	}
+	if record.SalePaymentTx != (common.Hash{}) && uint64(record.SoldAt) != 0 {
+		steps = append(steps, PhoneOwnershipStep{
+			Kind:      "operator-transfer-number-to-user",
+			From:      record.Operator,
+			To:        record.Owner,
+			PaymentTx: record.SalePaymentTx,
+			BucketID:  record.BucketID,
+			Number:    record.Number,
+			Hash:      record.TransferHash,
+			At:        record.SoldAt,
+		})
+	}
+	proofHash := svc.stablePhoneHash("number-ownership-proof", []byte(record.Number), bucket.Hash.Bytes(), svc.mainKing.Bytes(), record.Operator.Bytes(), record.Owner.Bytes(), record.IssuanceHash.Bytes(), bucket.OwnerHash.Bytes(), bucket.AssignHash.Bytes(), record.OwnerHash.Bytes(), record.TransferHash.Bytes())
+	return PhoneNumberOwnershipProof{
+		Number:           record.Number,
+		BucketID:         record.BucketID,
+		BucketHash:       record.BucketHash,
+		CreationTx:       bucket.CreationTx,
+		SalePaymentTx:    record.SalePaymentTx,
+		MainKing:         svc.mainKing,
+		Operator:         record.Operator,
+		CurrentOwner:     record.Owner,
+		IssuanceHash:     record.IssuanceHash,
+		BucketOwnerHash:  bucket.OwnerHash,
+		BucketAssignHash: bucket.AssignHash,
+		NumberOwnerHash:  record.OwnerHash,
+		TransferHash:     record.TransferHash,
+		ProofHash:        proofHash,
+		Steps:            steps,
+	}, nil
+}
+
+func (svc *TkmPhoneService) refreshOwnershipHashesLocked() {
+	for id, bucket := range svc.buckets {
+		svc.refreshBucketOwnershipHashesLocked(&bucket)
+		svc.buckets[id] = bucket
+	}
+	for number, record := range svc.numbers {
+		svc.refreshNumberOwnershipHashesLocked(&record)
+		svc.numbers[number] = record
+	}
+}
+
+func (svc *TkmPhoneService) refreshBucketOwnershipHashesLocked(bucket *PhoneNumberBucket) {
+	if bucket == nil {
+		return
+	}
+	bucket.IssueHash = svc.stablePhoneHash("bucket-issued", svc.mainKing.Bytes(), bucket.Hash.Bytes(), bucket.Seed.Bytes(), bucket.CreationTx.Bytes(), tkmPhoneUint64Bytes(uint64(bucket.ID)), tkmPhoneUint64Bytes(uint64(bucket.Round)), tkmPhoneUint64Bytes(uint64(bucket.Index)), tkmPhoneUint64Bytes(uint64(bucket.CreatedAt)))
+	owner := svc.mainKing
+	if bucket.Operator != (common.Address{}) {
+		owner = bucket.Operator
+	}
+	bucket.OwnerHash = svc.stablePhoneHash("bucket-owner", bucket.Hash.Bytes(), svc.mainKing.Bytes(), owner.Bytes(), bucket.PaymentTx.Bytes(), tkmPhoneUint64Bytes(uint64(bucket.AssignedAt)))
+	if bucket.Operator != (common.Address{}) && uint64(bucket.AssignedAt) != 0 {
+		bucket.AssignHash = svc.stablePhoneHash("bucket-transfer", bucket.Hash.Bytes(), svc.mainKing.Bytes(), bucket.Operator.Bytes(), bucket.PaymentTx.Bytes(), tkmPhoneUint64Bytes(uint64(bucket.ID)), tkmPhoneUint64Bytes(uint64(bucket.AssignedAt)))
+	}
+}
+
+func (svc *TkmPhoneService) refreshNumberOwnershipHashesLocked(record *PhoneNumber) {
+	if record == nil {
+		return
+	}
+	record.IssuanceHash = svc.stablePhoneHash("number-issued", []byte(record.Number), svc.mainKing.Bytes(), record.BucketHash.Bytes(), record.RandomX.Bytes(), tkmPhoneUint64Bytes(uint64(record.BucketID)), tkmPhoneUint64Bytes(uint64(record.CreatedAt)))
+	if record.Operator != (common.Address{}) && record.SalePaymentTx != (common.Hash{}) && uint64(record.SoldAt) != 0 {
+		price := []byte(nil)
+		if record.SalePrice != nil {
+			price = record.SalePrice.ToInt().Bytes()
+		}
+		record.TransferHash = svc.stablePhoneHash("number-sale-transfer", []byte(record.Number), record.BucketHash.Bytes(), record.Operator.Bytes(), record.Owner.Bytes(), price, record.SalePaymentTx.Bytes(), tkmPhoneUint64Bytes(uint64(record.SoldAt)))
+	} else if record.Owner != svc.mainKing && record.Operator != (common.Address{}) {
+		record.TransferHash = svc.stablePhoneHash("number-bucket-owner", []byte(record.Number), record.BucketHash.Bytes(), svc.mainKing.Bytes(), record.Operator.Bytes(), tkmPhoneUint64Bytes(uint64(record.BucketID)))
+	} else if record.TransferHash == (common.Hash{}) {
+		record.TransferHash = record.IssuanceHash
+	}
+	record.OwnerHash = svc.stablePhoneHash("number-owner", []byte(record.Number), record.BucketHash.Bytes(), record.Owner.Bytes(), record.TransferHash.Bytes())
 }
 
 func (svc *TkmPhoneService) requireNumbers(from string, to string) error {
@@ -2617,6 +2781,17 @@ func (svc *TkmPhoneService) callCandidateListSigningHash(id uint64, number strin
 
 func (svc *TkmPhoneService) messageKey(from string, to string, nonce []byte) common.Hash {
 	return svc.randomXServiceHash("message-key", []byte(from), []byte(to), nonce)
+}
+
+func (svc *TkmPhoneService) stablePhoneHash(label string, parts ...[]byte) common.Hash {
+	payload := []byte("TKMPHONE_STABLE_HASH_V1")
+	payload = append(payload, []byte(label)...)
+	payload = append(payload, svc.chainID.Bytes()...)
+	for _, part := range parts {
+		payload = append(payload, tkmPhoneUint64Bytes(uint64(len(part)))...)
+		payload = append(payload, part...)
+	}
+	return crypto.Keccak256Hash(payload)
 }
 
 func (svc *TkmPhoneService) randomXServiceHash(label string, parts ...[]byte) common.Hash {

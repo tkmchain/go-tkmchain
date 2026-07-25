@@ -47,6 +47,10 @@ var (
 		Name:  "payment-tx",
 		Usage: "canonical operator bucket payment transaction hash",
 	}
+	tkmPhoneNumberFlag = &cli.StringFlag{
+		Name:  "number",
+		Usage: "TKM phone number",
+	}
 	tkmPhoneScanBlocksFlag = &cli.Uint64Flag{
 		Name:  "scan-blocks",
 		Usage: "number of recent blocks to scan for pending operator payments",
@@ -132,6 +136,13 @@ RPC API enabled, and automatic signing needs eth_sign for an unlocked account.`,
 				ArgsUsage: "[endpoint]",
 				Flags:     append(tkmPhoneRPCFlags, tkmPhoneOperatorFlag, tkmPhoneBucketFlag, tkmPhoneSignatureFlag),
 				Action:    tkmPhoneOpenBucket,
+			},
+			{
+				Name:      "ownership-proof",
+				Usage:     "Show the MainKing -> operator -> user ownership proof for a phone number",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(tkmPhoneRPCFlags, tkmPhoneNumberFlag),
+				Action:    tkmPhoneOwnershipProof,
 			},
 		},
 	}
@@ -444,6 +455,24 @@ func tkmPhoneOpenBucket(ctx *cli.Context) error {
 		return err
 	}
 	fmt.Println(string(numbers))
+	return nil
+}
+
+func tkmPhoneOwnershipProof(ctx *cli.Context) error {
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	number := ctx.String(tkmPhoneNumberFlag.Name)
+	if number == "" {
+		return errors.New("--number is required")
+	}
+	var proof json.RawMessage
+	if err := client.CallContext(context.Background(), &proof, "tkmphone_numberOwnershipProof", number); err != nil {
+		return err
+	}
+	fmt.Println(string(proof))
 	return nil
 }
 
