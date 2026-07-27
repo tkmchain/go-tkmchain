@@ -84,6 +84,12 @@ curl -s http://127.0.0.1:8545 \
 
 ---
 
+## Governance Disclosure Ledger
+
+Tkmchain includes a non-consensus governance disclosure ledger through the `tkmgov` RPC namespace and `gtkm governance` CLI command. It is used to publish Main King signed, append-only hashes of public governance documents such as Rotating King selections, checkpoint explanations, roadmap statements, hardfork notices, and development-fund commitments.
+
+This does not require a hardfork. It stores public disclosure metadata in the node database and mirrors it under the datadir governance folder. Full documents should live in `docs/governance/`, while `tkmgov` stores the content hash, previous disclosure hash, Main King signature, and optional anchor transaction hash. See [docs/GOVERNANCE_DISCLOSURES.md](docs/GOVERNANCE_DISCLOSURES.md).
+
 ## TKM Phone Numbers, Messages, and Calls
 
 TKM Phone is a network-native phone-number system built into `gtkm`. It adds MainKing-signed phone-number buckets, operator sales, registered SIM/device keys, encrypted number-to-number messages, and WebRTC voice-call signaling through the `tkmphone` RPC namespace.

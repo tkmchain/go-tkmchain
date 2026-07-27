@@ -255,6 +255,8 @@ func init() {
 		bintrieCommand,
 		// See tkmphonecmd.go
 		tkmPhoneCommand,
+		// See governancecmd.go
+		governanceCommand,
 	}
 	if logTestCommand != nil {
 		app.Commands = append(app.Commands, logTestCommand)

@@ -173,6 +173,35 @@ func TestTkmPhoneOperatorKeyRequiresMainKingSignatureAndPrice(t *testing.T) {
 	}
 }
 
+func TestTkmPhoneOperatorUsedNumberCannotBeSoldAgain(t *testing.T) {
+	svc, _, operator, buyer, mainKingD, operatorKey := newTestTkmPhoneService(t)
+	registerTestTkmPhoneOperator(t, svc, mainKingD, operator)
+	inventory := openTestTkmPhoneBucket(t, svc, operator, operatorKey)
+	if len(inventory) != int(tkmPhoneBucketSize) {
+		t.Fatalf("operator inventory = %d, want %d", len(inventory), int(tkmPhoneBucketSize))
+	}
+	number := inventory[0].Number
+	deviceHash := svc.deviceKeySigningHash(number, "operator-phone", []byte("operator-device-public-key"))
+	deviceSig := signTkmPhoneDigest(t, operatorKey, deviceHash)
+	if _, err := svc.RegisterDeviceKey(number, "operator-phone", []byte("operator-device-public-key"), deviceSig); err != nil {
+		t.Fatal(err)
+	}
+	used, err := svc.Number(number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !used.InUse || used.UseHash == (common.Hash{}) || uint64(used.InUseAt) == 0 {
+		t.Fatalf("used number state not recorded: %#v", used)
+	}
+	if _, err := svc.SellNumber(operator, number, buyer, tkmPhoneDefaultNumberSalePrice, crypto.Keccak256Hash([]byte("sale-after-use"))); err == nil || !strings.Contains(err.Error(), "permanently in use") {
+		t.Fatalf("SellNumber after use error = %v, want permanently in use", err)
+	}
+	inventoryAfterUse := openTestTkmPhoneBucket(t, svc, operator, operatorKey)
+	if len(inventoryAfterUse) != int(tkmPhoneBucketSize)-1 {
+		t.Fatalf("operator inventory after use = %d, want %d", len(inventoryAfterUse), int(tkmPhoneBucketSize)-1)
+	}
+}
+
 func TestTkmPhoneMainKingBucketsGateNumberIssuance(t *testing.T) {
 	mainKingKey, err := crypto.GenerateKey()
 	if err != nil {

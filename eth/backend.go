@@ -135,6 +135,8 @@ type Ethereum struct {
 	miningStartPool    bool
 	phoneService       *TkmPhoneService
 	phoneDir           string
+	governanceSvc      *GovernanceService
+	governanceDir      string
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -286,6 +288,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		kingAddresses:   kingAddresses,
 		rkLocks:         make(map[common.Address]rkLockInfo),
 		phoneDir:        stack.ResolvePath("phone"),
+		governanceDir:   stack.ResolvePath("governance"),
 	}
 	if err := eth.loadCheckpoints(); err != nil {
 		rotatingKingDb.Close()
@@ -561,6 +564,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		{
 			Namespace: "tkmphone",
 			Service:   NewTkmPhoneAPI(s),
+		},
+		{
+			Namespace: "tkmgov",
+			Service:   NewGovernanceAPI(s),
 		},
 		{
 			Namespace: "admin",
