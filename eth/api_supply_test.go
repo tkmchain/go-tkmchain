@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/trie"
@@ -81,5 +82,24 @@ func TestSupplyRotatingZeroMarkerCountsAsMainKingReceived(t *testing.T) {
 	}
 	if delta.rotatingKing.Sign() != 0 {
 		t.Fatalf("zero rotating marker rotating delta = %v, want 0", delta.rotatingKing)
+	}
+}
+
+func TestSupplyUsesRandomXGenesisPremineForEconomicSupply(t *testing.T) {
+	if string(tkmSupplyLatestKey) != "tkm-supply-latest-v2" {
+		t.Fatalf("supply latest key = %q, want v2 key", string(tkmSupplyLatestKey))
+	}
+	entry := supplyEntryDisk{
+		BlockNumber:         0,
+		GenesisSupply:       randomx.GenesisPremine,
+		TotalIssued:         new(big.Int),
+		TotalSupply:         randomx.GenesisPremine,
+		MainKingRewards:     new(big.Int),
+		RotatingKingRewards: new(big.Int),
+		MinerRewards:        new(big.Int),
+	}
+	view := entry.view()
+	if (*big.Int)(view.GenesisSupply).Cmp(new(big.Int).Mul(big.NewInt(60000000), big.NewInt(1000000000000000000))) != 0 {
+		t.Fatalf("genesis supply = %v, want 60000000 TKM", (*big.Int)(view.GenesisSupply))
 	}
 }

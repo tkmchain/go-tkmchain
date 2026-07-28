@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	tkmSupplyLatestKey = []byte("tkm-supply-latest-v1")
-	tkmSupplyEntryPref = []byte("tkm-supply-entry-v1-")
+	tkmSupplyLatestKey = []byte("tkm-supply-latest-v2")
+	tkmSupplyEntryPref = []byte("tkm-supply-entry-v2-")
 )
 
 // SupplyEntry stores cumulative non-consensus supply accounting up to one canonical block.
@@ -122,6 +122,10 @@ func (svc *SupplyService) ensureGenesisSupply() error {
 	genesis, err := core.ReadGenesis(svc.db)
 	if err != nil {
 		return err
+	}
+	if genesis.Config != nil && genesis.Config.RandomX != nil && randomx.GenesisPremine.Sign() > 0 {
+		svc.genesisSupply = new(big.Int).Set(randomx.GenesisPremine)
+		return nil
 	}
 	total := new(big.Int)
 	for _, account := range genesis.Alloc {
