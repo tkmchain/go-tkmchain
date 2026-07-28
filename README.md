@@ -84,6 +84,50 @@ curl -s http://127.0.0.1:8545 \
 
 ---
 
+## Supply And Reward Accounting
+
+Tkmchain includes a non-consensus supply accounting index through the `tkmsupply` RPC namespace and `gtkm supply` CLI command. It scans canonical blocks, persists cumulative totals in the node database, and can return totals at historical block heights.
+
+This does not require a hardfork. It does not change balances, rewards, headers, validation, or consensus rules. It is an accounting index built from canonical chain data.
+
+Tracked totals:
+
+- genesis supply from the stored genesis allocation;
+- total issued block rewards;
+- total supply at a block height;
+- cumulative Main King rewards;
+- cumulative Rotating King rewards;
+- cumulative miner rewards.
+
+Enable the RPC namespace on HTTP if needed:
+
+```bash
+./build/bin/gtkm --http --http.api eth,net,web3,tkm,tkmsupply
+```
+
+CLI examples:
+
+```bash
+# Current head
+gtkm supply latest /home/mike/.tkmchain/gtkm.ipc
+
+# Historical height
+gtkm supply at --block 10000 /home/mike/.tkmchain/gtkm.ipc
+
+# Build or extend the persisted index to a height
+gtkm supply sync --block 10000 /home/mike/.tkmchain/gtkm.ipc
+```
+
+RPC methods:
+
+```text
+tkmsupply_latest()
+tkmsupply_atBlock(blockNumber)
+tkmsupply_sync(blockNumber)
+```
+
+For blocks that contain synthetic reward transactions, the accounting uses the actual reward marker values. For older implicit-reward blocks, it derives the reward split from canonical block headers and the RandomX reward schedule.
+
 ## Governance Disclosure Ledger
 
 Tkmchain includes a non-consensus governance disclosure ledger through the `tkmgov` RPC namespace and `gtkm governance` CLI command. It is used to publish Main King signed, append-only hashes of public governance documents such as Rotating King selections, checkpoint explanations, roadmap statements, hardfork notices, and development-fund commitments.

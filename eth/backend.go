@@ -570,6 +570,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewGovernanceAPI(s),
 		},
 		{
+			Namespace: "tkmsupply",
+			Service:   NewSupplyAPI(s),
+		},
+		{
 			Namespace: "admin",
 			Service:   NewAdminAPI(s),
 		},
