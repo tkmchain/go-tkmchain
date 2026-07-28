@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 )
@@ -55,18 +55,47 @@ The supply command attaches to a running gtkm node and uses the non-consensus
 	}
 )
 
+type supplyRPCEntry struct {
+	BlockNumber         hexutil.Uint64 `json:"blockNumber"`
+	BlockHash           common.Hash    `json:"blockHash"`
+	GenesisSupply       *hexutil.Big   `json:"genesisSupply"`
+	TotalIssued         *hexutil.Big   `json:"totalIssued"`
+	TotalSupply         *hexutil.Big   `json:"totalSupply"`
+	MainKingRewards     *hexutil.Big   `json:"mainKingRewards"`
+	RotatingKingRewards *hexutil.Big   `json:"rotatingKingRewards"`
+	MinerRewards        *hexutil.Big   `json:"minerRewards"`
+	IndexedTo           hexutil.Uint64 `json:"indexedTo"`
+}
+
+type supplyHumanEntry struct {
+	BlockNumber            uint64      `json:"blockNumber"`
+	BlockHash              common.Hash `json:"blockHash"`
+	GenesisSupplyTKM       string      `json:"genesisSupplyTKM"`
+	TotalIssuedTKM         string      `json:"totalIssuedTKM"`
+	TotalSupplyTKM         string      `json:"totalSupplyTKM"`
+	MainKingRewardsTKM     string      `json:"mainKingRewardsTKM"`
+	RotatingKingRewardsTKM string      `json:"rotatingKingRewardsTKM"`
+	MinerRewardsTKM        string      `json:"minerRewardsTKM"`
+	GenesisSupplyWei       string      `json:"genesisSupplyWei"`
+	TotalIssuedWei         string      `json:"totalIssuedWei"`
+	TotalSupplyWei         string      `json:"totalSupplyWei"`
+	MainKingRewardsWei     string      `json:"mainKingRewardsWei"`
+	RotatingKingRewardsWei string      `json:"rotatingKingRewardsWei"`
+	MinerRewardsWei        string      `json:"minerRewardsWei"`
+	IndexedTo              uint64      `json:"indexedTo"`
+}
+
 func supplyLatest(ctx *cli.Context) error {
 	client, err := tkmPhoneDial(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	var out json.RawMessage
+	var out supplyRPCEntry
 	if err := client.CallContext(context.Background(), &out, "tkmsupply_latest"); err != nil {
 		return err
 	}
-	fmt.Println(string(out))
-	return nil
+	return tkmPhonePrintJSON(supplyHumanize(out))
 }
 
 func supplyAt(ctx *cli.Context) error {
@@ -79,12 +108,11 @@ func supplyAt(ctx *cli.Context) error {
 		return err
 	}
 	defer client.Close()
-	var out json.RawMessage
+	var out supplyRPCEntry
 	if err := client.CallContext(context.Background(), &out, "tkmsupply_atBlock", hexutil.Uint64(block)); err != nil {
 		return err
 	}
-	fmt.Println(string(out))
-	return nil
+	return tkmPhonePrintJSON(supplyHumanize(out))
 }
 
 func supplySync(ctx *cli.Context) error {
@@ -97,12 +125,45 @@ func supplySync(ctx *cli.Context) error {
 		return err
 	}
 	defer client.Close()
-	var out json.RawMessage
+	var out supplyRPCEntry
 	if err := client.CallContext(context.Background(), &out, "tkmsupply_sync", hexutil.Uint64(block)); err != nil {
 		return err
 	}
-	fmt.Println(string(out))
-	return nil
+	return tkmPhonePrintJSON(supplyHumanize(out))
+}
+
+func supplyHumanize(entry supplyRPCEntry) supplyHumanEntry {
+	return supplyHumanEntry{
+		BlockNumber:            uint64(entry.BlockNumber),
+		BlockHash:              entry.BlockHash,
+		GenesisSupplyTKM:       supplyBigToTKM(entry.GenesisSupply),
+		TotalIssuedTKM:         supplyBigToTKM(entry.TotalIssued),
+		TotalSupplyTKM:         supplyBigToTKM(entry.TotalSupply),
+		MainKingRewardsTKM:     supplyBigToTKM(entry.MainKingRewards),
+		RotatingKingRewardsTKM: supplyBigToTKM(entry.RotatingKingRewards),
+		MinerRewardsTKM:        supplyBigToTKM(entry.MinerRewards),
+		GenesisSupplyWei:       supplyBigToWei(entry.GenesisSupply),
+		TotalIssuedWei:         supplyBigToWei(entry.TotalIssued),
+		TotalSupplyWei:         supplyBigToWei(entry.TotalSupply),
+		MainKingRewardsWei:     supplyBigToWei(entry.MainKingRewards),
+		RotatingKingRewardsWei: supplyBigToWei(entry.RotatingKingRewards),
+		MinerRewardsWei:        supplyBigToWei(entry.MinerRewards),
+		IndexedTo:              uint64(entry.IndexedTo),
+	}
+}
+
+func supplyBigToTKM(value *hexutil.Big) string {
+	if value == nil {
+		return "0"
+	}
+	return tkmPhoneWeiToTKM((*big.Int)(value))
+}
+
+func supplyBigToWei(value *hexutil.Big) string {
+	if value == nil {
+		return "0"
+	}
+	return (*big.Int)(value).String()
 }
 
 func supplyRequiredBlock(ctx *cli.Context) (uint64, error) {
