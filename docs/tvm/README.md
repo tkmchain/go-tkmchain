@@ -338,7 +338,7 @@ Then deploy the fixture from an unlocked funded account:
 Or deploy without globally unlocking the account by using the password-based TKM signing helper already used by the pool:
 
 ```sh
-./scripts/deploy_tvm_cpp_fixture.py --rpc http://127.0.0.1:8545 --pool-config /home/mike/pool/config.json
+./scripts/deploy_tvm_cpp_fixture.py --rpc http://127.0.0.1:8545 --pool-config "$HOME/pool/config.json"
 ```
 
 The script builds the TVM envelope with `tvm_buildDeployment`, sends a normal contract-creation transaction through either `eth_sendTransaction` or `tkm_sendTransactionWithPassphrase`, waits for the receipt, and verifies that both `eth_getCode` and `tvm_getCode` return the full stored deployment envelope after the transaction is mined. If the transaction is accepted but no block includes it before the timeout, the script reports the transaction hash, latest block, and pending status instead of submitting a duplicate.

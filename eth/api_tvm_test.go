@@ -138,3 +138,57 @@ func TestTVMCppFixtureDeployAndReadFullMinedCode(t *testing.T) {
 		t.Fatalf("decoded envelope does not match full mined code")
 	}
 }
+
+func TestTVMInstitutionalSuiteManifestDeployAndRead(t *testing.T) {
+	source, err := os.ReadFile("../contracts/tvm/institutional_suite_manifest.cpp")
+	if err != nil {
+		t.Fatalf("failed to read institutional C++ fixture: %v", err)
+	}
+	if !strings.Contains(string(source), "TkmInstitutionalSuite") {
+		t.Fatalf("institutional fixture does not declare suite manifest")
+	}
+
+	module := []byte{tvm.OpReturnCodeHash}
+	metadata := []byte(`{"name":"TkmInstitutionalSuiteManifest","language":"cpp","source":"contracts/tvm/institutional_suite_manifest.cpp","target":"cpp-evm-v1","applicationContract":"0x43aeb055883863cfe40804e386bec801b4ca63ec","modules":["InstitutionRegistry","CredentialRegistry","DocumentRegistry","InvoiceSettlement","EscrowVault","ProcurementRegistry","GrantRegistry","AuditDisclosureRegistry"]}`)
+	api := NewTVMAPI(nil)
+	build, err := api.BuildDeployment(TVMBuildRequest{
+		Code:        module,
+		Metadata:    metadata,
+		MemoryPages: 1,
+		StackSlots:  16,
+		CallDepth:   4,
+	})
+	if err != nil {
+		t.Fatalf("BuildDeployment failed: %v", err)
+	}
+
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	ret, address, _, err := vmruntime.Create(build.DeploymentCode, &vmruntime.Config{GasLimit: 1_000_000, State: statedb})
+	if err != nil {
+		t.Fatalf("TVM institutional manifest deployment failed: %v", err)
+	}
+	if !bytes.Equal(ret, build.DeploymentCode) {
+		t.Fatalf("create return = %x, want deployment code %x", ret, []byte(build.DeploymentCode))
+	}
+	if code := statedb.GetCode(address); !bytes.Equal(code, build.DeploymentCode) {
+		t.Fatalf("mined code = %x, want full deployment envelope %x", code, []byte(build.DeploymentCode))
+	}
+
+	readAPI := NewTVMAPI(testTVMBackend{state: statedb, header: &types.Header{Root: types.EmptyRootHash}})
+	decoded, err := readAPI.GetContractCode(context.Background(), address, nil)
+	if err != nil {
+		t.Fatalf("GetContractCode failed: %v", err)
+	}
+	if decoded.Target != tvm.TargetCppEVM || decoded.CodeHash != build.CodeHash || decoded.MetadataHash != build.MetadataHash {
+		t.Fatalf("unexpected decoded TVM metadata: %+v", decoded)
+	}
+	if !bytes.Contains(decoded.Metadata, []byte("TkmInstitutionalSuiteManifest")) || !bytes.Contains(decoded.Metadata, []byte("0x43aeb055883863cfe40804e386bec801b4ca63ec")) {
+		t.Fatalf("decoded metadata missing institutional manifest details: %s", []byte(decoded.Metadata))
+	}
+	if !bytes.Equal(decoded.Envelope, build.DeploymentCode) {
+		t.Fatalf("decoded envelope does not match full mined code")
+	}
+}
