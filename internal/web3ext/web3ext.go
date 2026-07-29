@@ -18,20 +18,21 @@
 package web3ext
 
 var Modules = map[string]string{
-	"admin":    AdminJs,
-	"clique":   CliqueJs,
-	"debug":    DebugJs,
-	"eth":      EthJs,
-	"tkm":      EthJs,
-	"tkmphone": TkmPhoneJs,
-	"miner":    MinerJs,
-	"net":      NetJs,
-	"rpc":      RpcJs,
-	"rk":       RkJs,
-	"mainking": MainKingJs,
-	"randomx":  RandomXJs,
-	"txpool":   TxpoolJs,
-	"dev":      DevJs,
+	"admin":          AdminJs,
+	"clique":         CliqueJs,
+	"debug":          DebugJs,
+	"eth":            EthJs,
+	"tkm":            EthJs,
+	"tkmphone":       TkmPhoneJs,
+	"tkminstitution": TkmInstitutionJs,
+	"miner":          MinerJs,
+	"net":            NetJs,
+	"rpc":            RpcJs,
+	"rk":             RkJs,
+	"mainking":       MainKingJs,
+	"randomx":        RandomXJs,
+	"txpool":         TxpoolJs,
+	"dev":            DevJs,
 }
 
 const RkJs = `
@@ -70,6 +71,84 @@ web3._extend({
 			name: 'addCheckpoint',
 			call: 'mainking_addCheckpoint',
 			params: 2
+		})
+	]
+});
+`
+
+const TkmInstitutionJs = `
+web3._extend({
+	property: 'tkminstitution',
+	methods: [
+		new web3._extend.Method({
+			name: 'status',
+			call: 'tkminstitution_status',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'contractAddress',
+			call: 'tkminstitution_contractAddress',
+			params: 0
+		}),
+		new web3._extend.Method({
+			name: 'textHash',
+			call: 'tkminstitution_textHash',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'institutionID',
+			call: 'tkminstitution_institutionID',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'recordID',
+			call: 'tkminstitution_recordID',
+			params: 3
+		}),
+		new web3._extend.Method({
+			name: 'registerInstitutionData',
+			call: 'tkminstitution_registerInstitutionData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'setInstitutionStatusData',
+			call: 'tkminstitution_setInstitutionStatusData',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'rotateInstitutionAdminData',
+			call: 'tkminstitution_rotateInstitutionAdminData',
+			params: 2
+		}),
+		new web3._extend.Method({
+			name: 'issueDocumentData',
+			call: 'tkminstitution_issueDocumentData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'issueCredentialData',
+			call: 'tkminstitution_issueCredentialData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'issueInvoiceData',
+			call: 'tkminstitution_issueInvoiceData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'publishProcurementData',
+			call: 'tkminstitution_publishProcurementData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'publishGrantData',
+			call: 'tkminstitution_publishGrantData',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'publishDisclosureData',
+			call: 'tkminstitution_publishDisclosureData',
+			params: 1
 		})
 	]
 });

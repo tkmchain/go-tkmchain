@@ -69,6 +69,45 @@ go test ./eth -run TestTVMInstitutionalSuiteManifestDeployAndRead
 
 The test builds a TVM envelope for the institutional manifest, deploys it through the normal VM creation path, and verifies that `tvm_getCode` returns the expected metadata and full stored envelope.
 
+## Institutional RPC
+
+The daemon exposes a non-consensus RPC namespace named `tkminstitution`. It gives wallets, explorers, and institution portals a stable way to discover the deployed institutional suite and prepare ABI calldata without exposing admin keys in a website.
+
+Default HTTP and WebSocket modules now include `tkminstitution`.
+
+Useful calls:
+
+```bash
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tkminstitution_status","params":[]}'
+```
+
+```bash
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tkminstitution_textHash","params":["Example University"]}'
+```
+
+```bash
+curl -s http://127.0.0.1:8545 \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tkminstitution_registerInstitutionData","params":[{"admin":"0x1111111111111111111111111111111111111111","nameHash":"0x0000000000000000000000000000000000000000000000000000000000000000","institutionTypeHash":"0x0000000000000000000000000000000000000000000000000000000000000000","registrationHash":"0x0000000000000000000000000000000000000000000000000000000000000000","metadataHash":"0x0000000000000000000000000000000000000000000000000000000000000000","metadataURI":"ipfs://institution-metadata"}]}'
+```
+
+The calldata helpers do not send transactions. The returned `data` should be sent to `0x43aeb055883863cfe40804e386bec801b4ca63ec` using `eth_sendTransaction`, offline signing, or the node password RPC flow. This keeps institution admin and owner signing inside the daemon or wallet layer.
+
+In `gtkm attach`, the web3 extension provides:
+
+```javascript
+tkminstitution.status()
+tkminstitution.contractAddress()
+tkminstitution.textHash("Example University")
+tkminstitution.registerInstitutionData({...})
+tkminstitution.issueCredentialData({...})
+tkminstitution.issueInvoiceData({...})
+```
+
 ## Future Native TVM Expansion
 
 A future TVM runtime can make institutional modules fully native by adding a new TVM target version with:
