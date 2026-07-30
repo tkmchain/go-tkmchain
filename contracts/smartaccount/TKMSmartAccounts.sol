@@ -41,7 +41,7 @@ library TKMSA {
 
 interface ITKMAccount {
     function validateUserOperation(TKMSA.UserOperation calldata op, bytes32 opHash, bytes calldata signature) external returns (bool);
-    function executeFromEntryPoint(address target, uint256 value, bytes calldata data) external returns (bytes memory);
+    function executeFromEntryPoint(address target, uint256 value, bytes calldata data) external;
 }
 
 interface ITKMPaymaster {
@@ -52,7 +52,7 @@ contract TKMEntryPoint {
     mapping(address => uint256) public nonces;
     bool private entered;
 
-    event UserOperationHandled(bytes32 indexed operationHash, address indexed account, address indexed target, address paymaster, bool success, bytes result);
+    event UserOperationHandled(bytes32 indexed operationHash, address indexed account, address indexed target, address paymaster);
 
     error Reentrant();
     error InvalidAccount();
@@ -63,7 +63,7 @@ contract TKMEntryPoint {
 
     function operationHash(TKMSA.UserOperation calldata op) external view returns (bytes32) { return TKMSA.hash(op, address(this)); }
 
-    function handleOperation(TKMSA.UserOperation calldata op, bytes calldata signature) external returns (bytes memory result) {
+    function handleOperation(TKMSA.UserOperation calldata op, bytes calldata signature) external {
         if (entered) revert Reentrant();
         entered = true;
         if (op.account.code.length == 0) revert InvalidAccount();
@@ -73,9 +73,9 @@ contract TKMEntryPoint {
         if (!ITKMAccount(op.account).validateUserOperation(op, digest, signature)) revert InvalidAuthorization();
         if (op.paymaster != address(0) && !ITKMPaymaster(op.paymaster).validateSponsorship(op, digest)) revert InvalidSponsorship();
         nonces[op.account]++;
-        result = ITKMAccount(op.account).executeFromEntryPoint{gas: op.gasLimit}(op.target, op.value, op.data);
+        ITKMAccount(op.account).executeFromEntryPoint{gas: op.gasLimit}(op.target, op.value, op.data);
         entered = false;
-        emit UserOperationHandled(digest, op.account, op.target, op.paymaster, true, result);
+        emit UserOperationHandled(digest, op.account, op.target, op.paymaster);
     }
 }
 
@@ -113,6 +113,8 @@ contract TKMAccount {
         bool active;
     }
     mapping(address => Session) public sessions;
+    mapping(address => uint256) public sessionEpochOf;
+    uint256 public sessionEpoch;
 
     event Executed(address indexed target, uint256 value, bytes4 selector);
     event OwnersChanged(address[] owners, uint16 threshold);
@@ -146,7 +148,7 @@ contract TKMAccount {
             address key = TKMSA.recover(opHash, payload);
             Session storage session = sessions[key];
             bytes4 selector = op.data.length >= 4 ? bytes4(op.data[:4]) : bytes4(0);
-            bool validSession = session.active && session.target == op.target && session.selector == selector &&
+            bool validSession = session.active && sessionEpochOf[key] == sessionEpoch && session.target == op.target && session.selector == selector &&
                 block.timestamp >= session.validAfter && block.timestamp <= session.validUntil &&
                 op.value <= session.maxValuePerCall && op.value <= session.remainingValue;
             if (validSession) session.remainingValue -= uint128(op.value);
@@ -154,9 +156,9 @@ contract TKMAccount {
         }
         if (mode == 2) {
             bytes[] memory signatures = abi.decode(payload, (bytes[]));
-            uint256 required = op.value >= highValueThreshold ? threshold : 1;
-            uint256 valid;
-            address previous;
+            uint256 required = (op.target == address(this) || op.value >= highValueThreshold) ? threshold : 1;
+            uint256 valid = 0;
+            address previous = address(0);
             for (uint256 i; i < signatures.length; i++) {
                 address signer = TKMSA.recover(opHash, signatures[i]);
                 if (owners[signer] && signer > previous) { valid++; previous = signer; }
@@ -166,15 +168,15 @@ contract TKMAccount {
         return false;
     }
 
-    function executeFromEntryPoint(address target, uint256 value, bytes calldata data) external onlyEntryPoint returns (bytes memory result) {
+    function executeFromEntryPoint(address target, uint256 value, bytes calldata data) external onlyEntryPoint {
+        require(target != address(0), "zero target");
         uint64 day = uint64(block.timestamp / 1 days);
         if (day != spendingDay) { spendingDay = day; spentToday = 0; }
         require(value <= dailyLimit - spentToday, "daily limit");
         spentToday += value;
-        (bool ok, bytes memory out) = target.call{value: value}(data);
-        if (!ok) assembly { revert(add(out, 32), mload(out)) }
+        (bool ok,) = target.call{value: value}(data);
+        require(ok, "target call failed");
         emit Executed(target, value, data.length >= 4 ? bytes4(data[:4]) : bytes4(0));
-        return out;
     }
 
     function setOwners(address[] calldata newOwners, uint16 newThreshold) external onlySelf { _setOwners(newOwners, newThreshold); }
@@ -207,9 +209,11 @@ contract TKMAccount {
     }
     function approveRecovery(bytes32 newOwnerHash) external {
         require(guardians[msg.sender] && guardianThreshold > 0, "guardian only");
-        if (!recovery.active || recovery.ownerHash != newOwnerHash) {
+        if (!recovery.active) {
             recoveryNonce++;
             recovery = Recovery(newOwnerHash, uint48(block.timestamp) + recoveryDelay, 0, true);
+        } else {
+            require(recovery.ownerHash == newOwnerHash, "different recovery active");
         }
         require(!recoveryApproved[recoveryNonce][msg.sender], "already approved");
         recoveryApproved[recoveryNonce][msg.sender] = true; recovery.approvals++;
@@ -219,16 +223,16 @@ contract TKMAccount {
     function completeRecovery(address[] calldata newOwners, uint16 newThreshold) external {
         require(recovery.active && recovery.approvals >= guardianThreshold && block.timestamp >= recovery.executeAfter, "recovery unavailable");
         require(keccak256(abi.encode(newOwners, newThreshold)) == recovery.ownerHash, "owner hash");
-        recovery.active = false; _setOwners(newOwners, newThreshold); locked = false;
+        recovery.active = false; sessionEpoch++; _setOwners(newOwners, newThreshold); locked = false;
         emit RecoveryCompleted(recoveryNonce);
     }
 
     function setSession(address key, Session calldata session) external onlySelf {
         require(key != address(0) && session.target != address(0), "invalid session");
         require(session.validUntil > session.validAfter, "invalid validity");
-        sessions[key] = session; emit SessionChanged(key, session.active);
+        sessions[key] = session; sessionEpochOf[key] = sessionEpoch; emit SessionChanged(key, session.active);
     }
-    function revokeSession(address key) external onlySelf { delete sessions[key]; emit SessionChanged(key, false); }
+    function revokeSession(address key) external onlySelf { delete sessions[key]; delete sessionEpochOf[key]; emit SessionChanged(key, false); }
 }
 
 contract TKMAccountFactory {
@@ -245,18 +249,21 @@ contract TKMAccountFactory {
     }
 }
 
-contract TKMAllowlistPaymaster {
+contract TKMAllowlistPaymaster is ITKMPaymaster {
     address public owner;
     address public signer;
     mapping(address => mapping(bytes4 => bool)) public allowed;
     bool public paused;
     event Allowed(address indexed target, bytes4 indexed selector, bool enabled);
-    constructor(address signer_) { owner = msg.sender; signer = signer_; }
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event SignerChanged(address indexed previousSigner, address indexed newSigner);
+    event Paused(bool paused);
+    constructor(address signer_) { require(signer_ != address(0), "zero signer"); owner = msg.sender; signer = signer_; emit OwnershipTransferred(address(0), msg.sender); }
     modifier onlyOwner() { require(msg.sender == owner, "owner only"); _; }
     function setAllowed(address target, bytes4 selector, bool enabled) external onlyOwner { allowed[target][selector] = enabled; emit Allowed(target, selector, enabled); }
-    function setSigner(address value) external onlyOwner { require(value != address(0), "zero signer"); signer = value; }
-    function setPaused(bool value) external onlyOwner { paused = value; }
-    function transferOwnership(address value) external onlyOwner { require(value != address(0), "zero owner"); owner = value; }
+    function setSigner(address value) external onlyOwner { require(value != address(0), "zero signer"); emit SignerChanged(signer, value); signer = value; }
+    function setPaused(bool value) external onlyOwner { paused = value; emit Paused(value); }
+    function transferOwnership(address value) external onlyOwner { require(value != address(0), "zero owner"); emit OwnershipTransferred(owner, value); owner = value; }
     function validateSponsorship(TKMSA.UserOperation calldata op, bytes32 opHash) external view returns (bool) {
         if (paused || op.paymaster != address(this) || op.data.length < 4) return false;
         bytes4 selector = bytes4(op.data[:4]);

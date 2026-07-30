@@ -48,7 +48,7 @@ func TestSmartAccountContractSecurityGuardsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	required := []string{"block.chainid", "InvalidNonce", "Reentrant", "onlyEntryPoint", "recoveryDelay", "recoveryApproved", "remainingValue", "dailyLimit", "allowed[op.target][selector]", "expiry > block.timestamp + 1 days"}
+	required := []string{"block.chainid", "InvalidNonce", "Reentrant", "onlyEntryPoint", "recoveryDelay", "recoveryApproved", "remainingValue", "dailyLimit", "allowed[op.target][selector]", "expiry > block.timestamp + 1 days", "op.target == address(this)", "sessionEpochOf[key] == sessionEpoch", "sessionEpoch++", "different recovery active", "zero target", "zero signer"}
 	for _, guard := range required {
 		if !strings.Contains(text, guard) {
 			t.Errorf("missing security guard %q", guard)
