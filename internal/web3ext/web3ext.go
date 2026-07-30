@@ -25,6 +25,7 @@ var Modules = map[string]string{
 	"tkm":            EthJs,
 	"tkmphone":       TkmPhoneJs,
 	"tkminstitution": TkmInstitutionJs,
+	"tkmaccount":     TkmAccountJs,
 	"miner":          MinerJs,
 	"net":            NetJs,
 	"rpc":            RpcJs,

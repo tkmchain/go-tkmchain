@@ -255,6 +255,7 @@ func init() {
 		bintrieCommand,
 		// See tkmphonecmd.go
 		tkmPhoneCommand,
+		smartAccountCommand,
 		// See supplycmd.go
 		supplyCommand,
 		// See governancecmd.go
