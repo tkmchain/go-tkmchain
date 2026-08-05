@@ -8,7 +8,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
@@ -367,7 +366,9 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 		Next:            api.e.getNextRotatingKing() == address,
 		LockedAmount:    new(big.Int),
 		RegistrationFee: new(big.Int),
-		TotalReceived:   api.e.totalRotatingKingReward(address),
+		// Historical reward accounting must not run while holding the global king
+		// lock. It previously made rk_add/rk_status exceed the HTTP RPC deadline.
+		TotalReceived: new(big.Int),
 	}
 
 	if height, ok := api.e.nextRotationHeight(address); ok {
@@ -419,25 +420,6 @@ func (s *Ethereum) ensureRotatingKingEligible(address common.Address) error {
 		return fmt.Errorf("insufficient balance: have %s wei, need at least %s wei", balance.String(), required.String())
 	}
 	return nil
-}
-
-func (s *Ethereum) totalRotatingKingReward(address common.Address) *big.Int {
-	total := new(big.Int)
-	head := s.blockchain.CurrentBlock()
-	if head == nil || len(s.kingAddresses) == 0 {
-		return total
-	}
-	distribution := randomx.DefaultRewardDistribution()
-	for block := uint64(1); block <= head.Number.Uint64(); block++ {
-		if s.rotatingKingAt(block) != address {
-			continue
-		}
-		reward := randomx.CalculateBlockReward(block)
-		reward.Mul(reward, big.NewInt(int64(distribution.RotatingKingPercent)))
-		reward.Div(reward, big.NewInt(100))
-		total.Add(total, reward)
-	}
-	return total
 }
 
 func (s *Ethereum) broadcastRotatingKing(address common.Address, unlock time.Time) {

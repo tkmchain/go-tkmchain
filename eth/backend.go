@@ -1462,11 +1462,16 @@ func (s *Ethereum) nextRotationHeight(address common.Address) (uint64, bool) {
 	}
 	blockNum := head.Number.Uint64()
 	interval := s.rotatingKingInterval()
-	for height := ((blockNum / interval) + 1) * interval; ; height += interval {
+	// Once the active set is stable, every registered address must appear within
+	// one full rotation. Keep a small extra margin for pending activations and
+	// never let an inconsistent registration block an RPC forever.
+	limit := len(s.kingAddresses)*2 + 2
+	for step, height := 0, ((blockNum/interval)+1)*interval; step < limit; step, height = step+1, height+interval {
 		if s.rotatingKingAt(height) == address {
 			return height, true
 		}
 	}
+	return 0, false
 }
 
 func nextRotationHeight(blockNum uint64, interval uint64, kingAddresses []common.Address, address common.Address) (uint64, bool) {
