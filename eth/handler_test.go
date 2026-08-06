@@ -168,7 +168,7 @@ func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bo
 // FilterType should check whether the pool supports the given type of transactions.
 func (p *testTxPool) FilterType(kind byte) bool {
 	switch kind {
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType:
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType, types.PQTkmTxType:
 		return true
 	}
 	return false

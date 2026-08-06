@@ -513,6 +513,8 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 			usedType = types.BlobTxType
 		case defaultType == types.RandomXTxType:
 			usedType = types.RandomXTxType
+		case defaultType == types.PQTkmTxType:
+			usedType = types.PQTkmTxType
 		case args.MaxFeePerGas != nil || defaultType == types.DynamicFeeTxType:
 			usedType = types.DynamicFeeTxType
 		case args.AccessList != nil || defaultType == types.AccessListTxType:
@@ -579,6 +581,23 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 			al = *args.AccessList
 		}
 		data = &types.RandomXTx{
+			To:         args.To,
+			ChainID:    (*big.Int)(args.ChainID),
+			Nonce:      uint64(*args.Nonce),
+			Gas:        uint64(*args.Gas),
+			GasFeeCap:  (*big.Int)(args.MaxFeePerGas),
+			GasTipCap:  (*big.Int)(args.MaxPriorityFeePerGas),
+			Value:      (*big.Int)(args.Value),
+			Data:       args.data(),
+			AccessList: al,
+		}
+
+	case types.PQTkmTxType:
+		al := types.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		data = &types.PQTkmTx{
 			To:         args.To,
 			ChainID:    (*big.Int)(args.ChainID),
 			Nonce:      uint64(*args.Nonce),

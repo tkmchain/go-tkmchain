@@ -97,6 +97,20 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return errors.New("randomx tx must be a coin transfer with a recipient")
 		}
 	}
+	if types.HasPQMigrationDataPrefix(tx.Data()) {
+		if !types.IsPQMigrationTx(tx) {
+			return errors.New("invalid post-quantum migration transaction")
+		}
+	}
+	if rules.IsQuantumResistant && tx.Type() != types.PQTkmTxType && !types.IsBlockRewardTx(tx) {
+		return fmt.Errorf("%w: type %d rejected, quantum-resistant transaction fork requires PQ tx type %d", core.ErrTxTypeNotSupported, tx.Type(), types.PQTkmTxType)
+	}
+	if !rules.IsQuantumResistant && tx.Type() == types.PQTkmTxType {
+		next := new(big.Int).Add(head.Number, big.NewInt(1))
+		if !opts.Config.IsQuantumResistant(next, head.Time) {
+			return fmt.Errorf("%w: type %d rejected, pool not yet at quantum-resistant transaction fork", core.ErrTxTypeNotSupported, tx.Type())
+		}
+	}
 	// Check whether the init code size has been exceeded
 	if tx.To() == nil {
 		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(tx.Data()))); err != nil {

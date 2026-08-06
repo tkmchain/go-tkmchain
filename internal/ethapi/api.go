@@ -41,6 +41,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/eth/gasestimator"
 	ethprotocol "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
@@ -1703,6 +1704,16 @@ type TKMPaymentAPI struct {
 	nonceLock *AddrLocker
 }
 
+// PQMigrationResult is returned by keystore-assisted migration helpers.
+type PQMigrationResult struct {
+	LegacyAccount common.Address `json:"legacyAccount"`
+	PQAccount     common.Address `json:"pqAccount"`
+	PQAlgorithm   string         `json:"pqAlgorithm"`
+	PQPublicKey   hexutil.Bytes  `json:"pqPublicKey"`
+	MigrationData hexutil.Bytes  `json:"migrationData"`
+	TxHash        *common.Hash   `json:"txHash,omitempty"`
+}
+
 // NewTKMPaymentAPI creates a payment API without enabling the deprecated personal namespace.
 func NewTKMPaymentAPI(b Backend, nonceLock *AddrLocker) *TKMPaymentAPI {
 	return &TKMPaymentAPI{b: b, nonceLock: nonceLock}
@@ -1725,6 +1736,194 @@ func (api *TKMPaymentAPI) NewAccountWithPassphrase(passphrase string) (common.Ad
 	return account.Address, nil
 }
 
+// NewPQAccountWithPassphrase creates a new ML-DSA-87 keystore account encrypted by passphrase.
+func (api *TKMPaymentAPI) NewPQAccountWithPassphrase(passphrase string) (common.Address, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return common.Address{}, err
+	}
+	account, err := ks.NewPQAccount(passphrase)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return account.Address, nil
+}
+
+// ImportPQSeedWithPassphrase imports a raw 32-byte ML-DSA-87 seed.
+func (api *TKMPaymentAPI) ImportPQSeedWithPassphrase(seed hexutil.Bytes, passphrase string) (common.Address, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return common.Address{}, err
+	}
+	account, err := ks.ImportPQSeed(seed, passphrase)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return account.Address, nil
+}
+
+// ExportPQAccount exports an encrypted PQ keystore JSON blob.
+func (api *TKMPaymentAPI) ExportPQAccount(addr common.Address, passphrase, newPassphrase string) (hexutil.Bytes, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return nil, err
+	}
+	blob, err := ks.ExportPQ(accounts.Account{Address: addr}, passphrase, newPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	return hexutil.Bytes(blob), nil
+}
+
+// AccountAlgorithm returns the local keystore algorithm for an account.
+func (api *TKMPaymentAPI) AccountAlgorithm(addr common.Address) (string, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return "", err
+	}
+	return ks.AccountAlgorithm(accounts.Account{Address: addr})
+}
+
+// AccountAlgorithms returns local keystore algorithm metadata by account address.
+func (api *TKMPaymentAPI) AccountAlgorithms() (map[common.Address]string, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return nil, err
+	}
+	return ks.AccountAlgorithms(), nil
+}
+
+// PQMigrationData returns calldata that marks a legacy transfer as a migration
+// into the PQ account derived from the supplied ML-DSA-87 public key.
+func (api *TKMPaymentAPI) PQMigrationData(publicKey hexutil.Bytes) (hexutil.Bytes, error) {
+	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		return nil, err
+	}
+	data, err := types.NewPQMigrationData(address, pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		return nil, err
+	}
+	return hexutil.Bytes(data), nil
+}
+
+// SendMigrationToPQWithPassphrase signs and submits a pre-fork value transfer
+// from a legacy account to the PQ address derived from publicKey.
+func (api *TKMPaymentAPI) SendMigrationToPQWithPassphrase(ctx context.Context, args TransactionArgs, publicKey hexutil.Bytes, passphrase string) (common.Hash, error) {
+	head := api.b.CurrentHeader()
+	if head == nil {
+		return common.Hash{}, errors.New("latest header unavailable")
+	}
+	if api.b.ChainConfig().IsQuantumResistant(head.Number, head.Time) {
+		return common.Hash{}, errors.New("PQ migration with legacy signatures is closed after the quantum-resistant fork")
+	}
+	if args.From == nil {
+		return common.Hash{}, errors.New("missing legacy migration source account")
+	}
+	if args.To != nil {
+		return common.Hash{}, errors.New("migration recipient is derived from the PQ public key and must not be supplied")
+	}
+	if len(args.data()) != 0 {
+		return common.Hash{}, errors.New("migration calldata is derived from the PQ public key and must not be supplied")
+	}
+	if args.Type != nil && uint64(*args.Type) == types.PQTkmTxType {
+		return common.Hash{}, errors.New("migration must be signed by the legacy account before the quantum-resistant fork")
+	}
+	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	data, err := types.NewPQMigrationData(address, pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	args.To = &address
+	input := hexutil.Bytes(data)
+	args.Input = &input
+	return api.SendTransactionWithPassphrase(ctx, args, passphrase)
+}
+
+// PreparePQMigrationWithPassphrases creates a PQ account and returns the
+// migration payload for moving the legacy account balance into it.
+func (api *TKMPaymentAPI) PreparePQMigrationWithPassphrases(addr common.Address, legacyPassphrase, pqPassphrase string) (*PQMigrationResult, error) {
+	ks, err := api.keystore()
+	if err != nil {
+		return nil, err
+	}
+	migration, err := ks.PreparePQMigration(accounts.Account{Address: addr}, legacyPassphrase, pqPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	return &PQMigrationResult{
+		LegacyAccount: migration.LegacyAccount.Address,
+		PQAccount:     migration.PQAccount.Address,
+		PQAlgorithm:   migration.PQAlgorithm,
+		PQPublicKey:   hexutil.Bytes(migration.PQPublicKey),
+		MigrationData: hexutil.Bytes(migration.MigrationData),
+	}, nil
+}
+
+// PreparePQMigrationWithPassphrase creates a PQ account encrypted by the same
+// passphrase as the legacy account and returns the migration payload.
+func (api *TKMPaymentAPI) PreparePQMigrationWithPassphrase(addr common.Address, passphrase string) (*PQMigrationResult, error) {
+	return api.PreparePQMigrationWithPassphrases(addr, passphrase, passphrase)
+}
+
+// AutoMigrateToPQWithPassphrases creates a PQ account, signs a pre-fork
+// migration transfer from the legacy account, and submits it.
+func (api *TKMPaymentAPI) AutoMigrateToPQWithPassphrases(ctx context.Context, args TransactionArgs, legacyPassphrase, pqPassphrase string) (*PQMigrationResult, error) {
+	head := api.b.CurrentHeader()
+	if head == nil {
+		return nil, errors.New("latest header unavailable")
+	}
+	if api.b.ChainConfig().IsQuantumResistant(head.Number, head.Time) {
+		return nil, errors.New("PQ migration with legacy signatures is closed after the quantum-resistant fork")
+	}
+	if args.From == nil {
+		return nil, errors.New("missing legacy migration source account")
+	}
+	if args.To != nil {
+		return nil, errors.New("migration recipient is derived from the new PQ account and must not be supplied")
+	}
+	if len(args.data()) != 0 {
+		return nil, errors.New("migration calldata is derived from the new PQ account and must not be supplied")
+	}
+	if args.Type != nil && uint64(*args.Type) == types.PQTkmTxType {
+		return nil, errors.New("migration must be signed by the legacy account before the quantum-resistant fork")
+	}
+	result, err := api.PreparePQMigrationWithPassphrases(*args.From, legacyPassphrase, pqPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	args.To = &result.PQAccount
+	input := hexutil.Bytes(result.MigrationData)
+	args.Input = &input
+	hash, err := api.SendTransactionWithPassphrase(ctx, args, legacyPassphrase)
+	if err != nil {
+		return result, err
+	}
+	result.TxHash = &hash
+	return result, nil
+}
+
+// AutoMigrateToPQWithPassphrase uses one passphrase for both the legacy source
+// account and the newly created PQ account.
+func (api *TKMPaymentAPI) AutoMigrateToPQWithPassphrase(ctx context.Context, args TransactionArgs, passphrase string) (*PQMigrationResult, error) {
+	return api.AutoMigrateToPQWithPassphrases(ctx, args, passphrase, passphrase)
+}
+
+func (api *TKMPaymentAPI) keystore() (*keystore.KeyStore, error) {
+	backends := api.b.AccountManager().Backends(reflect.TypeOf(&keystore.KeyStore{}))
+	if len(backends) == 0 {
+		return nil, errors.New("keystore backend unavailable")
+	}
+	ks, ok := backends[0].(*keystore.KeyStore)
+	if !ok {
+		return nil, errors.New("keystore backend has unexpected type")
+	}
+	return ks, nil
+}
+
 // SendTransactionWithPassphrase signs and submits a transaction using the supplied passphrase.
 func (api *TKMPaymentAPI) SendTransactionWithPassphrase(ctx context.Context, args TransactionArgs, passphrase string) (common.Hash, error) {
 	account := accounts.Account{Address: args.from()}
@@ -1742,7 +1941,11 @@ func (api *TKMPaymentAPI) SendTransactionWithPassphrase(ctx context.Context, arg
 	if err := args.setDefaults(ctx, api.b, sidecarConfig{}); err != nil {
 		return common.Hash{}, err
 	}
-	tx := args.ToTransaction(types.DynamicFeeTxType)
+	defaultType := types.DynamicFeeTxType
+	if args.Type != nil && uint64(*args.Type) == types.PQTkmTxType {
+		defaultType = types.PQTkmTxType
+	}
+	tx := args.ToTransaction(defaultType)
 	signed, err := wallet.SignTxWithPassphrase(account, passphrase, tx, api.b.ChainConfig().ChainID)
 	if err != nil {
 		return common.Hash{}, err

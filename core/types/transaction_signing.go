@@ -41,6 +41,8 @@ type sigCache struct {
 func MakeSigner(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64) Signer {
 	var signer Signer
 	switch {
+	case config.IsQuantumResistant(blockNumber, blockTime):
+		signer = NewQuantumSigner(config.ChainID)
 	case config.IsPrague(blockNumber, blockTime):
 		signer = NewPragueSigner(config.ChainID)
 	case config.IsCancun(blockNumber, blockTime):
@@ -70,6 +72,8 @@ func LatestSigner(config *params.ChainConfig) Signer {
 	var signer Signer
 	if config.ChainID != nil {
 		switch {
+		case config.QuantumResistantTime != nil:
+			signer = NewQuantumSigner(config.ChainID)
 		case config.PragueTime != nil:
 			signer = NewPragueSigner(config.ChainID)
 		case config.CancunTime != nil:
@@ -99,7 +103,7 @@ func LatestSigner(config *params.ChainConfig) Signer {
 func LatestSignerForChainID(chainID *big.Int) Signer {
 	var signer Signer
 	if chainID != nil {
-		signer = NewPragueSigner(chainID)
+		signer = NewQuantumSigner(chainID)
 	} else {
 		signer = HomesteadSigner{}
 	}
@@ -263,6 +267,13 @@ func (s *modernSigner) Sender(tx *Transaction) (common.Address, error) {
 	if tx.ChainId().Cmp(s.chainID) != 0 {
 		return common.Address{}, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, tx.ChainId(), s.chainID)
 	}
+	if tt == PQTkmTxType {
+		pqtx, ok := tx.inner.(*PQTkmTx)
+		if !ok {
+			return common.Address{}, ErrTxTypeNotSupported
+		}
+		return pqtx.validateSignature(s.Hash(tx))
+	}
 	// 'modern' txs are defined to use 0 and 1 as their recovery
 	// id, add 27 to become equivalent to unprotected Homestead signatures.
 	V, R, S := tx.RawSignatureValues()
@@ -278,6 +289,9 @@ func (s *modernSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *bi
 	if tt == LegacyTxType {
 		return s.legacy.SignatureValues(tx, sig)
 	}
+	if tt == PQTkmTxType {
+		return nil, nil, nil, ErrNotPQTkmTx
+	}
 	// Check that chain ID of tx matches the signer. We also accept ID zero here,
 	// because it indicates that the chain ID was not specified in the tx.
 	if tx.inner.chainID().Sign() != 0 && tx.inner.chainID().Cmp(s.chainID) != 0 {
@@ -289,6 +303,14 @@ func (s *modernSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *bi
 	}
 	V = big.NewInt(int64(sig[64]))
 	return R, S, V, nil
+}
+
+// NewQuantumSigner returns a signer that accepts post-quantum ML-DSA
+// transactions and the pre-fork typed transactions needed for migration.
+func NewQuantumSigner(chainId *big.Int) Signer {
+	s := newModernSigner(chainId, forks.Prague).(*modernSigner)
+	s.txtypes.set(PQTkmTxType)
+	return s
 }
 
 // NewPragueSigner returns a signer that accepts

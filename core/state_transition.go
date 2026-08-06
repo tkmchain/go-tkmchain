@@ -461,6 +461,14 @@ func (st *stateTransition) preCheck() error {
 				return errors.New("randomx tx must be a coin transfer with a recipient")
 			}
 		}
+		if st.evm.ChainConfig().IsQuantumResistant(st.evm.Context.BlockNumber, st.evm.Context.Time) && msg.TxType != types.PQTkmTxType {
+			return fmt.Errorf("%w: type %d rejected, quantum-resistant transaction fork requires PQ tx type %d", ErrTxTypeNotSupported, msg.TxType, types.PQTkmTxType)
+		}
+		if types.HasPQMigrationDataPrefix(msg.Data) {
+			if msg.To == nil || !types.ValidPQMigrationDataForRecipient(msg.Data, *msg.To) {
+				return errors.New("invalid post-quantum migration transaction")
+			}
+		}
 		// Verify tx gas limit does not exceed EIP-7825 cap.
 		if isOsaka && !isAmsterdam && msg.GasLimit > params.MaxTxGas {
 			return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, msg.GasLimit)

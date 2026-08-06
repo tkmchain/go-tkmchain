@@ -300,7 +300,7 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 // FilterType returns whether the legacy pool supports the given transaction type.
 func (pool *LegacyPool) FilterType(kind byte) bool {
 	switch kind {
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType, types.RandomXTxType:
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType, types.RandomXTxType, types.PQTkmTxType:
 		return true
 	default:
 		return false
@@ -568,7 +568,8 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 			1<<types.AccessListTxType |
 			1<<types.DynamicFeeTxType |
 			1<<types.SetCodeTxType |
-			1<<types.RandomXTxType,
+			1<<types.RandomXTxType |
+			1<<types.PQTkmTxType,
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load().ToBig(),
 	}

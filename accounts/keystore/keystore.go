@@ -24,6 +24,7 @@ import (
 	"crypto/ecdsa"
 	crand "crypto/rand"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -76,6 +77,7 @@ type KeyStore struct {
 
 type unlocked struct {
 	*Key
+	PQKey *PQKey
 	abort chan struct{}
 }
 
@@ -235,10 +237,11 @@ func (ks *KeyStore) Delete(a accounts.Account, passphrase string) error {
 	// Decrypting the key isn't really necessary, but we do
 	// it anyway to check the password and zero out the key
 	// immediately afterwards.
-	a, key, err := ks.getDecryptedKey(a, passphrase)
+	a, key, pqKey, err := ks.getDecryptedAnyKey(a, passphrase)
 	if key != nil {
 		zeroKey(key.PrivateKey)
 	}
+	zeroPQKey(pqKey)
 	if err != nil {
 		return err
 	}
@@ -264,6 +267,9 @@ func (ks *KeyStore) SignHash(a accounts.Account, hash []byte) ([]byte, error) {
 	if !found {
 		return nil, ErrLocked
 	}
+	if unlockedKey.Key == nil || unlockedKey.PrivateKey == nil {
+		return nil, ErrNoMatch
+	}
 	// Sign the hash using plain ECDSA operations
 	return crypto.Sign(hash, unlockedKey.PrivateKey)
 }
@@ -280,6 +286,15 @@ func (ks *KeyStore) SignTx(a accounts.Account, tx *types.Transaction, chainID *b
 	}
 	// Depending on the presence of the chain ID, sign with 2718 or homestead
 	signer := types.LatestSignerForChainID(chainID)
+	if tx.Type() == types.PQTkmTxType {
+		if unlockedKey.PQKey == nil {
+			return nil, ErrNoMatch
+		}
+		return signPQTkmTxWithKey(tx, signer, unlockedKey.PQKey)
+	}
+	if unlockedKey.Key == nil || unlockedKey.PrivateKey == nil {
+		return nil, ErrNoMatch
+	}
 	return types.SignTx(tx, signer, unlockedKey.PrivateKey)
 }
 
@@ -298,13 +313,21 @@ func (ks *KeyStore) SignHashWithPassphrase(a accounts.Account, passphrase string
 // SignTxWithPassphrase signs the transaction if the private key matching the
 // given address can be decrypted with the given passphrase.
 func (ks *KeyStore) SignTxWithPassphrase(a accounts.Account, passphrase string, tx *types.Transaction, chainID *big.Int) (*types.Transaction, error) {
+	// Depending on the presence of the chain ID, sign with or without replay protection.
+	signer := types.LatestSignerForChainID(chainID)
+	if tx.Type() == types.PQTkmTxType {
+		_, key, err := ks.getDecryptedPQKey(a, passphrase)
+		if err != nil {
+			return nil, err
+		}
+		defer zeroPQKey(key)
+		return signPQTkmTxWithKey(tx, signer, key)
+	}
 	_, key, err := ks.getDecryptedKey(a, passphrase)
 	if err != nil {
 		return nil, err
 	}
 	defer zeroKey(key.PrivateKey)
-	// Depending on the presence of the chain ID, sign with or without replay protection.
-	signer := types.LatestSignerForChainID(chainID)
 	return types.SignTx(tx, signer, key.PrivateKey)
 }
 
@@ -332,7 +355,7 @@ func (ks *KeyStore) Lock(addr common.Address) error {
 // shortens the active unlock timeout. If the address was previously unlocked
 // indefinitely the timeout is not altered.
 func (ks *KeyStore) TimedUnlock(a accounts.Account, passphrase string, timeout time.Duration) error {
-	a, key, err := ks.getDecryptedKey(a, passphrase)
+	a, key, pqKey, err := ks.getDecryptedAnyKey(a, passphrase)
 	if err != nil {
 		return err
 	}
@@ -344,17 +367,20 @@ func (ks *KeyStore) TimedUnlock(a accounts.Account, passphrase string, timeout t
 		if u.abort == nil {
 			// The address was unlocked indefinitely, so unlocking
 			// it with a timeout would be confusing.
-			zeroKey(key.PrivateKey)
+			if key != nil {
+				zeroKey(key.PrivateKey)
+			}
+			zeroPQKey(pqKey)
 			return nil
 		}
 		// Terminate the expire goroutine and replace it below.
 		close(u.abort)
 	}
 	if timeout > 0 {
-		u = &unlocked{Key: key, abort: make(chan struct{})}
+		u = &unlocked{Key: key, PQKey: pqKey, abort: make(chan struct{})}
 		go ks.expire(a.Address, u, timeout)
 	} else {
-		u = &unlocked{Key: key}
+		u = &unlocked{Key: key, PQKey: pqKey}
 	}
 	ks.unlocked[a.Address] = u
 	return nil
@@ -378,6 +404,57 @@ func (ks *KeyStore) getDecryptedKey(a accounts.Account, auth string) (accounts.A
 	return a, key, err
 }
 
+func (ks *KeyStore) getDecryptedPQKey(a accounts.Account, auth string) (accounts.Account, *PQKey, error) {
+	a, err := ks.Find(a)
+	if err != nil {
+		return a, nil, err
+	}
+	keyjson, err := os.ReadFile(a.URL.Path)
+	if err != nil {
+		return a, nil, err
+	}
+	key, err := DecryptPQKey(keyjson, auth)
+	if err != nil {
+		return a, nil, err
+	}
+	if key.Address != a.Address {
+		zeroPQKey(key)
+		return a, nil, fmt.Errorf("key content mismatch: have account %x, want %x", key.Address, a.Address)
+	}
+	return a, key, nil
+}
+
+func (ks *KeyStore) getDecryptedAnyKey(a accounts.Account, auth string) (accounts.Account, *Key, *PQKey, error) {
+	a, err := ks.Find(a)
+	if err != nil {
+		return a, nil, nil, err
+	}
+	keyjson, err := os.ReadFile(a.URL.Path)
+	if err != nil {
+		return a, nil, nil, err
+	}
+	if isPQKeyJSON(keyjson) {
+		key, err := DecryptPQKey(keyjson, auth)
+		if err != nil {
+			return a, nil, nil, err
+		}
+		if key.Address != a.Address {
+			zeroPQKey(key)
+			return a, nil, nil, fmt.Errorf("key content mismatch: have account %x, want %x", key.Address, a.Address)
+		}
+		return a, nil, key, nil
+	}
+	key, err := DecryptKey(keyjson, auth)
+	if err != nil {
+		return a, nil, nil, err
+	}
+	if key.Address != a.Address {
+		zeroKey(key.PrivateKey)
+		return a, nil, nil, fmt.Errorf("key content mismatch: have account %x, want %x", key.Address, a.Address)
+	}
+	return a, key, nil, nil
+}
+
 func (ks *KeyStore) expire(addr common.Address, u *unlocked, timeout time.Duration) {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
@@ -391,7 +468,10 @@ func (ks *KeyStore) expire(addr common.Address, u *unlocked, timeout time.Durati
 		// because the map stores a new pointer every time the key is
 		// unlocked.
 		if ks.unlocked[addr] == u {
-			zeroKey(u.PrivateKey)
+			if u.Key != nil {
+				zeroKey(u.PrivateKey)
+			}
+			zeroPQKey(u.PQKey)
 			delete(ks.unlocked, addr)
 		}
 		ks.mu.Unlock()
@@ -412,6 +492,21 @@ func (ks *KeyStore) NewAccount(passphrase string) (accounts.Account, error) {
 	return account, nil
 }
 
+// NewPQAccount generates a new ML-DSA-87 key and stores it into the key directory.
+func (ks *KeyStore) NewPQAccount(passphrase string) (accounts.Account, error) {
+	key, err := NewPQKey()
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	defer zeroPQKey(key)
+	ks.importMu.Lock()
+	defer ks.importMu.Unlock()
+	if ks.cache.hasAddress(key.Address) {
+		return accounts.Account{Address: key.Address}, ErrAccountAlreadyExists
+	}
+	return ks.importPQKey(key, passphrase)
+}
+
 // Export exports as a JSON key, encrypted with newPassphrase.
 func (ks *KeyStore) Export(a accounts.Account, passphrase, newPassphrase string) (keyJSON []byte, err error) {
 	_, key, err := ks.getDecryptedKey(a, passphrase)
@@ -428,8 +523,22 @@ func (ks *KeyStore) Export(a accounts.Account, passphrase, newPassphrase string)
 	return EncryptKey(key, newPassphrase, N, P)
 }
 
+// ExportPQ exports a PQ account as encrypted JSON with a new passphrase.
+func (ks *KeyStore) ExportPQ(a accounts.Account, passphrase, newPassphrase string) ([]byte, error) {
+	_, key, err := ks.getDecryptedPQKey(a, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroPQKey(key)
+	N, P := ks.scryptParams()
+	return EncryptPQKey(key, newPassphrase, N, P)
+}
+
 // Import stores the given encrypted JSON key into the key directory.
 func (ks *KeyStore) Import(keyJSON []byte, passphrase, newPassphrase string) (accounts.Account, error) {
+	if isPQKeyJSON(keyJSON) {
+		return ks.ImportPQ(keyJSON, passphrase, newPassphrase)
+	}
 	key, err := DecryptKey(keyJSON, passphrase)
 	if key != nil && key.PrivateKey != nil {
 		defer zeroKey(key.PrivateKey)
@@ -446,6 +555,40 @@ func (ks *KeyStore) Import(keyJSON []byte, passphrase, newPassphrase string) (ac
 		}, ErrAccountAlreadyExists
 	}
 	return ks.importKey(key, newPassphrase)
+}
+
+// ImportPQ imports an encrypted PQ key file, re-encrypting it with newPassphrase.
+func (ks *KeyStore) ImportPQ(keyJSON []byte, passphrase, newPassphrase string) (accounts.Account, error) {
+	key, err := DecryptPQKey(keyJSON, passphrase)
+	if key != nil {
+		defer zeroPQKey(key)
+	}
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	ks.importMu.Lock()
+	defer ks.importMu.Unlock()
+	if ks.cache.hasAddress(key.Address) {
+		return accounts.Account{Address: key.Address}, ErrAccountAlreadyExists
+	}
+	return ks.importPQKey(key, newPassphrase)
+}
+
+// ImportPQSeed imports a raw 32-byte ML-DSA-87 seed.
+func (ks *KeyStore) ImportPQSeed(seed []byte, passphrase string) (accounts.Account, error) {
+	key, err := NewPQKeyFromSeed(seed)
+	if key != nil {
+		defer zeroPQKey(key)
+	}
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	ks.importMu.Lock()
+	defer ks.importMu.Unlock()
+	if ks.cache.hasAddress(key.Address) {
+		return accounts.Account{Address: key.Address}, ErrAccountAlreadyExists
+	}
+	return ks.importPQKey(key, passphrase)
 }
 
 // ImportECDSA stores the given key into the key directory, encrypting it with the passphrase.
@@ -470,6 +613,28 @@ func (ks *KeyStore) importKey(key *Key, passphrase string) (accounts.Account, er
 	ks.cache.add(a)
 	ks.refreshWallets()
 	return a, nil
+}
+
+func (ks *KeyStore) importPQKey(key *PQKey, passphrase string) (accounts.Account, error) {
+	a := accounts.Account{Address: key.Address, URL: accounts.URL{Scheme: KeyStoreScheme, Path: ks.storage.JoinPath(keyFileName(key.Address))}}
+	N, P := ks.scryptParams()
+	keyjson, err := EncryptPQKey(key, passphrase, N, P)
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	if err := writeKeyFile(a.URL.Path, keyjson); err != nil {
+		return accounts.Account{}, err
+	}
+	ks.cache.add(a)
+	ks.refreshWallets()
+	return a, nil
+}
+
+func (ks *KeyStore) scryptParams() (int, int) {
+	if store, ok := ks.storage.(*keyStorePassphrase); ok {
+		return store.scryptN, store.scryptP
+	}
+	return StandardScryptN, StandardScryptP
 }
 
 // Update changes the passphrase of an existing account.
@@ -504,6 +669,9 @@ func (ks *KeyStore) isUpdating() bool {
 
 // zeroKey zeroes a private key in memory.
 func zeroKey(k *ecdsa.PrivateKey) {
+	if k == nil || k.D == nil {
+		return
+	}
 	b := k.D.Bits()
 	clear(b)
 }

@@ -154,11 +154,13 @@ type ChainConfig struct {
 	KyotoTime             *uint64 `json:"kyotoTime,omitempty"`
 	PhoneTime             *uint64 `json:"phoneTime,omitempty"`
 	PrivacyCommitmentTime *uint64 `json:"privacyCommitmentTime,omitempty"`
+	QuantumResistantTime  *uint64 `json:"quantumResistantTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
 	DepositContractAddress       common.Address   `json:"depositContractAddress,omitempty"`
 	MainKingAddress              common.Address   `json:"mainKingAddress,omitempty"`
+	PostQuantumMainKingAddress   common.Address   `json:"postQuantumMainKingAddress,omitempty"`
 	RotatingKingAddresses        []common.Address `json:"rotatingKingAddresses,omitempty"`
 	RotatingKingRotationInterval uint64           `json:"rotatingKingRotationInterval,omitempty"`
 	ShieldedGroth16VerifyingKey  hexutil.Bytes    `json:"shieldedGroth16VerifyingKey,omitempty"`
@@ -278,9 +280,11 @@ var MainnetChainConfig = &ChainConfig{
 	EDATime:                      newUint64(0),
 	KyotoTime:                    newUint64(1784115119),
 	PhoneTime:                    newUint64(1784709000),
-	PrivacyCommitmentTime:        newUint64(1786010400), // 2026-08-06 10:00:00 UTC
+	PrivacyCommitmentTime:        newUint64(1786341600), // 2026-08-09 10:00:00 UTC
+	QuantumResistantTime:         newUint64(1786341600), // 2026-08-09 10:00:00 UTC
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
 	RotatingKingRotationInterval: 100,
 	ShieldedGroth16VerifyingKey:  MainnetShieldedGroth16VerifyingKey,
 	RandomX:                      DefaultRandomXConfig(),
@@ -412,7 +416,9 @@ var (
 		UBTTime:                      nil,
 		EDATime:                      nil,
 		PrivacyCommitmentTime:        newUint64(0),
+		QuantumResistantTime:         newUint64(0),
 		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+		PostQuantumMainKingAddress:   common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b"),
 		RotatingKingRotationInterval: 100,
 		RandomX:                      DefaultRandomXConfig(),
 		BlobScheduleConfig: &BlobScheduleConfig{
@@ -565,6 +571,24 @@ func (c *ChainConfig) IsPrivacyCommitments(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.PrivacyCommitmentTime, time)
 }
 
+// IsQuantumResistant returns whether PQ-only user transaction rules are active.
+func (c *ChainConfig) IsQuantumResistant(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.QuantumResistantTime, time)
+}
+
+// MainKingAddressAt returns the configured Main King reward/control address for
+// a block. If a post-quantum Main King address is configured, it becomes active
+// at the quantum-resistant transaction fork.
+func (c *ChainConfig) MainKingAddressAt(num *big.Int, time uint64) common.Address {
+	if c == nil {
+		return common.Address{}
+	}
+	if c.PostQuantumMainKingAddress != (common.Address{}) && c.IsQuantumResistant(num, time) {
+		return c.PostQuantumMainKingAddress
+	}
+	return c.MainKingAddress
+}
+
 // BaseFeeChangeDenominator bounds the amount the base fee can change between blocks.
 func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
 	return DefaultBaseFeeChangeDenominator
@@ -586,6 +610,7 @@ type Rules struct {
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
 	IsAmsterdam, IsUBT                                      bool
 	IsKyoto, IsPhone                                        bool
+	IsQuantumResistant                                      bool
 	IsEIP2929, IsEIP4762                                    bool
 	IsMerge                                                 bool // Always false for RandomX
 }
@@ -597,35 +622,36 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 	isEIP4762 := c.IsUBT(num, timestamp)
 
 	return Rules{
-		IsHomestead:      c.IsHomestead(num),
-		IsEIP150:         c.IsEIP150(num),
-		IsEIP155:         c.IsEIP155(num),
-		IsEIP158:         c.IsEIP158(num),
-		IsByzantium:      c.IsByzantium(num),
-		IsConstantinople: c.IsConstantinople(num),
-		IsPetersburg:     c.IsPetersburg(num),
-		IsIstanbul:       c.IsIstanbul(num),
-		IsBerlin:         c.IsBerlin(num),
-		IsLondon:         c.IsLondon(num),
-		IsRandomXTx:      c.IsRandomXTx(num),
-		IsArrowGlacier:   c.IsArrowGlacier(num),
-		IsGrayGlacier:    c.IsGrayGlacier(num),
-		IsShanghai:       c.IsShanghai(num, timestamp),
-		IsCancun:         c.IsCancun(num, timestamp),
-		IsPrague:         c.IsPrague(num, timestamp),
-		IsOsaka:          c.IsOsaka(num, timestamp),
-		IsBPO1:           c.IsBPO1(num, timestamp),
-		IsBPO2:           c.IsBPO2(num, timestamp),
-		IsBPO3:           c.IsBPO3(num, timestamp),
-		IsBPO4:           c.IsBPO4(num, timestamp),
-		IsBPO5:           c.IsBPO5(num, timestamp),
-		IsAmsterdam:      c.IsAmsterdam(num, timestamp),
-		IsUBT:            c.IsUBT(num, timestamp),
-		IsKyoto:          c.IsKyoto(num, timestamp),
-		IsPhone:          c.IsPhone(num, timestamp),
-		IsEIP2929:        isEIP2929,
-		IsEIP4762:        isEIP4762,
-		IsMerge:          false, // RandomX chains always use proof-of-work consensus.
+		IsHomestead:        c.IsHomestead(num),
+		IsEIP150:           c.IsEIP150(num),
+		IsEIP155:           c.IsEIP155(num),
+		IsEIP158:           c.IsEIP158(num),
+		IsByzantium:        c.IsByzantium(num),
+		IsConstantinople:   c.IsConstantinople(num),
+		IsPetersburg:       c.IsPetersburg(num),
+		IsIstanbul:         c.IsIstanbul(num),
+		IsBerlin:           c.IsBerlin(num),
+		IsLondon:           c.IsLondon(num),
+		IsRandomXTx:        c.IsRandomXTx(num),
+		IsArrowGlacier:     c.IsArrowGlacier(num),
+		IsGrayGlacier:      c.IsGrayGlacier(num),
+		IsShanghai:         c.IsShanghai(num, timestamp),
+		IsCancun:           c.IsCancun(num, timestamp),
+		IsPrague:           c.IsPrague(num, timestamp),
+		IsOsaka:            c.IsOsaka(num, timestamp),
+		IsBPO1:             c.IsBPO1(num, timestamp),
+		IsBPO2:             c.IsBPO2(num, timestamp),
+		IsBPO3:             c.IsBPO3(num, timestamp),
+		IsBPO4:             c.IsBPO4(num, timestamp),
+		IsBPO5:             c.IsBPO5(num, timestamp),
+		IsAmsterdam:        c.IsAmsterdam(num, timestamp),
+		IsUBT:              c.IsUBT(num, timestamp),
+		IsKyoto:            c.IsKyoto(num, timestamp),
+		IsPhone:            c.IsPhone(num, timestamp),
+		IsQuantumResistant: c.IsQuantumResistant(num, timestamp),
+		IsEIP2929:          isEIP2929,
+		IsEIP4762:          isEIP4762,
+		IsMerge:            false, // RandomX chains always use proof-of-work consensus.
 	}
 }
 
@@ -692,6 +718,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"kyotoTime", c.KyotoTime},
 		{"phoneTime", c.PhoneTime},
 		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
+		{"quantumResistantTime", c.QuantumResistantTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -880,12 +907,18 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	if isForkTimestampIncompatible(c.PrivacyCommitmentTime, newcfg.PrivacyCommitmentTime, headTimestamp) {
 		return newTimestampCompatError("Privacy commitment fork timestamp", c.PrivacyCommitmentTime, newcfg.PrivacyCommitmentTime)
 	}
+	if isForkTimestampIncompatible(c.QuantumResistantTime, newcfg.QuantumResistantTime, headTimestamp) {
+		return newTimestampCompatError("Quantum-resistant transaction fork timestamp", c.QuantumResistantTime, newcfg.QuantumResistantTime)
+	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)
 		return &ConfigCompatError{What: "Shielded Groth16 verifying key", StoredBlock: head, NewBlock: head, RewindToBlock: headBlock}
 	}
 	if c.MainKingAddress != newcfg.MainKingAddress {
 		return &ConfigCompatError{What: "main king address", RewindToBlock: 0}
+	}
+	if c.PostQuantumMainKingAddress != newcfg.PostQuantumMainKingAddress {
+		return &ConfigCompatError{What: "post-quantum main king address", RewindToBlock: 0}
 	}
 	return nil
 }

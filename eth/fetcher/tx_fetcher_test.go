@@ -1733,7 +1733,7 @@ func TestTransactionFetcherWrongMetadata(t *testing.T) {
 			f := newTestTxFetcher()
 			f.validateMeta = func(name common.Hash, kind byte) error {
 				switch kind {
-				case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType:
+				case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType, types.PQTkmTxType:
 					return nil
 				}
 				return types.ErrTxTypeNotSupported

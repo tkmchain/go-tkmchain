@@ -683,6 +683,12 @@ func (s *Ethereum) ArchiveMode() bool { return s.config.NoPruning }
 
 // GetMainKingAddress returns the main king address
 func (s *Ethereum) GetMainKingAddress() common.Address {
+	if s != nil && s.blockchain != nil && s.blockchain.Config() != nil {
+		head := s.blockchain.CurrentBlock()
+		if head != nil {
+			return s.blockchain.Config().MainKingAddressAt(head.Number, head.Time)
+		}
+	}
 	return s.mainKingAddress
 }
 

@@ -85,6 +85,29 @@ func TestCompatibleRewardTransactionsIncludePreviousFallbackMarkers(t *testing.T
 	}
 }
 
+func TestRewardTransactionsSwitchToPostQuantumMainKingAtFork(t *testing.T) {
+	legacyMainKing := common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+	pqMainKing := common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b")
+	miner := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	forkTime := uint64(10)
+	rx := NewFaker()
+	rx.config.PostQuantumMainKingAddress = pqMainKing
+	rx.config.QuantumResistantTime = &forkTime
+	rx.mainKing = legacyMainKing
+	rx.rotatingKings = nil
+	rx.rotatingKingActivations = nil
+	rx.SetRotationInterval(100)
+
+	before := rx.RewardTransactions(&types.Header{Number: big.NewInt(1), Time: 9, Coinbase: miner}, nil)
+	if to := before[0].To(); to == nil || *to != legacyMainKing {
+		t.Fatalf("pre-fork main king reward recipient = %v, want %s", to, legacyMainKing)
+	}
+	after := rx.RewardTransactions(&types.Header{Number: big.NewInt(2), Time: 10, Coinbase: miner}, nil)
+	if to := after[0].To(); to == nil || *to != pqMainKing {
+		t.Fatalf("post-fork main king reward recipient = %v, want %s", to, pqMainKing)
+	}
+}
+
 func TestLegacyRewardTransactionMatchesBlock2462Marker(t *testing.T) {
 	mainKing := common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
 	amount := new(big.Int).Mul(big.NewInt(20), big.NewInt(1e18))

@@ -219,7 +219,7 @@ func rewardTxReceipts(txs types.Transactions, cumulativeGas uint64) []*types.Rec
 
 func (p *StateProcessor) legacyNoRotatingKingRewardTransactions(header *types.Header) []*types.Transaction {
 	config := p.chainConfig()
-	if config == nil || config.RandomX == nil || config.MainKingAddress == (common.Address{}) || len(config.RotatingKingAddresses) != 0 {
+	if config == nil || config.RandomX == nil || config.MainKingAddressAt(header.Number, header.Time) == (common.Address{}) || len(config.RotatingKingAddresses) != 0 {
 		return nil
 	}
 	blockNumber := header.Number.Uint64()
@@ -233,7 +233,7 @@ func (p *StateProcessor) legacyNoRotatingKingRewardTransactions(header *types.He
 	rotatingKingReward.Div(rotatingKingReward, big.NewInt(100))
 	minerReward := new(big.Int).Sub(blockReward, new(big.Int).Add(mainKingReward, rotatingKingReward))
 	return []*types.Transaction{
-		types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, config.MainKingAddress, mainKingReward),
+		types.NewBlockRewardTx(blockNumber, types.BlockRewardMainKing, config.MainKingAddressAt(header.Number, header.Time), mainKingReward),
 		types.NewBlockRewardTx(blockNumber, types.BlockRewardRotatingKing, common.Address{}, rotatingKingReward),
 		types.NewBlockRewardTx(blockNumber, types.BlockRewardMiner, header.Coinbase, minerReward),
 	}

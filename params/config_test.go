@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/require"
 )
@@ -190,6 +191,65 @@ func TestPrivacyCommitmentForkSchedule(t *testing.T) {
 	}
 	if !MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), 1786010400) {
 		t.Fatal("mainnet privacy commitments inactive at scheduled timestamp")
+	}
+}
+
+func TestQuantumResistantForkSchedule(t *testing.T) {
+	if !EgyptChainConfig.IsQuantumResistant(big.NewInt(0), 0) {
+		t.Fatal("Egypt quantum-resistant transactions are not active at genesis")
+	}
+	if MainnetChainConfig.QuantumResistantTime == nil || *MainnetChainConfig.QuantumResistantTime != 1786010400 {
+		t.Fatalf("mainnet quantum-resistant time = %v, want 1786010400", MainnetChainConfig.QuantumResistantTime)
+	}
+	if MainnetChainConfig.IsQuantumResistant(big.NewInt(0), 1786010399) {
+		t.Fatal("mainnet quantum-resistant transactions active before scheduled timestamp")
+	}
+	if !MainnetChainConfig.IsQuantumResistant(big.NewInt(0), 1786010400) {
+		t.Fatal("mainnet quantum-resistant transactions inactive at scheduled timestamp")
+	}
+}
+
+func TestEgyptMainKingPQAddress(t *testing.T) {
+	legacy := common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+	pq := common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b")
+	if EgyptChainConfig.MainKingAddress != legacy {
+		t.Fatalf("Egypt legacy main king address = %s, want %s", EgyptChainConfig.MainKingAddress, legacy)
+	}
+	if EgyptChainConfig.PostQuantumMainKingAddress != pq {
+		t.Fatalf("Egypt PQ main king address = %s, want %s", EgyptChainConfig.PostQuantumMainKingAddress, pq)
+	}
+	if got := EgyptChainConfig.MainKingAddressAt(big.NewInt(0), 0); got != pq {
+		t.Fatalf("Egypt active main king address = %s, want %s", got, pq)
+	}
+}
+
+func TestMainnetMainKingPQAddress(t *testing.T) {
+	legacy := common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2")
+	pq := common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f")
+	if MainnetChainConfig.MainKingAddress != legacy {
+		t.Fatalf("mainnet legacy main king address = %s, want %s", MainnetChainConfig.MainKingAddress, legacy)
+	}
+	if MainnetChainConfig.PostQuantumMainKingAddress != pq {
+		t.Fatalf("mainnet PQ main king address = %s, want %s", MainnetChainConfig.PostQuantumMainKingAddress, pq)
+	}
+	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), 1786010399); got != legacy {
+		t.Fatalf("mainnet pre-fork main king = %s, want %s", got, legacy)
+	}
+	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), 1786010400); got != pq {
+		t.Fatalf("mainnet post-fork main king = %s, want %s", got, pq)
+	}
+}
+
+func TestPostQuantumMainKingAddressChangeErrors(t *testing.T) {
+	stored := *MainnetChainConfig
+	updated := stored
+	updated.PostQuantumMainKingAddress = common.HexToAddress("0x0000000000000000000000000000000000000001")
+	err := stored.CheckCompatible(&updated, 0, 1786010399)
+	if err == nil {
+		t.Fatal("post-quantum main king address change accepted")
+	}
+	if err.What != "post-quantum main king address" {
+		t.Fatalf("compat error = %v, want post-quantum main king address", err)
 	}
 }
 

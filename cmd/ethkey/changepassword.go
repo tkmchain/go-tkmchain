@@ -52,9 +52,10 @@ Change the password of a keyfile.`,
 
 		// Decrypt key with passphrase.
 		passphrase := getPassphrase(ctx, false)
-		key, err := keystore.DecryptKey(keyjson, passphrase)
-		if err != nil {
-			utils.Fatalf("Error decrypting key: %v", err)
+		key, keyErr := keystore.DecryptKey(keyjson, passphrase)
+		pqKey, pqErr := keystore.DecryptPQKey(keyjson, passphrase)
+		if keyErr != nil && pqErr != nil {
+			utils.Fatalf("Error decrypting key: %v", keyErr)
 		}
 
 		// Get a new passphrase.
@@ -71,9 +72,16 @@ Change the password of a keyfile.`,
 		}
 
 		// Encrypt the key with the new passphrase.
-		newJson, err := keystore.EncryptKey(key, newPhrase, keystore.StandardScryptN, keystore.StandardScryptP)
-		if err != nil {
-			utils.Fatalf("Error encrypting with new password: %v", err)
+		var newJson []byte
+		var encryptErr error
+		if pqKey != nil {
+			defer clear(pqKey.Seed)
+			newJson, encryptErr = keystore.EncryptPQKey(pqKey, newPhrase, keystore.StandardScryptN, keystore.StandardScryptP)
+		} else {
+			newJson, encryptErr = keystore.EncryptKey(key, newPhrase, keystore.StandardScryptN, keystore.StandardScryptP)
+		}
+		if encryptErr != nil {
+			utils.Fatalf("Error encrypting with new password: %v", encryptErr)
 		}
 
 		// Then write the new keyfile in place of the old one.

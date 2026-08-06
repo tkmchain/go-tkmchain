@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -131,6 +132,96 @@ func TestValidateTransactionRejectsUnprotectedLegacyAfterEIP155(t *testing.T) {
 	}
 	if err := ValidateTransaction(protected, head, types.LatestSigner(params.TestChainConfig), opts); err != nil {
 		t.Fatalf("ValidateTransaction() protected error = %v", err)
+	}
+}
+
+func TestValidateTransactionQuantumResistantFork(t *testing.T) {
+	ecdsaKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pqKey, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := *params.TestChainConfig
+	config.QuantumResistantTime = new(uint64)
+	*config.QuantumResistantTime = 10
+	head := &types.Header{
+		Number:     big.NewInt(1),
+		GasLimit:   5000000,
+		Time:       10,
+		Difficulty: big.NewInt(1),
+	}
+	opts := &ValidationOptions{
+		Config:       &config,
+		Accept:       0xFF,
+		MaxSize:      64 * 1024,
+		MaxBlobCount: 6,
+		MinTip:       big.NewInt(0),
+	}
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	legacy, err := types.SignTx(types.NewTransaction(0, to, big.NewInt(1), 21000, big.NewInt(10), nil), types.NewEIP155Signer(config.ChainID), ecdsaKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(legacy, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
+		t.Fatalf("legacy tx post-quantum error = %v, want %v", err, core.ErrTxTypeNotSupported)
+	}
+	pqtx, err := types.SignNewPQTkmTx(pqKey, types.MakeSigner(&config, head.Number, head.Time), &types.PQTkmTx{
+		ChainID:   config.ChainID,
+		Nonce:     0,
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(10),
+		Gas:       21000,
+		To:        &to,
+		Value:     big.NewInt(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(pqtx, head, types.MakeSigner(&config, head.Number, head.Time), opts); err != nil {
+		t.Fatalf("PQ tx post-quantum error = %v", err)
+	}
+	head.Time = 9
+	if err := ValidateTransaction(pqtx, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
+		t.Fatalf("PQ tx pre-quantum error = %v, want %v", err, core.ErrTxTypeNotSupported)
+	}
+}
+
+func TestValidateTransactionRejectsInvalidPQMigrationMarker(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := &types.Header{
+		Number:     big.NewInt(1),
+		GasLimit:   5000000,
+		Time:       1,
+		Difficulty: big.NewInt(1),
+	}
+	opts := &ValidationOptions{
+		Config:       params.TestChainConfig,
+		Accept:       0xFF,
+		MaxSize:      32 * 1024,
+		MaxBlobCount: 6,
+		MinTip:       big.NewInt(0),
+	}
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		To:       &to,
+		Value:    big.NewInt(1),
+		Gas:      100000,
+		GasPrice: big.NewInt(1),
+		Data:     []byte("TKMPQMIG1invalid"),
+	})
+	signed, err := types.SignTx(tx, types.LatestSigner(params.TestChainConfig), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(signed, head, types.LatestSigner(params.TestChainConfig), opts); err == nil || err.Error() != "invalid post-quantum migration transaction" {
+		t.Fatalf("ValidateTransaction() error = %v, want invalid post-quantum migration transaction", err)
 	}
 }
 

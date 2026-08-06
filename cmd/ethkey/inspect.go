@@ -29,8 +29,9 @@ import (
 
 type outputInspect struct {
 	Address    string
+	Algorithm  string `json:"algorithm,omitempty"`
 	PublicKey  string
-	PrivateKey string
+	PrivateKey string `json:"privateKey,omitempty"`
 }
 
 var (
@@ -65,15 +66,38 @@ make sure to use this feature with great caution!`,
 
 		// Decrypt key with passphrase.
 		passphrase := getPassphrase(ctx, false)
+		showPrivate := ctx.Bool(privateFlag.Name)
+		if pqKey, err := keystore.DecryptPQKey(keyjson, passphrase); err == nil {
+			defer clear(pqKey.Seed)
+			out := outputInspect{
+				Address:   pqKey.Address.Hex(),
+				Algorithm: pqKey.Algorithm,
+				PublicKey: hex.EncodeToString(pqKey.PublicKey),
+			}
+			if showPrivate {
+				out.PrivateKey = hex.EncodeToString(pqKey.Seed)
+			}
+			if ctx.Bool(jsonFlag.Name) {
+				mustPrintJSON(out)
+			} else {
+				fmt.Println("Address:       ", out.Address)
+				fmt.Println("Algorithm:     ", out.Algorithm)
+				fmt.Println("Public key:    ", out.PublicKey)
+				if showPrivate {
+					fmt.Println("Private seed:  ", out.PrivateKey)
+				}
+			}
+			return nil
+		}
 		key, err := keystore.DecryptKey(keyjson, passphrase)
 		if err != nil {
 			utils.Fatalf("Error decrypting key: %v", err)
 		}
 
 		// Output all relevant information we can retrieve.
-		showPrivate := ctx.Bool(privateFlag.Name)
 		out := outputInspect{
-			Address: key.Address.Hex(),
+			Address:   key.Address.Hex(),
+			Algorithm: keystore.AlgorithmECDSA,
 			PublicKey: hex.EncodeToString(
 				crypto.FromECDSAPub(&key.PrivateKey.PublicKey)),
 		}
@@ -85,6 +109,7 @@ make sure to use this feature with great caution!`,
 			mustPrintJSON(out)
 		} else {
 			fmt.Println("Address:       ", out.Address)
+			fmt.Println("Algorithm:     ", out.Algorithm)
 			fmt.Println("Public key:    ", out.PublicKey)
 			if showPrivate {
 				fmt.Println("Private key:   ", out.PrivateKey)

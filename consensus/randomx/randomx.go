@@ -130,12 +130,14 @@ func newVMWithFallback(cache *Cache, dataset *Dataset, extra int) (*VM, int) {
 }
 
 type Config struct {
-	Enabled        bool
-	EpochLength    uint64
-	CacheSize      uint64
-	DatasetSize    uint64
-	MinMemory      uint64
-	PersistDataset bool
+	Enabled                    bool
+	EpochLength                uint64
+	CacheSize                  uint64
+	DatasetSize                uint64
+	MinMemory                  uint64
+	PersistDataset             bool
+	PostQuantumMainKingAddress common.Address
+	QuantumResistantTime       *uint64
 }
 
 type Work struct {
@@ -1274,8 +1276,9 @@ func (rx *RandomX) distributeKyotoEmptyBlockRewards(state vm.StateDB, header *ty
 	mainKingReward := new(big.Int).Mul(blockReward, big.NewInt(50))
 	mainKingReward.Div(mainKingReward, big.NewInt(100))
 	minerReward := new(big.Int).Sub(new(big.Int).Set(blockReward), mainKingReward)
-	if rx.mainKing != (common.Address{}) && mainKingReward.Sign() > 0 {
-		state.AddBalance(rx.mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
+	mainKing := rx.mainKingAt(header)
+	if mainKing != (common.Address{}) && mainKingReward.Sign() > 0 {
+		state.AddBalance(mainKing, uint256.MustFromBig(mainKingReward), tracing.BalanceIncreaseRewardMineBlock)
 	}
 	if header.Coinbase != (common.Address{}) && minerReward.Sign() > 0 {
 		state.AddBalance(header.Coinbase, uint256.MustFromBig(minerReward), tracing.BalanceIncreaseRewardMineBlock)
@@ -1391,6 +1394,16 @@ func (rx *RandomX) distributeBodyRewardTransactions(state vm.StateDB, body *type
 	return true
 }
 
+func (rx *RandomX) mainKingAt(header *types.Header) common.Address {
+	if rx == nil || rx.config == nil || header == nil {
+		return common.Address{}
+	}
+	if rx.config.PostQuantumMainKingAddress != (common.Address{}) && rx.config.QuantumResistantTime != nil && header.Time >= *rx.config.QuantumResistantTime {
+		return rx.config.PostQuantumMainKingAddress
+	}
+	return rx.mainKing
+}
+
 func rewardKind(tx *types.Transaction) int {
 	data := tx.Data()
 	if len(data) == 0 {
@@ -1493,7 +1506,7 @@ func (rx *RandomX) legacyRewardTransactions(header *types.Header, receipts []*ty
 	blockNumber := header.Number.Uint64()
 	blockReward := CalculateBlockReward(blockNumber)
 	totalReward := CalculateTotalReward(blockReward, nil)
-	mainKing := rx.mainKing
+	mainKing := rx.mainKingAt(header)
 	rotatingKing := rx.getRotatingKing(blockNumber)
 	miner := header.Coinbase
 
@@ -1523,7 +1536,7 @@ func (rx *RandomX) legacyRewardTransactions(header *types.Header, receipts []*ty
 
 func (rx *RandomX) rewardMarkerShares(header *types.Header, totalReward *big.Int) (common.Address, *big.Int, common.Address, *big.Int, common.Address, *big.Int) {
 	blockNumber := header.Number.Uint64()
-	mainKing := rx.mainKing
+	mainKing := rx.mainKingAt(header)
 	rotatingKing := rx.getRotatingKing(blockNumber)
 	miner := header.Coinbase
 
@@ -1604,7 +1617,7 @@ func rewardReceipts(txs []*types.Transaction, header *types.Header, cumulativeGa
 
 func (rx *RandomX) rewardShares(header *types.Header, totalReward *big.Int) (common.Address, *big.Int, common.Address, *big.Int, common.Address, *big.Int) {
 	blockNumber := header.Number.Uint64()
-	mainKing := rx.mainKing
+	mainKing := rx.mainKingAt(header)
 	rotatingKing := rx.getRotatingKing(blockNumber)
 	miner := header.Coinbase
 

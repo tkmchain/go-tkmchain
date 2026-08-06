@@ -10,12 +10,14 @@ This release adds the foundation for a consensus-enforced shielded transaction p
 
 The implementation is fail-closed: shielded spends require real zero-knowledge proof verification. Mainnet startup refuses to run an active privacy fork unless the shielded circuit ceremony output is embedded as the `shieldedGroth16VerifyingKey` chain-config artifact.
 
-This update also adds the shielded spend circuit package, deterministic test vectors, ceremony tooling, and a chain-format verifying key artifact.
+This update also adds the shielded spend circuit package, deterministic test vectors, ceremony tooling, a chain-format verifying key artifact, and the first consensus-enforced post-quantum transaction type.
 
 ## Activation
 
 - Egypt network: privacy commitments are active from genesis for testing.
 - Mainnet: `privacyCommitmentTime` is `1786010400`, which is `2026-08-06 10:00:00 UTC`.
+- Mainnet: `quantumResistantTime` is also `1786010400`, so PQ-only user transaction validation activates at the same `2026-08-06 10:00:00 UTC` hardfork timestamp.
+- Egypt network: quantum-resistant transaction validation is active from genesis for testing.
 - Mainnet readiness now requires the embedded shielded Groth16 verifying key artifact before startup.
 
 ## Consensus Changes
@@ -26,6 +28,7 @@ This update also adds the shielded spend circuit package, deterministic test vec
 - Added shielded transaction decoding for `TKMSHIELD1` envelopes in `tx.Data`.
 - Block processing now validates shielded transactions before EVM execution.
 - After privacy activation, transparent non-shielded user transactions are rejected.
+- After quantum-resistant activation, non-PQ user transaction types are rejected.
 - Shielded transactions must target the shielded pool address.
 - Shielded transactions must not expose a transparent `tx.Value`.
 - Output-only shielded deposits are rejected; shielded transactions must spend at least one private note.
@@ -128,6 +131,62 @@ proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
 - Downloader fixture setup now uses RandomX faker consensus instead of Ethash.
 - Obsolete downloader tests are gated behind `legacy_downloader_tests` so the active downloader package compiles cleanly.
 
+## Quantum-Resistant Transactions
+
+- Raised the module requirement to Go `1.25.0`.
+- Added `github.com/emmansun/gmsm v0.44.1` as the ML-DSA dependency.
+- Added `crypto/pqcrypto` with ML-DSA-87 key generation, signing, verification, and domain-separated address derivation.
+- Added typed transaction `PQTkmTxType` (`0x06`).
+- Added `PQTkmTx` fields for `pqAlgorithm`, `pqPublicKey`, and `pqSignature`.
+- Added `SignPQTkmTx` and `SignNewPQTkmTx` helpers.
+- Added `NewQuantumSigner` and sender validation that verifies real ML-DSA signatures instead of ECDSA public-key recovery.
+- Added `QuantumResistantTime` to chain config, fork ordering, compatibility checks, and runtime rules.
+- Mainnet `QuantumResistantTime` is `1786010400`; Egypt activates from genesis.
+- Txpool and block processing reject non-PQ user transactions after the fork.
+- Pre-fork block processing rejects PQ transactions unless the quantum signer is active for that timestamp.
+- PQ addresses remain 20-byte EVM addresses for state/ABI compatibility, but use a `tkmchain:pq-address:v1:` domain separator so they are not legacy secp256k1-derived addresses.
+- Added `postQuantumMainKingAddress`; `mainKingAddress` remains the pre-fork
+  Main King address and rewards/control APIs switch to the PQ address at
+  `quantumResistantTime` when the post-quantum address is configured.
+
+## PQ Wallet And RPC Support
+
+- Added version 4 PQ keystore JSON for ML-DSA-87 accounts.
+- PQ keystore files encrypt the compact ML-DSA seed using the existing
+  scrypt/AES-CTR/MAC envelope.
+- Existing version 3 ECDSA keystore files are unchanged and remain available for
+  pre-fork migration.
+- Added PQ account creation, seed import, encrypted export, unlock, delete, and
+  transaction signing to `accounts/keystore`.
+- Added algorithm metadata lookup so clients can distinguish `ECDSA-secp256k1`
+  and `ML-DSA-87` accounts.
+- Added `tkm` RPC helpers:
+  `newPQAccountWithPassphrase`, `importPQSeedWithPassphrase`,
+  `exportPQAccount`, `accountAlgorithm`, `accountAlgorithms`,
+  `pqMigrationData`, `sendMigrationToPQWithPassphrase`,
+  `preparePQMigrationWithPassphrase`, `preparePQMigrationWithPassphrases`,
+  `autoMigrateToPQWithPassphrase`, and `autoMigrateToPQWithPassphrases`.
+- `SendTransactionWithPassphrase` can sign `PQTkmTxType` when the selected local
+  account is a PQ account.
+- Legacy hash/text signing remains ECDSA-only; PQ signatures are not returned as
+  recoverable `r/s/v` signatures.
+- Pre-fork migration is performed by creating a PQ account and sending a
+  legacy-signed value transfer from the old ECDSA account to the derived PQ
+  address before activation.
+- Added `TKMPQMIG1` migration calldata that binds the transfer recipient to the
+  ML-DSA-87 public key so wallets and explorers can verify migration intent.
+- Added keystore-assisted auto migration that creates a version 4 PQ keyfile,
+  builds the migration marker, signs the legacy transfer, and submits it before
+  activation.
+- `sendMigrationToPQWithPassphrase` rejects migration attempts after
+  `quantumResistantTime`; post-fork user activity remains `PQTkmTxType` only.
+- Added `ethkey --pq` tooling for generating and inspecting version 4 PQ
+  keyfiles.
+- Added the deterministic PQ wallet/explorer integration vector:
+  `0x803e6EE61B7Ecba64eDF13ce0c4a8a65C495e5A5`.
+- Added `docs/pq-wallet-integration.md` for external wallet, explorer, and
+  indexer integration.
+
 ## Operational Notes
 
 - Mainnet nodes must not ship with a placeholder shielded verifying key.
@@ -147,8 +206,12 @@ go test ./params ./core/rawdb ./eth -run TestPrivacy
 go test ./zk/shielded
 go test ./cmd/shielded-vectors
 go test ./cmd/shielded-ceremony ./cmd/shielded-setup
+go test ./accounts/keystore ./internal/ethapi -run 'PQ|^$'
+go test ./cmd/ethkey -run PQ
+go test ./crypto/pqcrypto ./core/types ./params ./core/txpool -run 'PQTkm|Quantum|PrivacyCommitment'
 go test ./core -run ^$
 go test ./eth/downloader -run ^$
+go test ./eth ./internal/ethapi -run ^$
 ```
 
 Covered behavior includes:
@@ -175,10 +238,24 @@ Covered behavior includes:
 - nullifier and commitment state updates;
 - duplicate nullifier rejection;
 - transparent-value rejection.
+- ML-DSA-87 PQ transaction signing and sender derivation;
+- PQ transaction tamper rejection;
+- pre-fork PQ transaction rejection by non-quantum signers;
+- post-fork non-PQ user transaction rejection;
+- post-fork PQ transaction txpool acceptance.
+- PQ keystore create/export/import;
+- PQ raw seed import;
+- PQ unlock and transaction signing;
+- PQ delete;
+- PQ account algorithm metadata.
+- PQ migration payload derivation and address binding.
+- keystore-assisted PQ migration preparation.
+- `ethkey` PQ deterministic seed generation and inspection.
 
 ## Remaining Production Requirements
 
 - Release wallet/client support for note creation, note scanning, proof generation, encrypted note backup, and relayer or sender-hiding transaction submission.
+- Update external wallets, explorers, and operational scripts to use PQ account metadata and `PQTkmTxType` before mainnet activation.
 - Distribute the exact same binary/config to every mainnet validator before activation.
 - Keep the proving key outside the node binary and restrict it to prover infrastructure.
 - Preserve the circuit hashes, ceremony transcript hashes, beacon values, proving key hash, and verifying key hash in the release archive.

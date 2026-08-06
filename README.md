@@ -19,13 +19,14 @@ Automated builds are available for stable releases and the unstable master branc
 
 - [Kyoto Release Notes](docs/kyoto-release.md)
 - [Shielded Privacy Release Notes](docs/shielded-privacy-release.md)
+- [Post-Quantum Wallet Integration](docs/pq-wallet-integration.md)
 
 ---
 
 ## Shielded Privacy Activation
 
-Mainnet shielded privacy activates at `2026-08-06 10:00:00 UTC`
-(`privacyCommitmentTime = 1786010400`). Egypt test network has privacy
+Mainnet shielded privacy activates at `2026-08-09 10:00:00 UTC`
+(`privacyCommitmentTime = 1786341600`). Egypt test network has privacy
 commitments active from genesis.
 
 After activation, block processing rejects normal transparent user
@@ -48,6 +49,79 @@ verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
 
 The proving key is not embedded in the node binary and must stay with prover
 infrastructure.
+
+---
+
+## Quantum-Resistant Transaction Activation
+
+Mainnet quantum-resistant transaction rules activate at
+`2026-08-09 10:00:00 UTC` (`quantumResistantTime = 1786341600`), the same
+timestamp as shielded privacy activation. Egypt test network activates the rule
+from genesis.
+
+This release requires Go `1.25.0` or newer and uses
+`github.com/emmansun/gmsm` for ML-DSA support. The new consensus transaction
+type is `PQTkmTxType` (`0x06`). PQ transactions carry:
+
+- `pqAlgorithm`: currently `ML-DSA-87`;
+- `pqPublicKey`: canonical FIPS 204 public-key bytes;
+- `pqSignature`: ML-DSA signature over the transaction signing hash.
+
+After `quantumResistantTime`, block processing and the txpool reject transparent
+legacy/ECDSA user transaction types. Synthetic protocol block-reward
+transactions remain protocol-generated and are not wallet/user signatures.
+
+Main King rewards can be scheduled across the hardfork without replacing the
+legacy address. `mainKingAddress` remains the pre-fork address, while
+`postQuantumMainKingAddress` becomes active at `quantumResistantTime` when set.
+
+PQ account addresses remain EVM-compatible 20-byte `common.Address` values for
+contract and state compatibility, but they are domain-separated from legacy
+secp256k1 addresses using the hash domain `tkmchain:pq-address:v1:`.
+
+Wallet support is versioned instead of overloading legacy ECDSA key files.
+Version 4 PQ keystore files store the encrypted ML-DSA-87 seed, public key,
+algorithm, address, and the existing scrypt/AES-CTR/MAC envelope. Existing
+version 3 ECDSA keystores remain readable for pre-fork migration.
+
+RPC/account helpers added through the `tkm` API:
+
+- `newPQAccountWithPassphrase`
+- `importPQSeedWithPassphrase`
+- `exportPQAccount`
+- `accountAlgorithm`
+- `accountAlgorithms`
+- `pqMigrationData`
+- `sendMigrationToPQWithPassphrase`
+- `preparePQMigrationWithPassphrase`
+- `preparePQMigrationWithPassphrases`
+- `autoMigrateToPQWithPassphrase`
+- `autoMigrateToPQWithPassphrases`
+
+Before the hardfork, users migrate by creating a PQ account and sending a
+legacy-signed value transfer to the PQ address. The migration transfer should
+carry the `TKMPQMIG1` payload generated from the PQ public key through
+`pqMigrationData`, `preparePQMigrationWithPassphrase`, or
+`autoMigrateToPQWithPassphrase`; the payload binds the destination address to
+its ML-DSA-87 public key for wallet and explorer verification. The auto-migrate
+helper creates the PQ keystore, attaches the migration payload, signs the
+legacy transfer, and submits it before activation. After the hardfork,
+legacy-signed migration is closed and normal user transactions must be signed
+as `PQTkmTxType`.
+
+Deterministic PQ test vector:
+
+```text
+seed:    000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+address: 0x803e6EE61B7Ecba64eDF13ce0c4a8a65C495e5A5
+```
+
+Local tooling:
+
+```bash
+ethkey generate --pq --pqseed <32-byte-hex-seed> --passwordfile pass.txt key.json
+ethkey inspect --passwordfile pass.txt key.json
+```
 
 ---
 
