@@ -15,6 +15,13 @@ Automated builds are available for stable releases and the unstable master branc
 
 ---
 
+## Release Notes
+
+- [Kyoto Release Notes](docs/kyoto-release.md)
+- [Shielded Privacy Release Notes](docs/shielded-privacy-release.md)
+
+---
+
 ## Rotating Kings (RK) Governance
 
 Tkmchain features a unique **Rotating Kings** governance system with a 10/40/50 reward split:

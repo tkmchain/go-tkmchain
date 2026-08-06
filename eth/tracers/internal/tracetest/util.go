@@ -67,9 +67,7 @@ func (c *traceContext) toBlockContext(genesis *core.Genesis) vm.BlockContext {
 		context.BaseFee = (*big.Int)(c.BaseFee)
 	}
 
-	if genesis.Config.TerminalTotalDifficulty != nil && genesis.Config.TerminalTotalDifficulty.Sign() == 0 {
-		context.Random = &genesis.Mixhash
-	}
+	context.Random = &genesis.Mixhash
 
 	if genesis.ExcessBlobGas != nil && genesis.BlobGasUsed != nil {
 		header := &types.Header{Number: genesis.Config.LondonBlock, Time: *genesis.Config.CancunTime}

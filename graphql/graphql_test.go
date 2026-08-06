@@ -490,8 +490,6 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 	}
 	var engine = randomx.NewFaker()
 	if shanghai {
-		gspec.Config.TerminalTotalDifficulty = common.Big0
-		gspec.Config.MergeNetsplitBlock = common.Big0
 		// GenerateChain will increment timestamps by 10.
 		// Shanghai upgrade at block 1.
 		shanghaiTime := uint64(5)

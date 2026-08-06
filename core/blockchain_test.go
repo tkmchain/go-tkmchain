@@ -1840,7 +1840,6 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 		mergeBlock = 0
 
 		// Set the terminal total difficulty in the config
-		gspec.Config.TerminalTotalDifficulty = big.NewInt(0)
 	}
 	genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, 2*state.TriesInMemory, func(i int, gen *BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(nonce, common.HexToAddress("deadbeef"), big.NewInt(100), 21000, big.NewInt(int64(i+1)*params.GWei), nil), signer, key)
@@ -1875,7 +1874,6 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 		// Set the terminal total difficulty in the config
 		ttd := big.NewInt(int64(len(blocks)))
 		ttd.Mul(ttd, params.GenesisDifficulty)
-		gspec.Config.TerminalTotalDifficulty = ttd
 		mergeBlock = len(blocks)
 	}
 
@@ -2105,7 +2103,6 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 	)
 	// Apply merging since genesis
 	if mergeHeight == 0 {
-		genesis.Config.TerminalTotalDifficulty = big.NewInt(0)
 		mergeBlock = uint64(0)
 	}
 
@@ -2122,7 +2119,6 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 		// TTD is genesis diff + blocks
 		ttd := big.NewInt(1 + int64(len(blocks)))
 		ttd.Mul(ttd, params.GenesisDifficulty)
-		genesis.Config.TerminalTotalDifficulty = ttd
 		mergeBlock = uint64(len(blocks))
 	}
 	// Longer chain and shorter chain
@@ -3347,7 +3343,7 @@ func testEIP1559Transition(t *testing.T, scheme string) {
 	actual := state.GetBalance(block.Coinbase()).ToBig()
 	expected := new(big.Int).Add(
 		new(big.Int).SetUint64(block.GasUsed()*block.Transactions()[0].GasTipCap().Uint64()),
-		randomx.ConstantinopleBlockReward.ToBig(),
+		randomx.CalculateBlockReward(block.NumberU64()),
 	)
 	if actual.Cmp(expected) != 0 {
 		t.Fatalf("miner balance incorrect: expected %d, got %d", expected, actual)
@@ -3387,7 +3383,7 @@ func testEIP1559Transition(t *testing.T, scheme string) {
 	actual = state.GetBalance(block.Coinbase()).ToBig()
 	expected = new(big.Int).Add(
 		new(big.Int).SetUint64(block.GasUsed()*effectiveTip),
-		randomx.ConstantinopleBlockReward.ToBig(),
+		randomx.CalculateBlockReward(block.NumberU64()),
 	)
 	if actual.Cmp(expected) != 0 {
 		t.Fatalf("miner balance incorrect: expected %d, got %d", expected, actual)
@@ -3951,7 +3947,6 @@ func TestEIP3651(t *testing.T) {
 
 	gspec.Config.BerlinBlock = common.Big0
 	gspec.Config.LondonBlock = common.Big0
-	gspec.Config.TerminalTotalDifficulty = common.Big0
 	gspec.Config.ShanghaiTime = u64(0)
 	signer := types.LatestSigner(gspec.Config)
 

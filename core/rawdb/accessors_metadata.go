@@ -18,6 +18,7 @@ package rawdb
 
 import (
 	"encoding/json"
+	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -61,6 +62,40 @@ type RotatingKingLock struct {
 	ActivationHeight uint64      `rlp:"optional"`
 	AddedHeight      uint64      `rlp:"optional"`
 	Hash             common.Hash `rlp:"optional"`
+}
+
+// PrivacyActivation stores an address privacy activation paid to the main king.
+type PrivacyActivation struct {
+	Address        common.Address
+	PaymentHash    common.Hash
+	PaidHeight     uint64
+	ActivateHeight uint64
+	Amount         *big.Int
+}
+
+// PrivacyCommitment stores one encrypted privacy commitment without the payer address.
+type PrivacyCommitment struct {
+	Commitment       common.Hash
+	EncryptedPayload []byte
+	Nonce            []byte
+	PaidHeight       uint64
+	ActivateHeight   uint64
+	Amount           *big.Int
+	PayloadHash      common.Hash `rlp:"optional"`
+	EphemeralPubKey  []byte      `rlp:"optional"`
+	ViewTag          []byte      `rlp:"optional"`
+	Nullifier        common.Hash `rlp:"optional"`
+	SpentHeight      uint64      `rlp:"optional"`
+	SpendProofHash   common.Hash `rlp:"optional"`
+	SpendCiphertext  []byte      `rlp:"optional"`
+}
+
+// PrivacyNullifier stores an opaque spend marker for an encrypted privacy note.
+type PrivacyNullifier struct {
+	Nullifier          common.Hash
+	ProofHash          common.Hash
+	EncryptedSpendData []byte
+	SpentHeight        uint64
 }
 
 // ReadRotatingKingLocks retrieves dynamically registered rotating king locks.
@@ -110,6 +145,81 @@ func WriteRotatingKingAddresses(db ethdb.KeyValueWriter, addresses []common.Addr
 	}
 	if err := db.Put(rotatingKingAddressesKey, data); err != nil {
 		log.Crit("Failed to store rotating king addresses", "err", err)
+	}
+}
+
+// ReadPrivacyActivations retrieves persisted privacy activation records.
+func ReadPrivacyActivations(db ethdb.KeyValueReader) []PrivacyActivation {
+	data, _ := db.Get(privacyActivationsKey)
+	if len(data) == 0 {
+		return nil
+	}
+	var activations []PrivacyActivation
+	if err := rlp.DecodeBytes(data, &activations); err != nil {
+		log.Error("Invalid privacy activations RLP", "err", err)
+		return nil
+	}
+	return activations
+}
+
+// WritePrivacyActivations stores privacy activation records.
+func WritePrivacyActivations(db ethdb.KeyValueWriter, activations []PrivacyActivation) {
+	data, err := rlp.EncodeToBytes(activations)
+	if err != nil {
+		log.Crit("Failed to encode privacy activations", "err", err)
+	}
+	if err := db.Put(privacyActivationsKey, data); err != nil {
+		log.Crit("Failed to store privacy activations", "err", err)
+	}
+}
+
+// ReadPrivacyCommitments retrieves persisted encrypted privacy commitment records.
+func ReadPrivacyCommitments(db ethdb.KeyValueReader) []PrivacyCommitment {
+	data, _ := db.Get(privacyCommitmentsKey)
+	if len(data) == 0 {
+		return nil
+	}
+	var commitments []PrivacyCommitment
+	if err := rlp.DecodeBytes(data, &commitments); err != nil {
+		log.Error("Invalid privacy commitments RLP", "err", err)
+		return nil
+	}
+	return commitments
+}
+
+// WritePrivacyCommitments stores encrypted privacy commitment records.
+func WritePrivacyCommitments(db ethdb.KeyValueWriter, commitments []PrivacyCommitment) {
+	data, err := rlp.EncodeToBytes(commitments)
+	if err != nil {
+		log.Crit("Failed to encode privacy commitments", "err", err)
+	}
+	if err := db.Put(privacyCommitmentsKey, data); err != nil {
+		log.Crit("Failed to store privacy commitments", "err", err)
+	}
+}
+
+// ReadPrivacyNullifiers retrieves persisted private note spend markers.
+func ReadPrivacyNullifiers(db ethdb.KeyValueReader) []PrivacyNullifier {
+	data, _ := db.Get(privacyNullifiersKey)
+	if len(data) == 0 {
+		return nil
+	}
+	var nullifiers []PrivacyNullifier
+	if err := rlp.DecodeBytes(data, &nullifiers); err != nil {
+		log.Error("Invalid privacy nullifiers RLP", "err", err)
+		return nil
+	}
+	return nullifiers
+}
+
+// WritePrivacyNullifiers stores private note spend markers.
+func WritePrivacyNullifiers(db ethdb.KeyValueWriter, nullifiers []PrivacyNullifier) {
+	data, err := rlp.EncodeToBytes(nullifiers)
+	if err != nil {
+		log.Crit("Failed to encode privacy nullifiers", "err", err)
+	}
+	if err := db.Put(privacyNullifiersKey, data); err != nil {
+		log.Crit("Failed to store privacy nullifiers", "err", err)
 	}
 }
 

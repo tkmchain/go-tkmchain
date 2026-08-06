@@ -275,11 +275,14 @@ func newBackendMock() *backendMock {
 		ConstantinopleBlock: big.NewInt(0),
 		PetersburgBlock:     big.NewInt(0),
 		IstanbulBlock:       big.NewInt(0),
-		MuirGlacierBlock:    big.NewInt(0),
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(1000),
 		CancunTime:          &cancunTime,
-		BlobScheduleConfig:  params.DefaultBlobSchedule,
+		BlobScheduleConfig: &params.BlobScheduleConfig{
+			Cancun: params.DefaultCancunBlobConfig,
+			Prague: params.DefaultPragueBlobConfig,
+			Osaka:  params.DefaultOsakaBlobConfig,
+		},
 	}
 	return &backendMock{
 		current: &types.Header{
@@ -337,6 +340,13 @@ func (b *backendMock) RPCEVMTimeout() time.Duration      { return time.Second }
 func (b *backendMock) RPCTxFeeCap() float64              { return 0 }
 func (b *backendMock) UnprotectedAllowed() bool          { return false }
 func (b *backendMock) SetHead(number uint64)             {}
+func (b *backendMock) Etherbase() common.Address         { return common.Address{} }
+func (b *backendMock) Mining() bool                      { return false }
+func (b *backendMock) HashRate() uint64                  { return 0 }
+func (b *backendMock) GetWork() ([4]string, error)       { return [4]string{}, nil }
+func (b *backendMock) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest common.Hash) bool {
+	return false
+}
 func (b *backendMock) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	return nil, nil
 }

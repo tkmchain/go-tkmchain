@@ -82,7 +82,15 @@ func TestCalcBlobFee(t *testing.T) {
 		{10 * 1024 * 1024, 23},
 	}
 	for i, tt := range tests {
-		config := &params.ChainConfig{LondonBlock: big.NewInt(0), CancunTime: &zero, BlobScheduleConfig: params.DefaultBlobSchedule}
+		config := &params.ChainConfig{
+			LondonBlock: big.NewInt(0),
+			CancunTime:  &zero,
+			BlobScheduleConfig: &params.BlobScheduleConfig{
+				Cancun: params.DefaultCancunBlobConfig,
+				Prague: params.DefaultPragueBlobConfig,
+				Osaka:  params.DefaultOsakaBlobConfig,
+			},
+		}
 		header := &types.Header{ExcessBlobGas: &tt.excessBlobGas}
 		have := CalcBlobFee(config, header)
 		if have.Int64() != tt.blobfee {

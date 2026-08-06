@@ -93,7 +93,9 @@ func testHeaderVerification(t *testing.T, scheme string) {
 }
 
 func TestHeaderVerificationForMergingClique(t *testing.T) { testHeaderVerificationForMerging(t, true) }
-func TestHeaderVerificationForMergingEthash(t *testing.T) { testHeaderVerificationForMerging(t, false) }
+func TestHeaderVerificationForMergingRandomX(t *testing.T) {
+	testHeaderVerificationForMerging(t, false)
+}
 
 // Tests the verification for eth1/2 merging, including pre-merge and post-merge
 func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
@@ -123,7 +125,6 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 
 		// chain_maker has no blockchain to retrieve the TTD from, setting to nil
 		// is a hack to signal it to generate pre-merge blocks
-		gspec.Config.TerminalTotalDifficulty = nil
 		td := 0
 		genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, 8, nil)
 
@@ -143,7 +144,6 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 			td += int(block.Difficulty().Uint64())
 		}
 		preBlocks = blocks
-		gspec.Config.TerminalTotalDifficulty = big.NewInt(int64(td))
 		postBlocks, _ = GenerateChain(gspec.Config, preBlocks[len(preBlocks)-1], engine, genDb, 8, nil)
 	} else {
 		config := *params.TestChainConfig
@@ -156,7 +156,6 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 			td += int(block.Difficulty().Uint64())
 		}
 		preBlocks = blocks
-		gspec.Config.TerminalTotalDifficulty = big.NewInt(int64(td))
 		postBlocks, _ = GenerateChain(gspec.Config, preBlocks[len(preBlocks)-1], engine, genDb, 8, func(i int, gen *BlockGen) {
 			gen.SetPoS()
 		})

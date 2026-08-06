@@ -166,8 +166,8 @@ func TestSupplyRewardsWithUncle(t *testing.T) {
 		}
 	)
 
-	// Base reward for the miner
-	baseReward := randomx.ConstantinopleBlockReward.ToBig()
+	// Base reward for the miner.
+	baseReward := randomx.CalculateBlockReward(1)
 	// Miner reward for uncle inclusion is 1/32 of the base reward
 	uncleInclusionReward := new(big.Int).Rsh(baseReward, 5)
 	// Uncle miner reward for an uncle that is 1 block behind is 7/8 of the base reward
@@ -342,8 +342,6 @@ func TestSupplySelfdestruct(t *testing.T) {
 		}
 	)
 
-	gspec.Config.TerminalTotalDifficulty = big.NewInt(0)
-
 	signer := types.LatestSigner(gspec.Config)
 
 	testBlockGenerationFunc := func(b *core.BlockGen) {
@@ -405,7 +403,11 @@ func TestSupplySelfdestruct(t *testing.T) {
 	cancunTime := uint64(0)
 	gspec.Config.ShanghaiTime = &cancunTime
 	gspec.Config.CancunTime = &cancunTime
-	gspec.Config.BlobScheduleConfig = params.DefaultBlobSchedule
+	gspec.Config.BlobScheduleConfig = &params.BlobScheduleConfig{
+		Cancun: params.DefaultCancunBlobConfig,
+		Prague: params.DefaultPragueBlobConfig,
+		Osaka:  params.DefaultOsakaBlobConfig,
+	}
 
 	postCancunOutput, postCancunChain, err := testSupplyTracer(t, gspec, testBlockGenerationFunc, 1)
 	if err != nil {
@@ -524,8 +526,6 @@ func TestSupplySelfdestructItselfAndRevert(t *testing.T) {
 			},
 		}
 	)
-
-	gspec.Config.TerminalTotalDifficulty = big.NewInt(0)
 
 	signer := types.LatestSigner(gspec.Config)
 

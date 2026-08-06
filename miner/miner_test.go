@@ -190,7 +190,7 @@ func TestMakeCurrentUsesForkSigner(t *testing.T) {
 }
 
 func createMiner(t *testing.T) *Miner {
-	// Create Ethash config
+	// Create miner config.
 	config := Config{
 		PendingFeeRecipient: common.HexToAddress("123456789"),
 	}

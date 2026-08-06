@@ -145,17 +145,17 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, cancunBlock *big.Int, pe
 	config.LondonBlock = londonBlock
 	config.ArrowGlacierBlock = londonBlock
 	config.GrayGlacierBlock = londonBlock
-	if cancunBlock != nil {
-		// Enable the merge with cancun fork.
-		config.MergeNetsplitBlock = cancunBlock
-	}
 	engine := randomx.NewFaker()
 
 	if cancunBlock != nil {
 		ts := gspec.Timestamp + cancunBlock.Uint64()*10 // fixed 10 sec block time in blockgen
 		config.ShanghaiTime = &ts
 		config.CancunTime = &ts
-		config.BlobScheduleConfig = params.DefaultBlobSchedule
+		config.BlobScheduleConfig = &params.BlobScheduleConfig{
+			Cancun: params.DefaultCancunBlobConfig,
+			Prague: params.DefaultPragueBlobConfig,
+			Osaka:  params.DefaultOsakaBlobConfig,
+		}
 		signer = types.LatestSigner(gspec.Config)
 	}
 

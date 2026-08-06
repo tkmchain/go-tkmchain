@@ -17,10 +17,12 @@
 package params
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/params/forks"
 )
 
@@ -137,20 +139,21 @@ type ChainConfig struct {
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`
 
-	ShanghaiTime  *uint64 `json:"shanghaiTime,omitempty"`
-	CancunTime    *uint64 `json:"cancunTime,omitempty"`
-	PragueTime    *uint64 `json:"pragueTime,omitempty"`
-	OsakaTime     *uint64 `json:"osakaTime,omitempty"`
-	BPO1Time      *uint64 `json:"bpo1Time,omitempty"`
-	BPO2Time      *uint64 `json:"bpo2Time,omitempty"`
-	BPO3Time      *uint64 `json:"bpo3Time,omitempty"`
-	BPO4Time      *uint64 `json:"bpo4Time,omitempty"`
-	BPO5Time      *uint64 `json:"bpo5Time,omitempty"`
-	AmsterdamTime *uint64 `json:"amsterdamTime,omitempty"`
-	UBTTime       *uint64 `json:"ubtTime,omitempty"`
-	EDATime       *uint64 `json:"edaTime,omitempty"`
-	KyotoTime     *uint64 `json:"kyotoTime,omitempty"`
-	PhoneTime     *uint64 `json:"phoneTime,omitempty"`
+	ShanghaiTime          *uint64 `json:"shanghaiTime,omitempty"`
+	CancunTime            *uint64 `json:"cancunTime,omitempty"`
+	PragueTime            *uint64 `json:"pragueTime,omitempty"`
+	OsakaTime             *uint64 `json:"osakaTime,omitempty"`
+	BPO1Time              *uint64 `json:"bpo1Time,omitempty"`
+	BPO2Time              *uint64 `json:"bpo2Time,omitempty"`
+	BPO3Time              *uint64 `json:"bpo3Time,omitempty"`
+	BPO4Time              *uint64 `json:"bpo4Time,omitempty"`
+	BPO5Time              *uint64 `json:"bpo5Time,omitempty"`
+	AmsterdamTime         *uint64 `json:"amsterdamTime,omitempty"`
+	UBTTime               *uint64 `json:"ubtTime,omitempty"`
+	EDATime               *uint64 `json:"edaTime,omitempty"`
+	KyotoTime             *uint64 `json:"kyotoTime,omitempty"`
+	PhoneTime             *uint64 `json:"phoneTime,omitempty"`
+	PrivacyCommitmentTime *uint64 `json:"privacyCommitmentTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -158,6 +161,7 @@ type ChainConfig struct {
 	MainKingAddress              common.Address   `json:"mainKingAddress,omitempty"`
 	RotatingKingAddresses        []common.Address `json:"rotatingKingAddresses,omitempty"`
 	RotatingKingRotationInterval uint64           `json:"rotatingKingRotationInterval,omitempty"`
+	ShieldedGroth16VerifyingKey  hexutil.Bytes    `json:"shieldedGroth16VerifyingKey,omitempty"`
 
 	// RandomX consensus engine
 	RandomX            *RandomXConfig      `json:"randomx,omitempty"`
@@ -274,9 +278,11 @@ var MainnetChainConfig = &ChainConfig{
 	EDATime:                      newUint64(0),
 	KyotoTime:                    newUint64(1784115119),
 	PhoneTime:                    newUint64(1784709000),
+	PrivacyCommitmentTime:        newUint64(1786010400), // 2026-08-06 10:00:00 UTC
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
+	ShieldedGroth16VerifyingKey:  MainnetShieldedGroth16VerifyingKey,
 	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
@@ -405,6 +411,7 @@ var (
 		AmsterdamTime:                nil,
 		UBTTime:                      nil,
 		EDATime:                      nil,
+		PrivacyCommitmentTime:        newUint64(0),
 		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 		RotatingKingRotationInterval: 100,
 		RandomX:                      DefaultRandomXConfig(),
@@ -553,6 +560,11 @@ func (c *ChainConfig) IsPhone(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.PhoneTime, time)
 }
 
+// IsPrivacyCommitments returns true if encrypted privacy commitments are active.
+func (c *ChainConfig) IsPrivacyCommitments(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.PrivacyCommitmentTime, time)
+}
+
 // BaseFeeChangeDenominator bounds the amount the base fee can change between blocks.
 func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
 	return DefaultBaseFeeChangeDenominator
@@ -679,6 +691,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"edaTime", c.EDATime},
 		{"kyotoTime", c.KyotoTime},
 		{"phoneTime", c.PhoneTime},
+		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -863,6 +876,13 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.PhoneTime, newcfg.PhoneTime, headTimestamp) {
 		return newTimestampCompatError("Phone fork timestamp", c.PhoneTime, newcfg.PhoneTime)
+	}
+	if isForkTimestampIncompatible(c.PrivacyCommitmentTime, newcfg.PrivacyCommitmentTime, headTimestamp) {
+		return newTimestampCompatError("Privacy commitment fork timestamp", c.PrivacyCommitmentTime, newcfg.PrivacyCommitmentTime)
+	}
+	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
+		head := new(big.Int).SetUint64(headBlock)
+		return &ConfigCompatError{What: "Shielded Groth16 verifying key", StoredBlock: head, NewBlock: head, RewindToBlock: headBlock}
 	}
 	if c.MainKingAddress != newcfg.MainKingAddress {
 		return &ConfigCompatError{What: "main king address", RewindToBlock: 0}

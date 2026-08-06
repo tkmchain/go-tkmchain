@@ -79,7 +79,6 @@ type bbInput struct {
 	Withdrawals []*types.Withdrawal `json:"withdrawals,omitempty"`
 	Clique      *cliqueInput        `json:"clique,omitempty"`
 
-	Ethash bool                 `json:"-"`
 	Txs    []*types.Transaction `json:"-"`
 	Ommers []*types.Header      `json:"-"`
 }

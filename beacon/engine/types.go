@@ -171,9 +171,8 @@ type PayloadStatusV1 struct {
 }
 
 type TransitionConfigurationV1 struct {
-	TerminalTotalDifficulty *hexutil.Big   `json:"terminalTotalDifficulty"`
-	TerminalBlockHash       common.Hash    `json:"terminalBlockHash"`
-	TerminalBlockNumber     hexutil.Uint64 `json:"terminalBlockNumber"`
+	TerminalBlockHash   common.Hash    `json:"terminalBlockHash"`
+	TerminalBlockNumber hexutil.Uint64 `json:"terminalBlockNumber"`
 }
 
 // PayloadID is an identifier of the payload build process

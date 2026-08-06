@@ -29,7 +29,7 @@ import (
 // blocks based on their extradata fields.
 func TestDAOForkRangeExtradata(t *testing.T) {
 	forkBlock := big.NewInt(32)
-	chainConfig := *params.NonActivatedConfig
+	chainConfig := *params.TestChainConfig
 	chainConfig.HomesteadBlock = big.NewInt(0)
 
 	// Generate a common prefix for both pro-forkers and non-forkers
@@ -41,7 +41,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 
 	// Create the concurrent, conflicting two nodes
 	proDb := rawdb.NewMemoryDatabase()
-	proConf := *params.NonActivatedConfig
+	proConf := *params.TestChainConfig
 	proConf.HomesteadBlock = big.NewInt(0)
 	proConf.DAOForkBlock = forkBlock
 	proConf.DAOForkSupport = true
@@ -53,7 +53,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	defer proBc.Stop()
 
 	conDb := rawdb.NewMemoryDatabase()
-	conConf := *params.NonActivatedConfig
+	conConf := *params.TestChainConfig
 	conConf.HomesteadBlock = big.NewInt(0)
 	conConf.DAOForkBlock = forkBlock
 	conConf.DAOForkSupport = false

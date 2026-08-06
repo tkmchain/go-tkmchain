@@ -1991,6 +1991,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	case ctx.Bool(MainnetFlag.Name):
 		cfg.NetworkId = 1
 		cfg.Genesis = core.DefaultGenesisBlock()
+		if err := cfg.Genesis.Config.CheckMainnetShieldedPrivacyReady(); err != nil {
+			Fatalf("Mainnet privacy configuration is not ready: %v", err)
+		}
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 		params.SetActiveCheckpointGenesis(params.MainnetGenesisHash)
 	case ctx.Bool(HoleskyFlag.Name):

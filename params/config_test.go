@@ -17,12 +17,15 @@
 package params
 
 import (
+	"bytes"
 	"math"
 	"math/big"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,6 +176,94 @@ func TestDefaultPhoneForkTimestamp(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrivacyCommitmentForkSchedule(t *testing.T) {
+	if !EgyptChainConfig.IsPrivacyCommitments(big.NewInt(0), 0) {
+		t.Fatal("Egypt privacy commitments are not active at genesis")
+	}
+	if MainnetChainConfig.PrivacyCommitmentTime == nil || *MainnetChainConfig.PrivacyCommitmentTime != 1786010400 {
+		t.Fatalf("mainnet privacy commitment time = %v, want 1786010400", MainnetChainConfig.PrivacyCommitmentTime)
+	}
+	if MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), 1786010399) {
+		t.Fatal("mainnet privacy commitments active before scheduled timestamp")
+	}
+	if !MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), 1786010400) {
+		t.Fatal("mainnet privacy commitments inactive at scheduled timestamp")
+	}
+}
+
+func TestMainnetShieldedPrivacyRequiresCeremonyKey(t *testing.T) {
+	config := *MainnetChainConfig
+	config.ShieldedGroth16VerifyingKey = nil
+	err := config.CheckMainnetShieldedPrivacyReady()
+	if err == nil {
+		t.Fatal("mainnet privacy config accepted without shielded verifying key")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("audited ceremony output")) {
+		t.Fatalf("unexpected missing key error: %v", err)
+	}
+	config.ShieldedGroth16VerifyingKey = []byte("bad")
+	if err := config.CheckMainnetShieldedPrivacyReady(); err == nil {
+		t.Fatal("mainnet privacy config accepted malformed shielded verifying key")
+	}
+}
+
+func TestMainnetShieldedPrivacyAcceptsWellFormedCeremonyKeyEnvelope(t *testing.T) {
+	config := *MainnetChainConfig
+	config.ShieldedGroth16VerifyingKey = testShieldedGroth16VKEnvelope(t)
+	if err := config.CheckMainnetShieldedPrivacyReady(); err != nil {
+		t.Fatalf("well-formed shielded verifying key envelope rejected: %v", err)
+	}
+}
+
+func TestMainnetShieldedPrivacyRejectsMalformedCeremonyPoint(t *testing.T) {
+	config := *MainnetChainConfig
+	config.ShieldedGroth16VerifyingKey = testShieldedGroth16VKEnvelopeWith(t, func(envelope *shieldedGroth16VerifyingKeyEnvelope) {
+		envelope.AlphaG1 = []byte{1}
+	})
+	if err := config.CheckMainnetShieldedPrivacyReady(); err == nil {
+		t.Fatal("mainnet privacy config accepted malformed shielded verifying key point")
+	}
+}
+
+func TestEgyptShieldedPrivacyCanUseDevVerifierKey(t *testing.T) {
+	config := *EgyptChainConfig
+	config.ShieldedGroth16VerifyingKey = nil
+	if err := config.CheckMainnetShieldedPrivacyReady(); err != nil {
+		t.Fatalf("Egypt dev privacy config unexpectedly rejected: %v", err)
+	}
+}
+
+func testShieldedGroth16VKEnvelope(t *testing.T) []byte {
+	t.Helper()
+	return testShieldedGroth16VKEnvelopeWith(t, nil)
+}
+
+func testShieldedGroth16VKEnvelopeWith(t *testing.T, mutate func(*shieldedGroth16VerifyingKeyEnvelope)) []byte {
+	t.Helper()
+	_, _, g1, g2 := bn254.Generators()
+	g1Bytes := g1.Bytes()
+	g2Bytes := g2.Bytes()
+	ic := make([][]byte, shieldedGroth16PublicInputs+1)
+	for i := range ic {
+		ic[i] = g1Bytes[:]
+	}
+	envelope := shieldedGroth16VerifyingKeyEnvelope{
+		AlphaG1: g1Bytes[:],
+		BetaG2:  g2Bytes[:],
+		GammaG2: g2Bytes[:],
+		DeltaG2: g2Bytes[:],
+		IC:      ic,
+	}
+	if mutate != nil {
+		mutate(&envelope)
+	}
+	payload, err := rlp.EncodeToBytes(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(shieldedGroth16VKMagic), payload...)
 }
 
 func TestTimestampCompatError(t *testing.T) {

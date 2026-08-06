@@ -43,14 +43,14 @@ func testSetupGenesis(t *testing.T, scheme string) {
 	var (
 		customghash = common.HexToHash("0x89c99d90b79719238d2645c7642f2c9295246e80775b38cfd162b696817fbd50")
 		customg     = Genesis{
-			Config: &params.ChainConfig{HomesteadBlock: big.NewInt(3), Ethash: &params.EthashConfig{}},
+			Config: &params.ChainConfig{HomesteadBlock: big.NewInt(3), RandomX: params.DefaultRandomXConfig()},
 			Alloc: types.GenesisAlloc{
 				{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
 			},
 		}
 		oldcustomg = customg
 	)
-	oldcustomg.Config = &params.ChainConfig{HomesteadBlock: big.NewInt(2), Ethash: &params.EthashConfig{}}
+	oldcustomg.Config = &params.ChainConfig{HomesteadBlock: big.NewInt(2), RandomX: params.DefaultRandomXConfig()}
 
 	tests := []struct {
 		name           string
@@ -265,32 +265,28 @@ func newDbConfig(scheme string) *triedb.Config {
 func TestBinaryGenesisCommit(t *testing.T) {
 	var ubtTime uint64 = 0
 	ubtConfig := &params.ChainConfig{
-		ChainID:                 big.NewInt(1),
-		HomesteadBlock:          big.NewInt(0),
-		DAOForkBlock:            nil,
-		DAOForkSupport:          false,
-		EIP150Block:             big.NewInt(0),
-		EIP155Block:             big.NewInt(0),
-		EIP158Block:             big.NewInt(0),
-		ByzantiumBlock:          big.NewInt(0),
-		ConstantinopleBlock:     big.NewInt(0),
-		PetersburgBlock:         big.NewInt(0),
-		IstanbulBlock:           big.NewInt(0),
-		MuirGlacierBlock:        big.NewInt(0),
-		BerlinBlock:             big.NewInt(0),
-		LondonBlock:             big.NewInt(0),
-		ArrowGlacierBlock:       big.NewInt(0),
-		GrayGlacierBlock:        big.NewInt(0),
-		MergeNetsplitBlock:      nil,
-		ShanghaiTime:            &ubtTime,
-		CancunTime:              &ubtTime,
-		PragueTime:              &ubtTime,
-		OsakaTime:               &ubtTime,
-		UBTTime:                 &ubtTime,
-		TerminalTotalDifficulty: big.NewInt(0),
-		EnableUBTAtGenesis:      true,
-		Ethash:                  nil,
-		Clique:                  nil,
+		ChainID:             big.NewInt(1),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      false,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ArrowGlacierBlock:   big.NewInt(0),
+		GrayGlacierBlock:    big.NewInt(0),
+		ShanghaiTime:        &ubtTime,
+		CancunTime:          &ubtTime,
+		PragueTime:          &ubtTime,
+		OsakaTime:           &ubtTime,
+		UBTTime:             &ubtTime,
+		EnableUBTAtGenesis:  true,
+		Clique:              nil,
 		BlobScheduleConfig: &params.BlobScheduleConfig{
 			Cancun: params.DefaultCancunBlobConfig,
 			Prague: params.DefaultPragueBlobConfig,

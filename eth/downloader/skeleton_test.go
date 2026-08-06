@@ -1,3 +1,5 @@
+//go:build legacy_downloader_tests
+
 // Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //

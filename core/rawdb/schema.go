@@ -34,6 +34,9 @@ var (
 	// rotatingKingLocksKey tracks dynamically registered rotating kings and their unlock times.
 	rotatingKingLocksKey     = []byte("RotatingKingLocks")
 	rotatingKingAddressesKey = []byte("RotatingKingAddresses")
+	privacyActivationsKey    = []byte("TKMPrivacyActivations")
+	privacyCommitmentsKey    = []byte("TKMPrivacyCommitments")
+	privacyNullifiersKey     = []byte("TKMPrivacyNullifiers")
 
 	// headHeaderKey tracks the latest known header's hash.
 	headHeaderKey = []byte("LastHeader")

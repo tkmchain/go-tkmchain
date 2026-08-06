@@ -106,6 +106,7 @@ type Ethereum struct {
 	chainDb        ethdb.Database // Block chain database
 	checkpointDb   ethdb.Database // Immutable checkpoint database
 	rotatingKingDb ethdb.Database // Rotating king database
+	privacyDb      ethdb.Database // Address privacy activation database
 
 	engine         consensus.Engine
 	accountManager *accounts.Manager
@@ -131,6 +132,9 @@ type Ethereum struct {
 	mainKingAddress    common.Address
 	kingAddresses      []common.Address
 	rkLocks            map[common.Address]rkLockInfo
+	privacyActivations map[common.Address]privacyActivationInfo
+	privacyCommitments map[common.Hash]privacyCommitmentInfo
+	privacyNullifiers  map[common.Hash]privacyNullifierInfo
 	miningStartPending bool
 	miningStartPool    bool
 	phoneService       *TkmPhoneService
@@ -197,9 +201,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		chainDb.Close()
 		return nil, err
 	}
+	privacyDb, err := stack.OpenDatabaseWithOptions("privacy", node.DatabaseOptions{
+		Cache:            16,
+		Handles:          config.DatabaseHandles,
+		MetricsNamespace: "eth/db/privacy/",
+		ReadOnly:         false,
+	})
+	if err != nil {
+		rotatingKingDb.Close()
+		checkpointDb.Close()
+		chainDb.Close()
+		return nil, err
+	}
 
 	scheme, err := rawdb.ParseStateScheme(config.StateScheme, chainDb)
 	if err != nil {
+		privacyDb.Close()
 		rotatingKingDb.Close()
 		checkpointDb.Close()
 		chainDb.Close()
@@ -273,24 +290,29 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Assemble the Ethereum object
 	eth := &Ethereum{
-		config:          config,
-		chainDb:         chainDb,
-		checkpointDb:    checkpointDb,
-		rotatingKingDb:  rotatingKingDb,
-		accountManager:  stack.AccountManager(),
-		engine:          engine,
-		networkID:       networkID,
-		gasPrice:        config.Miner.GasPrice,
-		p2pServer:       stack.Server(),
-		discmix:         enode.NewFairMix(discmixTimeout),
-		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
-		mainKingAddress: mainKingAddress,
-		kingAddresses:   kingAddresses,
-		rkLocks:         make(map[common.Address]rkLockInfo),
-		phoneDir:        stack.ResolvePath("phone"),
-		governanceDir:   stack.ResolvePath("governance"),
+		config:             config,
+		chainDb:            chainDb,
+		checkpointDb:       checkpointDb,
+		rotatingKingDb:     rotatingKingDb,
+		privacyDb:          privacyDb,
+		accountManager:     stack.AccountManager(),
+		engine:             engine,
+		networkID:          networkID,
+		gasPrice:           config.Miner.GasPrice,
+		p2pServer:          stack.Server(),
+		discmix:            enode.NewFairMix(discmixTimeout),
+		shutdownTracker:    shutdowncheck.NewShutdownTracker(chainDb),
+		mainKingAddress:    mainKingAddress,
+		kingAddresses:      kingAddresses,
+		rkLocks:            make(map[common.Address]rkLockInfo),
+		privacyActivations: make(map[common.Address]privacyActivationInfo),
+		privacyCommitments: make(map[common.Hash]privacyCommitmentInfo),
+		privacyNullifiers:  make(map[common.Hash]privacyNullifierInfo),
+		phoneDir:           stack.ResolvePath("phone"),
+		governanceDir:      stack.ResolvePath("governance"),
 	}
 	if err := eth.loadCheckpoints(); err != nil {
+		privacyDb.Close()
 		rotatingKingDb.Close()
 		checkpointDb.Close()
 		chainDb.Close()
@@ -580,6 +602,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		{
 			Namespace: "tkmsupply",
 			Service:   NewSupplyAPI(s),
+		},
+		{
+			Namespace: "tkmprivacy",
+			Service:   NewPrivacyAPI(s),
 		},
 		{
 			Namespace: "admin",

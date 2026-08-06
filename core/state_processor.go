@@ -99,6 +99,7 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	}
 
 	// Iterate over and process the individual transactions
+	seenShieldedNullifiers := make(map[common.Hash]struct{})
 	for i, tx := range block.Transactions() {
 		if types.IsBlockRewardTx(tx) {
 			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used())
@@ -107,6 +108,9 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 			}
 			receipts = append(receipts, rewardReceipts...)
 			break
+		}
+		if err := processShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
+			return nil, fmt.Errorf("could not apply shielded tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
 		if err != nil {

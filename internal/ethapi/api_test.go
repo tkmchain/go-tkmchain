@@ -501,12 +501,15 @@ func (b testBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBloc
 func (b testBackend) BlobBaseFee(ctx context.Context) *big.Int { return new(big.Int) }
 func (b testBackend) ChainDb() ethdb.Database                  { return b.db }
 func (b testBackend) AccountManager() *accounts.Manager        { return b.accman }
+func (b testBackend) Etherbase() common.Address                { return b.acc.Address }
 func (b testBackend) ExtRPCEnabled() bool                      { return false }
 func (b testBackend) RPCGasCap() uint64                        { return 10000000 }
 func (b testBackend) RPCEVMTimeout() time.Duration             { return time.Second }
 func (b testBackend) RPCTxFeeCap() float64                     { return 0 }
 func (b testBackend) UnprotectedAllowed() bool                 { return false }
 func (b testBackend) SetHead(number uint64)                    {}
+func (b testBackend) Mining() bool                             { return false }
+func (b testBackend) HashRate() uint64                         { return 0 }
 func (b testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	if number == rpc.LatestBlockNumber {
 		return b.chain.CurrentBlock(), nil
@@ -3928,29 +3931,25 @@ func TestEIP7910Config(t *testing.T) {
 		// Define a snapshot of the current Hoodi config (only Prague scheduled) so that future forks do not
 		// cause this test to fail.
 		config = &params.ChainConfig{
-			ChainID:                 big.NewInt(560048),
-			HomesteadBlock:          big.NewInt(0),
-			DAOForkBlock:            nil,
-			DAOForkSupport:          true,
-			EIP150Block:             big.NewInt(0),
-			EIP155Block:             big.NewInt(0),
-			EIP158Block:             big.NewInt(0),
-			ByzantiumBlock:          big.NewInt(0),
-			ConstantinopleBlock:     big.NewInt(0),
-			PetersburgBlock:         big.NewInt(0),
-			IstanbulBlock:           big.NewInt(0),
-			MuirGlacierBlock:        big.NewInt(0),
-			BerlinBlock:             big.NewInt(0),
-			LondonBlock:             big.NewInt(0),
-			ArrowGlacierBlock:       nil,
-			GrayGlacierBlock:        nil,
-			TerminalTotalDifficulty: big.NewInt(0),
-			MergeNetsplitBlock:      big.NewInt(0),
-			ShanghaiTime:            newUint64(0),
-			CancunTime:              newUint64(0),
-			PragueTime:              newUint64(1742999832),
-			DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
-			Ethash:                  new(params.EthashConfig),
+			ChainID:                big.NewInt(560048),
+			HomesteadBlock:         big.NewInt(0),
+			DAOForkBlock:           nil,
+			DAOForkSupport:         true,
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
+			ConstantinopleBlock:    big.NewInt(0),
+			PetersburgBlock:        big.NewInt(0),
+			IstanbulBlock:          big.NewInt(0),
+			BerlinBlock:            big.NewInt(0),
+			LondonBlock:            big.NewInt(0),
+			ArrowGlacierBlock:      nil,
+			GrayGlacierBlock:       nil,
+			ShanghaiTime:           newUint64(0),
+			CancunTime:             newUint64(0),
+			PragueTime:             newUint64(1742999832),
+			DepositContractAddress: common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 			BlobScheduleConfig: &params.BlobScheduleConfig{
 				Cancun: params.DefaultCancunBlobConfig,
 				Prague: params.DefaultPragueBlobConfig,
