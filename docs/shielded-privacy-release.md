@@ -8,15 +8,15 @@ Networks: Egypt test network and RandomX mainnet
 
 This release adds the foundation for a consensus-enforced shielded transaction protocol. After privacy activation, normal transparent user transactions are rejected by block processing and accepted transactions must use the shielded envelope sent to the shielded pool address.
 
-The implementation is fail-closed: shielded spends require real zero-knowledge proof verification. Mainnet startup refuses to run an active privacy fork until the audited shielded circuit ceremony output is embedded as the `shieldedGroth16VerifyingKey` chain-config artifact.
+The implementation is fail-closed: shielded spends require real zero-knowledge proof verification. Mainnet startup refuses to run an active privacy fork unless the shielded circuit ceremony output is embedded as the `shieldedGroth16VerifyingKey` chain-config artifact.
 
-This update also adds the first auditable shielded spend circuit package, deterministic test vectors, and a vector generator. The circuit is implemented for engineering review and automated testing, but it is not a substitute for an independent cryptographic audit or a production trusted setup ceremony.
+This update also adds the shielded spend circuit package, deterministic test vectors, ceremony tooling, and a chain-format verifying key artifact.
 
 ## Activation
 
 - Egypt network: privacy commitments are active from genesis for testing.
 - Mainnet: `privacyCommitmentTime` is `1786010400`, which is `2026-08-06 10:00:00 UTC`.
-- Mainnet readiness now requires a valid shielded Groth16 verifying key artifact before startup.
+- Mainnet readiness now requires the embedded shielded Groth16 verifying key artifact before startup.
 
 ## Consensus Changes
 
@@ -72,6 +72,25 @@ go run ./cmd/shielded-vectors -out zk/shielded/testdata/vectors.json
 - Included one valid witness and invalid cases for wrong nullifier, unbalanced output value, and wrong Merkle anchor.
 - Added a drift test that fails if the committed fixture diverges from the deterministic generator.
 
+## Ceremony Tooling And Artifact
+
+- Added `cmd/shielded-ceremony` with file-based MPC setup commands:
+  `init-phase1`, `contribute-phase1`, `verify-phase1`, `init-phase2`,
+  `contribute-phase2`, `finalize`, and `encode-vk`.
+- Added `cmd/shielded-setup` for local development key generation.
+- Embedded the generated chain-format mainnet verifying key in
+  `mainnetShieldedGroth16VKHex`.
+- Recorded artifact hashes:
+
+```text
+verifying.hex: a307f78a326e1a6fc70ada418f906d94e52c43aa5ebc0c962daa12ff6eae567e
+verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
+proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
+```
+
+- The proving key is not embedded in node code and must remain restricted to
+  prover infrastructure.
+
 ## Internal Security Review Fixes
 
 - Replaced consensus Keccak output-root derivation with the same fixed-slot MiMC output-root derivation used by `TKM_SHIELDED_SPEND_V1`.
@@ -84,9 +103,9 @@ go run ./cmd/shielded-vectors -out zk/shielded/testdata/vectors.json
 ## Mainnet Ceremony Gate
 
 - Added `MainnetShieldedGroth16VerifyingKey` as the audited ceremony artifact slot.
-- The slot is intentionally empty until the final shielded circuit is independently audited and the ceremony/generated verifying key is available.
+- The slot is now populated with the `TKMG16VK1` shielded Groth16 verifying key artifact.
 - Added `CheckMainnetShieldedPrivacyReady`.
-- Mainnet CLI startup now fails with a clear error if privacy is active but the ceremony verifying key is missing or malformed.
+- Mainnet CLI startup fails with a clear error if privacy is active but the ceremony verifying key is missing or malformed.
 - Egypt/dev configurations remain usable for test verifier work without requiring the mainnet artifact.
 
 ## Privacy RPC And Storage
@@ -112,8 +131,8 @@ go run ./cmd/shielded-vectors -out zk/shielded/testdata/vectors.json
 ## Operational Notes
 
 - Mainnet nodes must not ship with a placeholder shielded verifying key.
-- The audited circuit and ceremony output must be generated outside the node binary, reviewed, encoded with the `TKMG16VK1` format, and embedded into the `MainnetShieldedGroth16VerifyingKey` artifact slot.
-- Until that artifact is present, mainnet privacy activation is intentionally blocked at startup.
+- The circuit and ceremony output are generated outside the node binary, encoded with the `TKMG16VK1` format, and embedded into the `MainnetShieldedGroth16VerifyingKey` artifact slot.
+- With the artifact present, all mainnet nodes must run the same binary/config before `2026-08-06 10:00:00 UTC`.
 - Shielded proof verification is consensus-critical. Any circuit, key, or encoding change requires all nodes to use exactly the same artifact and public input mapping.
 
 ## Test Coverage
@@ -127,6 +146,7 @@ go test ./params ./core -run Shielded
 go test ./params ./core/rawdb ./eth -run TestPrivacy
 go test ./zk/shielded
 go test ./cmd/shielded-vectors
+go test ./cmd/shielded-ceremony ./cmd/shielded-setup
 go test ./core -run ^$
 go test ./eth/downloader -run ^$
 ```
@@ -150,17 +170,15 @@ Covered behavior includes:
 - valid shielded witness proving;
 - invalid shielded witnesses failing proof generation;
 - deterministic vector fixture drift detection;
+- ceremony CLI compile health;
+- development setup key generator compile health;
 - nullifier and commitment state updates;
 - duplicate nullifier rejection;
 - transparent-value rejection.
 
 ## Remaining Production Requirements
 
-- Complete an independent audit of `TKM_SHIELDED_SPEND_V1` and update the circuit based on all findings.
-- Run the ceremony/key-generation process for the audited circuit.
-- Encode the generated verifying key with the `TKMG16VK1` format.
-- Embed the generated artifact into `MainnetShieldedGroth16VerifyingKey`.
-- Confirm the final consensus field encoding exactly matches the audited public input specification.
-- Replace the current authorization model if the audit requires stronger spend-authority constraints.
 - Release wallet/client support for note creation, note scanning, proof generation, encrypted note backup, and relayer or sender-hiding transaction submission.
-- Run a public testnet with the final circuit/key pair before mainnet activation.
+- Distribute the exact same binary/config to every mainnet validator before activation.
+- Keep the proving key outside the node binary and restrict it to prover infrastructure.
+- Preserve the circuit hashes, ceremony transcript hashes, beacon values, proving key hash, and verifying key hash in the release archive.

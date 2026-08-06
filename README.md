@@ -22,6 +22,35 @@ Automated builds are available for stable releases and the unstable master branc
 
 ---
 
+## Shielded Privacy Activation
+
+Mainnet shielded privacy activates at `2026-08-06 10:00:00 UTC`
+(`privacyCommitmentTime = 1786010400`). Egypt test network has privacy
+commitments active from genesis.
+
+After activation, block processing rejects normal transparent user
+transactions. Accepted user transactions must use the `TKMSHIELD1` envelope,
+target the shielded pool address, carry zero transparent `tx.Value`, include
+real BN254 Groth16 shielded spend proofs, and use exactly four padded output
+commitments.
+
+The mainnet `shieldedGroth16VerifyingKey` artifact is embedded in chain config
+using the `TKMG16VK1` encoding. The ceremony tooling used to produce and encode
+that artifact lives in `cmd/shielded-ceremony`; the local key generator for
+development lives in `cmd/shielded-setup`.
+
+Key ceremony artifact hashes recorded for this build:
+
+```text
+verifying.hex: a307f78a326e1a6fc70ada418f906d94e52c43aa5ebc0c962daa12ff6eae567e
+verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
+```
+
+The proving key is not embedded in the node binary and must stay with prover
+infrastructure.
+
+---
+
 ## Rotating Kings (RK) Governance
 
 Tkmchain features a unique **Rotating Kings** governance system with a 10/40/50 reward split:
