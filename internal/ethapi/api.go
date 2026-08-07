@@ -1134,10 +1134,42 @@ type RPCTransaction struct {
 	ChainID             *hexutil.Big                 `json:"chainId,omitempty"`
 	BlobVersionedHashes []common.Hash                `json:"blobVersionedHashes,omitempty"`
 	AuthorizationList   []types.SetCodeAuthorization `json:"authorizationList,omitempty"`
+	PQAlgorithm         string                       `json:"pqAlgorithm,omitempty"`
+	PQPublicKey         *hexutil.Bytes               `json:"pqPublicKey,omitempty"`
+	PQSignature         *hexutil.Bytes               `json:"pqSignature,omitempty"`
+	Shielded            *RPCShieldedTransaction      `json:"shielded,omitempty"`
 	V                   *hexutil.Big                 `json:"v"`
 	R                   *hexutil.Big                 `json:"r"`
 	S                   *hexutil.Big                 `json:"s"`
 	YParity             *hexutil.Uint64              `json:"yParity,omitempty"`
+}
+
+// RPCShieldedTransaction is the RPC summary of a TKMSHIELD1 envelope carried by tx.Data().
+type RPCShieldedTransaction struct {
+	Format            string              `json:"format"`
+	Version           hexutil.Uint64      `json:"version"`
+	SpendCount        hexutil.Uint64      `json:"spendCount"`
+	OutputCount       hexutil.Uint64      `json:"outputCount"`
+	BalanceCommitment common.Hash         `json:"balanceCommitment"`
+	BindingHash       common.Hash         `json:"bindingHash"`
+	Spends            []RPCShieldedSpend  `json:"spends"`
+	Outputs           []RPCShieldedOutput `json:"outputs"`
+}
+
+type RPCShieldedSpend struct {
+	Nullifier              common.Hash    `json:"nullifier"`
+	Anchor                 common.Hash    `json:"anchor"`
+	ProofSize              hexutil.Uint64 `json:"proofSize"`
+	EncryptedSpendDataSize hexutil.Uint64 `json:"encryptedSpendDataSize"`
+}
+
+type RPCShieldedOutput struct {
+	Commitment           common.Hash    `json:"commitment"`
+	PayloadHash          common.Hash    `json:"payloadHash"`
+	EphemeralPubKey      hexutil.Bytes  `json:"ephemeralPubKey,omitempty"`
+	ViewTag              hexutil.Bytes  `json:"viewTag,omitempty"`
+	EncryptedPayloadSize hexutil.Uint64 `json:"encryptedPayloadSize"`
+	NonceSize            hexutil.Uint64 `json:"nonceSize"`
 }
 
 // newRPCTransaction returns a transaction that will serialize to the RPC
@@ -1165,6 +1197,9 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		result.BlockNumber = (*hexutil.Big)(new(big.Int).SetUint64(blockNumber))
 		result.BlockTimestamp = (*hexutil.Uint64)(&blockTime)
 		result.TransactionIndex = (*hexutil.Uint64)(&index)
+	}
+	if shielded, ok, err := core.DecodeShieldedTransaction(tx.Data()); ok && err == nil {
+		result.Shielded = newRPCShieldedTransaction(shielded)
 	}
 
 	switch tx.Type() {
@@ -1211,6 +1246,23 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 
+	case types.PQTkmTxType:
+		al := tx.AccessList()
+		result.Accesses = &al
+		result.ChainID = (*hexutil.Big)(tx.ChainId())
+		result.GasFeeCap = (*hexutil.Big)(tx.GasFeeCap())
+		result.GasTipCap = (*hexutil.Big)(tx.GasTipCap())
+		if baseFee != nil && blockHash != (common.Hash{}) {
+			result.GasPrice = (*hexutil.Big)(effectiveGasPrice(tx, baseFee))
+		} else {
+			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
+		}
+		if algorithm, publicKey, signature, ok := tx.PQTkmFields(); ok {
+			result.PQAlgorithm = algorithm
+			result.PQPublicKey = (*hexutil.Bytes)(&publicKey)
+			result.PQSignature = (*hexutil.Bytes)(&signature)
+		}
+
 	case types.BlobTxType:
 		al := tx.AccessList()
 		yparity := hexutil.Uint64(v.Sign())
@@ -1243,6 +1295,38 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 		result.AuthorizationList = tx.SetCodeAuthorizations()
+	}
+	return result
+}
+
+func newRPCShieldedTransaction(envelope *core.ShieldedTransaction) *RPCShieldedTransaction {
+	result := &RPCShieldedTransaction{
+		Format:            "TKMSHIELD1",
+		Version:           hexutil.Uint64(envelope.Version),
+		SpendCount:        hexutil.Uint64(len(envelope.Spends)),
+		OutputCount:       hexutil.Uint64(len(envelope.Outputs)),
+		BalanceCommitment: envelope.BalanceCommitment,
+		BindingHash:       common.BytesToHash(envelope.BindingSig),
+		Spends:            make([]RPCShieldedSpend, len(envelope.Spends)),
+		Outputs:           make([]RPCShieldedOutput, len(envelope.Outputs)),
+	}
+	for i, spend := range envelope.Spends {
+		result.Spends[i] = RPCShieldedSpend{
+			Nullifier:              spend.Nullifier,
+			Anchor:                 spend.Anchor,
+			ProofSize:              hexutil.Uint64(len(spend.Proof)),
+			EncryptedSpendDataSize: hexutil.Uint64(len(spend.EncryptedSpendData)),
+		}
+	}
+	for i, output := range envelope.Outputs {
+		result.Outputs[i] = RPCShieldedOutput{
+			Commitment:           output.Commitment,
+			PayloadHash:          output.PayloadHash,
+			EphemeralPubKey:      hexutil.Bytes(common.CopyBytes(output.EphemeralPubKey)),
+			ViewTag:              hexutil.Bytes(common.CopyBytes(output.ViewTag)),
+			EncryptedPayloadSize: hexutil.Uint64(len(output.EncryptedPayload)),
+			NonceSize:            hexutil.Uint64(len(output.Nonce)),
+		}
 	}
 	return result
 }

@@ -49,6 +49,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/blocktest"
@@ -114,6 +115,110 @@ func TestTransactionBlobTx(t *testing.T) {
 	tests := allBlobTxs(common.Address{0xde, 0xad}, &config)
 
 	testTransactionMarshal(t, tests, &config)
+}
+
+func TestRPCTransactionIncludesPQTkmFields(t *testing.T) {
+	t.Parallel()
+
+	config := params.EgyptChainConfig
+	key, err := pqcrypto.GenerateMLDSA87()
+	require.NoError(t, err)
+
+	to := common.HexToAddress("0x0000000000000000000000000000000000001234")
+	tx, err := types.SignNewPQTkmTx(key, types.NewQuantumSigner(config.ChainID), &types.PQTkmTx{
+		ChainID:   config.ChainID,
+		Nonce:     7,
+		GasTipCap: big.NewInt(2),
+		GasFeeCap: big.NewInt(10),
+		Gas:       21000,
+		To:        &to,
+		Value:     big.NewInt(1),
+		Data:      []byte{0xaa, 0xbb},
+		AccessList: types.AccessList{{
+			Address:     common.Address{0x2},
+			StorageKeys: []common.Hash{types.EmptyRootHash},
+		}},
+	})
+	require.NoError(t, err)
+
+	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, nil, config)
+	require.Equal(t, hexutil.Uint64(types.PQTkmTxType), rpcTx.Type)
+	require.NotNil(t, rpcTx.ChainID)
+	require.Equal(t, config.ChainID.String(), (*big.Int)(rpcTx.ChainID).String())
+	require.Equal(t, (*hexutil.Big)(big.NewInt(10)), rpcTx.GasFeeCap)
+	require.Equal(t, (*hexutil.Big)(big.NewInt(2)), rpcTx.GasTipCap)
+	require.Equal(t, (*hexutil.Big)(big.NewInt(10)), rpcTx.GasPrice)
+	require.Equal(t, pqcrypto.AlgorithmMLDSA87, rpcTx.PQAlgorithm)
+	require.NotNil(t, rpcTx.PQPublicKey)
+	require.Equal(t, hexutil.Bytes(pqcrypto.PublicKeyBytes(key)), *rpcTx.PQPublicKey)
+	require.NotNil(t, rpcTx.PQSignature)
+	require.NotEmpty(t, []byte(*rpcTx.PQSignature))
+
+	var roundTrip types.Transaction
+	data, err := json.Marshal(rpcTx)
+	require.NoError(t, err)
+	require.NoError(t, roundTrip.UnmarshalJSON(data))
+	require.Equal(t, tx.Hash(), roundTrip.Hash())
+}
+
+func TestRPCTransactionIncludesShieldedEnvelope(t *testing.T) {
+	t.Parallel()
+
+	envelope := &core.ShieldedTransaction{
+		Version:           1,
+		BalanceCommitment: common.HexToHash("0xabc"),
+		BindingSig:        common.BigToHash(big.NewInt(9)).Bytes(),
+		Spends: []core.ShieldedSpend{{
+			Nullifier:          common.HexToHash("0x10"),
+			Anchor:             common.HexToHash("0x20"),
+			Proof:              []byte("proof-data"),
+			EncryptedSpendData: []byte("spend-data"),
+		}},
+	}
+	for i := 0; i < 4; i++ {
+		envelope.Outputs = append(envelope.Outputs, core.ShieldedOutput{
+			Commitment:       common.BigToHash(big.NewInt(int64(i + 1))),
+			PayloadHash:      common.BigToHash(big.NewInt(int64(i + 100))),
+			EphemeralPubKey:  []byte{byte(i), byte(i + 1), byte(i + 2)},
+			ViewTag:          []byte{byte(i + 9)},
+			EncryptedPayload: make([]byte, 32+i),
+			Nonce:            make([]byte, 12+i),
+		})
+	}
+	data, err := core.EncodeShieldedTransaction(envelope)
+	require.NoError(t, err)
+
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   params.EgyptChainConfig.ChainID,
+		Nonce:     8,
+		GasTipCap: big.NewInt(2),
+		GasFeeCap: big.NewInt(10),
+		Gas:       100000,
+		To:        &params.ShieldedPoolAddress,
+		Value:     big.NewInt(0),
+		Data:      data,
+	})
+	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, nil, params.EgyptChainConfig)
+
+	require.NotNil(t, rpcTx.Shielded)
+	require.Equal(t, "TKMSHIELD1", rpcTx.Shielded.Format)
+	require.Equal(t, hexutil.Uint64(1), rpcTx.Shielded.Version)
+	require.Equal(t, hexutil.Uint64(1), rpcTx.Shielded.SpendCount)
+	require.Equal(t, hexutil.Uint64(4), rpcTx.Shielded.OutputCount)
+	require.Equal(t, envelope.BalanceCommitment, rpcTx.Shielded.BalanceCommitment)
+	require.Equal(t, common.BytesToHash(envelope.BindingSig), rpcTx.Shielded.BindingHash)
+	require.Len(t, rpcTx.Shielded.Spends, 1)
+	require.Equal(t, envelope.Spends[0].Nullifier, rpcTx.Shielded.Spends[0].Nullifier)
+	require.Equal(t, envelope.Spends[0].Anchor, rpcTx.Shielded.Spends[0].Anchor)
+	require.Equal(t, hexutil.Uint64(len(envelope.Spends[0].Proof)), rpcTx.Shielded.Spends[0].ProofSize)
+	require.Equal(t, hexutil.Uint64(len(envelope.Spends[0].EncryptedSpendData)), rpcTx.Shielded.Spends[0].EncryptedSpendDataSize)
+	require.Len(t, rpcTx.Shielded.Outputs, 4)
+	require.Equal(t, envelope.Outputs[0].Commitment, rpcTx.Shielded.Outputs[0].Commitment)
+	require.Equal(t, envelope.Outputs[0].PayloadHash, rpcTx.Shielded.Outputs[0].PayloadHash)
+	require.Equal(t, hexutil.Bytes(envelope.Outputs[0].EphemeralPubKey), rpcTx.Shielded.Outputs[0].EphemeralPubKey)
+	require.Equal(t, hexutil.Bytes(envelope.Outputs[0].ViewTag), rpcTx.Shielded.Outputs[0].ViewTag)
+	require.Equal(t, hexutil.Uint64(len(envelope.Outputs[0].EncryptedPayload)), rpcTx.Shielded.Outputs[0].EncryptedPayloadSize)
+	require.Equal(t, hexutil.Uint64(len(envelope.Outputs[0].Nonce)), rpcTx.Shielded.Outputs[0].NonceSize)
 }
 
 type txData struct {

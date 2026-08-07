@@ -135,3 +135,12 @@ func (tx *PQTkmTx) validateSignature(hash common.Hash) (common.Address, error) {
 	}
 	return addr, nil
 }
+
+// PQTkmFields returns the public post-quantum signature metadata for RPC callers.
+func (tx *Transaction) PQTkmFields() (algorithm string, publicKey []byte, signature []byte, ok bool) {
+	pqtx, ok := tx.inner.(*PQTkmTx)
+	if !ok {
+		return "", nil, nil, false
+	}
+	return pqtx.Algorithm, common.CopyBytes(pqtx.PublicKey), common.CopyBytes(pqtx.Signature), true
+}
