@@ -42,6 +42,12 @@ type mockBackend struct {
 	txPool *txpool.TxPool
 }
 
+var minerTestTxPoolConfig = func() legacypool.Config {
+	config := legacypool.DefaultConfig
+	config.Journal = ""
+	return config
+}()
+
 func NewMockBackend(bc *core.BlockChain, txPool *txpool.TxPool) *mockBackend {
 	return &mockBackend{
 		bc:     bc,
@@ -102,7 +108,7 @@ func TestBuildPendingBlocks(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		block, _, _ := miner.Pending()
+		block, _ := miner.Pending()
 		if block == nil {
 			t.Error("Pending failed")
 		}
@@ -191,9 +197,8 @@ func TestMakeCurrentUsesForkSigner(t *testing.T) {
 
 func createMiner(t *testing.T) *Miner {
 	// Create miner config.
-	config := Config{
-		PendingFeeRecipient: common.HexToAddress("123456789"),
-	}
+	config := DefaultConfig
+	config.PendingFeeRecipient = common.HexToAddress("123456789")
 	// Create chainConfig
 	chainDB := rawdb.NewMemoryDatabase()
 	triedb := triedb.NewDatabase(chainDB, nil)
@@ -212,11 +217,13 @@ func createMiner(t *testing.T) *Miner {
 	statedb, _ := state.New(bc.Genesis().Root(), state.NewDatabase(bc.TrieDB(), bc.CodeDB()))
 	blockchain := &testBlockChain{bc.Genesis().Root(), chainConfig, statedb, 10000000, new(event.Feed)}
 
-	pool := legacypool.New(testTxPoolConfig, blockchain)
-	txpool, _ := txpool.New(testTxPoolConfig.PriceLimit, blockchain, []txpool.SubPool{pool})
+	pool := legacypool.New(minerTestTxPoolConfig, blockchain)
+	txpool, _ := txpool.New(minerTestTxPoolConfig.PriceLimit, blockchain, []txpool.SubPool{pool})
 
 	// Create Miner
 	backend := NewMockBackend(bc, txpool)
-	miner := New(backend, config, engine)
+	miner := New(backend, chainConfig, new(event.TypeMux), engine, config.Recommit, config.GasFloor, config.GasCeil, nil)
+	miner.SetEtherbase(config.PendingFeeRecipient)
+	miner.worker.generateWorkForExternal()
 	return miner
 }

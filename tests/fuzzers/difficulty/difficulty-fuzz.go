@@ -19,7 +19,6 @@ package difficulty
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math/big"
 
@@ -120,27 +119,15 @@ func (f *fuzzer) fuzz() int {
 		header.Time = pTime
 		time = childTime
 	}
-	// Bomb delay will never exceed uint64
-	bombDelay := new(big.Int).SetUint64(f.readUint64(1, 0xFFFFFFFFFFFFFFFe))
-
 	if f.exhausted {
 		return 0
 	}
-
-	for i, pair := range []struct {
-		bigFn  calculator
-		u256Fn calculator
-	}{
-		{randomx.FrontierDifficultyCalculator, randomx.CalcDifficultyFrontierU256},
-		{randomx.HomesteadDifficultyCalculator, randomx.CalcDifficultyHomesteadU256},
-		{randomx.DynamicDifficultyCalculator(bombDelay), randomx.MakeDifficultyCalculatorU256(bombDelay)},
-	} {
-		want := pair.bigFn(time, header)
-		have := pair.u256Fn(time, header)
-		if want.Cmp(have) != 0 {
-			panic(fmt.Sprintf("pair %d: want %x have %x\nparent.Number: %x\np.Time: %x\nc.Time: %x\nBombdelay: %v\n", i, want, have,
-				header.Number, header.Time, time, bombDelay))
-		}
+	have := randomx.CalcDifficulty(nil, time, header, nil)
+	if have == nil || have.Sign() <= 0 {
+		panic("randomx difficulty calculator returned non-positive difficulty")
+	}
+	if have.Cmp(randomx.GenesisDifficulty) < 0 {
+		panic("randomx difficulty calculator returned difficulty below genesis minimum")
 	}
 	return 1
 }

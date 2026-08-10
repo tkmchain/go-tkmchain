@@ -17,22 +17,37 @@
 package nat
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
+	"io"
+	mathrand "math/rand"
 	"net"
 	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
-	stunV2 "github.com/pion/stun/v2"
 )
 
 //go:embed stun-list.txt
 var stunDefaultServers string
 
 const requestLimit = 3
+const (
+	stunDefaultPort        = 3478
+	stunHeaderSize         = 20
+	stunBindingRequest     = 0x0001
+	stunBindingSuccess     = 0x0101
+	stunMagicCookie        = 0x2112A442
+	stunAttrMappedAddress  = 0x0001
+	stunAttrXORMappedAddr  = 0x0020
+	stunFamilyIPv4         = 0x01
+	stunFamilyIPv6         = 0x02
+	stunRequestTimeout     = 5 * time.Second
+	stunMaxResponseMessage = 1500
+)
 
 var errSTUNFailed = errors.New("STUN requests failed")
 
@@ -94,7 +109,7 @@ func (s *stun) randomServers(n int) []string {
 	m := make(map[int]struct{}, n)
 	list := make([]string, 0, n)
 	for i := 0; i < len(s.serverList)*2 && len(list) < n; i++ {
-		index := rand.Intn(len(s.serverList))
+		index := mathrand.Intn(len(s.serverList))
 		if _, alreadyHit := m[index]; alreadyHit {
 			continue
 		}
@@ -107,38 +122,141 @@ func (s *stun) randomServers(n int) []string {
 func (s *stun) externalIP(server string) (net.IP, error) {
 	_, _, err := net.SplitHostPort(server)
 	if err != nil {
-		server += fmt.Sprintf(":%d", stunV2.DefaultPort)
+		server += fmt.Sprintf(":%d", stunDefaultPort)
 	}
 
 	log.Trace("Attempting STUN binding request", "server", server)
-	conn, err := stunV2.Dial("udp4", server)
+	addr, err := net.ResolveUDPAddr("udp4", server)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialUDP("udp4", nil, addr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-
-	message, err := stunV2.Build(stunV2.TransactionID, stunV2.BindingRequest)
+	if err := conn.SetDeadline(time.Now().Add(stunRequestTimeout)); err != nil {
+		return nil, err
+	}
+	message, transactionID, err := stunBindingRequestMessage()
 	if err != nil {
 		return nil, err
 	}
-
-	var responseError error
-	var mappedAddr stunV2.XORMappedAddress
-	err = conn.Do(message, func(event stunV2.Event) {
-		if event.Error != nil {
-			responseError = event.Error
-			return
-		}
-		if err := mappedAddr.GetFrom(event.Message); err != nil {
-			responseError = err
-		}
-	})
+	if _, err := conn.Write(message); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, stunMaxResponseMessage)
+	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
 	}
-	if responseError != nil {
-		return nil, responseError
+	ip, err := stunMappedAddress(buf[:n], transactionID)
+	if err != nil {
+		return nil, err
 	}
-	log.Trace("STUN returned IP", "server", server, "ip", mappedAddr.IP)
-	return mappedAddr.IP, nil
+	log.Trace("STUN returned IP", "server", server, "ip", ip)
+	return ip, nil
+}
+
+func stunBindingRequestMessage() ([]byte, [12]byte, error) {
+	var transactionID [12]byte
+	if _, err := io.ReadFull(rand.Reader, transactionID[:]); err != nil {
+		return nil, transactionID, err
+	}
+	message := make([]byte, stunHeaderSize)
+	binary.BigEndian.PutUint16(message[0:2], stunBindingRequest)
+	binary.BigEndian.PutUint16(message[2:4], 0)
+	binary.BigEndian.PutUint32(message[4:8], stunMagicCookie)
+	copy(message[8:20], transactionID[:])
+	return message, transactionID, nil
+}
+
+func stunMappedAddress(message []byte, transactionID [12]byte) (net.IP, error) {
+	if len(message) < stunHeaderSize {
+		return nil, errors.New("short STUN response")
+	}
+	if binary.BigEndian.Uint16(message[0:2]) != stunBindingSuccess {
+		return nil, fmt.Errorf("unexpected STUN response type 0x%04x", binary.BigEndian.Uint16(message[0:2]))
+	}
+	bodyLen := int(binary.BigEndian.Uint16(message[2:4]))
+	if bodyLen > len(message)-stunHeaderSize {
+		return nil, errors.New("truncated STUN response")
+	}
+	if binary.BigEndian.Uint32(message[4:8]) != stunMagicCookie {
+		return nil, errors.New("invalid STUN magic cookie")
+	}
+	if !equalBytes(message[8:20], transactionID[:]) {
+		return nil, errors.New("STUN transaction ID mismatch")
+	}
+	attrs := message[stunHeaderSize : stunHeaderSize+bodyLen]
+	for len(attrs) >= 4 {
+		attrType := binary.BigEndian.Uint16(attrs[0:2])
+		attrLen := int(binary.BigEndian.Uint16(attrs[2:4]))
+		if attrLen > len(attrs)-4 {
+			return nil, errors.New("truncated STUN attribute")
+		}
+		value := attrs[4 : 4+attrLen]
+		switch attrType {
+		case stunAttrXORMappedAddr:
+			return parseSTUNAddress(value, transactionID, true)
+		case stunAttrMappedAddress:
+			return parseSTUNAddress(value, transactionID, false)
+		}
+		padded := (attrLen + 3) &^ 3
+		if padded > len(attrs)-4 {
+			break
+		}
+		attrs = attrs[4+padded:]
+	}
+	return nil, errors.New("STUN mapped address missing")
+}
+
+func parseSTUNAddress(value []byte, transactionID [12]byte, xor bool) (net.IP, error) {
+	if len(value) < 4 || value[0] != 0 {
+		return nil, errors.New("invalid STUN address attribute")
+	}
+	switch value[1] {
+	case stunFamilyIPv4:
+		if len(value) < 8 {
+			return nil, errors.New("short STUN IPv4 address")
+		}
+		ip := make(net.IP, net.IPv4len)
+		copy(ip, value[4:8])
+		if xor {
+			cookie := make([]byte, 4)
+			binary.BigEndian.PutUint32(cookie, stunMagicCookie)
+			for i := range ip {
+				ip[i] ^= cookie[i]
+			}
+		}
+		return ip, nil
+	case stunFamilyIPv6:
+		if len(value) < 20 {
+			return nil, errors.New("short STUN IPv6 address")
+		}
+		ip := make(net.IP, net.IPv6len)
+		copy(ip, value[4:20])
+		if xor {
+			mask := make([]byte, 16)
+			binary.BigEndian.PutUint32(mask[:4], stunMagicCookie)
+			copy(mask[4:], transactionID[:])
+			for i := range ip {
+				ip[i] ^= mask[i]
+			}
+		}
+		return ip, nil
+	default:
+		return nil, fmt.Errorf("unsupported STUN address family %d", value[1])
+	}
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var diff byte
+	for i := range a {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
 }

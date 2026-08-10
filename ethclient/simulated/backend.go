@@ -145,7 +145,7 @@ func (n *Backend) Close() error {
 
 // Commit seals a block and moves the chain forward to a new empty block.
 func (n *Backend) Commit() common.Hash {
-	block, _, _ := n.backend.Miner().Pending()
+	block, _ := n.backend.Miner().Pending()
 	if block == nil {
 		return common.Hash{}
 	}

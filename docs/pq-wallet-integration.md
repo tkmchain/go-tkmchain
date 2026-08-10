@@ -111,7 +111,7 @@ when the selected account is a PQ account.
 
 ## Migration
 
-Before `2026-08-06 10:00:00 UTC`, users should:
+Before `2026-08-10 06:00:00 UTC`, users should:
 
 1. Create a PQ account.
 2. Back up the version 4 keyfile and passphrase.

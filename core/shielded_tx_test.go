@@ -27,6 +27,12 @@ func (v testShieldedVerifier) VerifyShieldedSpend(ctx ShieldedProofContext, proo
 	return nil
 }
 
+type shieldedVerifierFunc func(ctx ShieldedProofContext, proof []byte) error
+
+func (f shieldedVerifierFunc) VerifyShieldedSpend(ctx ShieldedProofContext, proof []byte) error {
+	return f(ctx, proof)
+}
+
 func testShieldedEnvelope(t *testing.T, spends int) *ShieldedTransaction {
 	t.Helper()
 	tx := &ShieldedTransaction{
@@ -83,6 +89,67 @@ func TestShieldedEnvelopeRoundTrip(t *testing.T) {
 	}
 	if got.Version != want.Version || len(got.Spends) != 1 || len(got.Outputs) != shieldedOutputSlots {
 		t.Fatalf("decoded shielded envelope = %+v", got)
+	}
+}
+
+func TestShieldedTransactionIntentHashExcludesProofBytes(t *testing.T) {
+	envelope := testShieldedEnvelope(t, 1)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proofChanged := testShieldedEnvelope(t, 1)
+	proofChanged.Spends[0].Proof = []byte("different proof bytes")
+	proofChangedTx := testShieldedTx(t, proofChanged, new(big.Int))
+	if tx.Hash() == proofChangedTx.Hash() {
+		t.Fatal("full transaction hash did not change after proof byte change")
+	}
+	proofChangedIntentHash, err := ShieldedTransactionIntentHash(proofChangedTx, proofChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proofChangedIntentHash != intentHash {
+		t.Fatalf("intent hash changed after proof-only update: got %s want %s", proofChangedIntentHash, intentHash)
+	}
+
+	nullifierChanged := testShieldedEnvelope(t, 1)
+	nullifierChanged.Spends[0].Nullifier = common.BigToHash(big.NewInt(999))
+	nullifierChangedTx := testShieldedTx(t, nullifierChanged, new(big.Int))
+	nullifierChangedIntentHash, err := ShieldedTransactionIntentHash(nullifierChangedTx, nullifierChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nullifierChangedIntentHash == intentHash {
+		t.Fatal("intent hash did not change after nullifier update")
+	}
+}
+
+func TestProcessShieldedSpendUsesIntentHashForProofContext(t *testing.T) {
+	SetShieldedProofVerifier(nil)
+	defer SetShieldedProofVerifier(nil)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := testShieldedEnvelope(t, 1)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetShieldedProofVerifier(shieldedVerifierFunc(func(ctx ShieldedProofContext, proof []byte) error {
+		if ctx.TxHash != intentHash {
+			t.Fatalf("proof context tx hash = %s, want intent hash %s", ctx.TxHash, intentHash)
+		}
+		if ctx.TxHash == tx.Hash() {
+			t.Fatal("proof context used full transaction hash")
+		}
+		return nil
+	}))
+	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+		t.Fatal(err)
 	}
 }
 

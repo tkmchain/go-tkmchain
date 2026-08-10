@@ -23,8 +23,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-
-	"golang.org/x/crypto/openpgp"
+	"os/exec"
+	"strings"
 )
 
 // PGPSignFile parses a PGP private key from the specified string and creates a
@@ -33,39 +33,129 @@ import (
 // Note, this method assumes a single key will be container in the pgpkey arg,
 // furthermore that it is in armored format.
 func PGPSignFile(input string, output string, pgpkey string) error {
-	// Parse the keyring and make sure we only have a single private key in it
-	keys, err := openpgp.ReadArmoredKeyRing(bytes.NewBufferString(pgpkey))
+	home, cleanup, err := newGPGHome()
 	if err != nil {
 		return err
 	}
-	if len(keys) != 1 {
-		return fmt.Errorf("key count mismatch: have %d, want %d", len(keys), 1)
+	defer cleanup()
+	if err := importPGPKey(home, pgpkey); err != nil {
+		return err
 	}
-	// Create the input and output streams for signing
-	in, err := os.Open(input)
+	keyID, err := gpgKeyID(home)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-
-	out, err := os.Create(output)
+	cmd := exec.Command("gpg",
+		"--batch",
+		"--yes",
+		"--no-tty",
+		"--pinentry-mode", "loopback",
+		"--homedir", home,
+		"--armor",
+		"--detach-sign",
+		"--local-user", keyID,
+		"--output", output,
+		input,
+	)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return err
+		return fmt.Errorf("gpg detach-sign failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	defer out.Close()
-
-	// Generate the signature and return
-	return openpgp.ArmoredDetachSign(out, keys[0], in, nil)
+	return nil
 }
 
 // PGPKeyID parses an armored key and returns the key ID.
 func PGPKeyID(pgpkey string) (string, error) {
-	keys, err := openpgp.ReadArmoredKeyRing(bytes.NewBufferString(pgpkey))
+	home, cleanup, err := newGPGHome()
 	if err != nil {
 		return "", err
 	}
-	if len(keys) != 1 {
-		return "", fmt.Errorf("key count mismatch: have %d, want %d", len(keys), 1)
+	defer cleanup()
+	if err := importPGPKey(home, pgpkey); err != nil {
+		return "", err
 	}
-	return keys[0].PrimaryKey.KeyIdString(), nil
+	return gpgKeyID(home)
+}
+
+func newGPGHome() (string, func(), error) {
+	home, err := os.MkdirTemp("", "tkm-build-gpg-")
+	if err != nil {
+		return "", nil, err
+	}
+	return home, func() { _ = os.RemoveAll(home) }, nil
+}
+
+func importPGPKey(home string, pgpkey string) error {
+	cmd := exec.Command("gpg",
+		"--batch",
+		"--yes",
+		"--no-tty",
+		"--pinentry-mode", "loopback",
+		"--homedir", home,
+		"--import",
+	)
+	cmd.Stdin = bytes.NewBufferString(pgpkey)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gpg import failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func gpgKeyID(home string) (string, error) {
+	for _, listArgs := range [][]string{
+		{"--list-secret-keys"},
+		{"--list-keys"},
+	} {
+		keyID, found, err := gpgKeyIDFromList(home, listArgs)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			return keyID, nil
+		}
+	}
+	return "", fmt.Errorf("key count mismatch: have %d, want %d", 0, 1)
+}
+
+func gpgKeyIDFromList(home string, listArgs []string) (string, bool, error) {
+	args := append([]string{
+		"--batch",
+		"--yes",
+		"--no-tty",
+		"--homedir", home,
+		"--with-colons",
+	}, listArgs...)
+	cmd := exec.Command("gpg", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", false, fmt.Errorf("gpg %s failed: %w: %s", strings.Join(listArgs, " "), err, strings.TrimSpace(string(out)))
+	}
+	ids := make([]string, 0, 1)
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) < 5 {
+			continue
+		}
+		if fields[0] != "sec" && fields[0] != "pub" {
+			continue
+		}
+		if fields[4] == "" {
+			continue
+		}
+		if _, ok := seen[fields[4]]; ok {
+			continue
+		}
+		seen[fields[4]] = struct{}{}
+		ids = append(ids, fields[4])
+	}
+	switch len(ids) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return ids[0], true, nil
+	default:
+		return "", false, fmt.Errorf("key count mismatch: have %d, want %d", len(ids), 1)
+	}
 }

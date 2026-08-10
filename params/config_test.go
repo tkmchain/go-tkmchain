@@ -165,15 +165,24 @@ func TestPhoneTimestampCompatError(t *testing.T) {
 }
 
 func TestDefaultPhoneForkTimestamp(t *testing.T) {
-	want := uint64(1784709000)
+	want := MainnetHardforkTime
 	configs := map[string]*ChainConfig{
 		"randomx": RandomXChainConfig,
 		"mainnet": MainnetChainConfig,
 	}
 	for name, config := range configs {
 		t.Run(name, func(t *testing.T) {
-			if config.PhoneTime == nil || *config.PhoneTime != want {
-				t.Fatalf("PhoneTime = %v, want %d", config.PhoneTime, want)
+			tkmForkTimes := map[string]*uint64{
+				"EDATime":               config.EDATime,
+				"KyotoTime":             config.KyotoTime,
+				"PhoneTime":             config.PhoneTime,
+				"PrivacyCommitmentTime": config.PrivacyCommitmentTime,
+				"QuantumResistantTime":  config.QuantumResistantTime,
+			}
+			for forkName, forkTime := range tkmForkTimes {
+				if forkTime == nil || *forkTime != want {
+					t.Fatalf("%s = %v, want %d", forkName, forkTime, want)
+				}
 			}
 		})
 	}
@@ -183,13 +192,13 @@ func TestPrivacyCommitmentForkSchedule(t *testing.T) {
 	if !EgyptChainConfig.IsPrivacyCommitments(big.NewInt(0), 0) {
 		t.Fatal("Egypt privacy commitments are not active at genesis")
 	}
-	if MainnetChainConfig.PrivacyCommitmentTime == nil || *MainnetChainConfig.PrivacyCommitmentTime != 1786010400 {
-		t.Fatalf("mainnet privacy commitment time = %v, want 1786010400", MainnetChainConfig.PrivacyCommitmentTime)
+	if MainnetChainConfig.PrivacyCommitmentTime == nil || *MainnetChainConfig.PrivacyCommitmentTime != MainnetHardforkTime {
+		t.Fatalf("mainnet privacy commitment time = %v, want %d", MainnetChainConfig.PrivacyCommitmentTime, MainnetHardforkTime)
 	}
-	if MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), 1786010399) {
+	if MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), MainnetHardforkTime-1) {
 		t.Fatal("mainnet privacy commitments active before scheduled timestamp")
 	}
-	if !MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), 1786010400) {
+	if !MainnetChainConfig.IsPrivacyCommitments(big.NewInt(0), MainnetHardforkTime) {
 		t.Fatal("mainnet privacy commitments inactive at scheduled timestamp")
 	}
 }
@@ -198,13 +207,13 @@ func TestQuantumResistantForkSchedule(t *testing.T) {
 	if !EgyptChainConfig.IsQuantumResistant(big.NewInt(0), 0) {
 		t.Fatal("Egypt quantum-resistant transactions are not active at genesis")
 	}
-	if MainnetChainConfig.QuantumResistantTime == nil || *MainnetChainConfig.QuantumResistantTime != 1786010400 {
-		t.Fatalf("mainnet quantum-resistant time = %v, want 1786010400", MainnetChainConfig.QuantumResistantTime)
+	if MainnetChainConfig.QuantumResistantTime == nil || *MainnetChainConfig.QuantumResistantTime != MainnetHardforkTime {
+		t.Fatalf("mainnet quantum-resistant time = %v, want %d", MainnetChainConfig.QuantumResistantTime, MainnetHardforkTime)
 	}
-	if MainnetChainConfig.IsQuantumResistant(big.NewInt(0), 1786010399) {
+	if MainnetChainConfig.IsQuantumResistant(big.NewInt(0), MainnetHardforkTime-1) {
 		t.Fatal("mainnet quantum-resistant transactions active before scheduled timestamp")
 	}
-	if !MainnetChainConfig.IsQuantumResistant(big.NewInt(0), 1786010400) {
+	if !MainnetChainConfig.IsQuantumResistant(big.NewInt(0), MainnetHardforkTime) {
 		t.Fatal("mainnet quantum-resistant transactions inactive at scheduled timestamp")
 	}
 }
@@ -232,10 +241,10 @@ func TestMainnetMainKingPQAddress(t *testing.T) {
 	if MainnetChainConfig.PostQuantumMainKingAddress != pq {
 		t.Fatalf("mainnet PQ main king address = %s, want %s", MainnetChainConfig.PostQuantumMainKingAddress, pq)
 	}
-	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), 1786010399); got != legacy {
+	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), MainnetHardforkTime-1); got != legacy {
 		t.Fatalf("mainnet pre-fork main king = %s, want %s", got, legacy)
 	}
-	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), 1786010400); got != pq {
+	if got := MainnetChainConfig.MainKingAddressAt(big.NewInt(0), MainnetHardforkTime); got != pq {
 		t.Fatalf("mainnet post-fork main king = %s, want %s", got, pq)
 	}
 }
@@ -244,7 +253,7 @@ func TestPostQuantumMainKingAddressChangeErrors(t *testing.T) {
 	stored := *MainnetChainConfig
 	updated := stored
 	updated.PostQuantumMainKingAddress = common.HexToAddress("0x0000000000000000000000000000000000000001")
-	err := stored.CheckCompatible(&updated, 0, 1786010399)
+	err := stored.CheckCompatible(&updated, 0, MainnetHardforkTime-1)
 	if err == nil {
 		t.Fatal("post-quantum main king address change accepted")
 	}

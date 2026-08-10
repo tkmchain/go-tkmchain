@@ -168,7 +168,7 @@ type powDriver struct {
 }
 
 func (d *powDriver) Commit() common.Hash {
-	block, _, _ := d.backend.Miner().Pending()
+	block, _ := d.backend.Miner().Pending()
 	if block == nil {
 		return common.Hash{}
 	}

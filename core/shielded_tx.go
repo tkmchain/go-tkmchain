@@ -18,6 +18,7 @@ import (
 const (
 	shieldedTxMagic                 = "TKMSHIELD1"
 	shieldedTxVersion               = uint64(1)
+	shieldedTxIntentDomain          = "TKM_SHIELDED_INTENT_V1"
 	shieldedMinEncryptedOutputBytes = 32
 	shieldedMinNonceBytes           = 12
 	shieldedMaxEncryptedBytes       = 16 * 1024
@@ -71,6 +72,26 @@ type ShieldedProofContext struct {
 	PublicValue       *big.Int
 	OutputCommitments []common.Hash
 	BindingSig        []byte
+}
+
+type shieldedIntentPayload struct {
+	Domain                []byte
+	TxType                uint8
+	ChainID               *big.Int
+	Nonce                 uint64
+	GasTipCap             *big.Int
+	GasFeeCap             *big.Int
+	Gas                   uint64
+	To                    *common.Address `rlp:"nil"`
+	Value                 *big.Int
+	AccessList            types.AccessList
+	BlobGas               uint64
+	BlobFeeCap            *big.Int
+	BlobHashes            []common.Hash
+	SetCodeAuthorizations []types.SetCodeAuthorization
+	PQAlgorithm           string
+	PQPublicKey           []byte
+	Envelope              []byte
 }
 
 // ShieldedProofVerifier verifies a shielded spend proof against consensus public inputs.
@@ -128,6 +149,79 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 	return &tx, true, nil
 }
 
+// ShieldedTransactionIntentHash returns the transaction binding hash used as
+// the shielded circuit's TxHash public input. Proof bytes are excluded so the
+// proof can be generated before the final envelope is assembled.
+func ShieldedTransactionIntentHash(tx *types.Transaction, envelope *ShieldedTransaction) (common.Hash, error) {
+	if tx == nil {
+		return common.Hash{}, fmt.Errorf("%w: nil transaction", ErrInvalidShieldedTx)
+	}
+	if envelope == nil {
+		return common.Hash{}, fmt.Errorf("%w: nil shielded envelope", ErrInvalidShieldedTx)
+	}
+	cleanData, err := EncodeShieldedTransaction(stripShieldedProofs(envelope))
+	if err != nil {
+		return common.Hash{}, err
+	}
+	blobFeeCap := tx.BlobGasFeeCap()
+	if blobFeeCap == nil {
+		blobFeeCap = new(big.Int)
+	}
+	pqAlgorithm, pqPublicKey, _, _ := tx.PQTkmFields()
+	payload := shieldedIntentPayload{
+		Domain:                []byte(shieldedTxIntentDomain),
+		TxType:                tx.Type(),
+		ChainID:               tx.ChainId(),
+		Nonce:                 tx.Nonce(),
+		GasTipCap:             tx.GasTipCap(),
+		GasFeeCap:             tx.GasFeeCap(),
+		Gas:                   tx.Gas(),
+		To:                    tx.To(),
+		Value:                 tx.Value(),
+		AccessList:            tx.AccessList(),
+		BlobGas:               tx.BlobGas(),
+		BlobFeeCap:            blobFeeCap,
+		BlobHashes:            tx.BlobHashes(),
+		SetCodeAuthorizations: tx.SetCodeAuthorizations(),
+		PQAlgorithm:           pqAlgorithm,
+		PQPublicKey:           pqPublicKey,
+		Envelope:              cleanData,
+	}
+	encoded, err := rlp.EncodeToBytes(payload)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return crypto.Keccak256Hash(encoded), nil
+}
+
+func stripShieldedProofs(tx *ShieldedTransaction) *ShieldedTransaction {
+	cpy := &ShieldedTransaction{
+		Version:           tx.Version,
+		Spends:            make([]ShieldedSpend, len(tx.Spends)),
+		Outputs:           make([]ShieldedOutput, len(tx.Outputs)),
+		BalanceCommitment: tx.BalanceCommitment,
+		BindingSig:        common.CopyBytes(tx.BindingSig),
+	}
+	for i, spend := range tx.Spends {
+		cpy.Spends[i] = ShieldedSpend{
+			Nullifier:          spend.Nullifier,
+			Anchor:             spend.Anchor,
+			EncryptedSpendData: common.CopyBytes(spend.EncryptedSpendData),
+		}
+	}
+	for i, output := range tx.Outputs {
+		cpy.Outputs[i] = ShieldedOutput{
+			Commitment:       output.Commitment,
+			PayloadHash:      output.PayloadHash,
+			EphemeralPubKey:  common.CopyBytes(output.EphemeralPubKey),
+			ViewTag:          common.CopyBytes(output.ViewTag),
+			EncryptedPayload: common.CopyBytes(output.EncryptedPayload),
+			Nonce:            common.CopyBytes(output.Nonce),
+		}
+	}
+	return cpy
+}
+
 func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
 	envelope, ok, err := DecodeShieldedTransaction(tx.Data())
 	if err != nil {
@@ -155,6 +249,10 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		return fmt.Errorf("%w: shielded tx must spend at least one private note", ErrInvalidShieldedTx)
 	}
 	txHash := tx.Hash()
+	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
+	if err != nil {
+		return err
+	}
 	outputCommitments := make([]common.Hash, len(envelope.Outputs))
 	for i, output := range envelope.Outputs {
 		outputCommitments[i] = output.Commitment
@@ -169,7 +267,7 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		ctx := ShieldedProofContext{
 			ChainID:           config.ChainID,
 			BlockNumber:       blockNumber,
-			TxHash:            txHash,
+			TxHash:            intentHash,
 			SpendIndex:        i,
 			Nullifier:         spend.Nullifier,
 			Anchor:            spend.Anchor,

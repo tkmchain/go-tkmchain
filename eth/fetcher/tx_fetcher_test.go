@@ -47,7 +47,7 @@ var (
 	testTxsHashes = []common.Hash{testTxs[0].Hash(), testTxs[1].Hash(), testTxs[2].Hash(), testTxs[3].Hash()}
 )
 
-type announce struct {
+type testAnnounce struct {
 	hash common.Hash
 	kind byte
 	size uint32
@@ -71,10 +71,10 @@ type doWait struct {
 type doDrop string
 type doFunc func()
 
-type isWaiting map[string][]announce
+type isWaiting map[string][]testAnnounce
 
 type isScheduled struct {
-	tracking map[string][]announce
+	tracking map[string][]testAnnounce
 	fetching map[string][]common.Hash
 	dangling map[string][]common.Hash
 }
@@ -113,7 +113,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 		steps: []interface{}{
 			// Initial announcement to get something into the waitlist
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -121,7 +121,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			}),
 			// Announce from a new peer to check that no overwrite happens
 			doTxNotify{peer: "B", hashes: []common.Hash{{0x03}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{333, 444}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -133,7 +133,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			}),
 			// Announce clashing hashes but unique new peer
 			doTxNotify{peer: "C", hashes: []common.Hash{{0x01}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 444}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -150,7 +150,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			// Announce existing and clashing hashes from existing peer. Clashes
 			// should not overwrite previous announcements.
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x03}, {0x05}}, types: []byte{types.LegacyTxType, types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{999, 333, 555}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -169,7 +169,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			// Announce clashing hashes with conflicting metadata. Somebody will
 			// be in the wrong, but we don't know yet who.
 			doTxNotify{peer: "D", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.BlobTxType}, sizes: []uint32{999, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -196,7 +196,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -225,7 +225,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			// Queue up a non-fetchable transaction and then trigger it with a new
 			// peer (weird case to test 1 line in the fetcher)
 			doTxNotify{peer: "C", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"C": {
 					{common.Hash{0x06}, types.LegacyTxType, 666},
 					{common.Hash{0x07}, types.LegacyTxType, 777},
@@ -233,7 +233,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			}),
 			doWait{time: txArriveTimeout, step: true},
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -263,7 +263,7 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 			},
 			doTxNotify{peer: "E", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -313,7 +313,7 @@ func TestTransactionFetcherSkipWaiting(t *testing.T) {
 				types:  []byte{types.LegacyTxType, types.LegacyTxType},
 				sizes:  []uint32{111, 222},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -324,7 +324,7 @@ func TestTransactionFetcherSkipWaiting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -337,13 +337,13 @@ func TestTransactionFetcherSkipWaiting(t *testing.T) {
 			// Announce overlaps from the same peer, ensure the new ones end up
 			// in stage one, and clashing ones don't get double tracked
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x02}, {0x03}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{222, 333}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x03}, types.LegacyTxType, 333},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -356,7 +356,7 @@ func TestTransactionFetcherSkipWaiting(t *testing.T) {
 			// Announce overlaps from a new peer, ensure new transactions end up
 			// in stage one and clashing ones get tracked for the new peer
 			doTxNotify{peer: "B", hashes: []common.Hash{{0x02}, {0x03}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{222, 333, 444}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x03}, types.LegacyTxType, 333},
 				},
@@ -366,7 +366,7 @@ func TestTransactionFetcherSkipWaiting(t *testing.T) {
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -391,7 +391,7 @@ func TestTransactionFetcherSingletonRequesting(t *testing.T) {
 		steps: []interface{}{
 			// Push an initial announcement through to the scheduled stage
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -402,7 +402,7 @@ func TestTransactionFetcherSingletonRequesting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -415,14 +415,14 @@ func TestTransactionFetcherSingletonRequesting(t *testing.T) {
 			// Announce a new set of transactions from the same peer and ensure
 			// they do not start fetching since the peer is already busy
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x03}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{333, 444}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x03}, types.LegacyTxType, 333},
 					{common.Hash{0x04}, types.LegacyTxType, 444},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -435,7 +435,7 @@ func TestTransactionFetcherSingletonRequesting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -450,14 +450,14 @@ func TestTransactionFetcherSingletonRequesting(t *testing.T) {
 			// Announce a duplicate set of transactions from a new peer and ensure
 			// uniquely new ones start downloading, even if clashing.
 			doTxNotify{peer: "B", hashes: []common.Hash{{0x02}, {0x03}, {0x05}, {0x06}}, types: []byte{types.LegacyTxType, types.LegacyTxType, types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{222, 333, 555, 666}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"B": {
 					{common.Hash{0x05}, types.LegacyTxType, 555},
 					{common.Hash{0x06}, types.LegacyTxType, 666},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -496,7 +496,7 @@ func TestTransactionFetcherFailedRescheduling(t *testing.T) {
 		steps: []interface{}{
 			// Push an initial announcement through to the scheduled stage
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -507,7 +507,7 @@ func TestTransactionFetcherFailedRescheduling(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -522,7 +522,7 @@ func TestTransactionFetcherFailedRescheduling(t *testing.T) {
 			doTxNotify{peer: "B", hashes: []common.Hash{{0x02}}, types: []byte{types.LegacyTxType}, sizes: []uint32{222}},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -543,7 +543,7 @@ func TestTransactionFetcherFailedRescheduling(t *testing.T) {
 			doWait{time: 0, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"B": {
 						{common.Hash{0x02}, types.LegacyTxType, 222},
 					},
@@ -570,7 +570,7 @@ func TestTransactionFetcherCleanup(t *testing.T) {
 		steps: []interface{}{
 			// Push an initial announcement through to the scheduled stage
 			doTxNotify{peer: "A", hashes: []common.Hash{testTxsHashes[0]}, types: []byte{testTxs[0].Type()}, sizes: []uint32{uint32(testTxs[0].Size())}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 				},
@@ -580,7 +580,7 @@ func TestTransactionFetcherCleanup(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					},
@@ -605,7 +605,7 @@ func TestTransactionFetcherCleanupEmpty(t *testing.T) {
 		steps: []interface{}{
 			// Push an initial announcement through to the scheduled stage
 			doTxNotify{peer: "A", hashes: []common.Hash{testTxsHashes[0]}, types: []byte{testTxs[0].Type()}, sizes: []uint32{uint32(testTxs[0].Size())}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 				},
@@ -615,7 +615,7 @@ func TestTransactionFetcherCleanupEmpty(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					},
@@ -643,7 +643,7 @@ func TestTransactionFetcherMissingRescheduling(t *testing.T) {
 				types:  []byte{testTxs[0].Type(), testTxs[1].Type(), testTxs[2].Type()},
 				sizes:  []uint32{uint32(testTxs[0].Size()), uint32(testTxs[1].Size()), uint32(testTxs[2].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -655,7 +655,7 @@ func TestTransactionFetcherMissingRescheduling(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 						{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -670,7 +670,7 @@ func TestTransactionFetcherMissingRescheduling(t *testing.T) {
 			// should be dropped and the one after re-requested.
 			doTxEnqueue{peer: "A", txs: []*types.Transaction{testTxs[1]}, direct: true},
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[2], testTxs[2].Type(), uint32(testTxs[2].Size())},
 					},
@@ -695,7 +695,7 @@ func TestTransactionFetcherMissingCleanup(t *testing.T) {
 				types:  []byte{testTxs[0].Type(), testTxs[1].Type()},
 				sizes:  []uint32{uint32(testTxs[0].Size()), uint32(testTxs[1].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -706,7 +706,7 @@ func TestTransactionFetcherMissingCleanup(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 						{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -736,13 +736,13 @@ func TestTransactionFetcherBroadcasts(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			doTxNotify{peer: "A", hashes: []common.Hash{testTxsHashes[2]}, types: []byte{testTxs[2].Type()}, sizes: []uint32{uint32(testTxs[2].Size())}},
 
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[2], testTxs[2].Type(), uint32(testTxs[2].Size())},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 						{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -777,14 +777,14 @@ func TestTransactionFetcherWaitTimerResets(t *testing.T) {
 		init: newTestTxFetcher,
 		steps: []interface{}{
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}}, types: []byte{types.LegacyTxType}, sizes: []uint32{111}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 				},
 			}),
 			isScheduled{nil, nil, nil},
 			doWait{time: txArriveTimeout / 2, step: false},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 				},
@@ -792,7 +792,7 @@ func TestTransactionFetcherWaitTimerResets(t *testing.T) {
 			isScheduled{nil, nil, nil},
 
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x02}}, types: []byte{types.LegacyTxType}, sizes: []uint32{222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -800,13 +800,13 @@ func TestTransactionFetcherWaitTimerResets(t *testing.T) {
 			}),
 			isScheduled{nil, nil, nil},
 			doWait{time: txArriveTimeout / 2, step: true},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x02}, types.LegacyTxType, 222},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 					},
@@ -819,7 +819,7 @@ func TestTransactionFetcherWaitTimerResets(t *testing.T) {
 			doWait{time: txArriveTimeout / 2, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -846,7 +846,7 @@ func TestTransactionFetcherTimeoutRescheduling(t *testing.T) {
 				types:  []byte{testTxs[0].Type()},
 				sizes:  []uint32{uint32(testTxs[0].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())}},
 			}),
 			isScheduled{tracking: nil, fetching: nil},
@@ -854,7 +854,7 @@ func TestTransactionFetcherTimeoutRescheduling(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())}},
 				},
 				fetching: map[string][]common.Hash{
@@ -880,7 +880,7 @@ func TestTransactionFetcherTimeoutRescheduling(t *testing.T) {
 			},
 			doWait{time: txArriveTimeout, step: true},
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())}},
 				},
 				fetching: nil,
@@ -892,7 +892,7 @@ func TestTransactionFetcherTimeoutRescheduling(t *testing.T) {
 			doTxEnqueue{peer: "A", txs: []*types.Transaction{testTxs[0]}, direct: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())}},
 				},
 				fetching: map[string][]common.Hash{
@@ -915,7 +915,7 @@ func TestTransactionFetcherTimeoutTimerResets(t *testing.T) {
 
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 					},
@@ -930,7 +930,7 @@ func TestTransactionFetcherTimeoutTimerResets(t *testing.T) {
 			},
 			doWait{time: txFetchTimeout - txArriveTimeout, step: true},
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"B": {
 						{common.Hash{0x02}, types.LegacyTxType, 222},
 					},
@@ -958,19 +958,19 @@ func TestTransactionFetcherTimeoutTimerResets(t *testing.T) {
 // Tests that if thousands of transactions are announced, only a small
 // number of them will be requested at a time.
 func TestTransactionFetcherRateLimiting(t *testing.T) {
-	// Create a slew of transactions and announce them
+	// Create a slew of transactions and testAnnounce them
 	var (
 		hashes    []common.Hash
 		ts        []byte
 		sizes     []uint32
-		announces []announce
+		announces []testAnnounce
 	)
 	for i := 0; i < maxTxAnnounces; i++ {
 		hash := common.Hash{byte(i / 256), byte(i % 256)}
 		hashes = append(hashes, hash)
 		ts = append(ts, types.LegacyTxType)
 		sizes = append(sizes, 111)
-		announces = append(announces, announce{
+		announces = append(announces, testAnnounce{
 			hash: hash,
 			kind: types.LegacyTxType,
 			size: 111,
@@ -985,7 +985,7 @@ func TestTransactionFetcherRateLimiting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": announces,
 				},
 				fetching: map[string][]common.Hash{
@@ -1025,7 +1025,7 @@ func TestTransactionFetcherBandwidthLimiting(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 48 * 1024},
 						{common.Hash{0x02}, types.LegacyTxType, 48 * 1024},
@@ -1051,15 +1051,15 @@ func TestTransactionFetcherBandwidthLimiting(t *testing.T) {
 	})
 }
 
-// Tests that then number of transactions a peer is allowed to announce and/or
+// Tests that then number of transactions a peer is allowed to testAnnounce and/or
 // request at the same time is hard capped.
 func TestTransactionFetcherDoSProtection(t *testing.T) {
-	// Create a slew of transactions and to announce them
+	// Create a slew of transactions and to testAnnounce them
 	var (
 		hashesA   []common.Hash
 		typesA    []byte
 		sizesA    []uint32
-		announceA []announce
+		announceA []testAnnounce
 	)
 	for i := 0; i < maxTxAnnounces+1; i++ {
 		hash := common.Hash{0x01, byte(i / 256), byte(i % 256)}
@@ -1067,7 +1067,7 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 		typesA = append(typesA, types.LegacyTxType)
 		sizesA = append(sizesA, 111)
 
-		announceA = append(announceA, announce{
+		announceA = append(announceA, testAnnounce{
 			hash: hash,
 			kind: types.LegacyTxType,
 			size: 111,
@@ -1077,7 +1077,7 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 		hashesB   []common.Hash
 		typesB    []byte
 		sizesB    []uint32
-		announceB []announce
+		announceB []testAnnounce
 	)
 	for i := 0; i < maxTxAnnounces+1; i++ {
 		hash := common.Hash{0x02, byte(i / 256), byte(i % 256)}
@@ -1085,7 +1085,7 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 		typesB = append(typesB, types.LegacyTxType)
 		sizesB = append(sizesB, 111)
 
-		announceB = append(announceB, announce{
+		announceB = append(announceB, testAnnounce{
 			hash: hash,
 			kind: types.LegacyTxType,
 			size: 111,
@@ -1095,7 +1095,7 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 		hashesC   []common.Hash
 		typesC    []byte
 		sizesC    []uint32
-		announceC []announce
+		announceC []testAnnounce
 	)
 	for i := 0; i < maxTxAnnounces+2; i++ {
 		hash := common.Hash{0x03, byte(i / 256), byte(i % 256)}
@@ -1103,7 +1103,7 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 		typesC = append(typesC, types.LegacyTxType)
 		sizesC = append(sizesC, 111)
 
-		announceC = append(announceC, announce{
+		announceC = append(announceC, testAnnounce{
 			hash: hash,
 			kind: types.LegacyTxType,
 			size: 111,
@@ -1124,13 +1124,13 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 			doTxNotify{peer: "C", hashes: hashesC[maxTxAnnounces/2-1 : maxTxAnnounces-1], types: typesC[maxTxAnnounces/2-1 : maxTxAnnounces-1], sizes: sizesC[maxTxAnnounces/2-1 : maxTxAnnounces-1]},
 
 			// Ensure the hashes are split half and half
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": announceA[maxTxAnnounces/2 : maxTxAnnounces],
 				"B": announceB[maxTxAnnounces/2-1 : maxTxAnnounces-1],
 				"C": announceC[maxTxAnnounces/2-1 : maxTxAnnounces-1],
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": announceA[:maxTxAnnounces/2],
 					"B": announceB[:maxTxAnnounces/2-1],
 					"C": announceC[:maxTxAnnounces/2-1],
@@ -1146,13 +1146,13 @@ func TestTransactionFetcherDoSProtection(t *testing.T) {
 			doTxNotify{peer: "B", hashes: hashesB[maxTxAnnounces-1 : maxTxAnnounces+1], types: typesB[maxTxAnnounces-1 : maxTxAnnounces+1], sizes: sizesB[maxTxAnnounces-1 : maxTxAnnounces+1]},
 			doTxNotify{peer: "C", hashes: hashesC[maxTxAnnounces-1 : maxTxAnnounces+2], types: typesC[maxTxAnnounces-1 : maxTxAnnounces+2], sizes: sizesC[maxTxAnnounces-1 : maxTxAnnounces+2]},
 
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": announceA[maxTxAnnounces/2 : maxTxAnnounces],
 				"B": announceB[maxTxAnnounces/2-1 : maxTxAnnounces],
 				"C": announceC[maxTxAnnounces/2-1 : maxTxAnnounces],
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": announceA[:maxTxAnnounces/2],
 					"B": announceB[:maxTxAnnounces/2-1],
 					"C": announceC[:maxTxAnnounces/2-1],
@@ -1198,13 +1198,13 @@ func TestTransactionFetcherUnderpricedDedup(t *testing.T) {
 			doTxEnqueue{peer: "A", txs: []*types.Transaction{testTxs[0], testTxs[1]}, direct: true},
 			isScheduled{nil, nil, nil},
 
-			// Try to announce the transaction again, ensure it's not scheduled back
+			// Try to testAnnounce the transaction again, ensure it's not scheduled back
 			doTxNotify{peer: "A",
 				hashes: []common.Hash{testTxsHashes[0], testTxsHashes[1], testTxsHashes[2]},
 				types:  []byte{testTxs[0].Type(), testTxs[1].Type(), testTxs[2].Type()},
 				sizes:  []uint32{uint32(testTxs[0].Size()), uint32(testTxs[1].Size()), uint32(testTxs[2].Size())},
 			}, // [2] is needed to force a step in the fetcher
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {{testTxsHashes[2], testTxs[2].Type(), uint32(testTxs[2].Size())}},
 			}),
 			isScheduled{nil, nil, nil},
@@ -1229,19 +1229,19 @@ func TestTransactionFetcherUnderpricedDoSProtection(t *testing.T) {
 		hashes []common.Hash
 		ts     []byte
 		sizes  []uint32
-		annos  []announce
+		annos  []testAnnounce
 	)
 	for _, tx := range txs {
 		hashes = append(hashes, tx.Hash())
 		ts = append(ts, tx.Type())
 		sizes = append(sizes, uint32(tx.Size()))
-		annos = append(annos, announce{
+		annos = append(annos, testAnnounce{
 			hash: tx.Hash(),
 			kind: tx.Type(),
 			size: uint32(tx.Size()),
 		})
 	}
-	// Generate a set of steps to announce and deliver the entire set of transactions
+	// Generate a set of steps to testAnnounce and deliver the entire set of transactions
 	var steps []interface{}
 	for i := 0; i < maxTxUnderpricedSetSize/maxTxRetrievals; i++ {
 		steps = append(steps, doTxNotify{
@@ -1250,12 +1250,12 @@ func TestTransactionFetcherUnderpricedDoSProtection(t *testing.T) {
 			types:  ts[i*maxTxRetrievals : (i+1)*maxTxRetrievals],
 			sizes:  sizes[i*maxTxRetrievals : (i+1)*maxTxRetrievals],
 		})
-		steps = append(steps, isWaiting(map[string][]announce{
+		steps = append(steps, isWaiting(map[string][]testAnnounce{
 			"A": annos[i*maxTxRetrievals : (i+1)*maxTxRetrievals],
 		}))
 		steps = append(steps, doWait{time: txArriveTimeout, step: true})
 		steps = append(steps, isScheduled{
-			tracking: map[string][]announce{
+			tracking: map[string][]testAnnounce{
 				"A": annos[i*maxTxRetrievals : (i+1)*maxTxRetrievals],
 			},
 			fetching: map[string][]common.Hash{
@@ -1313,13 +1313,13 @@ func TestTransactionFetcherOutOfBoundDeliveries(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			doTxNotify{peer: "A", hashes: []common.Hash{testTxsHashes[2]}, types: []byte{testTxs[2].Type()}, sizes: []uint32{uint32(testTxs[2].Size())}},
 
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[2], testTxs[2].Type(), uint32(testTxs[2].Size())},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 						{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -1356,13 +1356,13 @@ func TestTransactionFetcherDrop(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x03}}, types: []byte{types.LegacyTxType}, sizes: []uint32{333}},
 
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x03}, types.LegacyTxType, 333},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -1382,7 +1382,7 @@ func TestTransactionFetcherDrop(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					},
@@ -1421,7 +1421,7 @@ func TestTransactionFetcherDropRescheduling(t *testing.T) {
 
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {{common.Hash{0x01}, types.LegacyTxType, 111}},
 					"B": {{common.Hash{0x01}, types.LegacyTxType, 111}},
 				},
@@ -1433,7 +1433,7 @@ func TestTransactionFetcherDropRescheduling(t *testing.T) {
 			doDrop("A"),
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"B": {{common.Hash{0x01}, types.LegacyTxType, 111}},
 				},
 				fetching: map[string][]common.Hash{
@@ -1462,7 +1462,7 @@ func TestInvalidAnnounceMetadata(t *testing.T) {
 				types:  []byte{testTxs[0].Type(), testTxs[1].Type()},
 				sizes:  []uint32{uint32(testTxs[0].Size()), uint32(testTxs[1].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -1481,7 +1481,7 @@ func TestInvalidAnnounceMetadata(t *testing.T) {
 				types:  []byte{1 + testTxs[1].Type()},
 				sizes:  []uint32{uint32(testTxs[1].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -1497,7 +1497,7 @@ func TestInvalidAnnounceMetadata(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true},
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 						{testTxsHashes[1], testTxs[1].Type(), uint32(testTxs[1].Size())},
@@ -1631,7 +1631,7 @@ func TestBlobTransactionAnnounce(t *testing.T) {
 		steps: []interface{}{
 			// Initial announcement to get something into the waitlist
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -1639,7 +1639,7 @@ func TestBlobTransactionAnnounce(t *testing.T) {
 			}),
 			// Announce a blob transaction
 			doTxNotify{peer: "B", hashes: []common.Hash{{0x03}}, types: []byte{types.BlobTxType}, sizes: []uint32{333}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -1649,14 +1649,14 @@ func TestBlobTransactionAnnounce(t *testing.T) {
 				},
 			}),
 			doWait{time: 0, step: true}, // zero time, but the blob fetching should be scheduled
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x01}, types.LegacyTxType, 111},
 					{common.Hash{0x02}, types.LegacyTxType, 222},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"B": {
 						{common.Hash{0x03}, types.BlobTxType, 333},
 					},
@@ -1668,7 +1668,7 @@ func TestBlobTransactionAnnounce(t *testing.T) {
 			doWait{time: txArriveTimeout, step: true}, // zero time, but the blob fetching should be scheduled
 			isWaiting(nil),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{common.Hash{0x01}, types.LegacyTxType, 111},
 						{common.Hash{0x02}, types.LegacyTxType, 222},
@@ -1695,7 +1695,7 @@ func TestTransactionFetcherDropAlternates(t *testing.T) {
 			doTxNotify{peer: "B", hashes: []common.Hash{testTxsHashes[0]}, types: []byte{testTxs[0].Type()}, sizes: []uint32{uint32(testTxs[0].Size())}},
 
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					},
@@ -1710,7 +1710,7 @@ func TestTransactionFetcherDropAlternates(t *testing.T) {
 			doDrop("B"),
 
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{testTxsHashes[0], testTxs[0].Type(), uint32(testTxs[0].Size())},
 					},
@@ -1742,7 +1742,7 @@ func TestTransactionFetcherWrongMetadata(t *testing.T) {
 		},
 		steps: []interface{}{
 			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{0xff, types.LegacyTxType}, sizes: []uint32{111, 222}},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{common.Hash{0x02}, types.LegacyTxType, 222},
 				},
@@ -1805,7 +1805,7 @@ func TestTransactionProtocolViolation(t *testing.T) {
 				types:  []byte{types.LegacyTxType, types.BlobTxType, types.LegacyTxType},
 				sizes:  []uint32{uint32(testTxs[0].Size()), uint32(badTx.Size()), uint32(testTxs[1].Size())},
 			},
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxs[0].Hash(), types.LegacyTxType, uint32(testTxs[0].Size())},
 					{badTx.Hash(), types.BlobTxType, uint32(badTx.Size())},
@@ -1814,14 +1814,14 @@ func TestTransactionProtocolViolation(t *testing.T) {
 			}),
 			doWait{time: 0, step: true}, // zero time, but the blob fetching should be scheduled
 
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxs[0].Hash(), types.LegacyTxType, uint32(testTxs[0].Size())},
 					{testTxs[1].Hash(), types.LegacyTxType, uint32(testTxs[1].Size())},
 				},
 			}),
 			isScheduled{
-				tracking: map[string][]announce{
+				tracking: map[string][]testAnnounce{
 					"A": {
 						{badTx.Hash(), types.BlobTxType, uint32(badTx.Size())},
 					},
@@ -1838,7 +1838,7 @@ func TestTransactionProtocolViolation(t *testing.T) {
 			},
 			// Some internal traces are left and will be cleaned by a following drop
 			// operation.
-			isWaiting(map[string][]announce{
+			isWaiting(map[string][]testAnnounce{
 				"A": {
 					{testTxs[0].Hash(), types.LegacyTxType, uint32(testTxs[0].Size())},
 					{testTxs[1].Hash(), types.LegacyTxType, uint32(testTxs[1].Size())},
@@ -1939,9 +1939,9 @@ func testTransactionFetcher(t *testing.T, tt txFetcherTest) {
 					}
 				}
 				for hash, meta := range waiting {
-					ann := announce{hash: hash, kind: meta.kind, size: meta.size}
+					ann := testAnnounce{hash: hash, kind: meta.kind, size: meta.size}
 					if !containsAnnounce(announces, ann) {
-						t.Errorf("step %d, peer %s: announce %v extra in waitslots", i, peer, ann)
+						t.Errorf("step %d, peer %s: testAnnounce %v extra in waitslots", i, peer, ann)
 					}
 				}
 			}
@@ -1998,14 +1998,14 @@ func testTransactionFetcher(t *testing.T, tt txFetcherTest) {
 						t.Errorf("step %d, peer %s: hash %x missing from announces", i, peer, ann.hash)
 					} else {
 						if meta.kind != ann.kind || meta.size != ann.size {
-							t.Errorf("step %d, peer %s, hash %x: announce metadata mismatch: want %v, have %v/%v", i, peer, ann.hash, meta, ann.kind, ann.size)
+							t.Errorf("step %d, peer %s, hash %x: testAnnounce metadata mismatch: want %v, have %v/%v", i, peer, ann.hash, meta, ann.kind, ann.size)
 						}
 					}
 				}
 				for hash, meta := range scheduled {
-					ann := announce{hash: hash, kind: meta.kind, size: meta.size}
+					ann := testAnnounce{hash: hash, kind: meta.kind, size: meta.size}
 					if !containsAnnounce(announces, ann) {
-						t.Errorf("step %d, peer %s: announce %x extra in announces", i, peer, hash)
+						t.Errorf("step %d, peer %s: testAnnounce %x extra in announces", i, peer, hash)
 					}
 				}
 			}
@@ -2150,7 +2150,7 @@ func testTransactionFetcher(t *testing.T, tt txFetcherTest) {
 
 // containsAnnounce returns whether an announcement is contained within a slice
 // of announcements.
-func containsAnnounce(slice []announce, ann announce) bool {
+func containsAnnounce(slice []testAnnounce, ann testAnnounce) bool {
 	for _, have := range slice {
 		if have.hash == ann.hash {
 			if have.kind != ann.kind {
@@ -2167,7 +2167,7 @@ func containsAnnounce(slice []announce, ann announce) bool {
 
 // containsHashInAnnounces returns whether a hash is contained within a slice
 // of announcements.
-func containsHashInAnnounces(slice []announce, hash common.Hash) bool {
+func containsHashInAnnounces(slice []testAnnounce, hash common.Hash) bool {
 	for _, have := range slice {
 		if have.hash == hash {
 			return true

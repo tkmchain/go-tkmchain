@@ -1,7 +1,7 @@
 # Shielded Privacy Release Notes
 
 Release scope: encrypted commitments and shielded transaction protocol
-Date: 2026-08-06
+Date: 2026-08-10
 Networks: Egypt test network and RandomX mainnet
 
 ## Summary
@@ -15,8 +15,8 @@ This update also adds the shielded spend circuit package, deterministic test vec
 ## Activation
 
 - Egypt network: privacy commitments are active from genesis for testing.
-- Mainnet: `privacyCommitmentTime` is `1786010400`, which is `2026-08-06 10:00:00 UTC`.
-- Mainnet: `quantumResistantTime` is also `1786010400`, so PQ-only user transaction validation activates at the same `2026-08-06 10:00:00 UTC` hardfork timestamp.
+- Mainnet: `privacyCommitmentTime` is `1786341600`, which is `2026-08-10 06:00:00 UTC`.
+- Mainnet: `quantumResistantTime` is also `1786341600`, so PQ-only user transaction validation activates at the same `2026-08-10 06:00:00 UTC` hardfork timestamp.
 - Egypt network: quantum-resistant transaction validation is active from genesis for testing.
 - Mainnet readiness now requires the embedded shielded Groth16 verifying key artifact before startup.
 
@@ -141,7 +141,7 @@ proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
 - Added `SignPQTkmTx` and `SignNewPQTkmTx` helpers.
 - Added `NewQuantumSigner` and sender validation that verifies real ML-DSA signatures instead of ECDSA public-key recovery.
 - Added `QuantumResistantTime` to chain config, fork ordering, compatibility checks, and runtime rules.
-- Mainnet `QuantumResistantTime` is `1786010400`; Egypt activates from genesis.
+- Mainnet `QuantumResistantTime` is `1786341600`; Egypt activates from genesis.
 - Txpool and block processing reject non-PQ user transactions after the fork.
 - Pre-fork block processing rejects PQ transactions unless the quantum signer is active for that timestamp.
 - PQ addresses remain 20-byte EVM addresses for state/ABI compatibility, but use a `tkmchain:pq-address:v1:` domain separator so they are not legacy secp256k1-derived addresses.
@@ -191,7 +191,7 @@ proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
 
 - Mainnet nodes must not ship with a placeholder shielded verifying key.
 - The circuit and ceremony output are generated outside the node binary, encoded with the `TKMG16VK1` format, and embedded into the `MainnetShieldedGroth16VerifyingKey` artifact slot.
-- With the artifact present, all mainnet nodes must run the same binary/config before `2026-08-06 10:00:00 UTC`.
+- With the artifact present, all mainnet nodes must run the same binary/config before `2026-08-10 06:00:00 UTC`.
 - Shielded proof verification is consensus-critical. Any circuit, key, or encoding change requires all nodes to use exactly the same artifact and public input mapping.
 
 ## Test Coverage

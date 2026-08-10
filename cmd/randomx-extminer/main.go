@@ -1,3 +1,6 @@
+//go:build cgo && randomx
+// +build cgo,randomx
+
 package main
 
 import (

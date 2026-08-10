@@ -4,7 +4,7 @@ TKM Phone is the phone-number, encrypted messaging, and WebRTC call-signaling se
 
 ## Hardfork Activation
 
-TKM Phone write features are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784709000`, which is `2026-07-22T08:30:00Z` and corresponds to the requested 2:00pm local activation time.
+TKM Phone write features are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1786341600`, which is `2026-08-10T06:00:00Z`.
 
 Before `PhoneTime`, read-only helper RPCs such as `tkmphone_status`, prices, signing hashes, bucket listing, registered-number inspection, and WebRTC configuration remain available. State-changing phone RPCs reject with `tkm phone hardfork is not active yet`, including bucket generation, operator registration, bucket opening, number sale/transfer/revocation, device-key registration, encrypted messages, call signaling, contacts, blocking, recovery, pruning, fraud reports, and propagation import.
 

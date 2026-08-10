@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -164,7 +166,7 @@ func (api *PrivacyAPI) Register(address common.Address, paymentHash common.Hash)
 	return api.e.privacyStatus(address, info), nil
 }
 
-// RegisterCommitment records an encrypted privacy commitment backed by a canonical fee payment.
+// RegisterCommitment records an encrypted privacy commitment from a canonical shielded transaction.
 func (api *PrivacyAPI) RegisterCommitment(commitment common.Hash, encryptedPayload hexutil.Bytes, nonce hexutil.Bytes, paymentHash common.Hash) (PrivacyCommitmentStatus, error) {
 	info, err := api.e.registerPrivacyCommitment(commitment, []byte(encryptedPayload), []byte(nonce), common.Hash{}, nil, nil, paymentHash)
 	if err != nil {
@@ -182,7 +184,7 @@ func (api *PrivacyAPI) RegisterShieldedNote(commitment common.Hash, payloadHash 
 	return api.e.privacyCommitmentStatus(commitment, info), nil
 }
 
-// SpendNullifier records an opaque private note spend marker and rejects duplicates.
+// SpendNullifier records a private note spend marker from a canonical shielded transaction.
 func (api *PrivacyAPI) SpendNullifier(nullifier common.Hash, proofHash common.Hash, encryptedSpendData hexutil.Bytes) (PrivacyNullifierStatus, error) {
 	info, err := api.e.spendPrivacyNullifier(nullifier, proofHash, []byte(encryptedSpendData))
 	if err != nil {
@@ -344,19 +346,19 @@ func (s *Ethereum) registerPrivacyCommitment(commitment common.Hash, encryptedPa
 	if payloadHash != (common.Hash{}) && len(viewTag) < privacyMinViewTagBytes {
 		return privacyCommitmentInfo{}, fmt.Errorf("privacy view tag must be at least %d byte", privacyMinViewTagBytes)
 	}
-	tx, _, blockNumber, err := s.privacyFeePayment(paymentHash)
+	tx, _, blockNumber, output, err := s.privacyShieldedOutputTx(commitment, payloadHash, ephemeralPubKey, viewTag, encryptedPayload, nonce, paymentHash)
 	if err != nil {
 		return privacyCommitmentInfo{}, err
 	}
 	info := privacyCommitmentInfo{
-		EncryptedPayload: append([]byte(nil), encryptedPayload...),
-		Nonce:            append([]byte(nil), nonce...),
+		EncryptedPayload: append([]byte(nil), output.EncryptedPayload...),
+		Nonce:            append([]byte(nil), output.Nonce...),
 		PaidHeight:       blockNumber,
 		ActivateHeight:   blockNumber + privacyActivationConfirmations,
 		Amount:           new(big.Int).Set(tx.Value()),
-		PayloadHash:      payloadHash,
-		EphemeralPubKey:  append([]byte(nil), ephemeralPubKey...),
-		ViewTag:          append([]byte(nil), viewTag...),
+		PayloadHash:      output.PayloadHash,
+		EphemeralPubKey:  append([]byte(nil), output.EphemeralPubKey...),
+		ViewTag:          append([]byte(nil), output.ViewTag...),
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -387,6 +389,61 @@ func (s *Ethereum) privacyActivationPayment(address common.Address, paymentHash 
 		return nil, common.Hash{}, 0, fmt.Errorf("privacy activation payment sender %s does not match address %s", from.Hex(), address.Hex())
 	}
 	return tx, blockHash, blockNumber, nil
+}
+
+func (s *Ethereum) privacyShieldedOutputTx(commitment common.Hash, payloadHash common.Hash, ephemeralPubKey []byte, viewTag []byte, encryptedPayload []byte, nonce []byte, txHash common.Hash) (*types.Transaction, common.Hash, uint64, core.ShieldedOutput, error) {
+	if s.blockchain == nil {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("blockchain is not available")
+	}
+	if s.chainDb == nil {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("chain database is not available")
+	}
+	if txHash == (common.Hash{}) {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction hash cannot be zero")
+	}
+	tx, blockHash, blockNumber, _ := rawdb.ReadCanonicalTransaction(s.chainDb, txHash)
+	if tx == nil {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction %s not found", txHash.Hex())
+	}
+	block := s.blockchain.GetBlockByHash(blockHash)
+	if block == nil || block.NumberU64() != blockNumber {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction is not canonical")
+	}
+	if to := tx.To(); to == nil || *to != params.ShieldedPoolAddress {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction must target %s", params.ShieldedPoolAddress.Hex())
+	}
+	if tx.Value().Sign() != 0 {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction must not expose transparent value")
+	}
+	envelope, ok, err := core.DecodeShieldedTransaction(tx.Data())
+	if err != nil {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction has malformed envelope: %w", err)
+	}
+	if !ok {
+		return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy shielded transaction is missing TKMSHIELD1 envelope")
+	}
+	for _, output := range envelope.Outputs {
+		if output.Commitment != commitment {
+			continue
+		}
+		if payloadHash != (common.Hash{}) && output.PayloadHash != payloadHash {
+			return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy payload hash does not match canonical shielded output")
+		}
+		if len(ephemeralPubKey) != 0 && !bytes.Equal(output.EphemeralPubKey, ephemeralPubKey) {
+			return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy ephemeral public key does not match canonical shielded output")
+		}
+		if len(viewTag) != 0 && !bytes.Equal(output.ViewTag, viewTag) {
+			return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy view tag does not match canonical shielded output")
+		}
+		if len(encryptedPayload) != 0 && !bytes.Equal(output.EncryptedPayload, encryptedPayload) {
+			return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy encrypted payload does not match canonical shielded output")
+		}
+		if len(nonce) != 0 && !bytes.Equal(output.Nonce, nonce) {
+			return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy nonce does not match canonical shielded output")
+		}
+		return tx, blockHash, blockNumber, output, nil
+	}
+	return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy commitment %s is not present in canonical shielded transaction %s", commitment.Hex(), txHash.Hex())
 }
 
 func (s *Ethereum) privacyFeePayment(paymentHash common.Hash) (*types.Transaction, common.Hash, uint64, error) {
@@ -431,10 +488,14 @@ func (s *Ethereum) spendPrivacyNullifier(nullifier common.Hash, proofHash common
 	if len(encryptedSpendData) > privacyMaxSpendPayloadBytes {
 		return privacyNullifierInfo{}, fmt.Errorf("encrypted spend payload exceeds %d bytes", privacyMaxSpendPayloadBytes)
 	}
+	_, blockNumber, canonicalSpendData, err := s.privacyShieldedSpendTx(nullifier, proofHash, encryptedSpendData)
+	if err != nil {
+		return privacyNullifierInfo{}, err
+	}
 	info := privacyNullifierInfo{
 		ProofHash:          proofHash,
-		EncryptedSpendData: append([]byte(nil), encryptedSpendData...),
-		SpentHeight:        s.privacyHeadNumber(),
+		EncryptedSpendData: append([]byte(nil), canonicalSpendData...),
+		SpentHeight:        blockNumber,
 	}
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -461,6 +522,49 @@ func (s *Ethereum) spendPrivacyNullifier(nullifier common.Hash, proofHash common
 	}
 	s.persistPrivacyNullifiersLocked()
 	return info, nil
+}
+
+func (s *Ethereum) privacyShieldedSpendTx(nullifier common.Hash, txHash common.Hash, encryptedSpendData []byte) (*types.Transaction, uint64, []byte, error) {
+	if s.blockchain == nil {
+		return nil, 0, nil, fmt.Errorf("blockchain is not available")
+	}
+	if s.chainDb == nil {
+		return nil, 0, nil, fmt.Errorf("chain database is not available")
+	}
+	if txHash == (common.Hash{}) {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction hash cannot be zero")
+	}
+	tx, blockHash, blockNumber, _ := rawdb.ReadCanonicalTransaction(s.chainDb, txHash)
+	if tx == nil {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction %s not found", txHash.Hex())
+	}
+	block := s.blockchain.GetBlockByHash(blockHash)
+	if block == nil || block.NumberU64() != blockNumber {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction is not canonical")
+	}
+	if to := tx.To(); to == nil || *to != params.ShieldedPoolAddress {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction must target %s", params.ShieldedPoolAddress.Hex())
+	}
+	envelope, ok, err := core.DecodeShieldedTransaction(tx.Data())
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction has malformed envelope: %w", err)
+	}
+	if !ok {
+		return nil, 0, nil, fmt.Errorf("privacy shielded spend transaction is missing TKMSHIELD1 envelope")
+	}
+	for _, spend := range envelope.Spends {
+		if spend.Nullifier != nullifier {
+			continue
+		}
+		if len(spend.EncryptedSpendData) > privacyMaxSpendPayloadBytes {
+			return nil, 0, nil, fmt.Errorf("canonical encrypted spend payload exceeds %d bytes", privacyMaxSpendPayloadBytes)
+		}
+		if len(encryptedSpendData) != 0 && !bytes.Equal(spend.EncryptedSpendData, encryptedSpendData) {
+			return nil, 0, nil, fmt.Errorf("encrypted spend payload does not match canonical shielded spend")
+		}
+		return tx, blockNumber, append([]byte(nil), spend.EncryptedSpendData...), nil
+	}
+	return nil, 0, nil, fmt.Errorf("privacy nullifier %s is not present in canonical shielded transaction %s", nullifier.Hex(), txHash.Hex())
 }
 
 func (s *Ethereum) getPrivacyActivation(address common.Address) (privacyActivationInfo, bool) {
