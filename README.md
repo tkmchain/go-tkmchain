@@ -381,7 +381,7 @@ Public apps:
 
 ### Phone Hardfork
 
-Phone write operations are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1786341600` (`2026-08-10T06:00:00Z`). Before activation, read-only helpers such as status, price, bucket listing, signing-hash, and WebRTC configuration calls are available, but state-changing phone calls are rejected.
+Phone write operations are gated by the `PhoneTime` hardfork. On TKMChain mainnet (`chainId 8979`), `PhoneTime` is `1784709000` (`2026-07-22T08:30:00Z`) and is already active on current mainnet heads. Before activation, read-only helpers such as status, price, bucket listing, signing-hash, and WebRTC configuration calls are available, but state-changing phone calls are rejected.
 
 Check activation:
 

@@ -39,8 +39,12 @@ var (
 func newUint64(val uint64) *uint64 { return &val }
 
 const (
-	// MainnetHardforkTime is 2026-08-10 06:00:00 UTC.
-	MainnetHardforkTime uint64 = 1786341600
+	// MainnetKyotoTime is 2026-07-15 11:31:59 UTC.
+	MainnetKyotoTime uint64 = 1784115119
+	// MainnetPhoneTime is 2026-07-22 08:30:00 UTC.
+	MainnetPhoneTime uint64 = 1784709000
+	// MainnetPrivacyQuantumTime is 2026-08-10 06:00:00 UTC.
+	MainnetPrivacyQuantumTime uint64 = 1786341600
 )
 
 // RandomXConfig is the consensus engine configs for RandomX proof-of-work based sealing.
@@ -82,11 +86,11 @@ var RandomXChainConfig = &ChainConfig{
 	BPO5Time:                     nil,
 	AmsterdamTime:                nil,
 	UBTTime:                      nil,
-	EDATime:                      newUint64(MainnetHardforkTime),
-	KyotoTime:                    newUint64(MainnetHardforkTime),
-	PhoneTime:                    newUint64(MainnetHardforkTime),
-	PrivacyCommitmentTime:        newUint64(MainnetHardforkTime),
-	QuantumResistantTime:         newUint64(MainnetHardforkTime),
+	EDATime:                      newUint64(0),
+	KyotoTime:                    newUint64(MainnetKyotoTime),
+	PhoneTime:                    newUint64(MainnetPhoneTime),
+	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
+	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
@@ -284,11 +288,11 @@ var MainnetChainConfig = &ChainConfig{
 	BPO5Time:                     nil,
 	AmsterdamTime:                nil,
 	UBTTime:                      nil,
-	EDATime:                      newUint64(MainnetHardforkTime),
-	KyotoTime:                    newUint64(MainnetHardforkTime),
-	PhoneTime:                    newUint64(MainnetHardforkTime),
-	PrivacyCommitmentTime:        newUint64(MainnetHardforkTime),
-	QuantumResistantTime:         newUint64(MainnetHardforkTime),
+	EDATime:                      newUint64(0),
+	KyotoTime:                    newUint64(MainnetKyotoTime),
+	PhoneTime:                    newUint64(MainnetPhoneTime),
+	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
+	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),

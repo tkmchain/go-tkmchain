@@ -76,7 +76,7 @@ func (at *authTest) Run(t *testing.T) {
 		t.Fatalf("method was silent but did not return expected value: %q", x)
 	}
 
-	err = cl.CallContext(ctx, &x, "eth_helloWorld")
+	err = cl.CallContext(ctx, &x, "tkm_helloWorld")
 	if at.expectCall2Fail {
 		if err == nil {
 			t.Fatal("expected call 2 to fail")
@@ -87,7 +87,7 @@ func (at *authTest) Run(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to call rpc endpoint: %v", err)
 	}
-	if x != "hello eth" {
+	if x != "hello tkm" {
 		t.Fatalf("method was silent but did not return expected value: %q", x)
 	}
 }
@@ -129,9 +129,9 @@ func TestAuthEndpoints(t *testing.T) {
 			Authenticated: true,
 		},
 		{
-			Namespace:     "eth",
+			Namespace:     "tkm",
 			Version:       "1.0",
-			Service:       helloRPC("hello eth"),
+			Service:       helloRPC("hello tkm"),
 			Public:        true,
 			Authenticated: true,
 		},
@@ -156,9 +156,8 @@ func TestAuthEndpoints(t *testing.T) {
 	}
 	badAuth := NewJWTAuth(otherSecret)
 
-	notTooLong := time.Second * 57
-	tooLong := time.Second * 60
-	requestDelay := time.Second
+	notTooLong := jwtExpiryTimeout - 5*time.Second
+	tooLong := jwtExpiryTimeout + 5*time.Second
 
 	testCases := []authTest{
 		// Auth works
@@ -173,12 +172,11 @@ func TestAuthEndpoints(t *testing.T) {
 		{name: "ws none", endpoint: node.WSAuthEndpoint(), prov: noneAuth(secret), expectDialFail: true},
 		{name: "http none", endpoint: node.HTTPAuthEndpoint(), prov: noneAuth(secret), expectCall1Fail: true},
 
-		// claims of 5 seconds or more, older or newer, are not allowed
+		// Claims outside the allowed clock-skew window are rejected.
 		{name: "ws too old", endpoint: node.WSAuthEndpoint(), prov: offsetTimeAuth(secret, -tooLong), expectDialFail: true},
 		{name: "http too old", endpoint: node.HTTPAuthEndpoint(), prov: offsetTimeAuth(secret, -tooLong), expectCall1Fail: true},
-		// note: for it to be too long we need to add a delay, so that once we receive the request, the difference has not dipped below the "tooLong"
-		{name: "ws too new", endpoint: node.WSAuthEndpoint(), prov: offsetTimeAuth(secret, tooLong+requestDelay), expectDialFail: true},
-		{name: "http too new", endpoint: node.HTTPAuthEndpoint(), prov: offsetTimeAuth(secret, tooLong+requestDelay), expectCall1Fail: true},
+		{name: "ws too new", endpoint: node.WSAuthEndpoint(), prov: offsetTimeAuth(secret, tooLong), expectDialFail: true},
+		{name: "http too new", endpoint: node.HTTPAuthEndpoint(), prov: offsetTimeAuth(secret, tooLong), expectCall1Fail: true},
 
 		// Try offset the time, but stay just within bounds
 		{name: "ws old", endpoint: node.WSAuthEndpoint(), prov: offsetTimeAuth(secret, -notTooLong)},
@@ -189,7 +187,7 @@ func TestAuthEndpoints(t *testing.T) {
 		// ws only authenticates on initial dial, then continues communication
 		{name: "ws single auth", endpoint: node.WSAuthEndpoint(), prov: changingAuth(goodAuth, badAuth)},
 		{name: "http call fail auth", endpoint: node.HTTPAuthEndpoint(), prov: changingAuth(goodAuth, badAuth), expectCall2Fail: true},
-		{name: "http call fail time", endpoint: node.HTTPAuthEndpoint(), prov: changingAuth(goodAuth, offsetTimeAuth(secret, tooLong+requestDelay)), expectCall2Fail: true},
+		{name: "http call fail time", endpoint: node.HTTPAuthEndpoint(), prov: changingAuth(goodAuth, offsetTimeAuth(secret, tooLong)), expectCall2Fail: true},
 	}
 
 	for _, testCase := range testCases {

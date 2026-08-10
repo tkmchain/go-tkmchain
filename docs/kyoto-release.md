@@ -4,7 +4,7 @@ Release: `gtkm v1.17.6-kyoto`
 Date: 2026-07-15
 Network: TKMChain RandomX mainnet, chain ID `8979`
 Fork name: `Kyoto`
-Fork timestamp: `1786341600` (`2026-08-10T06:00:00Z`)
+Fork timestamp: `1784115119` (`2026-07-15T11:31:59Z`)
 
 ## Summary
 
@@ -42,7 +42,7 @@ Pool software should distribute only the miner share. The Main King and Rotating
 ## TKM Phone Service
 
 - Added native `tkmphone` RPC and web3 extension support for encrypted number-based messaging and call sessions.
-- Added `PhoneTime` hardfork activation at timestamp `1786341600` (`2026-08-10T06:00:00Z`). TKM Phone write RPCs are rejected before this timestamp so historical state is not reinterpreted by phone registration, bucket, device-key, message, call, contact, recovery, report, or propagation rules. Added `tkmphone_status` for activation inspection.
+- Added `PhoneTime` hardfork activation at timestamp `1784709000` (`2026-07-22T08:30:00Z`). TKM Phone write RPCs are rejected before this timestamp so historical state is not reinterpreted by phone registration, bucket, device-key, message, call, contact, recovery, report, or propagation rules. Added `tkmphone_status` for activation inspection.
 - Added a permanent post-PhoneTime difficulty rule: deterministic integer adjustment, 25% per-block rise/drop caps, skipped-interval reductions for long stalls, and an EDA floor above genesis difficulty so the chain can recover without falling back to difficulty `3`.
 - Main King bucket generation is now transaction-based. `tkmphone_generateBuckets(seed, creationTx, signature)` requires a non-zero canonical creation transaction hash, verifies that hash is signed by Main King, records it as `creationTx` on every generated bucket, and rejects missing or stale creation hashes. Operator bucket keys require a `25000 TKM` payment record and a Main King signed operator grant. The `25000 TKM` bucket price is 5 numbers at `5000 TKM` each. When attached to a running chain, the service verifies the payment transaction is canonical, sent by the operator, sent to Main King, and exactly `25000 TKM`. Main King generates phone numbers only as signed buckets. Each bucket contains 5 numbers, only 5 unsold buckets can exist at a time, and a new batch of 5 can be generated only after all current buckets are bought. Each accepted operator key consumes one available bucket and receives those 5 active numbers.
 - Main King custody is intentionally kept out of the public phone website. Hosted marketplaces display generated buckets and pending operator payment data only. Main King creates buckets and signs operator approvals from a private `gtkm` node; websites reconcile approvals through `tkmphone_listOperators` and let operators open assigned buckets with their own wallet signatures.
