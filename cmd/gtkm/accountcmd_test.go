@@ -84,9 +84,10 @@ Your new account is locked with a password. Please give a password. Do not forge
 Password: {{.InputLine "foobar"}}
 Repeat password: {{.InputLine "foobar"}}
 
-Your new key was generated
+Your new post-quantum key was generated
 `)
 	geth.ExpectRegexp(`
+Key algorithm:               ML-DSA-87
 Public address of the key:   0x[0-9a-fA-F]{40}
 Path of the secret key file: .*UTC--.+--[0-9a-f]{40}
 

@@ -101,7 +101,7 @@ Print a short summary of all accounts`,
 			},
 			{
 				Name:   "new",
-				Usage:  "Create a new account",
+				Usage:  "Create a new post-quantum account",
 				Action: accountCreate,
 				Flags: []cli.Flag{
 					utils.DataDirFlag,
@@ -112,7 +112,7 @@ Print a short summary of all accounts`,
 				Description: `
     gtkm account new
 
-Creates a new account and prints the address.
+Creates a new ML-DSA-87 post-quantum account and prints the address.
 
 The account is saved in encrypted format, you are prompted for a password.
 
@@ -239,7 +239,7 @@ func readPasswordFromFile(path string) (string, bool) {
 	return strings.TrimRight(lines[0], "\r"), true
 }
 
-// accountCreate creates a new account into the keystore defined by the CLI flags.
+// accountCreate creates a new post-quantum account into the keystore defined by the CLI flags.
 func accountCreate(ctx *cli.Context) error {
 	cfg := loadBaseConfig(ctx)
 	keydir, isEphemeral, err := cfg.Node.GetKeyStoreDir()
@@ -260,12 +260,14 @@ func accountCreate(ctx *cli.Context) error {
 	if !ok {
 		password = utils.GetPassPhrase("Your new account is locked with a password. Please give a password. Do not forget this password.", true)
 	}
-	account, err := keystore.StoreKey(keydir, password, scryptN, scryptP)
+	ks := keystore.NewKeyStore(keydir, scryptN, scryptP)
+	account, err := ks.NewPQAccount(password)
 
 	if err != nil {
 		utils.Fatalf("Failed to create account: %v", err)
 	}
-	fmt.Printf("\nYour new key was generated\n\n")
+	fmt.Printf("\nYour new post-quantum key was generated\n\n")
+	fmt.Printf("Key algorithm:               ML-DSA-87\n")
 	fmt.Printf("Public address of the key:   %s\n", account.Address.Hex())
 	fmt.Printf("Path of the secret key file: %s\n\n", account.URL.Path)
 	fmt.Printf("- You can share your public address with anyone. Others need it to interact with you.\n")
