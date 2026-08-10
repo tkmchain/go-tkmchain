@@ -220,7 +220,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	switch peer.version {
 	case ETH69:
 		handlers = eth69
-	case ETH70:
+	case ETH70, ETH71:
 		handlers = eth70
 	default:
 		return fmt.Errorf("unknown eth protocol version: %v", peer.version)
