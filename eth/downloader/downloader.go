@@ -18,9 +18,9 @@
 package downloader
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-        "encoding/json"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -163,18 +163,18 @@ type Downloader struct {
 	receiptFetchHook func([]*types.Header) // Method to call upon starting a receipt fetch
 	chainInsertHook  func([]*fetchResult)  // Method to call upon inserting a chain of blocks (possibly in multiple invocations)
 
-        banList    map[string]time.Time  // Peer ID -> ban expiration time
-        banLock    sync.RWMutex          // Lock for ban list
-        banDuration time.Duration        // How long to ban (default: 24h)
-        maxBans    int                   // Max bans to track (default: 1000)
+	banList     map[string]time.Time // Peer ID -> ban expiration time
+	banLock     sync.RWMutex         // Lock for ban list
+	banDuration time.Duration        // How long to ban (default: 24h)
+	maxBans     int                  // Max bans to track (default: 1000)
 
-    banStats    struct {
-        totalBans       int64
-        bansByReason    map[string]int64
-        lastBanTime     time.Time
-        mostRecentBans  []string  // Keep last 10 banned peers
-    }
-       statsLock   sync.RWMutex
+	banStats struct {
+		totalBans      int64
+		bansByReason   map[string]int64
+		lastBanTime    time.Time
+		mostRecentBans []string // Keep last 10 banned peers
+	}
+	statsLock sync.RWMutex
 }
 
 // LightChain encapsulates functions required to synchronise a light chain.
@@ -263,16 +263,16 @@ func New(mode SyncMode, checkpoint uint64, stateDb ethdb.Database, mux *event.Ty
 			processed: rawdb.ReadFastTrieProgress(stateDb),
 		},
 		trackStateReq: make(chan *stateReq),
-                banList:    make(map[string]time.Time),
-                banDuration: 24 * time.Hour,  // Ban for 24 hours
-                maxBans:    1000,
+		banList:       make(map[string]time.Time),
+		banDuration:   24 * time.Hour, // Ban for 24 hours
+		maxBans:       1000,
 	}
 	if chain != nil {
 		dl.syncMode = newSyncModer(mode, chain, stateDb)
 	}
 	go dl.qosTuner()
 	go dl.stateFetcher()
-        go dl.cleanupBans()
+	go dl.cleanupBans()
 	return dl
 }
 
@@ -352,47 +352,48 @@ func (d *Downloader) banPeer(id string, duration time.Duration) {
 
 // Get ban statistics
 func (d *Downloader) GetBanStats() map[string]interface{} {
-    d.banLock.RLock()
-    defer d.banLock.RUnlock()
-    
-    d.statsLock.RLock()
-    defer d.statsLock.RUnlock()
-    
-    return map[string]interface{}{
-        "totalBans":      d.banStats.totalBans,
-        "activeBans":     len(d.banList),
-        "lastBanTime":    d.banStats.lastBanTime,
-        "recentBans":     d.banStats.mostRecentBans,
-        "bansByReason":   d.banStats.bansByReason,
-        "bannedPeers":    d.getBannedPeersLocked(),
-    }
+	d.banLock.RLock()
+	defer d.banLock.RUnlock()
+
+	d.statsLock.RLock()
+	defer d.statsLock.RUnlock()
+
+	return map[string]interface{}{
+		"totalBans":    d.banStats.totalBans,
+		"activeBans":   len(d.banList),
+		"lastBanTime":  d.banStats.lastBanTime,
+		"recentBans":   d.banStats.mostRecentBans,
+		"bansByReason": d.banStats.bansByReason,
+		"bannedPeers":  d.getBannedPeersLocked(),
+	}
 }
 
 func (d *Downloader) getBannedPeersLocked() []string {
-    banned := make([]string, 0, len(d.banList))
-    now := time.Now()
-    for id, expiry := range d.banList {
-        if now.Before(expiry) {
-            banned = append(banned, id)
-        }
-    }
-    return banned
+	banned := make([]string, 0, len(d.banList))
+	now := time.Now()
+	for id, expiry := range d.banList {
+		if now.Before(expiry) {
+			banned = append(banned, id)
+		}
+	}
+	return banned
 }
+
 // cleanupBans removes expired bans periodically
 func (d *Downloader) cleanupBans() {
-    ticker := time.NewTicker(10 * time.Minute)
-    defer ticker.Stop()
-    
-    for {
-        select {
-        case <-d.quitCh:
-            return
-        case <-ticker.C:
-            d.banLock.Lock()
-            d.cleanupBansLocked()
-            d.banLock.Unlock()
-        }
-    }
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-d.quitCh:
+			return
+		case <-ticker.C:
+			d.banLock.Lock()
+			d.cleanupBansLocked()
+			d.banLock.Unlock()
+		}
+	}
 }
 
 // cleanupBansLocked removes expired bans
@@ -408,18 +409,19 @@ func (d *Downloader) cleanupBansLocked() {
 
 // getBannedPeers returns list of currently banned peers
 func (d *Downloader) getBannedPeers() []string {
-    d.banLock.RLock()
-    defer d.banLock.RUnlock()
-    
-    banned := make([]string, 0, len(d.banList))
-    now := time.Now()
-    for id, expiry := range d.banList {
-        if now.Before(expiry) {
-            banned = append(banned, id)
-        }
-    }
-    return banned
+	d.banLock.RLock()
+	defer d.banLock.RUnlock()
+
+	banned := make([]string, 0, len(d.banList))
+	now := time.Now()
+	for id, expiry := range d.banList {
+		if now.Before(expiry) {
+			banned = append(banned, id)
+		}
+	}
+	return banned
 }
+
 // ConfigSyncMode returns the configured sync mode, adjusted for local chain state.
 func (d *Downloader) ConfigSyncMode() SyncMode {
 	if d.syncMode == nil {
@@ -682,7 +684,7 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	case errTimeout, errBadPeer, errStallingPeer, errUnsyncedPeer,
 		errEmptyHeaderSet, errPeersUnavailable, errTooOld,
 		errInvalidAncestor, errInvalidChain:
-		
+
 		// PERMANENTLY BAN for invalid chain - log at debug level to reduce noise
 		if err == errInvalidChain || err == errInvalidAncestor {
 			// Only log the ban at warn level once
@@ -1378,9 +1380,9 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 			headerTimeoutMeter.Mark(1)
 			d.dropPeer(p.id)
 
-                        // BAN the peer for repeated timeouts
-                        d.banPeer(p.id, 365*24*time.Hour)
-		        d.dropPeer(p.id)
+			// BAN the peer for repeated timeouts
+			d.banPeer(p.id, 365*24*time.Hour)
+			d.dropPeer(p.id)
 			// Finish the sync gracefully instead of dumping the gathered data though
 			for _, ch := range []chan bool{d.bodyWakeCh, d.receiptWakeCh} {
 				select {
@@ -1399,70 +1401,71 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 
 // Save bans to database
 func (d *Downloader) saveBans() {
-    if d.stateDB == nil {
-        return
-    }
-    
-    d.banLock.RLock()
-    defer d.banLock.RUnlock()
-    
-    // Serialize ban list to JSON
-    banData := make(map[string]int64)
-    now := time.Now()
-    for id, expiry := range d.banList {
-        if now.Before(expiry) {
-            banData[id] = expiry.Unix()
-        }
-    }
-    
-    if len(banData) == 0 {
-        return
-    }
-    
-    data, err := json.Marshal(banData)
-    if err != nil {
-        log.Error("Failed to marshal ban data", "err", err)
-        return
-    }
-    
-    // Store in database using a custom key
-    key := []byte("downloader/bans")
-    if err := d.stateDB.Put(key, data); err != nil {
-        log.Error("Failed to save bans", "err", err)
-    }
+	if d.stateDB == nil {
+		return
+	}
+
+	d.banLock.RLock()
+	defer d.banLock.RUnlock()
+
+	// Serialize ban list to JSON
+	banData := make(map[string]int64)
+	now := time.Now()
+	for id, expiry := range d.banList {
+		if now.Before(expiry) {
+			banData[id] = expiry.Unix()
+		}
+	}
+
+	if len(banData) == 0 {
+		return
+	}
+
+	data, err := json.Marshal(banData)
+	if err != nil {
+		log.Error("Failed to marshal ban data", "err", err)
+		return
+	}
+
+	// Store in database using a custom key
+	key := []byte("downloader/bans")
+	if err := d.stateDB.Put(key, data); err != nil {
+		log.Error("Failed to save bans", "err", err)
+	}
 }
 
 // Load bans from database
 func (d *Downloader) loadBans() {
-    if d.stateDB == nil {
-        return
-    }
-    
-    key := []byte("downloader/bans")
-    data, err := d.stateDB.Get(key)
-    if err != nil {
-        // No bans stored yet
-        return
-    }
-    
-    var banData map[string]int64
-    if err := json.Unmarshal(data, &banData); err != nil {
-        log.Error("Failed to unmarshal ban data", "err", err)
-        return
-    }
-    
-    d.banLock.Lock()
-    defer d.banLock.Unlock()
-    
-    now := time.Now()
-    for id, expiryUnix := range banData {
-        expiry := time.Unix(expiryUnix, 0)
-        if now.Before(expiry) {
-            d.banList[id] = expiry
-        }
-    }
-    log.Info("Loaded banned peers", "count", len(d.banList))
+	if d.stateDB == nil {
+		return
+	}
+
+	key := []byte("downloader/bans")
+	data, err := d.stateDB.Get(key)
+	if err != nil {
+		// No bans stored yet
+		return
+	}
+
+	var banData map[string]int64
+	if err := json.Unmarshal(data, &banData); err != nil {
+		log.Error("Failed to unmarshal ban data", "err", err)
+		return
+	}
+
+	d.banLock.Lock()
+	defer d.banLock.Unlock()
+
+	now := time.Now()
+	for id, expiryUnix := range banData {
+		expiry := time.Unix(expiryUnix, 0)
+		if now.Before(expiry) {
+			d.banList[id] = expiry
+		}
+	}
+	log.Info("Loaded banned peers", "count", len(d.banList))
 }
+
 // fillHeaderSkeleton concurrently retrieves headers from all our available peers
 // and maps them to the provided skeleton header chain.
 //
@@ -1718,12 +1721,13 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 					fetchHook(request.Headers)
 				}
 				if err := fetch(peer, request); err != nil {
-					// Although we could try and make an attempt to fix this, this error really
-					// means that we've double allocated a fetch task to a peer. If that is the
-					// case, the internal state of the downloader and the queue is very wrong so
-					// better hard crash and note the error instead of silently accumulating into
-					// a much bigger issue.
-					panic(fmt.Sprintf("%v: %s fetch assignment failed", peer, kind))
+					cancel(request)
+					setIdle(peer, 0)
+					peer.log.Warn("Failed to assign fetch request", "type", kind, "err", err)
+					if d.dropPeer != nil {
+						d.dropPeer(peer.id)
+					}
+					return fmt.Errorf("%s fetch assignment failed for peer %s: %w", kind, peer.id, err)
 				}
 				running = true
 			}
