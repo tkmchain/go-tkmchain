@@ -737,7 +737,11 @@ func requiresStrictSealFields(number uint64) bool {
 	return number >= strictRandomXSealFieldsFromBlock
 }
 
-const kyotoStoredMixDigestCompatUntil = uint64(8192)
+const (
+	kyotoStoredMixDigestCompatUntil              = uint64(8192)
+	privacyQuantumStoredMixDigestCompatFromBlock = uint64(20142)
+	privacyQuantumStoredMixDigestCompatUntil     = uint64(20145)
+)
 
 func (rx *RandomX) allowStoredMixDigestProof(header *types.Header, kyoto bool) bool {
 	if !kyoto {
@@ -746,7 +750,15 @@ func (rx *RandomX) allowStoredMixDigestProof(header *types.Header, kyoto bool) b
 	if header == nil || header.Number == nil {
 		return false
 	}
-	return header.Number.Uint64() <= kyotoStoredMixDigestCompatUntil
+	number := header.Number.Uint64()
+	if number <= kyotoStoredMixDigestCompatUntil {
+		return true
+	}
+	if number < privacyQuantumStoredMixDigestCompatFromBlock || number > privacyQuantumStoredMixDigestCompatUntil {
+		return false
+	}
+	checkpoint, ok := params.GetCheckpoint(number)
+	return ok && checkpoint == header.Hash()
 }
 
 func (rx *RandomX) validStoredMixDigest(header *types.Header, target *big.Int) bool {

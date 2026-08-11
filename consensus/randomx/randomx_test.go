@@ -122,6 +122,70 @@ func TestStoredMixDigestCompatibilityWindow(t *testing.T) {
 	}
 }
 
+func TestPostPrivacyStoredMixDigestCompatibilityIsCheckpointBound(t *testing.T) {
+	params.SetActiveCheckpointGenesis(params.MainnetGenesisHash)
+
+	rx := NewFaker()
+	header := canonicalMainnetBlock20142Header()
+	if hash := header.Hash(); hash != common.HexToHash("0x8beb1ff01cda9948a3c5a1dccc9b09c7d8fab67199a99efcffeed3e1d471267b") {
+		t.Fatalf("canonical block 20142 hash mismatch: have %s", hash)
+	}
+	target := new(big.Int).Div(maxUint256, header.Difficulty)
+	if !rx.validStoredMixDigest(header, target) {
+		t.Fatal("canonical block 20142 stored mix digest should be below target")
+	}
+	if !rx.allowStoredMixDigestProof(header, true) {
+		t.Fatal("canonical block 20142 should be accepted by checkpointed stored-mix compatibility")
+	}
+
+	mutated := types.CopyHeader(header)
+	mutated.Time++
+	if rx.allowStoredMixDigestProof(mutated, true) {
+		t.Fatal("mutated block 20142 must not use stored-mix compatibility")
+	}
+
+	afterRepair := types.CopyHeader(header)
+	afterRepair.Number = big.NewInt(int64(privacyQuantumStoredMixDigestCompatUntil + 1))
+	if rx.allowStoredMixDigestProof(afterRepair, true) {
+		t.Fatal("stored-mix compatibility must end after the repair window")
+	}
+}
+
+func TestVerifySealAcceptsCanonicalBlock20142StoredMixDigest(t *testing.T) {
+	params.SetActiveCheckpointGenesis(params.MainnetGenesisHash)
+
+	config := *params.RandomXChainConfig
+	rx, err := New(DefaultConfig(), 1, config.MainKingAddress, nil)
+	if err != nil {
+		t.Fatalf("new RandomX failed: %v", err)
+	}
+	defer rx.Close()
+
+	header := canonicalMainnetBlock20142Header()
+	if err := rx.VerifySeal(verifySealTestChain{config: &config}, header); err != nil {
+		t.Fatalf("canonical block 20142 should pass stored-mix compatibility: %v", err)
+	}
+}
+
+func canonicalMainnetBlock20142Header() *types.Header {
+	return &types.Header{
+		ParentHash:  common.HexToHash("0xdb737d2bb1f6bbd13683185d32a4808d27c6c3f6e533da1ceeb85d440bb77c47"),
+		UncleHash:   common.HexToHash("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+		Coinbase:    common.HexToAddress("0x1faa547896a1f89192b1a42a2d5d5bb60b4e0a7d"),
+		Root:        common.HexToHash("0x6fe0d9bcbc1c05523e1e86c5f84a33f0e51fc83c22e5bc4d56481d2eac12934c"),
+		TxHash:      common.HexToHash("0x8eba749e9651899e0f4f9fc9fddcf0e382e92d55b16e812382125e9d627b78ce"),
+		ReceiptHash: common.HexToHash("0xbbbe73c6307e298ca23c33f1d9f72b414bf1ad338bc49a665b16feb19c659f9d"),
+		Difficulty:  big.NewInt(0x51e),
+		Number:      big.NewInt(20142),
+		GasLimit:    0x8000000,
+		Time:        0x6a7aba2e,
+		Extra:       common.FromHex("0xd8830112008467746b6d88676f312e32362e35856c696e7578"),
+		MixDigest:   common.HexToHash("0x001cbdb9cd926076bb1de13409cbf5f3aa0f7e2b916a9ba8c51fd2e40ca5d244"),
+		Nonce:       types.BlockNonce{0xfa, 0x44, 0x3c, 0x2c, 0x0e, 0x00, 0xc5, 0x70},
+		BaseFee:     big.NewInt(7),
+	}
+}
+
 func TestEpochForBlockStartsAtRandomXTxActivation(t *testing.T) {
 	rx := &RandomX{config: DefaultConfig()}
 	config := *params.RandomXChainConfig
