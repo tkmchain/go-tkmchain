@@ -582,6 +582,30 @@ func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHe
 
 	if err := rx.VerifySeal(nil, header); err != nil {
 		atomic.AddUint64(&rx.sharesInvalid, 1)
+
+		// Diagnostic: attempt to compute and log the raw result and target to
+		// help debugging external miner submissions that fail validation.
+		// Best-effort only — don't fail the submission flow if diagnostics fail.
+		epoch := rx.epochForBlock(nil, header.Number.Uint64())
+		if uerr := rx.updateCacheForEpoch(epoch); uerr != nil {
+			log.Warn("Failed to update RandomX cache for diagnostics", "err", uerr)
+		} else {
+			if vm, verr := rx.getVM(); verr == nil {
+				defer vm.Close()
+				result, sealHash := rx.randomXHash(header, vm)
+				target := new(big.Int).Div(maxUint256, header.Difficulty)
+				log.Warn("Invalid RandomX proof details",
+					"nonce", nonce,
+					"result", result.Text(16),
+					"target", target.Text(16),
+					"sealHash", sealHash.Hex(),
+					"mixDigest", header.MixDigest.Hex(),
+				)
+			} else {
+				log.Warn("Failed to create RandomX VM for diagnostics", "err", verr)
+			}
+		}
+
 		return false, err
 	}
 
@@ -667,6 +691,23 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 			log.Warn("Accepted legacy RandomX proof variant", "number", header.Number.Uint64(), "hash", header.Hash())
 			return nil
 		}
+	}
+
+	// Diagnostic: compute and log the raw RandomX result and target to aid debugging
+	// of verification failures (nonce/difficulty/seed mismatches). Best-effort only.
+	if vm != nil {
+		if result, sealHash := rx.randomXHash(header, vm); result != nil && header.Difficulty != nil {
+			target := new(big.Int).Div(maxUint256, header.Difficulty)
+			log.Warn("Invalid RandomX proof details",
+				"number", header.Number.Uint64(),
+				"result", result.Text(16),
+				"target", target.Text(16),
+				"sealHash", sealHash.Hex(),
+				"mixDigest", header.MixDigest.Hex(),
+			)
+		}
+	} else {
+		log.Warn("Invalid RandomX proof: VM unavailable for diagnostics", "number", header.Number.Uint64())
 	}
 
 	return fmt.Errorf("invalid proof: result > target")

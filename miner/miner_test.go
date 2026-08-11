@@ -18,6 +18,7 @@
 package miner
 
 import (
+	"crypto/ecdsa"
 	"math/big"
 	"sync"
 	"testing"
@@ -40,6 +41,12 @@ import (
 type mockBackend struct {
 	bc     *core.BlockChain
 	txPool *txpool.TxPool
+}
+
+type acceptingShieldedVerifier struct{}
+
+func (acceptingShieldedVerifier) VerifyShieldedSpend(core.ShieldedProofContext, []byte) error {
+	return nil
 }
 
 var minerTestTxPoolConfig = func() legacypool.Config {
@@ -193,6 +200,101 @@ func TestMakeCurrentUsesForkSigner(t *testing.T) {
 	if sender != from {
 		t.Fatalf("sender = %v, want %v", sender, from)
 	}
+}
+
+func TestCommitTransactionAppliesShieldedState(t *testing.T) {
+	core.SetShieldedProofVerifier(acceptingShieldedVerifier{})
+	defer core.SetShieldedProofVerifier(nil)
+
+	config := *params.TestChainConfig
+	privacyTime := uint64(0)
+	config.PrivacyCommitmentTime = &privacyTime
+	config.QuantumResistantTime = nil
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	db := rawdb.NewMemoryDatabase()
+	genesis := &core.Genesis{
+		Config:    &config,
+		GasLimit:  11_500_000,
+		BaseFee:   big.NewInt(params.InitialBaseFee),
+		ExtraData: append(append(make([]byte, 32), from[:]...), make([]byte, crypto.SignatureLength)...),
+		Alloc: map[common.Address]types.Account{
+			from: {Balance: new(big.Int).Mul(big.NewInt(1000), big.NewInt(params.Ether))},
+		},
+	}
+	engine := clique.New(&params.CliqueConfig{Period: 15, Epoch: 30000}, db)
+	bc, err := core.NewBlockChain(db, genesis, engine, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bc.Stop()
+
+	parent := bc.Genesis()
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     big.NewInt(1),
+		Difficulty: big.NewInt(1),
+		GasLimit:   11_500_000,
+		BaseFee:    big.NewInt(params.InitialBaseFee),
+		Time:       privacyTime,
+	}
+	w := &worker{
+		chain:  bc,
+		config: &config,
+	}
+	if err := w.makeCurrent(parent, header); err != nil {
+		t.Fatal(err)
+	}
+	w.current.gasPool = core.NewGasPool(header.GasLimit)
+
+	envelope := testMinerShieldedEnvelope()
+	tx := testMinerShieldedDepositTx(t, key, w.current.signer, envelope)
+	if _, err := w.commitTransaction(tx, from, make(map[common.Hash]struct{})); err != nil {
+		t.Fatalf("commitTransaction failed: %v", err)
+	}
+	if _, ok := core.ShieldedCommitmentPath(w.current.state, envelope.Outputs[0].Commitment); !ok {
+		t.Fatalf("shielded commitment path for %s was not written", envelope.Outputs[0].Commitment)
+	}
+}
+
+func testMinerShieldedEnvelope() *core.ShieldedTransaction {
+	envelope := &core.ShieldedTransaction{
+		Version:           1,
+		BalanceCommitment: common.BigToHash(big.NewInt(10)),
+		BindingSig:        make([]byte, common.HashLength),
+		Spends: []core.ShieldedSpend{{
+			Proof: []byte("test deposit proof"),
+		}},
+	}
+	for i := 0; i < 4; i++ {
+		envelope.Outputs = append(envelope.Outputs, core.ShieldedOutput{
+			Commitment:       common.BigToHash(big.NewInt(int64(100 + i))),
+			PayloadHash:      common.BigToHash(big.NewInt(int64(200 + i))),
+			EncryptedPayload: make([]byte, 32),
+			Nonce:            make([]byte, 12),
+		})
+	}
+	return envelope
+}
+
+func testMinerShieldedDepositTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, envelope *core.ShieldedTransaction) *types.Transaction {
+	t.Helper()
+	data, err := core.EncodeShieldedTransaction(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return types.MustSignNewTx(key, signer, &types.LegacyTx{
+		Nonce:    0,
+		To:       &params.ShieldedPoolAddress,
+		Value:    big.NewInt(7),
+		Gas:      500_000,
+		GasPrice: new(big.Int).Add(big.NewInt(params.InitialBaseFee), big.NewInt(1)),
+		Data:     data,
+	})
 }
 
 func createMiner(t *testing.T) *Miner {

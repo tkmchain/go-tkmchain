@@ -74,6 +74,31 @@ func testShieldedTx(t *testing.T, envelope *ShieldedTransaction, value *big.Int)
 	})
 }
 
+func testShieldedPQTkmTx(t *testing.T, envelope *ShieldedTransaction, algorithm string, publicKey, signature []byte) *types.Transaction {
+	t.Helper()
+	data, err := EncodeShieldedTransaction(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return types.NewTx(&types.PQTkmTx{
+		ChainID:    big.NewInt(8979),
+		To:         &params.ShieldedPoolAddress,
+		Value:      new(big.Int),
+		Gas:        100000,
+		GasFeeCap:  big.NewInt(1),
+		GasTipCap:  big.NewInt(1),
+		Data:       data,
+		Algorithm:  algorithm,
+		PublicKey:  publicKey,
+		Signature:  signature,
+		AccessList: types.AccessList{},
+	})
+}
+
+func markShieldedRootKnown(statedb *state.StateDB, root common.Hash) {
+	statedb.SetState(params.ShieldedPoolAddress, ShieldedMerkleRootSlot(root), common.BigToHash(big.NewInt(1)))
+}
+
 func TestShieldedEnvelopeRoundTrip(t *testing.T) {
 	want := testShieldedEnvelope(t, 1)
 	data, err := EncodeShieldedTransaction(want)
@@ -92,7 +117,7 @@ func TestShieldedEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestShieldedTransactionIntentHashExcludesProofBytes(t *testing.T) {
+func TestShieldedTransactionIntentHashExcludesFinalizedProofFields(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 1)
 	tx := testShieldedTx(t, envelope, new(big.Int))
 	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
@@ -112,6 +137,34 @@ func TestShieldedTransactionIntentHashExcludesProofBytes(t *testing.T) {
 	}
 	if proofChangedIntentHash != intentHash {
 		t.Fatalf("intent hash changed after proof-only update: got %s want %s", proofChangedIntentHash, intentHash)
+	}
+
+	bindingChanged := testShieldedEnvelope(t, 1)
+	bindingChanged.BindingSig = common.BigToHash(big.NewInt(12345)).Bytes()
+	bindingChangedTx := testShieldedTx(t, bindingChanged, new(big.Int))
+	if tx.Hash() == bindingChangedTx.Hash() {
+		t.Fatal("full transaction hash did not change after binding hash change")
+	}
+	bindingChangedIntentHash, err := ShieldedTransactionIntentHash(bindingChangedTx, bindingChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bindingChangedIntentHash != intentHash {
+		t.Fatalf("intent hash changed after binding-only update: got %s want %s", bindingChangedIntentHash, intentHash)
+	}
+
+	unsignedPQ := testShieldedPQTkmTx(t, envelope, "", nil, nil)
+	unsignedPQIntentHash, err := ShieldedTransactionIntentHash(unsignedPQ, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPQ := testShieldedPQTkmTx(t, envelope, "ML-DSA-87", []byte("public-key"), []byte("signature"))
+	signedPQIntentHash, err := ShieldedTransactionIntentHash(signedPQ, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signedPQIntentHash != unsignedPQIntentHash {
+		t.Fatalf("intent hash changed after PQ auth metadata update: got %s want %s", signedPQIntentHash, unsignedPQIntentHash)
 	}
 
 	nullifierChanged := testShieldedEnvelope(t, 1)
@@ -134,6 +187,7 @@ func TestProcessShieldedSpendUsesIntentHashForProofContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	envelope := testShieldedEnvelope(t, 1)
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	tx := testShieldedTx(t, envelope, new(big.Int))
 	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
 	if err != nil {
@@ -159,7 +213,9 @@ func TestProcessShieldedSpendRequiresVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx := testShieldedTx(t, testShieldedEnvelope(t, 1), new(big.Int))
+	envelope := testShieldedEnvelope(t, 1)
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
+	tx := testShieldedTx(t, envelope, new(big.Int))
 	err = processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
 	if !errors.Is(err, ErrInvalidShieldedTx) {
 		t.Fatalf("processShieldedTransaction error = %v, want invalid shielded tx", err)
@@ -327,6 +383,7 @@ func TestProcessShieldedSpendUsesConfiguredGroth16Verifier(t *testing.T) {
 	config := *params.EgyptChainConfig
 	config.ShieldedGroth16VerifyingKey = vkBytes
 	envelope := testShieldedEnvelope(t, 1)
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	envelope.Spends[0].Proof = proofBytes
 	tx := testShieldedTx(t, envelope, new(big.Int))
 	err = processShieldedTransaction(&config, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
@@ -349,6 +406,7 @@ func TestProcessShieldedSpendStoresNullifierAndCommitment(t *testing.T) {
 		t.Fatal(err)
 	}
 	envelope := testShieldedEnvelope(t, 1)
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	tx := testShieldedTx(t, envelope, new(big.Int))
 	err = processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
 	if err != nil {
@@ -362,6 +420,57 @@ func TestProcessShieldedSpendStoresNullifierAndCommitment(t *testing.T) {
 	}
 	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err == nil {
 		t.Fatal("duplicate nullifier accepted")
+	}
+}
+
+func TestProcessShieldedDepositStoresCommitmentAndMerklePath(t *testing.T) {
+	SetShieldedProofVerifier(shieldedVerifierFunc(func(ctx ShieldedProofContext, proof []byte) error {
+		if ctx.Nullifier != (common.Hash{}) {
+			t.Fatalf("deposit nullifier = %s, want zero", ctx.Nullifier)
+		}
+		if ctx.Anchor != (common.Hash{}) {
+			t.Fatalf("deposit anchor = %s, want zero", ctx.Anchor)
+		}
+		if ctx.PublicValue.Cmp(big.NewInt(7)) != 0 {
+			t.Fatalf("deposit public value = %s, want 7", ctx.PublicValue)
+		}
+		if len(proof) == 0 {
+			return ErrInvalidShieldedTx
+		}
+		return nil
+	}))
+	defer SetShieldedProofVerifier(nil)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := testShieldedEnvelope(t, 0)
+	envelope.Spends = append(envelope.Spends, ShieldedSpend{Proof: []byte("deposit-proof")})
+	tx := testShieldedTx(t, envelope, big.NewInt(7))
+	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+		t.Fatal(err)
+	}
+	if got := statedb.GetState(params.ShieldedPoolAddress, shieldedNullifierSlot(common.Hash{})); got != (common.Hash{}) {
+		t.Fatalf("deposit stored zero nullifier = %s", got)
+	}
+	if got := statedb.GetState(params.ShieldedPoolAddress, shieldedCommitmentSlot(envelope.Outputs[0].Commitment)); got != envelope.Outputs[0].PayloadHash {
+		t.Fatalf("commitment state = %s, want %s", got, envelope.Outputs[0].PayloadHash)
+	}
+	witness, ok := ShieldedCommitmentPath(statedb, envelope.Outputs[0].Commitment)
+	if !ok {
+		t.Fatal("commitment path was not stored")
+	}
+	if witness.Index != 0 {
+		t.Fatalf("commitment index = %d, want 0", witness.Index)
+	}
+	if len(witness.Path) != shieldedMerkleDepth || len(witness.PathIndex) != shieldedMerkleDepth {
+		t.Fatalf("path lengths = %d/%d, want %d", len(witness.Path), len(witness.PathIndex), shieldedMerkleDepth)
+	}
+	if !shieldedMerkleRootKnown(statedb, witness.Root) {
+		t.Fatalf("deposit root %s was not stored", witness.Root)
+	}
+	if got := ShieldedMerkleNextIndex(statedb); got != shieldedOutputSlots {
+		t.Fatalf("next shielded index = %d, want %d", got, shieldedOutputSlots)
 	}
 }
 

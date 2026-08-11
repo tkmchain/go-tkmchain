@@ -113,7 +113,7 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		if err != nil {
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
-		if err := processShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
+		if err := ProcessShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
 			return nil, fmt.Errorf("could not apply shielded tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
 		statedb.SetTxContext(tx.Hash(), i)

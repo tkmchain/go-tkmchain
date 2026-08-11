@@ -859,11 +859,15 @@ func (w *worker) updateSnapshot() {
 	w.snapshotState = w.current.state.Copy()
 }
 
-func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address) ([]*types.Log, error) {
+func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address, seenShieldedNullifiers map[common.Hash]struct{}) ([]*types.Log, error) {
 	snap := w.current.state.Snapshot()
 
 	blockContext := core.NewEVMBlockContext(w.current.header, w.chain, &coinbase)
 	evm := vm.NewEVM(blockContext, w.current.state, w.config, *w.chain.GetVMConfig())
+	if err := core.ProcessShieldedTransaction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx, seenShieldedNullifiers); err != nil {
+		w.current.state.RevertToSnapshot(snap)
+		return nil, err
+	}
 	w.current.state.SetTxContext(tx.Hash(), len(w.current.txs))
 	receipt, err := core.ApplyTransaction(evm, w.current.gasPool, w.current.state, w.current.header, tx)
 	if err != nil {
@@ -888,6 +892,7 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 	}
 
 	var coalescedLogs []*types.Log
+	seenShieldedNullifiers := make(map[common.Hash]struct{})
 
 	for {
 		// In the following three cases, we will interrupt the execution of the transaction.
@@ -939,7 +944,7 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 			continue
 		}
 		// Start executing the transaction
-		logs, err := w.commitTransaction(tx, coinbase)
+		logs, err := w.commitTransaction(tx, coinbase, seenShieldedNullifiers)
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account

@@ -189,6 +189,46 @@ func TestValidateTransactionQuantumResistantFork(t *testing.T) {
 	}
 }
 
+func TestValidateTransactionRejectsTransparentPQAfterPrivacyCommitments(t *testing.T) {
+	pqKey, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := *params.TestChainConfig
+	activation := uint64(10)
+	config.QuantumResistantTime = &activation
+	config.PrivacyCommitmentTime = &activation
+	head := &types.Header{
+		Number:     big.NewInt(1),
+		GasLimit:   5000000,
+		Time:       activation,
+		Difficulty: big.NewInt(1),
+	}
+	opts := &ValidationOptions{
+		Config:       &config,
+		Accept:       0xFF,
+		MaxSize:      64 * 1024,
+		MaxBlobCount: 6,
+		MinTip:       big.NewInt(0),
+	}
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	pqtx, err := types.SignNewPQTkmTx(pqKey, types.MakeSigner(&config, head.Number, head.Time), &types.PQTkmTx{
+		ChainID:   config.ChainID,
+		Nonce:     0,
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(10),
+		Gas:       21000,
+		To:        &to,
+		Value:     new(big.Int),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(pqtx, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrInvalidShieldedTx) {
+		t.Fatalf("transparent PQ tx post-privacy error = %v, want %v", err, core.ErrInvalidShieldedTx)
+	}
+}
+
 func TestValidateTransactionRejectsInvalidPQMigrationMarker(t *testing.T) {
 	key, err := crypto.GenerateKey()
 	if err != nil {

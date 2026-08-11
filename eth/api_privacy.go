@@ -96,6 +96,23 @@ type PrivacyNullifierStatus struct {
 	Spent              bool           `json:"spent"`
 }
 
+// ShieldedTreeStatus describes the public append-only shielded commitment tree.
+type ShieldedTreeStatus struct {
+	NextIndex  hexutil.Uint64 `json:"nextIndex"`
+	Frontier   []common.Hash  `json:"frontier"`
+	ZeroHashes []common.Hash  `json:"zeroHashes"`
+}
+
+// ShieldedCommitmentPathStatus describes the Merkle witness for one commitment.
+type ShieldedCommitmentPathStatus struct {
+	Commitment      common.Hash      `json:"commitment"`
+	Found           bool             `json:"found"`
+	Index           hexutil.Uint64   `json:"index"`
+	Root            common.Hash      `json:"root"`
+	MerklePath      []common.Hash    `json:"merklePath"`
+	MerklePathIndex []hexutil.Uint64 `json:"merklePathIndex"`
+}
+
 // PrivacyDefaults describes privacy-preserving client defaults.
 type PrivacyDefaults struct {
 	CommitmentMode           bool           `json:"commitmentMode"`
@@ -232,6 +249,45 @@ func (api *PrivacyAPI) Commitments() []PrivacyCommitmentStatus {
 		}))
 	}
 	return statuses
+}
+
+// ShieldedTree returns the current shielded commitment tree frontier.
+func (api *PrivacyAPI) ShieldedTree() (ShieldedTreeStatus, error) {
+	statedb, err := api.e.currentPrivacyState()
+	if err != nil {
+		return ShieldedTreeStatus{}, err
+	}
+	frontier := make([]common.Hash, core.ShieldedMerkleDepth)
+	for level := 0; level < core.ShieldedMerkleDepth; level++ {
+		frontier[level] = statedb.GetState(params.ShieldedPoolAddress, core.ShieldedMerkleFrontierSlot(level))
+	}
+	return ShieldedTreeStatus{
+		NextIndex:  hexutil.Uint64(core.ShieldedMerkleNextIndex(statedb)),
+		Frontier:   frontier,
+		ZeroHashes: core.ShieldedMerkleZeroHashes(),
+	}, nil
+}
+
+// NextShieldedPath returns the witness a new commitment would use if appended next.
+func (api *PrivacyAPI) NextShieldedPath(commitment common.Hash) (ShieldedCommitmentPathStatus, error) {
+	statedb, err := api.e.currentPrivacyState()
+	if err != nil {
+		return ShieldedCommitmentPathStatus{}, err
+	}
+	return shieldedCommitmentPathStatus(core.ShieldedNextMerklePath(statedb, commitment), true), nil
+}
+
+// CommitmentPath returns the stored witness for a canonical shielded output.
+func (api *PrivacyAPI) CommitmentPath(commitment common.Hash) (ShieldedCommitmentPathStatus, error) {
+	statedb, err := api.e.currentPrivacyState()
+	if err != nil {
+		return ShieldedCommitmentPathStatus{}, err
+	}
+	path, ok := core.ShieldedCommitmentPath(statedb, commitment)
+	if !ok {
+		return ShieldedCommitmentPathStatus{Commitment: commitment}, nil
+	}
+	return shieldedCommitmentPathStatus(path, true), nil
 }
 
 // Status returns the activation status for an address.
@@ -764,6 +820,38 @@ func (s *Ethereum) privacyCommitmentsActive() bool {
 		return false
 	}
 	return s.blockchain.Config().IsPrivacyCommitments(head.Number, head.Time)
+}
+
+func (s *Ethereum) currentPrivacyState() (interface {
+	GetState(common.Address, common.Hash) common.Hash
+}, error) {
+	if s == nil || s.blockchain == nil {
+		return nil, fmt.Errorf("blockchain is not available")
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return nil, fmt.Errorf("chain head is not available")
+	}
+	statedb, err := s.blockchain.StateAt(head)
+	if err != nil {
+		return nil, err
+	}
+	return statedb, nil
+}
+
+func shieldedCommitmentPathStatus(path core.ShieldedMerklePath, found bool) ShieldedCommitmentPathStatus {
+	index := make([]hexutil.Uint64, len(path.PathIndex))
+	for i, bit := range path.PathIndex {
+		index[i] = hexutil.Uint64(bit)
+	}
+	return ShieldedCommitmentPathStatus{
+		Commitment:      path.Commitment,
+		Found:           found,
+		Index:           hexutil.Uint64(path.Index),
+		Root:            path.Root,
+		MerklePath:      append([]common.Hash(nil), path.Path...),
+		MerklePathIndex: index,
+	}
 }
 
 func (s *Ethereum) loadPrivacyActivationsLocked() {

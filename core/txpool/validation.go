@@ -111,6 +111,11 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return fmt.Errorf("%w: type %d rejected, pool not yet at quantum-resistant transaction fork", core.ErrTxTypeNotSupported, tx.Type())
 		}
 	}
+	if opts.Config.IsPrivacyCommitments(head.Number, head.Time) {
+		if err := core.ValidateShieldedTransactionBasics(opts.Config, head.Number, head.Time, tx); err != nil {
+			return err
+		}
+	}
 	// Check whether the init code size has been exceeded
 	if tx.To() == nil {
 		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(tx.Data()))); err != nil {

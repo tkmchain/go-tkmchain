@@ -17,7 +17,14 @@ const (
 	DomainBind   = 1006
 )
 
-// SpendCircuit proves one private note spend and a fixed padded output set.
+// SpendCircuit proves either one private note spend or one transparent-to-shielded
+// deposit into a fixed padded output set.
+//
+// Deposit mode is selected by setting Nullifier and Anchor to zero. In deposit
+// mode, NoteValue must be zero and PublicValue must equal the sum of private
+// outputs. Spend mode keeps the original equation:
+//
+//	NoteValue = sum(outputs) + PublicValue
 type SpendCircuit struct {
 	ChainID           frontend.Variable `gnark:",public"`
 	BlockNumber       frontend.Variable `gnark:",public"`
@@ -55,6 +62,9 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 	api.ToBinary(c.PublicValue, 64)
 	api.ToBinary(c.AssetID, 64)
 
+	isDeposit := api.IsZero(c.Nullifier)
+	api.AssertIsEqual(isDeposit, api.IsZero(c.Anchor))
+
 	inputCommitment := c.hash(api, DomainNote, c.OwnerSecret, c.AssetID, c.NoteValue, c.NoteRandomness)
 	root := inputCommitment
 	for i := 0; i < MerkleDepth; i++ {
@@ -63,10 +73,10 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 		right := api.Select(c.MerklePathIndex[i], root, c.MerklePath[i])
 		root = c.hash(api, DomainNode, left, right)
 	}
-	api.AssertIsEqual(c.Anchor, root)
+	api.AssertIsEqual(api.Select(isDeposit, 0, c.Anchor), api.Select(isDeposit, 0, root))
 
 	nullifier := c.hash(api, DomainNull, c.OwnerSecret, c.NoteRandomness)
-	api.AssertIsEqual(c.Nullifier, nullifier)
+	api.AssertIsEqual(api.Select(isDeposit, 0, c.Nullifier), api.Select(isDeposit, 0, nullifier))
 
 	totalOutput := frontend.Variable(0)
 	for i := 0; i < OutputSlots; i++ {
@@ -75,7 +85,8 @@ func (c *SpendCircuit) Define(api frontend.API) error {
 		api.AssertIsEqual(c.OutputCommitment[i], commitment)
 		totalOutput = api.Add(totalOutput, c.OutputValue[i])
 	}
-	api.AssertIsEqual(c.NoteValue, api.Add(totalOutput, c.PublicValue))
+	api.AssertIsEqual(c.NoteValue, api.Select(isDeposit, 0, api.Add(totalOutput, c.PublicValue)))
+	api.AssertIsEqual(c.PublicValue, api.Select(isDeposit, totalOutput, c.PublicValue))
 
 	outputRoot := c.hash(api, DomainOutput, c.OutputCommitment[:]...)
 	api.AssertIsEqual(c.OutputRoot, outputRoot)

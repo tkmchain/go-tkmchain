@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/consensys/gnark/test"
@@ -23,6 +24,17 @@ func TestSpendCircuitVectors(t *testing.T) {
 	}
 }
 
+func TestSpendCircuitDepositMode(t *testing.T) {
+	assert := test.NewAssert(t)
+	var circuit SpendCircuit
+	valid := deterministicDepositCase()
+	assert.ProverSucceeded(&circuit, assignmentFromVector(t, valid), test.WithCurves(ecc.BN254))
+
+	invalid := cloneVectorCase(valid)
+	invalid.Private.OutputValue[0] = "69"
+	assert.ProverFailed(&circuit, assignmentFromVector(t, invalid), test.WithCurves(ecc.BN254))
+}
+
 func TestSpendCircuitCompiles(t *testing.T) {
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &SpendCircuit{})
 	if err != nil {
@@ -30,6 +42,63 @@ func TestSpendCircuitCompiles(t *testing.T) {
 	}
 	if ccs.GetNbConstraints() == 0 {
 		t.Fatal("shielded spend circuit compiled with no constraints")
+	}
+}
+
+func deterministicDepositCase() VectorCase {
+	owner := elem(11)
+	asset := elem(1)
+	noteValue := elem(0)
+	noteRandomness := elem(22)
+	path := make([]fr.Element, MerkleDepth)
+	index := make([]fr.Element, MerkleDepth)
+
+	recipients := [OutputSlots]fr.Element{owner, elem(32), elem(33), elem(34)}
+	values := [OutputSlots]fr.Element{elem(70), elem(30), elem(0), elem(0)}
+	randomness := [OutputSlots]fr.Element{elem(41), elem(42), elem(43), elem(44)}
+	var commitments [OutputSlots]fr.Element
+	for i := 0; i < OutputSlots; i++ {
+		commitments[i] = hash(DomainNote, recipients[i], asset, values[i], randomness[i])
+	}
+	outputRoot := hash(DomainOutput, commitments[:]...)
+	publicValue := elem(100)
+	totalOutput := elem(100)
+	balance := hash(DomainBal, noteValue, totalOutput, publicValue, asset, outputRoot)
+	chainID := elem(8979)
+	blockNumber := elem(1)
+	txHashHi := elem(0)
+	txHashLo := elem(555)
+	spendIndex := elem(0)
+	nullifier := elem(0)
+	anchor := elem(0)
+	binding := hash(DomainBind, owner, nullifier, outputRoot, balance, chainID, txHashHi, txHashLo)
+
+	return VectorCase{
+		Public: PublicInputs{
+			ChainID:           str(chainID),
+			BlockNumber:       str(blockNumber),
+			TxHashHi:          str(txHashHi),
+			TxHashLo:          str(txHashLo),
+			SpendIndex:        str(spendIndex),
+			Nullifier:         str(nullifier),
+			Anchor:            str(anchor),
+			BalanceCommitment: str(balance),
+			PublicValue:       str(publicValue),
+			OutputRoot:        str(outputRoot),
+			BindingSigHash:    str(binding),
+		},
+		Private: PrivateInputs{
+			OwnerSecret:      str(owner),
+			NoteRandomness:   str(noteRandomness),
+			NoteValue:        str(noteValue),
+			AssetID:          str(asset),
+			MerklePath:       strSlice(path[:]),
+			MerklePathIndex:  strSlice(index[:]),
+			OutputRecipient:  strSlice(recipients[:]),
+			OutputValue:      strSlice(values[:]),
+			OutputRandomness: strSlice(randomness[:]),
+			OutputCommitment: strSlice(commitments[:]),
+		},
 	}
 }
 
