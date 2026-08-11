@@ -1,0 +1,15 @@
+{
+  "listen": "127.0.0.1:8787",
+  "bearerToken": "replace-with-the-pool-shieldedPayoutProverToken",
+  "nodeRPC": "http://127.0.0.1:8545",
+  "keystoreDir": "/home/mike/.tkmchain/keystore",
+  "signerAddress": "0xYourPostQuantumSignerAddress",
+  "signerPassphraseFile": "/home/mike/shielded-prover/signer.pass",
+  "signMode": "pq",
+  "provingKeyPath": "/home/mike/shielded-prover/proving.key",
+  "notesPath": "/home/mike/shielded-prover/notes.json",
+  "requestsPath": "/home/mike/shielded-prover/requests.json",
+  "gasLimit": 3000000,
+  "submitSync": true,
+  "receiptTimeoutMs": 20000
+}

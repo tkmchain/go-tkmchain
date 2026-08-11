@@ -31,7 +31,8 @@ This update also adds the shielded spend circuit package, deterministic test vec
 - After quantum-resistant activation, non-PQ user transaction types are rejected.
 - Shielded transactions must target the shielded pool address.
 - Shielded transactions must not expose a transparent `tx.Value`.
-- Output-only shielded deposits are rejected; shielded transactions must spend at least one private note.
+- Transparent-to-shielded deposits are accepted only with a deposit proof: the transaction must lock positive transparent value in `ShieldedPoolAddress`, carry one zero-nullifier/zero-anchor proof, and bind that public value to the private output commitments.
+- Private spends must use a known shielded Merkle root and cannot use arbitrary local anchors.
 - Duplicate nullifiers are rejected within a block.
 - Already-spent nullifiers are rejected from state.
 - Output commitments are stored in shielded-pool state slots.
@@ -86,9 +87,11 @@ go run ./cmd/shielded-vectors -out zk/shielded/testdata/vectors.json
 - Recorded artifact hashes:
 
 ```text
-verifying.hex: a307f78a326e1a6fc70ada418f906d94e52c43aa5ebc0c962daa12ff6eae567e
-verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
-proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
+stored-config verifying.hex: a307f78a326e1a6fc70ada418f906d94e52c43aa5ebc0c962daa12ff6eae567e
+stored-config verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
+upgraded verifier verifying.hex: 71850b9114e51f7290d2f04a2583df5bea7e142afd7457ecde72e49c7945d0cd
+upgraded verifier verifying.key: b42cf88c36107d34fec8bacda545cab3cb17da52ac9d20674d553b69deda40a7
+upgraded prover proving.key: 2c094442e02f1d39cc7ac47e213815b1a24f50decc58bd473258357605d9db72
 ```
 
 - The proving key is not embedded in node code and must remain restricted to
@@ -97,6 +100,8 @@ proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
 ## Internal Security Review Fixes
 
 - Replaced consensus Keccak output-root derivation with the same fixed-slot MiMC output-root derivation used by `TKM_SHIELDED_SPEND_V1`.
+- Added deposit mode to `TKM_SHIELDED_SPEND_V1`: zero nullifier and zero anchor prove `sum(outputs) == public value` for transparent-to-shielded deposits.
+- Added the shielded commitment Merkle tree root registry, per-commitment witness storage, and root checks for spends.
 - Split the transaction hash into two 128-bit public inputs instead of reducing the full 256-bit hash into one field element.
 - Required exactly four padded outputs in shielded transaction envelopes so consensus matches the circuit.
 - Added verifier-side public-context validation before pairing checks.
@@ -193,6 +198,7 @@ proving.key: 7220670143963d8ebf26c1ffb74797f2ef657c6cee63f64c7b0b409137043b1d
 - The circuit and ceremony output are generated outside the node binary, encoded with the `TKMG16VK1` format, and embedded into the `MainnetShieldedGroth16VerifyingKey` artifact slot.
 - With the artifact present, all mainnet nodes must run the same binary/config before `2026-08-10 06:00:00 UTC`.
 - Shielded proof verification is consensus-critical. Any circuit, key, or encoding change requires all nodes to use exactly the same artifact and public input mapping.
+- The stored chain config keeps the original verifier artifact for database compatibility. Upgraded nodes also embed `MainnetShieldedGroth16UpgradedVerifyingKey` and try it before falling back to the stored-config verifier, so transparent-to-shielded deposits can activate without rewriting the already-stored chain config.
 
 ## Test Coverage
 

@@ -57,12 +57,17 @@ type parsedShieldedGroth16VerifyingKey struct {
 	ic      []bn254.G1Affine
 }
 
-var shieldedGroth16ConfigCache struct {
+type shieldedGroth16VerifierCache struct {
 	sync.RWMutex
 	keyHash  common.Hash
 	verifier ShieldedProofVerifier
 	err      error
 }
+
+var (
+	shieldedGroth16ConfigCache  shieldedGroth16VerifierCache
+	shieldedGroth16UpgradeCache shieldedGroth16VerifierCache
+)
 
 // NewShieldedGroth16Verifier creates a production BN254 Groth16 verifier.
 func NewShieldedGroth16Verifier(encodedVK []byte) (ShieldedProofVerifier, error) {
@@ -88,24 +93,41 @@ func shieldedGroth16VerifierFromChainConfig(config *params.ChainConfig) Shielded
 	if config == nil || len(config.ShieldedGroth16VerifyingKey) == 0 {
 		return nil
 	}
-	keyHash := crypto.Keccak256Hash(config.ShieldedGroth16VerifyingKey)
-	shieldedGroth16ConfigCache.RLock()
-	if shieldedGroth16ConfigCache.keyHash == keyHash {
-		verifier := shieldedGroth16ConfigCache.verifier
-		shieldedGroth16ConfigCache.RUnlock()
+	return shieldedGroth16VerifierFromBytes(config.ShieldedGroth16VerifyingKey, &shieldedGroth16ConfigCache)
+}
+
+func upgradedShieldedGroth16VerifierFromParams(config *params.ChainConfig) ShieldedProofVerifier {
+	if config == nil || config.ChainID == nil || params.MainnetChainConfig == nil || params.MainnetChainConfig.ChainID == nil {
+		return nil
+	}
+	if config.ChainID.Cmp(params.MainnetChainConfig.ChainID) != 0 {
+		return nil
+	}
+	if len(params.MainnetShieldedGroth16UpgradedVerifyingKey) == 0 {
+		return nil
+	}
+	return shieldedGroth16VerifierFromBytes(params.MainnetShieldedGroth16UpgradedVerifyingKey, &shieldedGroth16UpgradeCache)
+}
+
+func shieldedGroth16VerifierFromBytes(encoded []byte, cache *shieldedGroth16VerifierCache) ShieldedProofVerifier {
+	keyHash := crypto.Keccak256Hash(encoded)
+	cache.RLock()
+	if cache.keyHash == keyHash {
+		verifier := cache.verifier
+		cache.RUnlock()
 		return verifier
 	}
-	shieldedGroth16ConfigCache.RUnlock()
+	cache.RUnlock()
 
-	shieldedGroth16ConfigCache.Lock()
-	defer shieldedGroth16ConfigCache.Unlock()
-	if shieldedGroth16ConfigCache.keyHash == keyHash {
-		return shieldedGroth16ConfigCache.verifier
+	cache.Lock()
+	defer cache.Unlock()
+	if cache.keyHash == keyHash {
+		return cache.verifier
 	}
-	verifier, err := NewShieldedGroth16Verifier(config.ShieldedGroth16VerifyingKey)
-	shieldedGroth16ConfigCache.keyHash = keyHash
-	shieldedGroth16ConfigCache.verifier = verifier
-	shieldedGroth16ConfigCache.err = err
+	verifier, err := NewShieldedGroth16Verifier(encoded)
+	cache.keyHash = keyHash
+	cache.verifier = verifier
+	cache.err = err
 	if err != nil {
 		return unavailableShieldedVerifier{}
 	}

@@ -737,7 +737,7 @@ func (s *Ethereum) startMining(pool bool) error {
 			s.miningStartPending = true
 			go s.waitForMiningReady()
 		}
-		log.Info("RandomX mining deferred", "reason", reason, "local", local, "peerHeight", highest)
+		log.Info("RandomX mining deferred", "pool", pool, "reason", reason, "local", local, "peerHeight", highest)
 		return nil
 	}
 	return s.startMiningLocked(pool)
@@ -835,6 +835,13 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 		return false, "downloader target ahead before mining", localHeight, progress.HighestBlock
 	}
 	return true, "", localHeight, highest
+}
+
+func (s *Ethereum) miningReadiness() (bool, string, uint64, uint64) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	return s.readyToMine()
 }
 
 func (s *Ethereum) startMiningLocked(pool bool) error {

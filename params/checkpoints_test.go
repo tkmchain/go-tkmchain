@@ -47,6 +47,7 @@ func TestMandatoryRandomXCheckpoints(t *testing.T) {
 		6000:  common.HexToHash("0x4d3cd743aec4b40c276174d6582049189901a0a78fa6fc280b8c5cfd946fa660"),
 		7165:  common.HexToHash("0xcd0abe2c94903b0a7584ac5892ff812d2f2450853fc6a055cbb09807ce8c9f53"),
 		20004: common.HexToHash("0x8918c6621a4fd423b86fedbae903277078a2286cbce5057a9afbc436c46dc7da"),
+		20141: common.HexToHash("0xdb737d2bb1f6bbd13683185d32a4808d27c6c3f6e533da1ceeb85d440bb77c47"),
 	}
 	for number, want := range tests {
 		got, ok := GetCheckpoint(number)

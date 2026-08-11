@@ -245,9 +245,17 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		log.Debug("Ignoring stale submitted work without pending task", "headerHash", hash.Hex(), "head", miner.eth.BlockChain().CurrentBlock().Number)
 		return false
 	}
-	currentBlock := miner.worker.pendingBlock()
-	if currentBlock == nil || currentBlock.Hash() != task.block.Hash() {
-		log.Debug("Ignoring stale submitted work", "headerHash", hash.Hex(), "head", miner.eth.BlockChain().CurrentBlock().Number)
+	head := miner.eth.BlockChain().CurrentBlock()
+	if head == nil || task.block == nil || task.block.NumberU64() != head.Number.Uint64()+1 || task.block.ParentHash() != head.Hash() {
+		var headNumber interface{} = "<nil>"
+		if head != nil {
+			headNumber = head.Number
+		}
+		var taskNumber interface{} = "<nil>"
+		if task.block != nil {
+			taskNumber = task.block.Number()
+		}
+		log.Debug("Ignoring stale submitted work", "headerHash", hash.Hex(), "head", headNumber, "task", taskNumber)
 		return false
 	}
 
@@ -266,6 +274,9 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	newHeader.Nonce = nonce
 	prepareSealedHeader(newHeader, task.block)
 	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
+		// Log initial failure for diagnostics
+		log.Debug("VerifyHeader initial failure", "err", err, "nonce", nonce, "mixDigest", digest.Hex())
+
 		// RandomX miners hash sealHash || nonce, but external miner RPC clients do
 		// not all agree on byte order for nonce and result hash fields. RPC block
 		// nonces are decoded as raw bytes, so try the common byte-order variants
@@ -277,7 +288,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		reversedDigest := reverseHashBytes(digest)
 
 		var retryErr error
-		for _, attempt := range []struct {
+		for idx, attempt := range []struct {
 			nonce  types.BlockNonce
 			digest common.Hash
 		}{
@@ -289,8 +300,11 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 			newHeader.MixDigest = attempt.digest
 			prepareSealedHeader(newHeader, task.block)
 			if retryErr = miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr == nil {
+				log.Info("Accepted share after retry variant", "variant", idx, "nonce", newHeader.Nonce, "mixDigest", newHeader.MixDigest.Hex())
 				break
 			}
+			// Log each retry attempt for diagnostics
+			log.Debug("VerifyHeader retry failed", "variant", idx, "err", retryErr, "nonce", attempt.nonce, "mixDigest", attempt.digest.Hex())
 		}
 		if retryErr != nil {
 			log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)

@@ -18,6 +18,7 @@ package eth
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -62,6 +63,12 @@ func (api *MinerAPI) GetSeedHash() (common.Hash, error) {
 func (api *MinerAPI) GetWork() ([4]string, error) {
 	if api.e.Miner() == nil {
 		return [4]string{}, errors.New("miner not available")
+	}
+	if !api.e.IsMining() {
+		if ready, reason, local, highest := api.e.miningReadiness(); !ready {
+			return [4]string{}, fmt.Errorf("mining deferred: %s (local %d, peer height %d)", reason, local, highest)
+		}
+		return [4]string{}, errors.New("miner is not running")
 	}
 
 	work, err := api.e.Miner().GetWork()
