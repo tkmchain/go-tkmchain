@@ -135,8 +135,9 @@ upgraded prover proving.key: 2c094442e02f1d39cc7ac47e213815b1a24f50decc58bd47325
 - Removed stale TerminalTotalDifficulty/Merge-era fields from the touched code paths.
 - Downloader fixture setup now uses RandomX faker consensus instead of Ethash.
 - Obsolete downloader tests are gated behind `legacy_downloader_tests` so the active downloader package compiles cleanly.
-- Added mandatory mainnet checkpoints for blocks `20141` through `20145`.
+- Added mandatory mainnet checkpoints for blocks `20141` through `20146` and `20173`.
 - Blocks `20142` through `20145` use a bounded, checkpoint-only stored `MixDigest` compatibility path because those already-mined canonical blocks carry stored proof values that cannot be reproduced by the strict verifier. Normal RandomX proof validation resumes at block `20146`.
+- Blocks `20146` and `20173` use checkpoint-only historical PQ receipt-root compatibility because those already-mined canonical PQ transaction blocks were sealed before `PQTkmTxType` receipt trie encoding was finalized. New PQ transaction blocks use the normal typed receipt encoding.
 
 ## Quantum-Resistant Transactions
 
