@@ -149,7 +149,9 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	// The receipt Trie's root (R = (Tr [[H1, R1], ... [Hn, Rn]]))
 	receiptSha := types.DeriveSha(res.Receipts, trie.NewStackTrie(nil))
 	if receiptSha != header.ReceiptHash {
-		return fmt.Errorf("invalid receipt root hash (remote: %x local: %x)", header.ReceiptHash, receiptSha)
+		if !acceptHistoricalBrokenPqReceiptRoot(block.NumberU64(), block.Hash(), header.ReceiptHash, res.Receipts) {
+			return fmt.Errorf("invalid receipt root hash (remote: %x local: %x)", header.ReceiptHash, receiptSha)
+		}
 	}
 	// Validate the parsed requests match the expected header value.
 	if header.RequestsHash != nil {
