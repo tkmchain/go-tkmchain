@@ -452,7 +452,7 @@ func (s *Ethereum) storeCheckpoint(number uint64, hash common.Hash) error {
 	if s.checkpointDb == nil {
 		return fmt.Errorf("checkpoint database is not available")
 	}
-	if err := rawdb.WriteCheckpoint(s.checkpointDb, number, hash); err != nil {
+	if err := rawdb.WriteTrustedCheckpoint(s.checkpointDb, number, hash); err != nil {
 		return err
 	}
 	return params.AddCheckpoint(number, hash)
@@ -462,15 +462,35 @@ func (s *Ethereum) loadCheckpoints() error {
 	if s.checkpointDb == nil {
 		return fmt.Errorf("checkpoint database is not available")
 	}
+	hardcoded := make(map[uint64]common.Hash)
 	for _, checkpoint := range params.AllCheckpoints() {
+		hardcoded[checkpoint.Number] = checkpoint.Hash
 		if err := rawdb.WriteCheckpoint(s.checkpointDb, checkpoint.Number, checkpoint.Hash); err != nil {
 			return err
 		}
 	}
+	trustedLoaded := 0
+	legacyPruned := 0
 	for _, checkpoint := range rawdb.ReadCheckpoints(s.checkpointDb) {
+		if hash, ok := hardcoded[checkpoint.Number]; !ok || hash != checkpoint.Hash {
+			if !rawdb.ReadTrustedCheckpoint(s.checkpointDb, checkpoint.Number) {
+				legacyPruned++
+				if err := rawdb.DeleteCheckpoint(s.checkpointDb, checkpoint.Number); err != nil {
+					log.Warn("Failed to prune legacy unsigned checkpoint", "number", checkpoint.Number, "hash", checkpoint.Hash, "err", err)
+				}
+				continue
+			}
+			trustedLoaded++
+		}
 		if err := params.AddCheckpoint(checkpoint.Number, checkpoint.Hash); err != nil {
 			return err
 		}
+	}
+	if legacyPruned > 0 {
+		log.Info("Pruned legacy unsigned checkpoints", "count", legacyPruned)
+	}
+	if trustedLoaded > 0 {
+		log.Info("Loaded trusted persisted checkpoints", "count", trustedLoaded)
 	}
 	return nil
 }

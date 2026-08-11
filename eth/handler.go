@@ -184,15 +184,17 @@ type handler struct {
 	handlerDoneCh  chan struct{}
 }
 
-// checkpointRequiredBlocks merges CLI required-block challenges with enforced
-// checkpoints, making checkpoint mismatches a peer-level disconnect condition.
+// checkpointRequiredBlocks merges CLI required-block challenges with mandatory
+// checkpoints, making consensus-critical mismatches a peer disconnect condition.
+// Optional checkpoints remain local validation only, so stale database rows from
+// older builds do not expand the peer handshake challenge list.
 func checkpointRequiredBlocks(required map[uint64]common.Hash) map[uint64]common.Hash {
 	merged := make(map[uint64]common.Hash, len(required)+len(params.AllCheckpoints()))
 	for number, hash := range required {
 		merged[number] = hash
 	}
 	for _, checkpoint := range params.AllCheckpoints() {
-		if !params.ShouldValidateCheckpoint(checkpoint.Number) {
+		if !params.IsMandatoryCheckpoint(checkpoint.Number) {
 			continue
 		}
 		if existing, ok := merged[checkpoint.Number]; ok && existing != checkpoint.Hash {

@@ -43,6 +43,7 @@ func TestMandatoryRandomXCheckpoints(t *testing.T) {
 	SetActiveCheckpointGenesis(MainnetGenesisHash)
 
 	tests := map[uint64]common.Hash{
+		0:     MainnetGenesisHash,
 		2370:  common.HexToHash("0xe10ff3179cc30f911c29326a822e6a24206f819dcaff2edfeeb5b2078dd95b17"),
 		6000:  common.HexToHash("0x4d3cd743aec4b40c276174d6582049189901a0a78fa6fc280b8c5cfd946fa660"),
 		7165:  common.HexToHash("0xcd0abe2c94903b0a7584ac5892ff812d2f2450853fc6a055cbb09807ce8c9f53"),
@@ -54,6 +55,8 @@ func TestMandatoryRandomXCheckpoints(t *testing.T) {
 		20145: common.HexToHash("0xf81c126ad77f00e0312ab0e8e06b5c5ca522344f17b7d4f2a9ebc695a5ecbd22"),
 		20146: common.HexToHash("0x4ad9f0d3caec69b43c547254b041060514dd689c2b50bf03cfec32e9559b749d"),
 		20173: common.HexToHash("0xca3393c0164ea2b7ae776c3e5b90ae4a717ee46a81c0303895eb1344b2b7ab5c"),
+		20179: common.HexToHash("0xba8a7984e885eab29ff3042259233cdfef808aa5869ccb5caf0e24ad2e826f19"),
+		20261: common.HexToHash("0xf8b43cc91baf5bd363466d827ee24e86a18a10f8c73811f8baf472faa9b4d1ef"),
 	}
 	for number, want := range tests {
 		got, ok := GetCheckpoint(number)
@@ -69,6 +72,9 @@ func TestMandatoryRandomXCheckpoints(t *testing.T) {
 	defer SetCheckpointValidation(old)
 	SetCheckpointValidation(false)
 	for number := range tests {
+		if !IsMandatoryCheckpoint(number) {
+			t.Fatalf("mandatory checkpoint %d is not marked mandatory", number)
+		}
 		if !ShouldValidateCheckpoint(number) {
 			t.Fatalf("mandatory checkpoint %d disabled with optional checkpoint validation", number)
 		}

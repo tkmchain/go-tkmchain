@@ -26,12 +26,22 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-var checkpointPrefix = []byte("checkpoint-")
+var (
+	checkpointPrefix        = []byte("checkpoint-")
+	trustedCheckpointPrefix = []byte("checkpoint-trusted-")
+)
 
 func checkpointKey(number uint64) []byte {
 	key := make([]byte, len(checkpointPrefix)+8)
 	copy(key, checkpointPrefix)
 	binary.BigEndian.PutUint64(key[len(checkpointPrefix):], number)
+	return key
+}
+
+func trustedCheckpointKey(number uint64) []byte {
+	key := make([]byte, len(trustedCheckpointPrefix)+8)
+	copy(key, trustedCheckpointPrefix)
+	binary.BigEndian.PutUint64(key[len(trustedCheckpointPrefix):], number)
 	return key
 }
 
@@ -53,6 +63,30 @@ func WriteCheckpoint(db ethdb.KeyValueStore, number uint64, hash common.Hash) er
 		return fmt.Errorf("checkpoint already set at block %d: have %s, want %s", number, existing, hash)
 	}
 	return db.Put(checkpointKey(number), hash.Bytes())
+}
+
+// WriteTrustedCheckpoint stores a checkpoint that was verified through a local
+// main-king action or signed checkpoint announcement.
+func WriteTrustedCheckpoint(db ethdb.KeyValueStore, number uint64, hash common.Hash) error {
+	if err := WriteCheckpoint(db, number, hash); err != nil {
+		return err
+	}
+	return db.Put(trustedCheckpointKey(number), []byte{1})
+}
+
+// ReadTrustedCheckpoint reports whether a persisted checkpoint was explicitly
+// trusted by the current checkpoint storage format.
+func ReadTrustedCheckpoint(db ethdb.KeyValueReader, number uint64) bool {
+	ok, _ := db.Has(trustedCheckpointKey(number))
+	return ok
+}
+
+// DeleteCheckpoint removes a persisted checkpoint and its trusted marker.
+func DeleteCheckpoint(db ethdb.KeyValueWriter, number uint64) error {
+	if err := db.Delete(checkpointKey(number)); err != nil {
+		return err
+	}
+	return db.Delete(trustedCheckpointKey(number))
 }
 
 // ReadCheckpoints retrieves all persisted validation checkpoints.

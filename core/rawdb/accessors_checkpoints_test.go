@@ -42,4 +42,22 @@ func TestCheckpointPersistenceIsImmutable(t *testing.T) {
 	if len(checkpoints) != 1 || checkpoints[0].Number != 98 || checkpoints[0].Hash != hash {
 		t.Fatalf("unexpected checkpoints: %#v", checkpoints)
 	}
+	if ReadTrustedCheckpoint(db, 98) {
+		t.Fatalf("ordinary checkpoint should not be trusted")
+	}
+	if err := WriteTrustedCheckpoint(db, 98, hash); err != nil {
+		t.Fatalf("failed to mark checkpoint trusted: %v", err)
+	}
+	if !ReadTrustedCheckpoint(db, 98) {
+		t.Fatalf("trusted checkpoint marker missing")
+	}
+	if err := DeleteCheckpoint(db, 98); err != nil {
+		t.Fatalf("failed to delete checkpoint: %v", err)
+	}
+	if _, ok := ReadCheckpoint(db, 98); ok {
+		t.Fatalf("checkpoint was not deleted")
+	}
+	if ReadTrustedCheckpoint(db, 98) {
+		t.Fatalf("trusted marker was not deleted")
+	}
 }

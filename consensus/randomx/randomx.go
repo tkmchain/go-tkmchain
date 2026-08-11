@@ -741,7 +741,95 @@ const (
 	kyotoStoredMixDigestCompatUntil              = uint64(8192)
 	privacyQuantumStoredMixDigestCompatFromBlock = uint64(20142)
 	privacyQuantumStoredMixDigestCompatUntil     = uint64(20145)
+	postPrivacyGapStoredMixDigestCompatFromBlock = uint64(20179)
+	postPrivacyGapStoredMixDigestCompatUntil     = uint64(20261)
 )
+
+var postPrivacyGapStoredMixDigestCompatCheckpoints = map[uint64]common.Hash{
+	20179: common.HexToHash("0xba8a7984e885eab29ff3042259233cdfef808aa5869ccb5caf0e24ad2e826f19"),
+	20180: common.HexToHash("0x0cde0c10d5247b33ede3675b21740a4d6993e9baf13d900fc9d5a80595ded466"),
+	20181: common.HexToHash("0xd792880f509cf59bb0e774133809833215b30942eb65d15652006ffcafd28338"),
+	20182: common.HexToHash("0xa7a668c745267ab51146b841977375f0c76a8fd7fda5ffd149180327847e1467"),
+	20183: common.HexToHash("0xf0d4a554e28b97fa8826df4b91ebbb573996e573078000d420a3378e677f08c5"),
+	20184: common.HexToHash("0x5b8a800d1590c469765b19148e5223ba84ceaead9240c726d749a2594b9d62b3"),
+	20185: common.HexToHash("0x50f9013cecc3af2fc040c5c0d0d885c3b948a4d8976a0358c7381ce61391991d"),
+	20186: common.HexToHash("0x7c3b6829873eb16a4a67881e00a0e0aa28ae264d36b3be439de3d68eb2f8a633"),
+	20187: common.HexToHash("0xa261d42d9c405bb53c1a35f1d1a23ddee6ca529a58379d53e0a76fec88afc1ff"),
+	20188: common.HexToHash("0x08923e04f5aa109f4bf130ccb1d90c90b7f99f100ac0285530bf64c225197815"),
+	20189: common.HexToHash("0x024487482aded2a57d47e2b7d39457ad4f7f5ff2d654b35739b5936b40de7028"),
+	20190: common.HexToHash("0x8a61ae9e553e29cde6f6ff9a80b8215e958717b3dc349944c82c7a24d329eee9"),
+	20191: common.HexToHash("0x0976fd36ca98f5efbb220dbcda79be3d72f6a043163c64f9b16ba822c1ba2479"),
+	20192: common.HexToHash("0x37eaf319c6b791622b2006d6e19253aff759a72778b2f46bcf0fcdb05e79fcb8"),
+	20193: common.HexToHash("0x7cd439491b7bb3effb3ea35a671cc3d7e8cb0afed72c6e09a8145a413f1cd18b"),
+	20194: common.HexToHash("0x612c56757ebc99e75c7632b3ae5c0c37c09db09df23eb1aab55009f3a6d64e0d"),
+	20195: common.HexToHash("0x2e4f550c5cbdd7b028e94051796d8830981f6a96f99b264e61ce52bd86125716"),
+	20196: common.HexToHash("0xa4e7119618e5df9966bf1d3c9dbe042f076a83856f7f2ba74030f5e1db5a8ba2"),
+	20197: common.HexToHash("0x974ace55515e9a23bca74151962c37734d2483f7695c69121de0e250f57f21d9"),
+	20198: common.HexToHash("0xaee98eef71d771cae0be793c5aa55b82bb7389a87c303245e559d464d0da30de"),
+	20199: common.HexToHash("0x9e5034b91ae9190cffb5fcd37ad52ebdda75168173c39d4e99343a54e4ad16f0"),
+	20200: common.HexToHash("0x804d586af4bb4a89fa5fe7079964458c74fc5bced6ce63759d600a6afc5ab8a9"),
+	20201: common.HexToHash("0x7a30a757d0590b7b4c56d77f238c2321283fcbdee8b8d4334d37e60b9ba939a2"),
+	20202: common.HexToHash("0xa74977f01eab34e64431a6321c380d0656430a3262d9e1a640912a4516ac4d0e"),
+	20203: common.HexToHash("0xdf54e60862c2c5a2dcba016e12f211a6409715d4ba7fc712c3941a1486d1d924"),
+	20204: common.HexToHash("0xbefe93d86cb9ef86cdab621c0230421ff08c400d5a3287f8c79c9c8346976631"),
+	20205: common.HexToHash("0x1b40ef16292c20ce5f727011cd13521adb079c40ed1f13059774c753dab4726c"),
+	20206: common.HexToHash("0x725d7d5af973db7ca57da08aa4f5efef8c90ff853b588fb8ecd8c86a96297a0d"),
+	20207: common.HexToHash("0xf49ed9bc9c273371c0c95db83ddef46d1f4116c76dffde6d1361189881d10637"),
+	20208: common.HexToHash("0xb9bc66a1e1d91a95fa0537b9cce94d896a23969b65b3dc13ea69e7f604be60e1"),
+	20209: common.HexToHash("0xba5977df68bcf2522e61170e6c538a65097e2e7247303442c99912dff203861c"),
+	20210: common.HexToHash("0xcfb7a8edddc1c276d882aac5090c3418cd8b5577b4a80a3629ebbdd4b285855b"),
+	20211: common.HexToHash("0x5658a264caae095fbf524d5cafb15dc181084f4823bead5eb0ee8a713b5dcc92"),
+	20212: common.HexToHash("0x73e126fc6eae97799ca6cafa0a87b6cdce6e992fa966e23139c211e5da7b8a55"),
+	20213: common.HexToHash("0x1851a23a5cd3d8df159d6f86ef9a75de3adc0e5fbd050cbe2a6225cfa6590da6"),
+	20214: common.HexToHash("0x44f2dee9003008d78f6360d5ccd51ff49d768470e2c44dba19b949fc41aa2a8b"),
+	20215: common.HexToHash("0xe2adb549ccb8baf59e93e11804c3015273271beefd1537c7558fd9712b7761a5"),
+	20216: common.HexToHash("0x0fda89d2132dce6e2e806bb867c9777a2eae3f9cfbf51bca5ef0f78f9582ac7e"),
+	20217: common.HexToHash("0x4cdcb417ac3b6d60c1d70455be389642036f462488c12830ea5423fb0578a3e6"),
+	20218: common.HexToHash("0x731f756599fa738b71f7d2c6f88ce29c60936f43289a323c656d661b9708d9ca"),
+	20219: common.HexToHash("0x2a685565781f68cd2e58a1c4f279fda069135095ac84b4af1e5609fed6d8ebab"),
+	20220: common.HexToHash("0xc7afeaf23abdd95e4bc9bdf7ff3e12c5d7ce77eac8e03e083d4adc6886a4df47"),
+	20221: common.HexToHash("0x0934ae091a3896fbb77f59593ead421a007fe04040ecf96d5dd27de5c479c2f2"),
+	20222: common.HexToHash("0x4468b53588b2de6d7eb84755f6f8be3b2379e0af3a709784a8a26912ccb2fe09"),
+	20223: common.HexToHash("0x9b1c7cc401be97f387a75180797e42dc671cffc86cf9511739673f47a999033a"),
+	20224: common.HexToHash("0x7c23ec1a127842e4c385509412a1addc3d7a3e63f728871c54e1ccb86fdace59"),
+	20225: common.HexToHash("0x23ff90146789000e37a52ba46d4590736639ee8fdaba2ac3b4aafc857d32b564"),
+	20226: common.HexToHash("0xe87fa0c95429ecc40c784dd2958d925222aa0d0debb86f01cc3a67027f72a3bc"),
+	20227: common.HexToHash("0xbbb0e77b0c8a35491d6a57a7d73c6c0080d8c6af5b5824278a046ba3f6c1c0d6"),
+	20228: common.HexToHash("0x69a2d4417086303df6d1c3cbf7ae1154a380db22b7747fd3e83ae81a1ba316bb"),
+	20229: common.HexToHash("0x289ad6a53f84258fe3a626f8c7a45df0b62af012e470eb173f2ec56192b85241"),
+	20230: common.HexToHash("0x2fc5ab283ce18306d4cfea53a9fb003b42fd685effcdbe352b0e2182098a1baf"),
+	20231: common.HexToHash("0xc8d39c66210c06eb059ea167b3f9d6eca2b1c961a8179caff8e69173eea6c448"),
+	20232: common.HexToHash("0x19397d4dd32167cc9fb43346ced2f915f0f642e057d71f24a27c702fb8225e3e"),
+	20233: common.HexToHash("0xf471fd7e58873db042901bb01f99ab5b72583a2759cddfdf0f54206bb05847be"),
+	20234: common.HexToHash("0x164ef029d759b548d75f99d965c03b7e8477341ef962c4b262ae33d7c2b85fdd"),
+	20235: common.HexToHash("0xb6fc3d2ae0aaba737e62e294597c438f8c2e12baeaeb7cdc37dd3b7e4adf97ac"),
+	20236: common.HexToHash("0x0114c01d985da734a2a8d3ad4ee137f94107230c5ab1d527b2b75d8d048a00e9"),
+	20237: common.HexToHash("0xa6866c6723ece700a365ddc7793246b4cb4df93053578da386b147256ef0f441"),
+	20238: common.HexToHash("0x6c04dcb023b4e8b1b0444322d1a173bc5e61952fd62c91329b9f84975720941c"),
+	20239: common.HexToHash("0x7a9908be27fc17404429cd3d2bee8673716fcd7a5b7be9900ff8d4b7fc19b82a"),
+	20240: common.HexToHash("0xb93c5703d00b30b1d66aab69874a7a4b8cc2f50bdd00753c8ae5988447be955c"),
+	20241: common.HexToHash("0x38472ebe28b0044f636e9c97fce3ab8b995398116223d1e3c90e08bb18619765"),
+	20242: common.HexToHash("0xf783f3d00e6cdd5303eceef355343757dd7aeb474256590cab0fb2c9b9997733"),
+	20243: common.HexToHash("0x8a068fab0b7349b7ff12299ae1c8a5414743c33860f834af951901cc81a183c6"),
+	20244: common.HexToHash("0xb7e535fa74fbddc2d7704d3606a78c2536bd50e21dfaa2a76a7af4babb48a51c"),
+	20245: common.HexToHash("0xfc3c724df50ac9abe9105b1f36cf683eaa99bd232e7791fe893a639f6ecbe3ea"),
+	20246: common.HexToHash("0x154321c94b107d58265a32bd2aabd738ceebad9737bda9654e85fb3e7e5bd9d4"),
+	20247: common.HexToHash("0x799f03b68c8bc9447d94dc92641b63fb0cce7ea19217269da822aa7f4fb1fa25"),
+	20248: common.HexToHash("0x5259316ad595f8a85aacc567f640963a0e04bc4c1d5c0750044a87b7c05a4b3b"),
+	20249: common.HexToHash("0x3b411050254617d7d1f3a748a69b04a129685e851c16a5ce171e6b6ef4d69714"),
+	20250: common.HexToHash("0x4b0a8c197555bd3a2f31836bfb320829542bff2a39bd6abf49fee1e286eb5125"),
+	20251: common.HexToHash("0x5fe26b9bfb1c1dd96af63f88d6a233d1150167a5cc0bab30e63334fe32468f2a"),
+	20252: common.HexToHash("0xf0a657946af44d1c723d75faf4d70a1c2ed3a02b337bd2b8916fce3c0b713922"),
+	20253: common.HexToHash("0xc0b636c5925bf6d4dbdd301e2446463300252863908a550e3d01799f2add2749"),
+	20254: common.HexToHash("0xa0522928b331b8102a3289dc7bf20aaa507c15f234ded5f868ad1cd7569d0e46"),
+	20255: common.HexToHash("0x24a1fa59e7fd895a505edf1f07ec6862bf9368b5f074f658410f23de8751d6ce"),
+	20256: common.HexToHash("0xe2fee3b5bc301881cec560a7347d6d123236dd319a5c39ed141b5de749f00766"),
+	20257: common.HexToHash("0x519890e0b47f4e9a6f786fe415e7175d4075c04be56fa0ab6d6cb6ae1062c255"),
+	20258: common.HexToHash("0x6211040cf3a0b7fef242482c6d027d63c7776e06ed704d4609793004f414757f"),
+	20259: common.HexToHash("0x23e4050af7571711d2c508c738b0699f46c61f86c465d3bcd88d5b95fd74409a"),
+	20260: common.HexToHash("0xbdc8141ea8c384ad85d9d89e98cb5bee72a2293df73afcb248257bdc95253481"),
+	20261: common.HexToHash("0xf8b43cc91baf5bd363466d827ee24e86a18a10f8c73811f8baf472faa9b4d1ef"),
+}
 
 func (rx *RandomX) allowStoredMixDigestProof(header *types.Header, kyoto bool) bool {
 	if !kyoto {
@@ -754,8 +842,14 @@ func (rx *RandomX) allowStoredMixDigestProof(header *types.Header, kyoto bool) b
 	if number <= kyotoStoredMixDigestCompatUntil {
 		return true
 	}
-	if number < privacyQuantumStoredMixDigestCompatFromBlock || number > privacyQuantumStoredMixDigestCompatUntil {
+	inPrivacyQuantumCompat := number >= privacyQuantumStoredMixDigestCompatFromBlock && number <= privacyQuantumStoredMixDigestCompatUntil
+	inPostPrivacyGapCompat := number >= postPrivacyGapStoredMixDigestCompatFromBlock && number <= postPrivacyGapStoredMixDigestCompatUntil
+	if !inPrivacyQuantumCompat && !inPostPrivacyGapCompat {
 		return false
+	}
+	if inPostPrivacyGapCompat {
+		checkpoint, ok := postPrivacyGapStoredMixDigestCompatCheckpoints[number]
+		return ok && checkpoint == header.Hash()
 	}
 	checkpoint, ok := params.GetCheckpoint(number)
 	return ok && checkpoint == header.Hash()
