@@ -61,7 +61,9 @@ func (m *miner) close() {
 func (m *miner) getWork() (*work, error) {
 	var payload [4]string
 	if err := m.client.Call(&payload, "randomx_getWork"); err != nil {
-		return nil, err
+		if fallbackErr := m.client.Call(&payload, "miner_getWork"); fallbackErr != nil {
+			return nil, fmt.Errorf("randomx_getWork failed: %w; miner_getWork failed: %v", err, fallbackErr)
+		}
 	}
 	sealHash, err := decodeHex(payload[0])
 	if err != nil {
@@ -139,7 +141,9 @@ func (m *miner) submit(nonce uint64, sealHash, digest []byte) bool {
 	digestHex := "0x" + hex.EncodeToString(digest)
 	var ok bool
 	if err := m.client.Call(&ok, "randomx_submitWorkRaw", nonceHex, sealHex, digestHex); err != nil {
-		return false
+		if fallbackErr := m.client.Call(&ok, "miner_submitWork", nonceHex, sealHex, digestHex); fallbackErr != nil {
+			return false
+		}
 	}
 	return ok
 }
@@ -161,7 +165,7 @@ func (m *miner) mineThread(id int, initial *work) {
 			continue
 		}
 		atomic.AddUint64(&m.hashes, 1)
-		if new(big.Int).SetBytes(digest).Cmp(current.target) <= 0 {
+		if digestMeetsTarget(digest, current.target) {
 			if m.submit(nonce, current.sealHash, digest) {
 				atomic.AddUint64(&m.accepted, 1)
 				fmt.Printf("accepted block height=%d nonce=%d digest=0x%s\n", current.height, nonce, hex.EncodeToString(digest))
@@ -175,6 +179,14 @@ func (m *miner) mineThread(id int, initial *work) {
 		}
 		nonce++
 	}
+}
+
+func digestMeetsTarget(digest []byte, target *big.Int) bool {
+	littleEndian := append([]byte(nil), digest...)
+	for left, right := 0, len(littleEndian)-1; left < right; left, right = left+1, right-1 {
+		littleEndian[left], littleEndian[right] = littleEndian[right], littleEndian[left]
+	}
+	return new(big.Int).SetBytes(littleEndian).Cmp(target) <= 0
 }
 
 func (m *miner) stats() {

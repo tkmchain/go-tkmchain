@@ -195,6 +195,25 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 	}
 }
 
+func TestRandomXMoneroForkSchedule(t *testing.T) {
+	for name, config := range map[string]*ChainConfig{
+		"randomx": RandomXChainConfig,
+		"mainnet": MainnetChainConfig,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if config.IsRandomXMonero(new(big.Int).SetUint64(MainnetRandomXMoneroBlock - 1)) {
+				t.Fatal("RandomX Monero proof rules active before the fork")
+			}
+			if !config.IsRandomXMonero(new(big.Int).SetUint64(MainnetRandomXMoneroBlock)) {
+				t.Fatal("RandomX Monero proof rules inactive at the fork")
+			}
+		})
+	}
+	if !EgyptChainConfig.IsRandomXMonero(big.NewInt(0)) {
+		t.Fatal("Egypt RandomX Monero proof rules are not active at genesis")
+	}
+}
+
 func TestPrivacyCommitmentForkSchedule(t *testing.T) {
 	if !EgyptChainConfig.IsPrivacyCommitments(big.NewInt(0), 0) {
 		t.Fatal("Egypt privacy commitments are not active at genesis")

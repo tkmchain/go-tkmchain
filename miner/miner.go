@@ -238,15 +238,20 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		"headerHash", hash.Hex()[:16],
 		"mixDigest", digest.Hex()[:16])
 
+	chain := miner.eth.BlockChain()
+	head := chain.CurrentBlock()
 	miner.worker.pendingMu.RLock()
 	task, exist := miner.worker.pendingTasks[hash]
 	miner.worker.pendingMu.RUnlock()
 	if !exist {
-		log.Debug("Ignoring stale submitted work without pending task", "headerHash", hash.Hex(), "head", miner.eth.BlockChain().CurrentBlock().Number)
+		var headNumber interface{} = "<nil>"
+		if head != nil {
+			headNumber = head.Number
+		}
+		log.Debug("Ignoring stale submitted work without pending task", "headerHash", hash.Hex(), "head", headNumber)
 		return false
 	}
-	head := miner.eth.BlockChain().CurrentBlock()
-	if head == nil || task.block == nil || task.block.NumberU64() != head.Number.Uint64()+1 || task.block.ParentHash() != head.Hash() {
+	if task == nil || !isCurrentMiningCandidate(head, task.block) {
 		var headNumber interface{} = "<nil>"
 		if head != nil {
 			headNumber = head.Number
@@ -273,7 +278,11 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	newHeader.MixDigest = digest
 	newHeader.Nonce = nonce
 	prepareSealedHeader(newHeader, task.block)
-	if err := miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); err != nil {
+	if err := miner.engine.VerifyHeader(chain, newHeader); err != nil {
+		if config := chain.Config(); config != nil && config.IsRandomXMonero(newHeader.Number) {
+			log.Warn("Invalid proof-of-work submitted", "err", err)
+			return false
+		}
 		// Log initial failure for diagnostics
 		log.Debug("VerifyHeader initial failure", "err", err, "nonce", nonce, "mixDigest", digest.Hex())
 
@@ -299,7 +308,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 			newHeader.Nonce = attempt.nonce
 			newHeader.MixDigest = attempt.digest
 			prepareSealedHeader(newHeader, task.block)
-			if retryErr = miner.engine.VerifyHeader(miner.eth.BlockChain(), newHeader); retryErr == nil {
+			if retryErr = miner.engine.VerifyHeader(chain, newHeader); retryErr == nil {
 				log.Info("Accepted share after retry variant", "variant", idx, "nonce", newHeader.Nonce, "mixDigest", newHeader.MixDigest.Hex())
 				break
 			}
@@ -342,6 +351,10 @@ func prepareSealedHeader(header *types.Header, block *types.Block) {
 	}
 	header.GasUsed = block.GasUsed()
 	header.Bloom = block.Bloom()
+}
+
+func isCurrentMiningCandidate(head *types.Header, block *types.Block) bool {
+	return head != nil && block != nil && block.NumberU64() == head.Number.Uint64()+1 && block.ParentHash() == head.Hash()
 }
 
 func reverseHashBytes(hash common.Hash) common.Hash {

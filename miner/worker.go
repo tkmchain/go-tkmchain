@@ -679,6 +679,15 @@ func (w *worker) persistSealedTask(sealhash common.Hash, task *task, block *type
 		return false
 	}
 	hash := block.Hash()
+	head := w.chain.CurrentBlock()
+	if !isCurrentMiningCandidate(head, block) {
+		log.Debug("Dropping stale sealed block", "number", block.Number(), "hash", hash)
+		return false
+	}
+	if actual := w.engine.SealHash(block.Header()); actual != sealhash {
+		log.Warn("Dropping sealed block with mismatched work hash", "number", block.Number(), "hash", hash, "have", actual, "want", sealhash)
+		return false
+	}
 
 	// Different block could share same sealhash, deep copy here to prevent write-write conflict.
 	var (
@@ -705,7 +714,9 @@ func (w *worker) persistSealedTask(sealhash common.Hash, task *task, block *type
 		log.Warn("Dropping sealed block with empty coinbase", "number", block.Number(), "hash", hash)
 		return false
 	}
-	if header.MixDigest == (common.Hash{}) || header.Nonce == (types.BlockNonce{}) {
+	config := w.chain.Config()
+	moneroProof := config != nil && config.IsRandomXMonero(header.Number)
+	if !moneroProof && (header.MixDigest == (common.Hash{}) || header.Nonce == (types.BlockNonce{})) {
 		log.Warn("Dropping unsealed RandomX block", "number", block.Number(), "hash", hash, "nonce", header.Nonce, "mixDigest", header.MixDigest)
 		return false
 	}

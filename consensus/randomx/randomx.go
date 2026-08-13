@@ -618,21 +618,27 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	if rx.fullFake || rx.isClosed() {
 		return nil
 	}
+	if header == nil || header.Number == nil {
+		return fmt.Errorf("invalid proof: missing block number")
+	}
 
 	num := header.Number.Uint64()
 	if num == 0 {
 		return nil
 	}
-	if chain != nil {
-		config := chain.Config()
-		if config != nil && !config.IsRandomXTx(header.Number) {
-			return nil
-		}
+	verifyChain := chain
+	if verifyChain == nil {
+		verifyChain = rx.chain
 	}
+	config := chainConfig(verifyChain)
+	if config != nil && !config.IsRandomXTx(header.Number) {
+		return nil
+	}
+	moneroProof := config != nil && config.IsRandomXMonero(header.Number)
 	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
 		return fmt.Errorf("invalid proof: non-positive difficulty")
 	}
-	if requiresStrictSealFields(num) {
+	if !moneroProof && requiresStrictSealFields(num) {
 		if header.MixDigest == (common.Hash{}) {
 			return fmt.Errorf("invalid proof: empty mix digest")
 		}
@@ -641,7 +647,7 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 		}
 	}
 
-	epoch := rx.epochForBlock(chain, num)
+	epoch := rx.epochForBlock(verifyChain, num)
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
 		return err
 	}
@@ -653,35 +659,21 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	defer vm.Close()
 
 	target := new(big.Int).Div(maxUint256, header.Difficulty)
-	
+	if moneroProof {
+		return rx.verifyMoneroProof(header, vm)
+	}
+
 	// Try strict RandomX proof first
 	if rx.validProof(header, vm, target) {
 		return nil
 	}
 
 	kyoto := false
-	if chain != nil {
-		if config := chain.Config(); config != nil {
-			kyoto = config.IsKyoto(header.Number, header.Time)
-		}
+	if config != nil {
+		kyoto = config.IsKyoto(header.Number, header.Time)
 	}
 
-	// For blocks after the compatibility cutoff, don't try any legacy paths
-	if num > postPrivacyGapStoredMixDigestCompatUntil {
-		// Strict verification failed - log and return error
-		if result, sealHash := rx.randomXHash(header, vm); result != nil && header.Difficulty != nil {
-			log.Warn("Invalid RandomX proof - strict verification required",
-				"number", num,
-				"result", result.Text(16),
-				"target", target.Text(16),
-				"sealHash", sealHash.Hex(),
-				"mixDigest", header.MixDigest.Hex(),
-			)
-		}
-		return fmt.Errorf("invalid proof: result > target")
-	}
-
-	// Legacy compatibility paths only for blocks <= postPrivacyGapStoredMixDigestCompatUntil
+	// Historical compatibility paths end at the mandatory pre-fork checkpoint.
 	if rx.validProofWithNonceVariants(header, vm, target) {
 		if kyoto {
 			log.Warn("Accepted RandomX nonce byte-order variant", "number", header.Number.Uint64(), "hash", header.Hash())
@@ -731,17 +723,29 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	return fmt.Errorf("invalid proof: result > target")
 }
 
-func (rx *RandomX) verifyStrictProof(header *types.Header, vm *VM, target *big.Int) error {
-    result, hash := rx.randomXHash(header, vm)
-    
-    // The RandomX output IS the proof - just check if it meets the target
-    if result.Cmp(target) <= 0 {
-        return nil
-    }
-    
-    return fmt.Errorf("invalid proof: RandomX result %s exceeds target %s", 
-                      hash.Hex(), 
-                      fmt.Sprintf("%064x", target))
+func (rx *RandomX) verifyMoneroProof(header *types.Header, vm *VM) error {
+	_, hash := rx.randomXHash(header, vm)
+	if header.MixDigest != hash {
+		return fmt.Errorf("invalid proof: mix digest mismatch: have %s, want %s", header.MixDigest, hash)
+	}
+	if !meetsMoneroDifficulty(hash, header.Difficulty) {
+		return fmt.Errorf("invalid proof: little-endian RandomX result %s does not meet difficulty %s", hash, header.Difficulty)
+	}
+	return nil
+}
+
+// meetsMoneroDifficulty interprets the raw RandomX output as a little-endian
+// 256-bit integer and applies Monero's hash*difficulty < 2^256 rule.
+func meetsMoneroDifficulty(hash common.Hash, difficulty *big.Int) bool {
+	if difficulty == nil || difficulty.Sign() <= 0 {
+		return false
+	}
+	bytes := hash.Bytes()
+	for left, right := 0, len(bytes)-1; left < right; left, right = left+1, right-1 {
+		bytes[left], bytes[right] = bytes[right], bytes[left]
+	}
+	result := new(big.Int).SetBytes(bytes)
+	return new(big.Int).Mul(result, difficulty).Cmp(maxUint256) < 0
 }
 
 func (rx *RandomX) validProof(header *types.Header, vm *VM, target *big.Int) bool {
@@ -773,7 +777,7 @@ const (
 	privacyQuantumStoredMixDigestCompatFromBlock = uint64(20142)
 	privacyQuantumStoredMixDigestCompatUntil     = uint64(20145)
 	postPrivacyGapStoredMixDigestCompatFromBlock = uint64(20179)
-	postPrivacyGapStoredMixDigestCompatUntil     = uint64(20267)
+	postPrivacyGapStoredMixDigestCompatUntil     = uint64(20373)
 )
 
 var postPrivacyGapStoredMixDigestCompatCheckpoints = map[uint64]common.Hash{
@@ -859,12 +863,17 @@ var postPrivacyGapStoredMixDigestCompatCheckpoints = map[uint64]common.Hash{
 	20258: common.HexToHash("0x6211040cf3a0b7fef242482c6d027d63c7776e06ed704d4609793004f414757f"),
 	20259: common.HexToHash("0x23e4050af7571711d2c508c738b0699f46c61f86c465d3bcd88d5b95fd74409a"),
 	20260: common.HexToHash("0xbdc8141ea8c384ad85d9d89e98cb5bee72a2293df73afcb248257bdc95253481"),
-        20261: common.HexToHash("0xf8b43cc91baf5bd363466d827ee24e86a18a10f8c73811f8baf472faa9b4d1ef"),
-        20262: common.HexToHash("0xa9bf672918ef526426b95567f1074d9581838f17c158992b837823bbd13d2655"),
-        20263: common.HexToHash("0xf1e85f7f0450a6c12b53e93f4b56b2f20c243e7e5ca4f5eaefc17373ca49f139"),
-        20264: common.HexToHash("0x785ec1f8a9d903a44dfb38147aac83a17c4191fc5e8858ec98e56896c6f1a11e"),
-        20265: common.HexToHash("0xd89e4f9a772cb91e8a9bf4add699017e071eaaa9915174d15b38192ffe6dba40"),
-        20266: common.HexToHash("0x0f2320687171d71804086b1e6bea44375bfb640a86a1ccf038ace383033ed989"),
+	20261: common.HexToHash("0xf8b43cc91baf5bd363466d827ee24e86a18a10f8c73811f8baf472faa9b4d1ef"),
+	20262: common.HexToHash("0xa9bf672918ef526426b95567f1074d9581838f17c158992b837823bbd13d2655"),
+	20263: common.HexToHash("0xf1e85f7f0450a6c12b53e93f4b56b2f20c243e7e5ca4f5eaefc17373ca49f139"),
+	20264: common.HexToHash("0x785ec1f8a9d903a44dfb38147aac83a17c4191fc5e8858ec98e56896c6f1a11e"),
+	20265: common.HexToHash("0xd89e4f9a772cb91e8a9bf4add699017e071eaaa9915174d15b38192ffe6dba40"),
+	20266: common.HexToHash("0x0f2320687171d71804086b1e6bea44375bfb640a86a1ccf038ace383033ed989"),
+	20369: common.HexToHash("0xbe28029213fd28ad8393a3f2ee76982441d2e4de09b0b3d3b5e77cdfff4533e2"),
+	20370: common.HexToHash("0xc53450d9108bbedf82a74dfa063277f0072b8320bb35fe7dedd34624d94d4434"),
+	20371: common.HexToHash("0x582809dbdc5f1ea71c5565497e925e7af2fead9f19f4c81b795e11c82852f539"),
+	20372: common.HexToHash("0x44c6076c7abbec0cf22742856df7ab9703b1649de99ce72b1701256b156d91bd"),
+	20373: common.HexToHash("0x6386f2bea3d034883ce29af5777408caeb3ecc8e055f25af79c8098d8de3fcea"),
 }
 
 func (rx *RandomX) allowStoredMixDigestProof(header *types.Header, kyoto bool) bool {
@@ -1041,7 +1050,11 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 					}
 				}
 
-				if result.Cmp(target) <= 0 {
+				valid := result.Cmp(target) <= 0
+				if config := chainConfig(chain); config != nil && config.IsRandomXMonero(localHeader.Number) {
+					valid = meetsMoneroDifficulty(hash, localHeader.Difficulty)
+				}
+				if valid {
 					localHeader.MixDigest = hash
 					sealedBlock := block.WithSeal(localHeader)
 
@@ -1050,8 +1063,8 @@ func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, r
 						"difficulty", localHeader.Difficulty,
 						"nonce", nonce,
 						"thread", threadID,
-				     		"hash", hash.Hex(),
-                                                "result", result.Text(16))
+						"hash", hash.Hex(),
+						"result", result.Text(16))
 					doneOnce.Do(func() { close(done) })
 					select {
 					case found <- sealedBlock:

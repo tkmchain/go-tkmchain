@@ -806,6 +806,9 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 		return false, "sync in progress before mining", localHeight, highest
 	}
 	if s.handler.peers.len() == 0 {
+		if s.canMineFromRandomXCheckpoint(localHeight) {
+			return true, "", localHeight, localHeight
+		}
 		return false, "waiting for peers", localHeight, localHeight
 	}
 
@@ -835,6 +838,24 @@ func (s *Ethereum) readyToMine() (bool, string, uint64, uint64) {
 		return false, "downloader target ahead before mining", localHeight, progress.HighestBlock
 	}
 	return true, "", localHeight, highest
+}
+
+func (s *Ethereum) canMineFromRandomXCheckpoint(localHeight uint64) bool {
+	config := s.blockchain.Config()
+	if config == nil || config.RandomXMoneroBlock == nil || config.RandomXMoneroBlock.Sign() <= 0 {
+		return false
+	}
+	next := new(big.Int).SetUint64(localHeight + 1)
+	if !config.IsRandomXMonero(next) {
+		return false
+	}
+	checkpointNumber := new(big.Int).Sub(config.RandomXMoneroBlock, common.Big1).Uint64()
+	checkpointHash, ok := params.GetCheckpoint(checkpointNumber)
+	if !ok {
+		return false
+	}
+	header := s.blockchain.GetHeaderByNumber(checkpointNumber)
+	return header != nil && header.Hash() == checkpointHash
 }
 
 func (s *Ethereum) miningReadiness() (bool, string, uint64, uint64) {

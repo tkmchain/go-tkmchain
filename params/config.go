@@ -45,6 +45,8 @@ const (
 	MainnetPhoneTime uint64 = 1784709000
 	// MainnetPrivacyQuantumTime is 2026-08-10 06:00:00 UTC.
 	MainnetPrivacyQuantumTime uint64 = 1786341600
+	// MainnetRandomXMoneroBlock activates canonical RandomX proof validation.
+	MainnetRandomXMoneroBlock uint64 = 20374
 )
 
 // RandomXConfig is the consensus engine configs for RandomX proof-of-work based sealing.
@@ -73,6 +75,7 @@ var RandomXChainConfig = &ChainConfig{
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
 	RandomXTxBlock:               big.NewInt(2450),
+	RandomXMoneroBlock:           new(big.Int).SetUint64(MainnetRandomXMoneroBlock),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 newUint64(0),
@@ -147,6 +150,7 @@ type ChainConfig struct {
 	BerlinBlock         *big.Int `json:"berlinBlock,omitempty"`
 	LondonBlock         *big.Int `json:"londonBlock,omitempty"`
 	RandomXTxBlock      *big.Int `json:"randomXTxBlock,omitempty"`
+	RandomXMoneroBlock  *big.Int `json:"randomXMoneroBlock,omitempty"`
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`
 
@@ -275,6 +279,7 @@ var MainnetChainConfig = &ChainConfig{
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
 	RandomXTxBlock:               big.NewInt(2450),
+	RandomXMoneroBlock:           new(big.Int).SetUint64(MainnetRandomXMoneroBlock),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 newUint64(0),
@@ -320,6 +325,7 @@ var TestChainConfig = &ChainConfig{
 	BerlinBlock:                  big.NewInt(0),
 	LondonBlock:                  big.NewInt(0),
 	RandomXTxBlock:               big.NewInt(2450),
+	RandomXMoneroBlock:           big.NewInt(2450),
 	ArrowGlacierBlock:            nil,
 	GrayGlacierBlock:             nil,
 	ShanghaiTime:                 nil,
@@ -359,6 +365,7 @@ var (
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
 		RandomXTxBlock:      big.NewInt(2450),
+		RandomXMoneroBlock:  big.NewInt(2450),
 		Clique: &CliqueConfig{
 			Period: 0,
 			Epoch:  30000,
@@ -383,6 +390,7 @@ var (
 		BerlinBlock:         big.NewInt(0),
 		LondonBlock:         big.NewInt(0),
 		RandomXTxBlock:      big.NewInt(2450),
+		RandomXMoneroBlock:  big.NewInt(2450),
 		ShanghaiTime:        newUint64(0),
 		CancunTime:          newUint64(0),
 		PragueTime:          newUint64(0),
@@ -412,6 +420,7 @@ var (
 		BerlinBlock:                  big.NewInt(0),
 		LondonBlock:                  big.NewInt(0),
 		RandomXTxBlock:               big.NewInt(0),
+		RandomXMoneroBlock:           big.NewInt(0),
 		ArrowGlacierBlock:            nil,
 		GrayGlacierBlock:             nil,
 		ShanghaiTime:                 nil,
@@ -496,6 +505,11 @@ func (c *ChainConfig) IsLondon(num *big.Int) bool {
 // IsRandomXTx returns whether num is at or beyond the RandomX transaction fork.
 func (c *ChainConfig) IsRandomXTx(num *big.Int) bool {
 	return c.IsLondon(num) && isBlockForked(c.RandomXTxBlock, num)
+}
+
+// IsRandomXMonero returns whether canonical Monero-style RandomX proof rules are active.
+func (c *ChainConfig) IsRandomXMonero(num *big.Int) bool {
+	return c.IsRandomXTx(num) && isBlockForked(c.RandomXMoneroBlock, num)
 }
 
 // IsArrowGlacier returns whether num is at or beyond Arrow Glacier.
@@ -615,7 +629,7 @@ type Rules struct {
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
-	IsRandomXTx                                             bool
+	IsRandomXTx, IsRandomXMonero                            bool
 	IsArrowGlacier, IsGrayGlacier                           bool
 	IsShanghai, IsCancun, IsPrague, IsOsaka                 bool
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
@@ -644,6 +658,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsBerlin:           c.IsBerlin(num),
 		IsLondon:           c.IsLondon(num),
 		IsRandomXTx:        c.IsRandomXTx(num),
+		IsRandomXMonero:    c.IsRandomXMonero(num),
 		IsArrowGlacier:     c.IsArrowGlacier(num),
 		IsGrayGlacier:      c.IsGrayGlacier(num),
 		IsShanghai:         c.IsShanghai(num, timestamp),
@@ -693,6 +708,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"berlinBlock", c.BerlinBlock, false},
 		{"londonBlock", c.LondonBlock, false},
 		{"randomXTxBlock", c.RandomXTxBlock, true},
+		{"randomXMoneroBlock", c.RandomXMoneroBlock, true},
 		{"arrowGlacierBlock", c.ArrowGlacierBlock, true},
 		{"grayGlacierBlock", c.GrayGlacierBlock, true},
 	}
@@ -872,6 +888,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkBlockIncompatible(c.RandomXTxBlock, newcfg.RandomXTxBlock, headBlock) {
 		return newBlockCompatError("RandomX transaction fork block", c.RandomXTxBlock, newcfg.RandomXTxBlock)
+	}
+	if isForkBlockIncompatible(c.RandomXMoneroBlock, newcfg.RandomXMoneroBlock, headBlock) {
+		return newBlockCompatError("RandomX Monero proof fork block", c.RandomXMoneroBlock, newcfg.RandomXMoneroBlock)
 	}
 	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
