@@ -366,6 +366,9 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	}
 	if !ok {
 		if config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+			if config.IsPQMigrationAllowed(blockNumber, blockTime) && types.IsPQMigrationTx(tx) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("%w: transparent transactions are disabled after privacy activation", ErrInvalidShieldedTx)
 		}
 		return nil, nil

@@ -96,6 +96,34 @@ func testTransactionMarshal(t *testing.T, tests []txData, config *params.ChainCo
 	}
 }
 
+func TestTKMPaymentPqRPCNames(t *testing.T) {
+	server := rpc.NewServer()
+	defer server.Stop()
+	if err := server.RegisterName("tkm", &TKMPaymentAPI{}); err != nil {
+		t.Fatal(err)
+	}
+	client := rpc.DialInProc(server)
+	defer client.Close()
+
+	key, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data hexutil.Bytes
+	if err := client.Call(&data, "tkm_pqMigrationData", hexutil.Bytes(pqcrypto.PublicKeyBytes(key))); err != nil {
+		t.Fatalf("tkm_pqMigrationData call failed: %v", err)
+	}
+	if !types.HasPQMigrationDataPrefix(data) {
+		t.Fatal("tkm_pqMigrationData returned an invalid marker")
+	}
+
+	var gas hexutil.Uint64
+	err = client.Call(&gas, "tkm_pqMigrationGas", hexutil.Bytes{0x01})
+	if err == nil || strings.Contains(err.Error(), "method not found") {
+		t.Fatalf("tkm_pqMigrationGas registration error = %v", err)
+	}
+}
+
 func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 	t.Parallel()
 

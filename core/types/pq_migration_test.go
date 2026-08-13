@@ -70,3 +70,35 @@ func TestPQMigrationDataRejectsMismatchedAddress(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, ErrPQMigrationAddress)
 	}
 }
+
+func TestPQMigrationRejectsNonTransferTransactionTypes(t *testing.T) {
+	key, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := pqcrypto.PublicKeyBytes(key)
+	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := NewPQMigrationData(address, pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := NewTx(&PQTkmTx{
+		ChainID:   big.NewInt(8979),
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(1),
+		Gas:       100000,
+		To:        &address,
+		Value:     big.NewInt(1),
+		Data:      data,
+	})
+	if IsPQMigrationTx(tx) {
+		t.Fatal("PQ transaction envelope accepted as a legacy migration")
+	}
+	zeroValue := NewTransaction(0, address, new(big.Int), 100000, big.NewInt(1), data)
+	if IsPQMigrationTx(zeroValue) {
+		t.Fatal("zero-value marker accepted as a funds migration")
+	}
+}

@@ -19,6 +19,7 @@ package ethapi
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	gomath "math"
@@ -1859,6 +1860,42 @@ func (api *TKMPaymentAPI) ExportPQAccount(addr common.Address, passphrase, newPa
 	return hexutil.Bytes(blob), nil
 }
 
+// ImportLegacyKeyfileWithPassphrase imports an encrypted version 3 ECDSA
+// keyfile into the trusted local keystore so it can sign a one-way PQ migration.
+func (api *TKMPaymentAPI) ImportLegacyKeyfileWithPassphrase(keyJSON hexutil.Bytes, passphrase string) (common.Address, error) {
+	if len(keyJSON) == 0 || len(keyJSON) > 1<<20 {
+		return common.Address{}, errors.New("legacy keyfile must be between 1 byte and 1 MiB")
+	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(keyJSON, &header); err != nil {
+		return common.Address{}, fmt.Errorf("invalid legacy keyfile JSON: %w", err)
+	}
+	if header.Version != 3 {
+		return common.Address{}, errors.New("legacy migration requires an encrypted version 3 keyfile")
+	}
+	ks, err := api.keystore()
+	if err != nil {
+		return common.Address{}, err
+	}
+	account, err := ks.Import(keyJSON, passphrase, passphrase)
+	if errors.Is(err, keystore.ErrAccountAlreadyExists) {
+		algorithm, algorithmErr := ks.AccountAlgorithm(account)
+		if algorithmErr != nil {
+			return common.Address{}, algorithmErr
+		}
+		if algorithm != keystore.AlgorithmECDSA {
+			return common.Address{}, errors.New("existing source account is not a legacy ECDSA account")
+		}
+		return account.Address, nil
+	}
+	if err != nil {
+		return common.Address{}, err
+	}
+	return account.Address, nil
+}
+
 // AccountAlgorithm returns the local keystore algorithm for an account.
 func (api *TKMPaymentAPI) AccountAlgorithm(addr common.Address) (string, error) {
 	ks, err := api.keystore()
@@ -1877,9 +1914,9 @@ func (api *TKMPaymentAPI) AccountAlgorithms() (map[common.Address]string, error)
 	return ks.AccountAlgorithms(), nil
 }
 
-// PQMigrationData returns calldata that marks a legacy transfer as a migration
+// PqMigrationData returns calldata that marks a legacy transfer as a migration
 // into the PQ account derived from the supplied ML-DSA-87 public key.
-func (api *TKMPaymentAPI) PQMigrationData(publicKey hexutil.Bytes) (hexutil.Bytes, error) {
+func (api *TKMPaymentAPI) PqMigrationData(publicKey hexutil.Bytes) (hexutil.Bytes, error) {
 	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
 	if err != nil {
 		return nil, err
@@ -1891,15 +1928,44 @@ func (api *TKMPaymentAPI) PQMigrationData(publicKey hexutil.Bytes) (hexutil.Byte
 	return hexutil.Bytes(data), nil
 }
 
-// SendMigrationToPQWithPassphrase signs and submits a pre-fork value transfer
+// PqMigrationGas returns the exact gas limit for a migration marker under the
+// current fork rules. The transfer targets a fresh EOA and has no execution gas.
+func (api *TKMPaymentAPI) PqMigrationGas(publicKey hexutil.Bytes) (hexutil.Uint64, error) {
+	data, err := api.PqMigrationData(publicKey)
+	if err != nil {
+		return 0, err
+	}
+	head := api.b.CurrentHeader()
+	if head == nil {
+		return 0, errors.New("latest header unavailable")
+	}
+	rules := api.b.ChainConfig().Rules(head.Number, false, head.Time)
+	cost, err := core.IntrinsicGas(data, nil, nil, false, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam)
+	if err != nil {
+		return 0, err
+	}
+	gas := cost.RegularGas
+	if rules.IsPrague {
+		floor, err := core.FloorDataGas(rules, data, nil)
+		if err != nil {
+			return 0, err
+		}
+		if floor > gas {
+			gas = floor
+		}
+	}
+	return hexutil.Uint64(gas), nil
+}
+
+// SendMigrationToPQWithPassphrase signs and submits an allowed value transfer
 // from a legacy account to the PQ address derived from publicKey.
 func (api *TKMPaymentAPI) SendMigrationToPQWithPassphrase(ctx context.Context, args TransactionArgs, publicKey hexutil.Bytes, passphrase string) (common.Hash, error) {
 	head := api.b.CurrentHeader()
 	if head == nil {
 		return common.Hash{}, errors.New("latest header unavailable")
 	}
-	if api.b.ChainConfig().IsQuantumResistant(head.Number, head.Time) {
-		return common.Hash{}, errors.New("PQ migration with legacy signatures is closed after the quantum-resistant fork")
+	if !api.b.ChainConfig().IsPQMigrationAllowed(head.Number, head.Time) {
+		return common.Hash{}, errors.New("PQ migration recovery fork is not active")
 	}
 	if args.From == nil {
 		return common.Hash{}, errors.New("missing legacy migration source account")
@@ -1911,7 +1977,7 @@ func (api *TKMPaymentAPI) SendMigrationToPQWithPassphrase(ctx context.Context, a
 		return common.Hash{}, errors.New("migration calldata is derived from the PQ public key and must not be supplied")
 	}
 	if args.Type != nil && uint64(*args.Type) == types.PQTkmTxType {
-		return common.Hash{}, errors.New("migration must be signed by the legacy account before the quantum-resistant fork")
+		return common.Hash{}, errors.New("migration must be signed by the legacy account")
 	}
 	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
 	if err != nil {
@@ -1953,15 +2019,15 @@ func (api *TKMPaymentAPI) PreparePQMigrationWithPassphrase(addr common.Address, 
 	return api.PreparePQMigrationWithPassphrases(addr, passphrase, passphrase)
 }
 
-// AutoMigrateToPQWithPassphrases creates a PQ account, signs a pre-fork
+// AutoMigrateToPQWithPassphrases creates a PQ account, signs an allowed
 // migration transfer from the legacy account, and submits it.
 func (api *TKMPaymentAPI) AutoMigrateToPQWithPassphrases(ctx context.Context, args TransactionArgs, legacyPassphrase, pqPassphrase string) (*PQMigrationResult, error) {
 	head := api.b.CurrentHeader()
 	if head == nil {
 		return nil, errors.New("latest header unavailable")
 	}
-	if api.b.ChainConfig().IsQuantumResistant(head.Number, head.Time) {
-		return nil, errors.New("PQ migration with legacy signatures is closed after the quantum-resistant fork")
+	if !api.b.ChainConfig().IsPQMigrationAllowed(head.Number, head.Time) {
+		return nil, errors.New("PQ migration recovery fork is not active")
 	}
 	if args.From == nil {
 		return nil, errors.New("missing legacy migration source account")
@@ -1973,7 +2039,7 @@ func (api *TKMPaymentAPI) AutoMigrateToPQWithPassphrases(ctx context.Context, ar
 		return nil, errors.New("migration calldata is derived from the new PQ account and must not be supplied")
 	}
 	if args.Type != nil && uint64(*args.Type) == types.PQTkmTxType {
-		return nil, errors.New("migration must be signed by the legacy account before the quantum-resistant fork")
+		return nil, errors.New("migration must be signed by the legacy account")
 	}
 	result, err := api.PreparePQMigrationWithPassphrases(*args.From, legacyPassphrase, pqPassphrase)
 	if err != nil {

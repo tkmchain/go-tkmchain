@@ -97,9 +97,11 @@ The node exposes helper methods in the `tkm` namespace:
 - `newPQAccountWithPassphrase(passphrase)`
 - `importPQSeedWithPassphrase(seed, passphrase)`
 - `exportPQAccount(address, passphrase, newPassphrase)`
+- `importLegacyKeyfileWithPassphrase(keyfileJSON, passphrase)`
 - `accountAlgorithm(address)`
 - `accountAlgorithms()`
 - `pqMigrationData(publicKey)`
+- `pqMigrationGas(publicKey)`
 - `sendMigrationToPQWithPassphrase(args, publicKey, passphrase)`
 - `preparePQMigrationWithPassphrase(address, passphrase)`
 - `preparePQMigrationWithPassphrases(address, legacyPassphrase, pqPassphrase)`
@@ -133,13 +135,20 @@ Nodes validate the marker by recomputing:
 pqAddress = keccak256("tkmchain:pq-address:v1:" || "ML-DSA-87" || pqPublicKey)[12:]
 ```
 
-After the hardfork, legacy-signed migration is closed and normal user
-transactions must use `PQTkmTxType`.
+From the original quantum-resistant fork until `2026-08-14 06:00:00 UTC`,
+legacy-signed migration is closed. At that recovery timestamp, consensus again
+accepts a normal legacy-signed transaction only when it carries a valid
+recipient-bound `TKMPQMIG1` marker. Ordinary legacy transactions remain
+rejected and normal user transactions must use `PQTkmTxType`.
+
+Web wallets can pass the encrypted version 3 keyfile to
+`importLegacyKeyfileWithPassphrase` on a trusted local node, then use the
+prepare, export, and send helpers without exposing a raw ECDSA private key.
 
 ## Keystore-Assisted Auto Migration
 
 For a local keystore account, `autoMigrateToPQWithPassphrase` performs the
-pre-fork migration workflow in one call:
+allowed migration workflow in one call:
 
 1. Decrypt the legacy ECDSA account to verify the passphrase.
 2. Create and store a new version 4 ML-DSA-87 keyfile.

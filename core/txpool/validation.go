@@ -97,12 +97,14 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return errors.New("randomx tx must be a coin transfer with a recipient")
 		}
 	}
+	isPQMigration := false
 	if types.HasPQMigrationDataPrefix(tx.Data()) {
 		if !types.IsPQMigrationTx(tx) {
 			return errors.New("invalid post-quantum migration transaction")
 		}
+		isPQMigration = true
 	}
-	if rules.IsQuantumResistant && tx.Type() != types.PQTkmTxType && !types.IsBlockRewardTx(tx) {
+	if rules.IsQuantumResistant && tx.Type() != types.PQTkmTxType && !types.IsBlockRewardTx(tx) && !(isPQMigration && rules.IsPQMigrationAllowed) {
 		return fmt.Errorf("%w: type %d rejected, quantum-resistant transaction fork requires PQ tx type %d", core.ErrTxTypeNotSupported, tx.Type(), types.PQTkmTxType)
 	}
 	if !rules.IsQuantumResistant && tx.Type() == types.PQTkmTxType {

@@ -171,8 +171,8 @@ upgraded prover proving.key: 2c094442e02f1d39cc7ac47e213815b1a24f50decc58bd47325
   and `ML-DSA-87` accounts.
 - Added `tkm` RPC helpers:
   `newPQAccountWithPassphrase`, `importPQSeedWithPassphrase`,
-  `exportPQAccount`, `accountAlgorithm`, `accountAlgorithms`,
-  `pqMigrationData`, `sendMigrationToPQWithPassphrase`,
+  `exportPQAccount`, `importLegacyKeyfileWithPassphrase`, `accountAlgorithm`, `accountAlgorithms`,
+  `pqMigrationData`, `pqMigrationGas`, `sendMigrationToPQWithPassphrase`,
   `preparePQMigrationWithPassphrase`, `preparePQMigrationWithPassphrases`,
   `autoMigrateToPQWithPassphrase`, and `autoMigrateToPQWithPassphrases`.
 - `SendTransactionWithPassphrase` can sign `PQTkmTxType` when the selected local
@@ -185,10 +185,11 @@ upgraded prover proving.key: 2c094442e02f1d39cc7ac47e213815b1a24f50decc58bd47325
 - Added `TKMPQMIG1` migration calldata that binds the transfer recipient to the
   ML-DSA-87 public key so wallets and explorers can verify migration intent.
 - Added keystore-assisted auto migration that creates a version 4 PQ keyfile,
-  builds the migration marker, signs the legacy transfer, and submits it before
-  activation.
-- `sendMigrationToPQWithPassphrase` rejects migration attempts after
-  `quantumResistantTime`; post-fork user activity remains `PQTkmTxType` only.
+  builds the migration marker, signs the legacy transfer, and submits it while
+  migration is enabled.
+- The recovery fork at `2026-08-14 06:00:00 UTC` permits valid `TKMPQMIG1`
+  transfers after `quantumResistantTime`; all other post-fork legacy user
+  transactions remain rejected.
 - Added `ethkey --pq` tooling for generating and inspecting version 4 PQ
   keyfiles.
 - Added the deterministic PQ wallet/explorer integration vector:

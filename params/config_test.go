@@ -172,18 +172,20 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 	for name, config := range configs {
 		t.Run(name, func(t *testing.T) {
 			tkmForkTimes := map[string]*uint64{
-				"EDATime":               config.EDATime,
-				"KyotoTime":             config.KyotoTime,
-				"PhoneTime":             config.PhoneTime,
-				"PrivacyCommitmentTime": config.PrivacyCommitmentTime,
-				"QuantumResistantTime":  config.QuantumResistantTime,
+				"EDATime":                 config.EDATime,
+				"KyotoTime":               config.KyotoTime,
+				"PhoneTime":               config.PhoneTime,
+				"PrivacyCommitmentTime":   config.PrivacyCommitmentTime,
+				"QuantumResistantTime":    config.QuantumResistantTime,
+				"PQMigrationRecoveryTime": config.PQMigrationRecoveryTime,
 			}
 			want := map[string]uint64{
-				"EDATime":               0,
-				"KyotoTime":             MainnetKyotoTime,
-				"PhoneTime":             MainnetPhoneTime,
-				"PrivacyCommitmentTime": MainnetPrivacyQuantumTime,
-				"QuantumResistantTime":  MainnetPrivacyQuantumTime,
+				"EDATime":                 0,
+				"KyotoTime":               MainnetKyotoTime,
+				"PhoneTime":               MainnetPhoneTime,
+				"PrivacyCommitmentTime":   MainnetPrivacyQuantumTime,
+				"QuantumResistantTime":    MainnetPrivacyQuantumTime,
+				"PQMigrationRecoveryTime": MainnetPQMigrationRecoveryTime,
 			}
 			for forkName, wantTime := range want {
 				forkTime := tkmForkTimes[forkName]
@@ -241,6 +243,24 @@ func TestQuantumResistantForkSchedule(t *testing.T) {
 	}
 	if !MainnetChainConfig.IsQuantumResistant(big.NewInt(0), MainnetPrivacyQuantumTime) {
 		t.Fatal("mainnet quantum-resistant transactions inactive at scheduled timestamp")
+	}
+}
+
+func TestPQMigrationRecoveryForkSchedule(t *testing.T) {
+	if !EgyptChainConfig.IsPQMigrationAllowed(big.NewInt(0), 0) {
+		t.Fatal("Egypt PQ migration recovery is not active at genesis")
+	}
+	if MainnetChainConfig.PQMigrationRecoveryTime == nil || *MainnetChainConfig.PQMigrationRecoveryTime != MainnetPQMigrationRecoveryTime {
+		t.Fatalf("mainnet PQ migration recovery time = %v, want %d", MainnetChainConfig.PQMigrationRecoveryTime, MainnetPQMigrationRecoveryTime)
+	}
+	if !MainnetChainConfig.IsPQMigrationAllowed(big.NewInt(0), MainnetPrivacyQuantumTime-1) {
+		t.Fatal("mainnet PQ migration should be available before the PQ-only fork")
+	}
+	if MainnetChainConfig.IsPQMigrationAllowed(big.NewInt(0), MainnetPrivacyQuantumTime) {
+		t.Fatal("mainnet PQ migration recovery active before its scheduled timestamp")
+	}
+	if !MainnetChainConfig.IsPQMigrationAllowed(big.NewInt(0), MainnetPQMigrationRecoveryTime) {
+		t.Fatal("mainnet PQ migration recovery inactive at its scheduled timestamp")
 	}
 }
 

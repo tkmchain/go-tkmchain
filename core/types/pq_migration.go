@@ -20,7 +20,7 @@ var (
 var pqMigrationDataMagic = []byte("TKMPQMIG1")
 
 // PQMigration records the public PQ account identity that a legacy account is
-// moving funds to before the quantum-resistant transaction fork activates.
+// moving funds to during an enabled migration period.
 type PQMigration struct {
 	Address   common.Address
 	Algorithm string
@@ -85,10 +85,16 @@ func ValidPQMigrationDataForRecipient(data []byte, recipient common.Address) boo
 	return migration.Address == recipient
 }
 
+// IsPQMigrationTxType reports whether the transaction envelope has no
+// side-effects beyond an ordinary EVM value transfer and calldata.
+func IsPQMigrationTxType(txType byte) bool {
+	return txType == LegacyTxType || txType == AccessListTxType || txType == DynamicFeeTxType
+}
+
 // IsPQMigrationTx reports whether tx is a normal transfer that carries a valid
 // PQ migration marker for its recipient.
 func IsPQMigrationTx(tx *Transaction) bool {
-	if tx == nil || tx.To() == nil {
+	if tx == nil || tx.To() == nil || tx.Value().Sign() <= 0 || !IsPQMigrationTxType(tx.Type()) {
 		return false
 	}
 	return ValidPQMigrationDataForRecipient(tx.Data(), *tx.To())

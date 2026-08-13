@@ -45,6 +45,8 @@ const (
 	MainnetPhoneTime uint64 = 1784709000
 	// MainnetPrivacyQuantumTime is 2026-08-10 06:00:00 UTC.
 	MainnetPrivacyQuantumTime uint64 = 1786341600
+	// MainnetPQMigrationRecoveryTime is 2026-08-14 06:00:00 UTC.
+	MainnetPQMigrationRecoveryTime uint64 = 1786687200
 	// MainnetRandomXMoneroBlock activates canonical RandomX proof validation.
 	MainnetRandomXMoneroBlock uint64 = 20374
 )
@@ -94,6 +96,7 @@ var RandomXChainConfig = &ChainConfig{
 	PhoneTime:                    newUint64(MainnetPhoneTime),
 	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
+	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
@@ -154,22 +157,23 @@ type ChainConfig struct {
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`
 
-	ShanghaiTime          *uint64 `json:"shanghaiTime,omitempty"`
-	CancunTime            *uint64 `json:"cancunTime,omitempty"`
-	PragueTime            *uint64 `json:"pragueTime,omitempty"`
-	OsakaTime             *uint64 `json:"osakaTime,omitempty"`
-	BPO1Time              *uint64 `json:"bpo1Time,omitempty"`
-	BPO2Time              *uint64 `json:"bpo2Time,omitempty"`
-	BPO3Time              *uint64 `json:"bpo3Time,omitempty"`
-	BPO4Time              *uint64 `json:"bpo4Time,omitempty"`
-	BPO5Time              *uint64 `json:"bpo5Time,omitempty"`
-	AmsterdamTime         *uint64 `json:"amsterdamTime,omitempty"`
-	UBTTime               *uint64 `json:"ubtTime,omitempty"`
-	EDATime               *uint64 `json:"edaTime,omitempty"`
-	KyotoTime             *uint64 `json:"kyotoTime,omitempty"`
-	PhoneTime             *uint64 `json:"phoneTime,omitempty"`
-	PrivacyCommitmentTime *uint64 `json:"privacyCommitmentTime,omitempty"`
-	QuantumResistantTime  *uint64 `json:"quantumResistantTime,omitempty"`
+	ShanghaiTime            *uint64 `json:"shanghaiTime,omitempty"`
+	CancunTime              *uint64 `json:"cancunTime,omitempty"`
+	PragueTime              *uint64 `json:"pragueTime,omitempty"`
+	OsakaTime               *uint64 `json:"osakaTime,omitempty"`
+	BPO1Time                *uint64 `json:"bpo1Time,omitempty"`
+	BPO2Time                *uint64 `json:"bpo2Time,omitempty"`
+	BPO3Time                *uint64 `json:"bpo3Time,omitempty"`
+	BPO4Time                *uint64 `json:"bpo4Time,omitempty"`
+	BPO5Time                *uint64 `json:"bpo5Time,omitempty"`
+	AmsterdamTime           *uint64 `json:"amsterdamTime,omitempty"`
+	UBTTime                 *uint64 `json:"ubtTime,omitempty"`
+	EDATime                 *uint64 `json:"edaTime,omitempty"`
+	KyotoTime               *uint64 `json:"kyotoTime,omitempty"`
+	PhoneTime               *uint64 `json:"phoneTime,omitempty"`
+	PrivacyCommitmentTime   *uint64 `json:"privacyCommitmentTime,omitempty"`
+	QuantumResistantTime    *uint64 `json:"quantumResistantTime,omitempty"`
+	PQMigrationRecoveryTime *uint64 `json:"pqMigrationRecoveryTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -298,6 +302,7 @@ var MainnetChainConfig = &ChainConfig{
 	PhoneTime:                    newUint64(MainnetPhoneTime),
 	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
+	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -437,6 +442,7 @@ var (
 		EDATime:                      nil,
 		PrivacyCommitmentTime:        newUint64(0),
 		QuantumResistantTime:         newUint64(0),
+		PQMigrationRecoveryTime:      newUint64(0),
 		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 		PostQuantumMainKingAddress:   common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b"),
 		RotatingKingRotationInterval: 100,
@@ -601,6 +607,16 @@ func (c *ChainConfig) IsQuantumResistant(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.QuantumResistantTime, time)
 }
 
+// IsPQMigrationAllowed returns whether a legacy account may submit a strictly
+// marked one-way migration into an ML-DSA-87 account. Migration is available
+// before the PQ-only fork and reopens at the scheduled recovery fork.
+func (c *ChainConfig) IsPQMigrationAllowed(num *big.Int, time uint64) bool {
+	if !c.IsQuantumResistant(num, time) {
+		return true
+	}
+	return c.IsLondon(num) && isTimestampForked(c.PQMigrationRecoveryTime, time)
+}
+
 // MainKingAddressAt returns the configured Main King reward/control address for
 // a block. If a post-quantum Main King address is configured, it becomes active
 // at the quantum-resistant transaction fork.
@@ -636,6 +652,7 @@ type Rules struct {
 	IsAmsterdam, IsUBT                                      bool
 	IsKyoto, IsPhone                                        bool
 	IsQuantumResistant                                      bool
+	IsPQMigrationAllowed                                    bool
 	IsEIP2929, IsEIP4762                                    bool
 	IsMerge                                                 bool // Always false for RandomX
 }
@@ -647,37 +664,38 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 	isEIP4762 := c.IsUBT(num, timestamp)
 
 	return Rules{
-		IsHomestead:        c.IsHomestead(num),
-		IsEIP150:           c.IsEIP150(num),
-		IsEIP155:           c.IsEIP155(num),
-		IsEIP158:           c.IsEIP158(num),
-		IsByzantium:        c.IsByzantium(num),
-		IsConstantinople:   c.IsConstantinople(num),
-		IsPetersburg:       c.IsPetersburg(num),
-		IsIstanbul:         c.IsIstanbul(num),
-		IsBerlin:           c.IsBerlin(num),
-		IsLondon:           c.IsLondon(num),
-		IsRandomXTx:        c.IsRandomXTx(num),
-		IsRandomXMonero:    c.IsRandomXMonero(num),
-		IsArrowGlacier:     c.IsArrowGlacier(num),
-		IsGrayGlacier:      c.IsGrayGlacier(num),
-		IsShanghai:         c.IsShanghai(num, timestamp),
-		IsCancun:           c.IsCancun(num, timestamp),
-		IsPrague:           c.IsPrague(num, timestamp),
-		IsOsaka:            c.IsOsaka(num, timestamp),
-		IsBPO1:             c.IsBPO1(num, timestamp),
-		IsBPO2:             c.IsBPO2(num, timestamp),
-		IsBPO3:             c.IsBPO3(num, timestamp),
-		IsBPO4:             c.IsBPO4(num, timestamp),
-		IsBPO5:             c.IsBPO5(num, timestamp),
-		IsAmsterdam:        c.IsAmsterdam(num, timestamp),
-		IsUBT:              c.IsUBT(num, timestamp),
-		IsKyoto:            c.IsKyoto(num, timestamp),
-		IsPhone:            c.IsPhone(num, timestamp),
-		IsQuantumResistant: c.IsQuantumResistant(num, timestamp),
-		IsEIP2929:          isEIP2929,
-		IsEIP4762:          isEIP4762,
-		IsMerge:            false, // RandomX chains always use proof-of-work consensus.
+		IsHomestead:          c.IsHomestead(num),
+		IsEIP150:             c.IsEIP150(num),
+		IsEIP155:             c.IsEIP155(num),
+		IsEIP158:             c.IsEIP158(num),
+		IsByzantium:          c.IsByzantium(num),
+		IsConstantinople:     c.IsConstantinople(num),
+		IsPetersburg:         c.IsPetersburg(num),
+		IsIstanbul:           c.IsIstanbul(num),
+		IsBerlin:             c.IsBerlin(num),
+		IsLondon:             c.IsLondon(num),
+		IsRandomXTx:          c.IsRandomXTx(num),
+		IsRandomXMonero:      c.IsRandomXMonero(num),
+		IsArrowGlacier:       c.IsArrowGlacier(num),
+		IsGrayGlacier:        c.IsGrayGlacier(num),
+		IsShanghai:           c.IsShanghai(num, timestamp),
+		IsCancun:             c.IsCancun(num, timestamp),
+		IsPrague:             c.IsPrague(num, timestamp),
+		IsOsaka:              c.IsOsaka(num, timestamp),
+		IsBPO1:               c.IsBPO1(num, timestamp),
+		IsBPO2:               c.IsBPO2(num, timestamp),
+		IsBPO3:               c.IsBPO3(num, timestamp),
+		IsBPO4:               c.IsBPO4(num, timestamp),
+		IsBPO5:               c.IsBPO5(num, timestamp),
+		IsAmsterdam:          c.IsAmsterdam(num, timestamp),
+		IsUBT:                c.IsUBT(num, timestamp),
+		IsKyoto:              c.IsKyoto(num, timestamp),
+		IsPhone:              c.IsPhone(num, timestamp),
+		IsQuantumResistant:   c.IsQuantumResistant(num, timestamp),
+		IsPQMigrationAllowed: c.IsPQMigrationAllowed(num, timestamp),
+		IsEIP2929:            isEIP2929,
+		IsEIP4762:            isEIP4762,
+		IsMerge:              false, // RandomX chains always use proof-of-work consensus.
 	}
 }
 
@@ -746,6 +764,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"phoneTime", c.PhoneTime},
 		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
 		{"quantumResistantTime", c.QuantumResistantTime},
+		{"pqMigrationRecoveryTime", c.PQMigrationRecoveryTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -939,6 +958,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.QuantumResistantTime, newcfg.QuantumResistantTime, headTimestamp) {
 		return newTimestampCompatError("Quantum-resistant transaction fork timestamp", c.QuantumResistantTime, newcfg.QuantumResistantTime)
+	}
+	if isForkTimestampIncompatible(c.PQMigrationRecoveryTime, newcfg.PQMigrationRecoveryTime, headTimestamp) {
+		return newTimestampCompatError("PQ migration recovery fork timestamp", c.PQMigrationRecoveryTime, newcfg.PQMigrationRecoveryTime)
 	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)

@@ -147,6 +147,8 @@ func TestValidateTransactionQuantumResistantFork(t *testing.T) {
 	config := *params.TestChainConfig
 	config.QuantumResistantTime = new(uint64)
 	*config.QuantumResistantTime = 10
+	migrationRecovery := uint64(20)
+	config.PQMigrationRecoveryTime = &migrationRecovery
 	head := &types.Header{
 		Number:     big.NewInt(1),
 		GasLimit:   5000000,
@@ -168,6 +170,28 @@ func TestValidateTransactionQuantumResistantFork(t *testing.T) {
 	if err := ValidateTransaction(legacy, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
 		t.Fatalf("legacy tx post-quantum error = %v, want %v", err, core.ErrTxTypeNotSupported)
 	}
+	pqAddress, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, pqcrypto.PublicKeyBytes(pqKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationData, err := types.NewPQMigrationData(pqAddress, pqcrypto.AlgorithmMLDSA87, pqcrypto.PublicKeyBytes(pqKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := types.SignTx(types.NewTransaction(0, pqAddress, big.NewInt(1), 100000, big.NewInt(10), migrationData), types.NewEIP155Signer(config.ChainID), ecdsaKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(migration, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
+		t.Fatalf("migration before recovery error = %v, want %v", err, core.ErrTxTypeNotSupported)
+	}
+	head.Time = migrationRecovery
+	if err := ValidateTransaction(migration, head, types.MakeSigner(&config, head.Number, head.Time), opts); err != nil {
+		t.Fatalf("migration at recovery fork error = %v", err)
+	}
+	if err := ValidateTransaction(legacy, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
+		t.Fatalf("ordinary legacy tx at recovery fork error = %v, want %v", err, core.ErrTxTypeNotSupported)
+	}
 	pqtx, err := types.SignNewPQTkmTx(pqKey, types.MakeSigner(&config, head.Number, head.Time), &types.PQTkmTx{
 		ChainID:   config.ChainID,
 		Nonce:     0,
@@ -186,6 +210,56 @@ func TestValidateTransactionQuantumResistantFork(t *testing.T) {
 	head.Time = 9
 	if err := ValidateTransaction(pqtx, head, types.MakeSigner(&config, head.Number, head.Time), opts); !errors.Is(err, core.ErrTxTypeNotSupported) {
 		t.Fatalf("PQ tx pre-quantum error = %v, want %v", err, core.ErrTxTypeNotSupported)
+	}
+}
+
+func TestValidateTransactionPQMigrationRecoveryWithPrivacy(t *testing.T) {
+	legacyKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pqKey, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation := uint64(10)
+	recovery := uint64(20)
+	config := *params.TestChainConfig
+	config.QuantumResistantTime = &activation
+	config.PrivacyCommitmentTime = &activation
+	config.PQMigrationRecoveryTime = &recovery
+	head := &types.Header{
+		Number:     big.NewInt(1),
+		GasLimit:   5000000,
+		Time:       recovery,
+		Difficulty: big.NewInt(1),
+	}
+	opts := &ValidationOptions{
+		Config:       &config,
+		Accept:       0xFF,
+		MaxSize:      64 * 1024,
+		MaxBlobCount: 6,
+		MinTip:       big.NewInt(0),
+	}
+	publicKey := pqcrypto.PublicKeyBytes(pqKey)
+	pqAddress, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := types.NewPQMigrationData(pqAddress, pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := types.SignTx(
+		types.NewTransaction(0, pqAddress, big.NewInt(1), 100000, big.NewInt(10), data),
+		types.NewEIP155Signer(config.ChainID),
+		legacyKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTransaction(tx, head, types.MakeSigner(&config, head.Number, head.Time), opts); err != nil {
+		t.Fatalf("privacy-era PQ migration recovery error = %v", err)
 	}
 }
 
