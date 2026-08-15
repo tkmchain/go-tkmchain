@@ -335,12 +335,19 @@ func (p *Prover) noteInventoryStatus() noteInventoryStatus {
 	status.NoteCount = len(store.Notes)
 	total := new(big.Int)
 	maxValue := new(big.Int)
+	firstWitnessError := ""
 	for _, note := range store.Notes {
 		if strings.TrimSpace(note.Status) != "" && strings.TrimSpace(note.Status) != "available" {
 			continue
 		}
 		value, ok := parseDecimalBig(note.NoteValueWei)
 		if !ok || value.Sign() <= 0 || value.BitLen() > 64 {
+			continue
+		}
+		if err := validateMerkleWitness(note.MerklePath, note.MerklePathIndex); err != nil {
+			if firstWitnessError == "" {
+				firstWitnessError = fmt.Sprintf("note %s has invalid Merkle witness: %v", note.ID, err)
+			}
 			continue
 		}
 		status.AvailableNoteCount++
@@ -350,6 +357,9 @@ func (p *Prover) noteInventoryStatus() noteInventoryStatus {
 		}
 	}
 	status.HasSpendableNotes = status.AvailableNoteCount > 0
+	if !status.HasSpendableNotes && firstWitnessError != "" {
+		status.Error = firstWitnessError
+	}
 	status.AvailableNoteTotalWei = total.String()
 	status.AvailableNoteMaxWei = maxValue.String()
 	status.AvailableNoteTotalAntd = weiToAntdFloat(total)
@@ -435,7 +445,7 @@ func isAcceptedButUnminedError(err error) bool {
 	return strings.Contains(msg, "was added to the transaction pool") && strings.Contains(msg, "wasn't processed")
 }
 
-func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (string, error) {
+func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (txHash string, retErr error) {
 	if !p.ready() {
 		return "", errors.New("prover is not ready; check /healthz")
 	}
@@ -450,6 +460,28 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (string, 
 	if err != nil {
 		return "", err
 	}
+	panicNoteID := ""
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("payout request %s recovered panic: %v", req.RequestID, recovered)
+			if panicNoteID == "" {
+				p.recordError(db, req, "", "internal prover error before transaction construction")
+			} else {
+				db.Requests[req.RequestID] = RequestRecord{
+					Request:   req,
+					Status:    "processing",
+					Error:     "internal prover error; inspect node and request state before retrying",
+					NoteID:    panicNoteID,
+					UpdatedAt: time.Now().UTC(),
+				}
+				if err := writeRequestDB(p.cfg.RequestsPath, db); err != nil {
+					log.Printf("request db error after recovered panic: %v", err)
+				}
+			}
+			txHash = ""
+			retErr = errors.New("internal prover error while processing payout")
+		}
+	}()
 	var existing RequestRecord
 	replacing := false
 	if rec, ok := db.Requests[req.RequestID]; ok {
@@ -485,6 +517,7 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (string, 
 		return "", errors.New("no spendable shielded note is available for this amount")
 	}
 	note := notes.Notes[noteIndex]
+	panicNoteID = note.ID
 	db.Requests[req.RequestID] = RequestRecord{Request: req, Status: "processing", NoteID: note.ID, UpdatedAt: time.Now().UTC()}
 	if err := writeRequestDB(p.cfg.RequestsPath, db); err != nil {
 		return "", err
@@ -683,8 +716,14 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 }
 
 func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, assetID string, ownerSecret string, chainID, blockNumber *big.Int) (draftEnvelope, *shielded.SpendCircuit, ShieldedNote, common.Hash, error) {
-	asset := mustElement(assetID)
-	owner := mustElement(ownerSecret)
+	asset, err := parseFieldElement(assetID)
+	if err != nil {
+		return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, fmt.Errorf("invalid assetId: %w", err)
+	}
+	owner, err := parseFieldElement(ownerSecret)
+	if err != nil {
+		return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, fmt.Errorf("invalid ownerSecret: %w", err)
+	}
 	noteRandomness := randomElement()
 	outputRecipients := [shielded.OutputSlots]fr.Element{
 		owner,
@@ -896,12 +935,24 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 	if strings.TrimSpace(assetID) == "" {
 		assetID = "1"
 	}
-	owner := mustElement(note.OwnerSecret)
-	randomness := mustElement(note.NoteRandomness)
-	asset := mustElement(assetID)
+	owner, err := parseFieldElement(note.OwnerSecret)
+	if err != nil {
+		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid ownerSecret: %w", note.ID, err)
+	}
+	randomness, err := parseFieldElement(note.NoteRandomness)
+	if err != nil {
+		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid noteRandomness: %w", note.ID, err)
+	}
+	asset, err := parseFieldElement(assetID)
+	if err != nil {
+		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid assetId: %w", note.ID, err)
+	}
 	noteValueElement := fieldElementFromBig(noteValue)
 	inputCommitment := fieldHash(shielded.DomainNote, owner, asset, noteValueElement, randomness)
-	anchor := computeAnchor(inputCommitment, note.MerklePath, note.MerklePathIndex)
+	anchor, err := computeAnchor(inputCommitment, note.MerklePath, note.MerklePathIndex)
+	if err != nil {
+		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid Merkle witness: %w", note.ID, err)
+	}
 	nullifier := fieldHash(shielded.DomainNull, owner, randomness)
 
 	outputRecipients := [shielded.OutputSlots]fr.Element{
@@ -1083,18 +1134,37 @@ func applyIntentHash(c *shielded.SpendCircuit, hash common.Hash) {
 	c.TxHashLo = new(big.Int).SetBytes(hash[16:]).String()
 }
 
-func computeAnchor(commitment fr.Element, path, index []string) fr.Element {
+func computeAnchor(commitment fr.Element, path, index []string) (fr.Element, error) {
+	if err := validateMerkleWitness(path, index); err != nil {
+		return fr.Element{}, err
+	}
 	root := commitment
 	for i := 0; i < shielded.MerkleDepth; i++ {
-		sibling := mustElement(path[i])
-		idx := strings.TrimSpace(index[i])
-		if idx == "1" {
+		sibling, _ := parseFieldElement(path[i])
+		idx, _ := parseBigFlexible(index[i])
+		if idx.Sign() == 1 {
 			root = fieldHash(shielded.DomainNode, sibling, root)
 		} else {
 			root = fieldHash(shielded.DomainNode, root, sibling)
 		}
 	}
-	return root
+	return root, nil
+}
+
+func validateMerkleWitness(path, index []string) error {
+	if len(path) != shielded.MerkleDepth || len(index) != shielded.MerkleDepth {
+		return fmt.Errorf("expected %d path elements and indexes", shielded.MerkleDepth)
+	}
+	for i := 0; i < shielded.MerkleDepth; i++ {
+		if _, err := parseFieldElement(path[i]); err != nil {
+			return fmt.Errorf("path[%d]: %w", i, err)
+		}
+		idx, ok := parseBigFlexible(index[i])
+		if !ok || idx.Sign() < 0 || idx.BitLen() > 1 {
+			return fmt.Errorf("pathIndex[%d] must be 0 or 1", i)
+		}
+	}
+	return nil
 }
 
 func selectSpendableNote(store NoteStore, amount *big.Int) int {
@@ -1103,7 +1173,7 @@ func selectSpendableNote(store NoteStore, amount *big.Int) int {
 			continue
 		}
 		value, ok := parseDecimalBig(note.NoteValueWei)
-		if ok && value.Cmp(amount) >= 0 && value.BitLen() <= 64 {
+		if ok && value.Cmp(amount) >= 0 && value.BitLen() <= 64 && validateMerkleWitness(note.MerklePath, note.MerklePathIndex) == nil {
 			return i
 		}
 	}
@@ -1124,6 +1194,9 @@ func selectReplacementNote(store NoteStore, noteID string, requestID string) int
 			continue
 		}
 		if strings.TrimSpace(note.SpentRequestID) != requestID {
+			continue
+		}
+		if validateMerkleWitness(note.MerklePath, note.MerklePathIndex) != nil {
 			continue
 		}
 		return i
@@ -1503,11 +1576,19 @@ func hashFromField(v fr.Element) common.Hash {
 }
 
 func mustElement(input string) fr.Element {
-	v, ok := parseDecimalBig(input)
-	if !ok {
-		panic("invalid field decimal: " + input)
+	v, err := parseFieldElement(input)
+	if err != nil {
+		panic(err)
 	}
-	return fieldElementFromBig(v)
+	return v
+}
+
+func parseFieldElement(input string) (fr.Element, error) {
+	v, ok := parseBigFlexible(input)
+	if !ok || v.Sign() < 0 {
+		return fr.Element{}, fmt.Errorf("invalid field element %q", input)
+	}
+	return fieldElementFromBig(v), nil
 }
 
 func zeroElement() fr.Element {

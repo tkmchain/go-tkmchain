@@ -275,49 +275,102 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 		"sealHash", miner.engine.SealHash(header).Hex()[:16])
 
 	newHeader := types.CopyHeader(header)
-	newHeader.MixDigest = digest
 	newHeader.Nonce = nonce
+	newHeader.MixDigest = digest
 	prepareSealedHeader(newHeader, task.block)
+	
+	config := chain.Config()
+	moneroProof := config != nil && config.IsRandomXMonero(newHeader.Number)
+	
 	if err := miner.engine.VerifyHeader(chain, newHeader); err != nil {
-		if config := chain.Config(); config != nil && config.IsRandomXMonero(newHeader.Number) {
-			log.Warn("Invalid proof-of-work submitted", "err", err)
-			return false
-		}
-		// Log initial failure for diagnostics
-		log.Debug("VerifyHeader initial failure", "err", err, "nonce", nonce, "mixDigest", digest.Hex())
-
-		// RandomX miners hash sealHash || nonce, but external miner RPC clients do
-		// not all agree on byte order for nonce and result hash fields. RPC block
-		// nonces are decoded as raw bytes, so try the common byte-order variants
-		// before rejecting an otherwise valid share.
-		var reversedNonce types.BlockNonce
-		for i := 0; i < len(nonce); i++ {
-			reversedNonce[i] = nonce[len(nonce)-1-i]
-		}
-		reversedDigest := reverseHashBytes(digest)
-
-		var retryErr error
-		for idx, attempt := range []struct {
-			nonce  types.BlockNonce
-			digest common.Hash
-		}{
-			{nonce: reversedNonce, digest: digest},
-			{nonce: nonce, digest: reversedDigest},
-			{nonce: reversedNonce, digest: reversedDigest},
-		} {
-			newHeader.Nonce = attempt.nonce
-			newHeader.MixDigest = attempt.digest
-			prepareSealedHeader(newHeader, task.block)
-			if retryErr = miner.engine.VerifyHeader(chain, newHeader); retryErr == nil {
-				log.Info("Accepted share after retry variant", "variant", idx, "nonce", newHeader.Nonce, "mixDigest", newHeader.MixDigest.Hex())
-				break
+		if moneroProof {
+			// For Monero-style blocks, we need to compute the actual RandomX output
+			// and set it as MixDigest, because XMRig doesn't return the hash itself.
+			log.Warn("Monero proof verification failed with submitted digest", 
+				"err", err, 
+				"submitted_digest", digest.Hex())
+			
+			// Try to compute the RandomX hash using the engine
+			if rxEngine, ok := miner.engine.(interface {
+				ComputeRandomXHash(header *types.Header) (common.Hash, error)
+			}); ok {
+				// First try with empty MixDigest to see if the engine can compute it
+				testHeader := types.CopyHeader(newHeader)
+				testHeader.MixDigest = common.Hash{}
+				
+				computedHash, computeErr := rxEngine.ComputeRandomXHash(testHeader)
+				if computeErr == nil {
+					log.Info("Computed RandomX hash for Monero proof", 
+						"computed_hash", computedHash.Hex())
+					
+					// Check if this hash meets Monero difficulty
+					if rxEngine2, ok := miner.engine.(interface {
+						MeetsMoneroDifficulty(hash common.Hash, difficulty *big.Int) bool
+					}); ok {
+						if rxEngine2.MeetsMoneroDifficulty(computedHash, header.Difficulty) {
+							newHeader.MixDigest = computedHash
+							prepareSealedHeader(newHeader, task.block)
+							if retryErr := miner.engine.VerifyHeader(chain, newHeader); retryErr == nil {
+								log.Info("Accepted Monero proof with computed mix digest",
+									"mix_digest", computedHash.Hex())
+							} else {
+								log.Warn("Still invalid after setting computed mix digest", "err", retryErr)
+								return false
+							}
+						} else {
+							log.Warn("Computed hash does not meet Monero difficulty",
+								"hash", computedHash.Hex(),
+								"difficulty", header.Difficulty)
+							return false
+						}
+					}
+				} else {
+					log.Warn("Failed to compute RandomX hash", "err", computeErr)
+					return false
+				}
+			} else {
+				// Fallback: try with empty MixDigest
+				newHeader.MixDigest = common.Hash{}
+				prepareSealedHeader(newHeader, task.block)
+				if retryErr := miner.engine.VerifyHeader(chain, newHeader); retryErr == nil {
+					log.Info("Accepted Tkm proof with empty mix digest")
+				} else {
+					log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)
+					return false
+				}
 			}
-			// Log each retry attempt for diagnostics
-			log.Debug("VerifyHeader retry failed", "variant", idx, "err", retryErr, "nonce", attempt.nonce, "mixDigest", attempt.digest.Hex())
-		}
-		if retryErr != nil {
-			log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)
-			return false
+		} else {
+			// Legacy non-Monero blocks - use existing retry logic
+			log.Debug("VerifyHeader initial failure", "err", err, "nonce", nonce, "mixDigest", digest.Hex())
+
+			var reversedNonce types.BlockNonce
+			for i := 0; i < len(nonce); i++ {
+				reversedNonce[i] = nonce[len(nonce)-1-i]
+			}
+			reversedDigest := reverseHashBytes(digest)
+
+			var retryErr error
+			for idx, attempt := range []struct {
+				nonce  types.BlockNonce
+				digest common.Hash
+			}{
+				{nonce: reversedNonce, digest: digest},
+				{nonce: nonce, digest: reversedDigest},
+				{nonce: reversedNonce, digest: reversedDigest},
+			} {
+				newHeader.Nonce = attempt.nonce
+				newHeader.MixDigest = attempt.digest
+				prepareSealedHeader(newHeader, task.block)
+				if retryErr = miner.engine.VerifyHeader(chain, newHeader); retryErr == nil {
+					log.Info("Accepted share after retry variant", "variant", idx, "nonce", newHeader.Nonce, "mixDigest", newHeader.MixDigest.Hex())
+					break
+				}
+				log.Debug("VerifyHeader retry failed", "variant", idx, "err", retryErr, "nonce", attempt.nonce, "mixDigest", attempt.digest.Hex())
+			}
+			if retryErr != nil {
+				log.Warn("Invalid proof-of-work submitted", "err", err, "retryErr", retryErr)
+				return false
+			}
 		}
 	}
 
@@ -325,7 +378,7 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	log.Info("Valid proof-of-work submitted, importing external block",
 		"nonce", newHeader.Nonce,
 		"blockNumber", sealedBlock.NumberU64(),
-		"mixDigest", digest.Hex()[:16])
+		"mixDigest", newHeader.MixDigest.Hex()[:16])
 
 	if !miner.worker.persistSealedTask(hash, task, sealedBlock) {
 		log.Warn("Valid proof-of-work did not import block", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
@@ -333,7 +386,6 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	}
 	log.Info("External proof-of-work imported block successfully", "number", sealedBlock.NumberU64(), "hash", sealedBlock.Hash())
 	return true
-
 }
 
 func prepareSealedHeader(header *types.Header, block *types.Block) {

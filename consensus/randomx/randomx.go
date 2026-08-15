@@ -723,6 +723,32 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	return fmt.Errorf("invalid proof: result > target")
 }
 
+// ComputeRandomXHash computes the RandomX hash for a header without verifying
+func (rx *RandomX) ComputeRandomXHash(header *types.Header) (common.Hash, error) {
+	if rx.isClosed() {
+		return common.Hash{}, errEngineClosed
+	}
+	
+	epoch := rx.epochForBlock(rx.chain, header.Number.Uint64())
+	if err := rx.updateCacheForEpoch(epoch); err != nil {
+		return common.Hash{}, err
+	}
+	
+	vm, err := rx.getVM()
+	if err != nil {
+		return common.Hash{}, err
+	}
+	defer vm.Close()
+	
+	_, hash := rx.randomXHash(header, vm)
+	return hash, nil
+}
+
+// MeetsMoneroDifficulty checks if a hash meets the Monero difficulty
+func (rx *RandomX) MeetsMoneroDifficulty(hash common.Hash, difficulty *big.Int) bool {
+	return meetsMoneroDifficulty(hash, difficulty)
+}
+
 func (rx *RandomX) verifyMoneroProof(header *types.Header, vm *VM) error {
 	_, hash := rx.randomXHash(header, vm)
 	if header.MixDigest != hash {
