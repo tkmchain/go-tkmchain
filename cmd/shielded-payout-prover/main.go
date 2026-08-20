@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/zk/shielded"
@@ -51,6 +50,7 @@ const (
 
 type Config struct {
 	Listen               string `json:"listen"`
+	AllowedOrigin        string `json:"allowedOrigin"`
 	BearerToken          string `json:"bearerToken"`
 	NodeRPC              string `json:"nodeRPC"`
 	KeystoreDir          string `json:"keystoreDir"`
@@ -75,6 +75,8 @@ type PayoutRequest struct {
 	PayoutTxType          string    `json:"payoutTxType,omitempty"`
 	Nonce                 string    `json:"nonce,omitempty"`
 	GasPriceWei           string    `json:"gasPriceWei,omitempty"`
+	RecipientViewKey      string    `json:"recipientViewKey,omitempty"`
+	ChangeViewKey         string    `json:"changeViewKey,omitempty"`
 	PrivacyCommitmentTime uint64    `json:"privacyCommitmentTime"`
 	QuantumResistantTime  uint64    `json:"quantumResistantTime"`
 	CreatedAt             time.Time `json:"createdAt"`
@@ -87,14 +89,16 @@ type PayoutResponse struct {
 }
 
 type DepositRequest struct {
-	RequestID   string    `json:"requestId"`
-	AmountAntd  float64   `json:"amountAntd"`
-	AmountWei   string    `json:"amountWei"`
-	AssetID     string    `json:"assetId,omitempty"`
-	OwnerSecret string    `json:"ownerSecret,omitempty"`
-	Nonce       string    `json:"nonce,omitempty"`
-	GasPriceWei string    `json:"gasPriceWei,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	RequestID        string    `json:"requestId"`
+	AmountAntd       float64   `json:"amountAntd"`
+	AmountWei        string    `json:"amountWei"`
+	AssetID          string    `json:"assetId,omitempty"`
+	OwnerSecret      string    `json:"ownerSecret,omitempty"`
+	Nonce            string    `json:"nonce,omitempty"`
+	GasPriceWei      string    `json:"gasPriceWei,omitempty"`
+	From             string    `json:"from,omitempty"`
+	RecipientViewKey string    `json:"recipientViewKey,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 type DepositResponse struct {
@@ -115,6 +119,7 @@ type NoteStore struct {
 type ShieldedNote struct {
 	ID              string   `json:"id"`
 	Commitment      string   `json:"commitment,omitempty"`
+	Nullifier       string   `json:"nullifier,omitempty"`
 	OwnerSecret     string   `json:"ownerSecret"`
 	NoteRandomness  string   `json:"noteRandomness"`
 	NoteValueWei    string   `json:"noteValueWei"`
@@ -212,6 +217,7 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Listen == "" {
 		cfg.Listen = defaultListen
 	}
+	cfg.AllowedOrigin = strings.TrimSpace(cfg.AllowedOrigin)
 	cfg.BearerToken = strings.TrimSpace(cfg.BearerToken)
 	cfg.NodeRPC = strings.TrimSpace(cfg.NodeRPC)
 	cfg.KeystoreDir = strings.TrimSpace(cfg.KeystoreDir)
@@ -278,15 +284,38 @@ func (p *Prover) Serve() error {
 	mux.HandleFunc("/healthz", p.handleHealth)
 	mux.HandleFunc("/payout", p.handlePayout)
 	mux.HandleFunc("/deposit", p.handleDeposit)
-	server := &http.Server{Addr: p.cfg.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	mux.HandleFunc("/build-deposit", p.handleBuildDeposit)
+	mux.HandleFunc("/build-transfer", p.handleBuildTransfer)
+	server := &http.Server{Addr: p.cfg.Listen, Handler: p.corsHandler(mux), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("shielded payout prover listening on %s", p.cfg.Listen)
 	return server.ListenAndServe()
+}
+
+func (p *Prover) corsHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("origin")
+		if origin != "" && p.cfg.AllowedOrigin != "" && origin == p.cfg.AllowedOrigin {
+			w.Header().Set("access-control-allow-origin", origin)
+			w.Header().Set("access-control-allow-headers", "authorization, content-type")
+			w.Header().Set("access-control-allow-methods", "GET, POST, OPTIONS")
+			if r.Header.Get("access-control-request-private-network") == "true" {
+				w.Header().Set("access-control-allow-private-network", "true")
+			}
+			w.Header().Set("vary", "Origin")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
 	noteStatus := p.noteInventoryStatus()
 	status := map[string]any{
 		"ok":                     p.ready(),
+		"buildReady":             p.ready(),
 		"payoutReady":            p.ready() && noteStatus.HasSpendableNotes,
 		"listen":                 p.cfg.Listen,
 		"nodeRPC":                p.cfg.NodeRPC,
@@ -737,6 +766,20 @@ func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, asset
 	if err != nil {
 		return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, fmt.Errorf("invalid ownerSecret: %w", err)
 	}
+	var viewKey []byte
+	if strings.TrimSpace(req.RecipientViewKey) != "" {
+		viewKey, err = parseViewPublicKey(req.RecipientViewKey)
+		if err != nil {
+			return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, err
+		}
+	}
+	recipientAddress := common.HexToAddress(p.cfg.SignerAddress)
+	if strings.TrimSpace(req.From) != "" {
+		if !isValidAddress(req.From) {
+			return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, fmt.Errorf("invalid from address %q", req.From)
+		}
+		recipientAddress = common.HexToAddress(req.From)
+	}
 	noteRandomness := randomElement()
 	outputRecipients := [shielded.OutputSlots]fr.Element{
 		owner,
@@ -761,15 +804,27 @@ func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, asset
 	for i := 0; i < shielded.OutputSlots; i++ {
 		outputCommitments[i] = fieldHash(shielded.DomainNote, outputRecipients[i], asset, outputValues[i], outputRandomness[i])
 		commitment := hashFromField(outputCommitments[i])
-		payload := privateOutputPayload(req.RequestID, i, "deposit")
-		outputs = append(outputs, core.ShieldedOutput{
-			Commitment:       commitment,
-			PayloadHash:      crypto.Keccak256Hash(payload),
-			EphemeralPubKey:  randomBytes(32),
-			ViewTag:          randomBytes(1),
-			EncryptedPayload: payload,
-			Nonce:            randomBytes(24),
-		})
+		var output core.ShieldedOutput
+		if i == 0 && len(viewKey) != 0 {
+			nullifier := hashFromField(fieldHash(shielded.DomainNull, owner, outputRandomness[i]))
+			output, err = encryptShieldedNote(commitment, noteOpening(
+				recipientAddress,
+				owner.BigInt(new(big.Int)),
+				asset.BigInt(new(big.Int)),
+				outputValues[i].BigInt(new(big.Int)),
+				outputRandomness[i].BigInt(new(big.Int)),
+				commitment,
+				nullifier,
+			), viewKey)
+		} else if i == 0 {
+			output = legacyMetadataOutput(commitment, req.RequestID, i, "deposit")
+		} else {
+			output, err = decoyShieldedOutput(commitment)
+		}
+		if err != nil {
+			return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, err
+		}
+		outputs = append(outputs, output)
 	}
 	outputRoot := hashFromField(fieldHash(shielded.DomainOutput, outputCommitments[:]...))
 	noteValue := new(big.Int)
@@ -818,6 +873,7 @@ func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, asset
 	note := ShieldedNote{
 		ID:             "deposit-" + req.RequestID,
 		Commitment:     commitment.Hex(),
+		Nullifier:      hashFromField(fieldHash(shielded.DomainNull, owner, noteRandomness)).Hex(),
 		OwnerSecret:    ownerSecret,
 		NoteRandomness: noteRandomness.BigInt(new(big.Int)).String(),
 		NoteValueWei:   amountWei.String(),
@@ -960,6 +1016,25 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 	if err != nil {
 		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid assetId: %w", note.ID, err)
 	}
+	var recipientViewKey []byte
+	if strings.TrimSpace(req.RecipientViewKey) != "" {
+		recipientViewKey, err = parseViewPublicKey(req.RecipientViewKey)
+		if err != nil {
+			return draftEnvelope{}, nil, err
+		}
+	}
+	var changeViewKey []byte
+	if strings.TrimSpace(req.ChangeViewKey) != "" {
+		changeViewKey, err = parseViewPublicKey(req.ChangeViewKey)
+		if err != nil {
+			return draftEnvelope{}, nil, fmt.Errorf("change %w", err)
+		}
+	}
+	if !isValidAddress(req.PoolWallet) {
+		return draftEnvelope{}, nil, fmt.Errorf("invalid poolWallet address %q", req.PoolWallet)
+	}
+	recipientAddress := common.HexToAddress(req.To)
+	changeAddress := common.HexToAddress(req.PoolWallet)
 	noteValueElement := fieldElementFromBig(noteValue)
 	inputCommitment := fieldHash(shielded.DomainNote, owner, asset, noteValueElement, randomness)
 	anchor, err := computeAnchor(inputCommitment, note.MerklePath, note.MerklePathIndex)
@@ -992,15 +1067,41 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 	for i := 0; i < shielded.OutputSlots; i++ {
 		outputCommitments[i] = fieldHash(shielded.DomainNote, outputRecipients[i], asset, outputValues[i], outputRandomness[i])
 		commitment := hashFromField(outputCommitments[i])
-		payload := outputPayload(req, i, outputRecipients[i], outputValues[i], outputRandomness[i], asset)
-		outputs = append(outputs, core.ShieldedOutput{
-			Commitment:       commitment,
-			PayloadHash:      crypto.Keccak256Hash(payload),
-			EphemeralPubKey:  randomBytes(32),
-			ViewTag:          randomBytes(1),
-			EncryptedPayload: payload,
-			Nonce:            randomBytes(24),
-		})
+		var output core.ShieldedOutput
+		switch {
+		case i == 0 && len(recipientViewKey) != 0:
+			outputNullifier := hashFromField(fieldHash(shielded.DomainNull, outputRecipients[i], outputRandomness[i]))
+			output, err = encryptShieldedNote(commitment, noteOpening(
+				recipientAddress,
+				outputRecipients[i].BigInt(new(big.Int)),
+				asset.BigInt(new(big.Int)),
+				outputValues[i].BigInt(new(big.Int)),
+				outputRandomness[i].BigInt(new(big.Int)),
+				commitment,
+				outputNullifier,
+			), recipientViewKey)
+		case i == 0:
+			output = legacyMetadataOutput(commitment, req.RequestID, i, "payout")
+		case i == 1 && changeWei.Sign() > 0 && len(changeViewKey) != 0:
+			outputNullifier := hashFromField(fieldHash(shielded.DomainNull, outputRecipients[i], outputRandomness[i]))
+			output, err = encryptShieldedNote(commitment, noteOpening(
+				changeAddress,
+				outputRecipients[i].BigInt(new(big.Int)),
+				asset.BigInt(new(big.Int)),
+				outputValues[i].BigInt(new(big.Int)),
+				outputRandomness[i].BigInt(new(big.Int)),
+				commitment,
+				outputNullifier,
+			), changeViewKey)
+		case i == 1 && changeWei.Sign() > 0:
+			output = legacyMetadataOutput(commitment, req.RequestID, i, "change")
+		default:
+			output, err = decoyShieldedOutput(commitment)
+		}
+		if err != nil {
+			return draftEnvelope{}, nil, err
+		}
+		outputs = append(outputs, output)
 	}
 	outputRoot := hashFromField(fieldHash(shielded.DomainOutput, outputCommitments[:]...))
 	totalOutput := new(big.Int).Set(noteValue)
@@ -1028,6 +1129,7 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 		changeNote = &ShieldedNote{
 			ID:             "change-" + req.RequestID,
 			Commitment:     changeCommitment.Hex(),
+			Nullifier:      hashFromField(fieldHash(shielded.DomainNull, owner, outputRandomness[1])).Hex(),
 			OwnerSecret:    note.OwnerSecret,
 			NoteRandomness: outputRandomness[1].BigInt(new(big.Int)).String(),
 			NoteValueWei:   changeWei.String(),
@@ -1352,25 +1454,6 @@ func appendOrReplaceNote(notes []ShieldedNote, note ShieldedNote) []ShieldedNote
 		}
 	}
 	return append(notes, note)
-}
-
-func outputPayload(req PayoutRequest, index int, recipient, value, randomness, asset fr.Element) []byte {
-	return privateOutputPayload(req.RequestID, index, "payout")
-}
-
-func privateOutputPayload(requestID string, index int, source string) []byte {
-	payload := map[string]string{
-		"format":    "TKM_SHIELDED_NOTE_PAYLOAD_V2",
-		"requestId": requestID,
-		"output":    fmt.Sprintf("%d", index),
-		"source":    source,
-	}
-	data, _ := json.Marshal(payload)
-	if len(data) >= outputEncryptedBytesSize {
-		return data
-	}
-	padding := randomBytes(outputEncryptedBytesSize - len(data))
-	return append(data, padding...)
 }
 
 func (p *Prover) recordError(db RequestDB, req PayoutRequest, noteID string, msg string) {

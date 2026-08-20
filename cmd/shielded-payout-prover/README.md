@@ -1,8 +1,13 @@
 # TKM Shielded Payout Prover
 
-`shielded-payout-prover` is the private HTTP service used by the mining pool after privacy commitments are active. The pool calls this service at `shieldedPayoutProverURL`; the prover builds a `TKMSHIELD1` envelope, creates a Groth16 shielded spend proof, signs a TKM transaction, submits it to the node, and returns the transaction hash.
+`shielded-payout-prover` supports two operating models after privacy commitments are active:
 
-The service fails closed. If the proving key, PQ signer, node RPC, or spendable notes are missing, it returns an error and the pool keeps the miner balance owed.
+- pool mode builds, signs, and submits authenticated `/deposit` and `/payout` requests;
+- `proof-only` mode exposes `/build-deposit` and `/build-transfer`, returns an unsigned type-`0x06` transaction, and never loads a signer or submits a transaction.
+
+The service fails closed. Proof-only builders require the proving key and node
+RPC but no signer or funded prover account. Pool-mode submission additionally
+requires its PQ signer and real spendable notes.
 
 ## Build
 
@@ -44,6 +49,7 @@ Example:
 ```json
 {
   "listen": "127.0.0.1:8787",
+  "allowedOrigin": "https://wallet.tkmchain.site",
   "bearerToken": "same-value-as-pool-shieldedPayoutProverToken",
   "nodeRPC": "http://127.0.0.1:8545",
   "keystoreDir": "/home/mike/.tkmchain/keystore",
@@ -60,6 +66,65 @@ Example:
 ```
 
 For production after the quantum fork, keep `"signMode": "pq"` and use an ML-DSA-87 keystore account. Legacy signing is only for pre-fork or private testing.
+
+`gtkm --tkmprover` creates a separate `proof-only` configuration automatically,
+downloads and verifies the shared proving key, generates a bearer token, clears
+all signer fields, and restricts browser CORS access to `allowedOrigin`.
+
+## Non-custodial Wallet Builders
+
+The authenticated proof-only endpoints are:
+
+```text
+POST /build-deposit
+POST /build-transfer
+```
+
+`/build-deposit` accepts the locally controlled sender, exact nonce and gas
+price, amount, note owner field, and the wallet's 32-byte X25519 viewing public
+key. `/build-transfer` additionally accepts one real note opening and Merkle
+witness plus the recipient and change viewing keys.
+
+Both endpoints return:
+
+```json
+{
+  "transaction": {
+    "chainId": "0x2313",
+    "nonce": "0x1",
+    "gasTipCap": "0xb2d05e00",
+    "gasFeeCap": "0xb2d05e00",
+    "gas": "0x2dc6c0",
+    "to": "0x00000000000000000000000000000000000000F7",
+    "value": "0x0",
+    "data": "0x544b4d534849454c4431...",
+    "accessList": []
+  },
+  "intentHash": "0x...",
+  "spentNullifier": "0x...",
+  "createdNotes": []
+}
+```
+
+The browser must verify the chain ID, nonce, gas, public value, shielded-pool
+recipient, nullifier, and `TKMSHIELD1` prefix before signing. It then signs with
+ML-DSA-87 locally and submits through `eth_sendRawTransaction`.
+
+Real output openings use `TKM_SHIELDED_NOTE_PAYLOAD_V3`, ephemeral X25519,
+HKDF-SHA256, and XChaCha20-Poly1305. The payment code supplies the recipient's
+viewing key. Proof-only requests disclose note openings to the prover, so bind
+it to loopback and run it on a machine controlled by the wallet owner.
+
+### V1 ownership limitation
+
+The current V1 circuit binds a note to a private owner field and randomness,
+but it does not prove that the owner field belongs to the recipient's PQ key.
+A sender-controlled builder knows the output opening and could therefore spend
+a third-party recipient's V1 note. The official browser wallet deliberately
+permits self-shielding only, and `/build-transfer` rejects requests whose
+`from` and `to` addresses differ. Secure recipient payments need a
+recipient-bound V2 circuit, new matching Groth16 keys, and a future consensus
+activation.
 
 ## Pool Wiring
 
@@ -214,6 +279,8 @@ nohup /home/mike/shielded-prover/shielded-payout-prover \
 
 - Bind to `127.0.0.1` or a private network only.
 - Never expose the prover directly to the internet.
+- Never use an untrusted proof builder: a transfer witness contains enough
+  information to attempt spending the input note.
 - Keep the bearer token out of git.
 - Treat `proving.key` as a public, hash-verified circuit artifact. Keep note witnesses, bearer tokens, signer keys, and ceremony toxic-waste material private.
 - Persist `requests.json`; it protects against double-send retries.

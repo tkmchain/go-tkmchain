@@ -94,6 +94,7 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 
 type tkmProverConfig struct {
 	Listen               string `json:"listen"`
+	AllowedOrigin        string `json:"allowedOrigin"`
 	BearerToken          string `json:"bearerToken"`
 	NodeRPC              string `json:"nodeRPC"`
 	KeystoreDir          string `json:"keystoreDir"`
@@ -117,6 +118,9 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		var cfg tkmProverConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return fmt.Errorf("decode tkmprover config: %w", err)
+		}
+		if cfg.AllowedOrigin == "" {
+			cfg.AllowedOrigin = "https://wallet.tkmchain.site"
 		}
 		cfg.SignMode = "proof-only"
 		cfg.SubmitSync = false
@@ -172,7 +176,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 			}
 		}
 	}
-	cfg := tkmProverConfig{Listen: "127.0.0.1:8787", BearerToken: hex.EncodeToString(bearer), NodeRPC: nodeRPC, SignMode: "proof-only", ProvingKeyPath: pkPath, NotesPath: filepath.Join(dataDir, "notes.json"), RequestsPath: filepath.Join(dataDir, "requests.json"), GasLimit: 3000000, SubmitSync: false, ReceiptTimeoutMs: 20000}
+	cfg := tkmProverConfig{Listen: "127.0.0.1:8787", AllowedOrigin: "https://wallet.tkmchain.site", BearerToken: hex.EncodeToString(bearer), NodeRPC: nodeRPC, SignMode: "proof-only", ProvingKeyPath: pkPath, NotesPath: filepath.Join(dataDir, "notes.json"), RequestsPath: filepath.Join(dataDir, "requests.json"), GasLimit: 3000000, SubmitSync: false, ReceiptTimeoutMs: 20000}
 	encoded, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

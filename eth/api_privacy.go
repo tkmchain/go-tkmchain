@@ -113,6 +113,20 @@ type ShieldedCommitmentPathStatus struct {
 	MerklePathIndex []hexutil.Uint64 `json:"merklePathIndex"`
 }
 
+// ShieldedOutputStatus is one canonical encrypted output returned to light
+// wallets for local view-key scanning.
+type ShieldedOutputStatus struct {
+	BlockNumber      hexutil.Uint64 `json:"blockNumber"`
+	TransactionHash  common.Hash    `json:"transactionHash"`
+	OutputIndex      hexutil.Uint64 `json:"outputIndex"`
+	Commitment       common.Hash    `json:"commitment"`
+	PayloadHash      common.Hash    `json:"payloadHash"`
+	EphemeralPubKey  hexutil.Bytes  `json:"ephemeralPubKey"`
+	ViewTag          hexutil.Bytes  `json:"viewTag"`
+	EncryptedPayload hexutil.Bytes  `json:"encryptedPayload"`
+	Nonce            hexutil.Bytes  `json:"nonce"`
+}
+
 // PrivacyDefaults describes privacy-preserving client defaults.
 type PrivacyDefaults struct {
 	CommitmentMode           bool           `json:"commitmentMode"`
@@ -288,6 +302,60 @@ func (api *PrivacyAPI) CommitmentPath(commitment common.Hash) (ShieldedCommitmen
 		return ShieldedCommitmentPathStatus{Commitment: commitment}, nil
 	}
 	return shieldedCommitmentPathStatus(path, true), nil
+}
+
+// ShieldedOutputs returns canonical encrypted outputs in an inclusive block
+// range. The bounded range lets browser wallets scan without trusting the
+// optional privacy registration database.
+func (api *PrivacyAPI) ShieldedOutputs(fromBlock, toBlock hexutil.Uint64) ([]ShieldedOutputStatus, error) {
+	if api == nil || api.e == nil || api.e.blockchain == nil {
+		return nil, fmt.Errorf("blockchain is not available")
+	}
+	from, to := uint64(fromBlock), uint64(toBlock)
+	if to < from {
+		return nil, fmt.Errorf("toBlock must be greater than or equal to fromBlock")
+	}
+	const maxShieldedOutputScanBlocks = uint64(2048)
+	if to-from >= maxShieldedOutputScanBlocks {
+		return nil, fmt.Errorf("shielded output scan exceeds %d blocks", maxShieldedOutputScanBlocks)
+	}
+	head := api.e.blockchain.CurrentBlock()
+	if head == nil || head.Number == nil || from > head.Number.Uint64() {
+		return []ShieldedOutputStatus{}, nil
+	}
+	if to > head.Number.Uint64() {
+		to = head.Number.Uint64()
+	}
+	outputs := make([]ShieldedOutputStatus, 0)
+	for number := from; number <= to; number++ {
+		block := api.e.blockchain.GetBlockByNumber(number)
+		if block == nil {
+			continue
+		}
+		for _, tx := range block.Transactions() {
+			envelope, ok, err := core.DecodeShieldedTransaction(tx.Data())
+			if err != nil || !ok {
+				continue
+			}
+			for index, output := range envelope.Outputs {
+				outputs = append(outputs, ShieldedOutputStatus{
+					BlockNumber:      hexutil.Uint64(number),
+					TransactionHash:  tx.Hash(),
+					OutputIndex:      hexutil.Uint64(index),
+					Commitment:       output.Commitment,
+					PayloadHash:      output.PayloadHash,
+					EphemeralPubKey:  append(hexutil.Bytes(nil), output.EphemeralPubKey...),
+					ViewTag:          append(hexutil.Bytes(nil), output.ViewTag...),
+					EncryptedPayload: append(hexutil.Bytes(nil), output.EncryptedPayload...),
+					Nonce:            append(hexutil.Bytes(nil), output.Nonce...),
+				})
+			}
+		}
+		if number == ^uint64(0) {
+			break
+		}
+	}
+	return outputs, nil
 }
 
 // Status returns the activation status for an address.

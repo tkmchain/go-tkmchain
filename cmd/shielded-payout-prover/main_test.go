@@ -1,13 +1,21 @@
 package main
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
+	"io"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark/frontend"
 	"github.com/ethereum/go-ethereum/zk/shielded"
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/hkdf"
 )
 
 func TestParseFieldElementAcceptsDecimalAndHex(t *testing.T) {
@@ -21,6 +29,58 @@ func TestParseFieldElementAcceptsDecimalAndHex(t *testing.T) {
 	}
 	if !decimal.Equal(&hexadecimal) {
 		t.Fatalf("decimal and hex field elements differ")
+	}
+}
+
+func TestEncryptShieldedNoteRoundTrip(t *testing.T) {
+	curve := ecdh.X25519()
+	recipient, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitment := hashFromField(fieldElementFromUint64(42))
+	opening := shieldedNoteOpening{
+		Recipient:      "0x0000000000000000000000000000000000000001",
+		OwnerSecret:    "1",
+		AssetID:        "1",
+		NoteValueWei:   "5",
+		NoteRandomness: "9",
+		Nullifier:      hashFromField(fieldElementFromUint64(10)).Hex(),
+	}
+	output, err := encryptShieldedNote(commitment, opening, recipient.PublicKey().Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ephemeral, err := curve.NewPublicKey(output.EphemeralPubKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := recipient.ECDH(ephemeral)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := make([]byte, chacha20poly1305.KeySize+1)
+	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, commitment[:], []byte(shieldedNoteKDFInfo)), material); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.ViewTag) != 1 || output.ViewTag[0] != material[chacha20poly1305.KeySize] {
+		t.Fatal("view tag does not match derived key material")
+	}
+	aead, err := chacha20poly1305.NewX(material[:chacha20poly1305.KeySize])
+	if err != nil {
+		t.Fatal(err)
+	}
+	aad := append([]byte(shieldedNoteKDFInfo), commitment[:]...)
+	plain, err := aead.Open(nil, output.Nonce, output.EncryptedPayload, aad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded shieldedNoteOpening
+	if err := json.Unmarshal(plain, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Format != shieldedNotePayloadFormat || decoded.Commitment != commitment.Hex() || decoded.NoteValueWei != "5" {
+		t.Fatalf("unexpected decrypted opening: %+v", decoded)
 	}
 }
 
@@ -107,9 +167,12 @@ func TestBuildDraftEnvelopeAcceptsHexWitness(t *testing.T) {
 		Status:          "available",
 	}
 	req := PayoutRequest{
-		RequestID: "12345678",
-		To:        "0x0000000000000000000000000000000000000001",
-		AmountWei: "0x5",
+		RequestID:        "12345678",
+		PoolWallet:       "0x0000000000000000000000000000000000000002",
+		To:               "0x0000000000000000000000000000000000000001",
+		AmountWei:        "0x5",
+		RecipientViewKey: "09" + strings.Repeat("00", 31),
+		ChangeViewKey:    "09" + strings.Repeat("00", 31),
 	}
 	_, assignment, err := (&Prover{}).buildDraftEnvelope(req, note, big.NewInt(5), big.NewInt(1), new(big.Int), 0, big.NewInt(1))
 	if err != nil {
