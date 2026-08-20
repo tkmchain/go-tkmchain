@@ -65,8 +65,9 @@ type shieldedGroth16VerifierCache struct {
 }
 
 var (
-	shieldedGroth16ConfigCache  shieldedGroth16VerifierCache
-	shieldedGroth16UpgradeCache shieldedGroth16VerifierCache
+	shieldedGroth16ConfigCache   shieldedGroth16VerifierCache
+	shieldedGroth16UpgradeCache  shieldedGroth16VerifierCache
+	shieldedGroth16RecoveryCache shieldedGroth16VerifierCache
 )
 
 // NewShieldedGroth16Verifier creates a production BN254 Groth16 verifier.
@@ -107,6 +108,16 @@ func upgradedShieldedGroth16VerifierFromParams(config *params.ChainConfig) Shiel
 		return nil
 	}
 	return shieldedGroth16VerifierFromBytes(params.MainnetShieldedGroth16UpgradedVerifyingKey, &shieldedGroth16UpgradeCache)
+}
+
+func recoveryShieldedGroth16VerifierFromParams(config *params.ChainConfig) ShieldedProofVerifier {
+	if config == nil || config.ChainID == nil || params.MainnetChainConfig == nil || params.MainnetChainConfig.ChainID == nil {
+		return nil
+	}
+	if config.ChainID.Cmp(params.MainnetChainConfig.ChainID) != 0 || len(params.MainnetShieldedGroth16RecoveryVerifyingKey) == 0 {
+		return nil
+	}
+	return shieldedGroth16VerifierFromBytes(params.MainnetShieldedGroth16RecoveryVerifyingKey, &shieldedGroth16RecoveryCache)
 }
 
 func shieldedGroth16VerifierFromBytes(encoded []byte, cache *shieldedGroth16VerifierCache) ShieldedProofVerifier {

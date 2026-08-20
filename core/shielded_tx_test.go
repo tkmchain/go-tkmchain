@@ -270,6 +270,24 @@ func TestShieldedGroth16VerifierFormats(t *testing.T) {
 	}
 }
 
+func TestMainnetRecoveryVerifierActivation(t *testing.T) {
+	SetShieldedProofVerifier(nil)
+	defer SetShieldedProofVerifier(nil)
+
+	recovery := recoveryShieldedGroth16VerifierFromParams(params.MainnetChainConfig)
+	if recovery == nil {
+		t.Fatal("mainnet recovery verifier is unavailable")
+	}
+	before := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime-1)
+	if before == recovery {
+		t.Fatal("recovery verifier activated before recovery timestamp")
+	}
+	after := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime)
+	if after != recovery {
+		t.Fatal("recovery verifier did not activate at recovery timestamp")
+	}
+}
+
 func TestShieldedProofPublicInputsMatchCircuitVector(t *testing.T) {
 	vector := shieldedcircuit.DeterministicTestVectors().Valid
 	outputs := make([]common.Hash, 0, len(vector.Private.OutputCommitment))

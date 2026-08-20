@@ -215,6 +215,6 @@ nohup /home/mike/shielded-prover/shielded-payout-prover \
 - Bind to `127.0.0.1` or a private network only.
 - Never expose the prover directly to the internet.
 - Keep the bearer token out of git.
-- Keep `proving.key` off public pool/dashboard hosts where possible.
+- Treat `proving.key` as a public, hash-verified circuit artifact. Keep note witnesses, bearer tokens, signer keys, and ceremony toxic-waste material private.
 - Persist `requests.json`; it protects against double-send retries.
 - Back up `notes.json` after every successful payout.

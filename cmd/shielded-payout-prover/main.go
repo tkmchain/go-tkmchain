@@ -239,8 +239,11 @@ func loadConfig(path string) (Config, error) {
 	if cfg.BearerToken == "" {
 		return cfg, errors.New("bearerToken is required")
 	}
-	if cfg.NodeRPC == "" || cfg.KeystoreDir == "" || cfg.SignerAddress == "" || cfg.ProvingKeyPath == "" || cfg.NotesPath == "" || cfg.RequestsPath == "" {
-		return cfg, errors.New("nodeRPC, keystoreDir, signerAddress, provingKeyPath, notesPath, and requestsPath are required")
+	if cfg.NodeRPC == "" || cfg.ProvingKeyPath == "" || cfg.NotesPath == "" || cfg.RequestsPath == "" {
+		return cfg, errors.New("nodeRPC, provingKeyPath, notesPath, and requestsPath are required")
+	}
+	if cfg.SignMode != "proof-only" && (cfg.KeystoreDir == "" || cfg.SignerAddress == "") {
+		return cfg, errors.New("keystoreDir and signerAddress are required unless signMode is proof-only")
 	}
 	return cfg, nil
 }
@@ -264,7 +267,9 @@ func NewProver(cfg Config) (*Prover, error) {
 	} else {
 		prover.pk = pk
 	}
-	prover.ks = keystore.NewKeyStore(cfg.KeystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
+	if cfg.SignMode != "proof-only" {
+		prover.ks = keystore.NewKeyStore(cfg.KeystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
+	}
 	return prover, nil
 }
 
@@ -376,6 +381,10 @@ func (p *Prover) handlePayout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if p.cfg.SignMode == "proof-only" {
+		writeJSON(w, http.StatusConflict, PayoutResponse{Error: "prover is running in proof-only mode and cannot sign or submit transactions"})
+		return
+	}
 	var req PayoutRequest
 	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
@@ -399,6 +408,10 @@ func (p *Prover) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 	if !p.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.cfg.SignMode == "proof-only" {
+		writeJSON(w, http.StatusConflict, DepositResponse{Error: "prover is running in proof-only mode and cannot sign or submit transactions"})
 		return
 	}
 	var req DepositRequest
@@ -426,7 +439,7 @@ func (p *Prover) authorized(r *http.Request) bool {
 }
 
 func (p *Prover) ready() bool {
-	return p != nil && p.client != nil && p.ks != nil && p.pk != nil && p.r1cs != nil
+	return p != nil && p.client != nil && (p.cfg.SignMode == "proof-only" || p.ks != nil) && p.pk != nil && p.r1cs != nil
 }
 
 func (p *Prover) operationContext() (context.Context, context.CancelFunc) {
