@@ -1,5 +1,6 @@
 {
   "listen": "127.0.0.1:8787",
+  "allowedOrigin": "https://wallet.tkmchain.site",
   "bearerToken": "replace-with-the-pool-shieldedPayoutProverToken",
   "nodeRPC": "http://127.0.0.1:8545",
   "keystoreDir": "/home/mike/.tkmchain/keystore",
