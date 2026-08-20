@@ -178,6 +178,7 @@ type Prover struct {
 	passphrase string
 	startupErr string
 	mu         sync.Mutex
+	buildSlots chan struct{}
 }
 
 func main() {
@@ -255,7 +256,7 @@ func loadConfig(path string) (Config, error) {
 }
 
 func NewProver(cfg Config) (*Prover, error) {
-	prover := &Prover{cfg: cfg, passphrase: cfg.SignerPassphrase}
+	prover := &Prover{cfg: cfg, passphrase: cfg.SignerPassphrase, buildSlots: make(chan struct{}, 1)}
 	client, err := ethclient.Dial(cfg.NodeRPC)
 	if err != nil {
 		return nil, err
