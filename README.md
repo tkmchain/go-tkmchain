@@ -52,7 +52,7 @@ artifact and may be mirrored by anyone; private note witnesses, local signing
 keys, and any ceremony toxic-waste material must never be published.
 
 The recovery Groth16 verifier activates on mainnet at
-`2026-08-20 07:00:00 UTC` (`1787209200`). Recovery artifacts:
+`2026-08-20 10:00:00 UTC` (`1787220000`). Recovery artifacts:
 
 ```text
 proving.key:  7c3dc3b9f33e522e84665189fa02c08299d209daaa80f96d2dfa6ad43dc2be40

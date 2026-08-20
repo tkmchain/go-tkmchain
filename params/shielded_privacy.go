@@ -35,7 +35,7 @@ var MainnetShieldedGroth16VerifyingKey = mustDecodeOptionalHex(mainnetShieldedGr
 var MainnetShieldedGroth16UpgradedVerifyingKey = mustDecodeOptionalHex(mainnetShieldedGroth16UpgradedVKHex)
 
 // MainnetShieldedGroth16RecoveryTime activates the recovery ceremony verifier.
-const MainnetShieldedGroth16RecoveryTime uint64 = 1787209200
+const MainnetShieldedGroth16RecoveryTime uint64 = 1787220000
 
 // MainnetShieldedGroth16RecoveryVerifyingKey matches the publicly distributed
 // recovery proving key and applies only at and after the recovery timestamp.

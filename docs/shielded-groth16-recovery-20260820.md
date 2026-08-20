@@ -1,10 +1,12 @@
 # Shielded Groth16 recovery — 2026-08-20
 
-Mainnet switches to this verifier at Unix timestamp `1787209200`, which is
-`2026-08-20 07:00:00 UTC`. Blocks before the timestamp use the historical
+Mainnet switches to this verifier at Unix timestamp `1787220000`, which is
+`2026-08-20 10:00:00 UTC`. Blocks before the timestamp use the historical
 verifier rules; blocks at or after it accept proofs for the recovery key only.
 
-Git tag: `shielded-groth16-recovery-20260820`
+Activation source branch: `shielded-groth16-recovery-20260820`
+
+Immutable proving-key artifact tag: `shielded-groth16-recovery-20260820`
 
 Default proving-key URL:
 
