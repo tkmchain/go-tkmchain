@@ -58,6 +58,11 @@ func (p *Prover) handleBuildDeposit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !p.acquireBuildSlot() {
+		writeJSON(w, http.StatusTooManyRequests, BuildShieldedResponse{Error: "proof builder is busy; retry later"})
+		return
+	}
+	defer p.releaseBuildSlot()
 	var req DepositRequest
 	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
@@ -84,6 +89,11 @@ func (p *Prover) handleBuildTransfer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !p.acquireBuildSlot() {
+		writeJSON(w, http.StatusTooManyRequests, BuildShieldedResponse{Error: "proof builder is busy; retry later"})
+		return
+	}
+	defer p.releaseBuildSlot()
 	var req BuildTransferRequest
 	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
@@ -99,6 +109,28 @@ func (p *Prover) handleBuildTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (p *Prover) acquireBuildSlot() bool {
+	if p == nil || p.buildSlots == nil {
+		return false
+	}
+	select {
+	case p.buildSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Prover) releaseBuildSlot() {
+	if p == nil || p.buildSlots == nil {
+		return
+	}
+	select {
+	case <-p.buildSlots:
+	default:
+	}
 }
 
 func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShieldedResponse, error) {

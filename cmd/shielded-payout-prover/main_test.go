@@ -84,6 +84,21 @@ func TestEncryptShieldedNoteRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProofBuilderAllowsOnlyOneConcurrentBuild(t *testing.T) {
+	p := &Prover{buildSlots: make(chan struct{}, 1)}
+	if !p.acquireBuildSlot() {
+		t.Fatal("first proof build should acquire the slot")
+	}
+	if p.acquireBuildSlot() {
+		t.Fatal("second concurrent proof build should be rejected")
+	}
+	p.releaseBuildSlot()
+	if !p.acquireBuildSlot() {
+		t.Fatal("released proof build slot should be reusable")
+	}
+	p.releaseBuildSlot()
+}
+
 func TestComputeAnchorAcceptsHexWitness(t *testing.T) {
 	decimalPath := make([]string, shielded.MerkleDepth)
 	hexPath := make([]string, shielded.MerkleDepth)

@@ -110,6 +110,12 @@ The browser must verify the chain ID, nonce, gas, public value, shielded-pool
 recipient, nullifier, and `TKMSHIELD1` prefix before signing. It then signs with
 ML-DSA-87 locally and submits through `eth_sendRawTransaction`.
 
+Proof-only mode does not require or consume `notes.json` inventory and it never
+funds a transaction. Each wallet discovers its own encrypted canonical notes.
+The first real note is created only when that wallet submits a positive-value
+shielded deposit; generating a spendable note without matching on-chain value
+would be unauthorized minting.
+
 Real output openings use `TKM_SHIELDED_NOTE_PAYLOAD_V3`, ephemeral X25519,
 HKDF-SHA256, and XChaCha20-Poly1305. The payment code supplies the recipient's
 viewing key. Proof-only requests disclose note openings to the prover, so bind
@@ -279,6 +285,8 @@ nohup /home/mike/shielded-prover/shielded-payout-prover \
 
 - Bind to `127.0.0.1` or a private network only.
 - Never expose the prover directly to the internet.
+- When publishing it through Nginx, inject the bearer token only in a root-owned
+  Nginx snippet, apply per-IP limits, and allow no more than one active proof.
 - Never use an untrusted proof builder: a transfer witness contains enough
   information to attempt spending the input note.
 - Keep the bearer token out of git.
