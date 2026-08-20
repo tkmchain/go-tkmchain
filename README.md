@@ -47,8 +47,18 @@ verifying.hex: a307f78a326e1a6fc70ada418f906d94e52c43aa5ebc0c962daa12ff6eae567e
 verifying.key: c5cfb0c58b1a9a6823e8b4973dc122590b6568253d4152a7ac928cce8f157d79
 ```
 
-The proving key is not embedded in the node binary and must stay with prover
-infrastructure.
+The proving key is not embedded in the node binary. It is a public circuit
+artifact and may be mirrored by anyone; private note witnesses, local signing
+keys, and any ceremony toxic-waste material must never be published.
+
+The recovery Groth16 verifier activates on mainnet at
+`2026-08-20 12:00:00 UTC` (`1787227200`). Recovery artifacts:
+
+```text
+proving.key:  7c3dc3b9f33e522e84665189fa02c08299d209daaa80f96d2dfa6ad43dc2be40
+verifying.key: 24a3dcf939acc41bc236c628e556ad80fb0a8e381f8f93a095fcc44196fcea9b
+verifying.hex: 214b4671b3110d14936117b92cb3a4266895afd7d0725fe1099377c02bbc0fef
+```
 
 ---
 

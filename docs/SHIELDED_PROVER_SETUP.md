@@ -27,12 +27,12 @@ go run ../../cmd/shielded-ceremony init-phase2 -commons commons.bin -out phase2-
 # (optionally: have other participants run contribute-phase2)
 go run ../../cmd/shielded-ceremony contribute-phase2 -in phase2-0.bin -out phase2-1.bin
 
-# Finalize -> produces proving.key (private), verifying.key, and verifying.hex (chain-format hex)
+# Finalize -> produces proving.key, verifying.key, and verifying.hex (chain-format hex)
 go run ../../cmd/shielded-ceremony finalize -commons commons.bin -beacon 0xDEADBEEF -pk proving.key -vk verifying.key -vk-hex verifying.hex phase2-1.bin
 
 Notes
 
-- Keep proving.key secret and on prover infrastructure only. Do NOT commit it to repo or share it.
+- The finalized proving key is public and can be mirrored for decentralized proving. Keep private note witnesses, signer keys, and all ceremony toxic-waste material secret.
 - verifying.hex is the chain-format TKMG16VK1 verifying key. It must be embedded into your chain artifact or installed at runtime before activating mainnet privacy.
 
 Installing the verifying key into gtkm
@@ -165,4 +165,3 @@ Security & correctness notes
 - The prover must produce valid Groth16 proofs and all BN254-field-encoded values used in the envelope (nullifiers, anchors, commitments, binding sig). The example uses placeholders — do not broadcast such placeholders.
 - Keep proving.key and private signer keys on restricted infrastructure. Rotate or hardware-protect keys as appropriate.
 - The consensus code enforces that shielded transactions target params.ShieldedPoolAddress and validates envelope structure and canonical field encodings.
-

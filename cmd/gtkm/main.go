@@ -155,6 +155,10 @@ var (
 		utils.GpoPercentileFlag,
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
+		tkmProverFlag,
+		tkmProverConfigFlag,
+		tkmProverBinaryFlag,
+		tkmProverKeyURLFlag,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -367,12 +371,17 @@ func geth(ctx *cli.Context) error {
 		// Give a moment for any pending writes
 		time.Sleep(1 * time.Second)
 
-		// Force exit - don't wait for peer discovery to stop
-		log.Info("Forcing exit to avoid peer discovery hang")
-		os.Exit(0)
+		// Close the node so managed services can run their deferred cleanup.
+		log.Info("Closing node after interrupt")
+		stack.Close()
 	}()
 
 	startNode(ctx, stack, false)
+	prover, err := startTkmProver(ctx)
+	if err != nil {
+		return err
+	}
+	defer prover.stop()
 	log.Info("Gtkm node is running; waiting for shutdown signal", "ipc", stack.IPCEndpoint(), "http", stack.HTTPEndpoint(), "ws", stack.WSEndpoint())
 	stack.Wait()
 	return nil

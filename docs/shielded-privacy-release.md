@@ -94,8 +94,9 @@ upgraded verifier verifying.key: b42cf88c36107d34fec8bacda545cab3cb17da52ac9d206
 upgraded prover proving.key: 2c094442e02f1d39cc7ac47e213815b1a24f50decc58bd473258357605d9db72
 ```
 
-- The proving key is not embedded in node code and must remain restricted to
-  prover infrastructure.
+- The proving key is not embedded in node code. It is a public artifact;
+  private witnesses, signer keys, and ceremony toxic-waste material remain
+  restricted.
 
 ## Internal Security Review Fixes
 
@@ -268,5 +269,5 @@ Covered behavior includes:
 - Release wallet/client support for note creation, note scanning, proof generation, encrypted note backup, and relayer or sender-hiding transaction submission.
 - Update external wallets, explorers, and operational scripts to use PQ account metadata and `PQTkmTxType` before mainnet activation.
 - Distribute the exact same binary/config to every mainnet validator before activation.
-- Keep the proving key outside the node binary and restrict it to prover infrastructure.
+- Keep the proving key outside the node binary and distribute it by a hash-verified release artifact.
 - Preserve the circuit hashes, ceremony transcript hashes, beacon values, proving key hash, and verifying key hash in the release archive.

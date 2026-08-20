@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm clef devp2p abigen bootnode evm rlpdump all \
+.PHONY: gtkm shielded-payout-prover clef devp2p abigen bootnode evm rlpdump all \
         test lint fmt clean devtools help \
         randomx randomx-clean randomx-install randomx-check \
         randomx-windows randomx-darwin randomx-linux randomx-all \
@@ -73,7 +73,7 @@ DARWIN_ARM64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_ARM64) -lrandomx -lc
 DARWIN_RANDOMX_LDFLAGS = $(DARWIN_AMD64_RANDOMX_LDFLAGS)
 
 # List of all commands to build (skip bootnode if not exists)
-CMDS = gtkm clef devp2p abigen evm rlpdump
+CMDS = gtkm shielded-payout-prover clef devp2p abigen evm rlpdump
 # bootnode is optional - add if exists
 ifneq ($(wildcard ./cmd/bootnode),)
 CMDS += bootnode
@@ -107,8 +107,14 @@ gtkm: randomx
 	fi
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
-		go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
+	go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
+
+#? shielded-payout-prover: Build the shielded prover managed by gtkm.
+shielded-payout-prover:
+	@echo "Building shielded payout prover..."
+	@mkdir -p $(GOBIN)
+	go build $(LDFLAGS) -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
 
 #? clef: Build clef (transaction signing tool).
 clef: randomx

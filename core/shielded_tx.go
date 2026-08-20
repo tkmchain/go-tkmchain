@@ -338,7 +338,7 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 			OutputCommitments: outputCommitments,
 			BindingSig:        append([]byte(nil), envelope.BindingSig...),
 		}
-		if err := verifyShieldedSpend(config, ctx, spend.Proof); err != nil {
+		if err := verifyShieldedSpend(config, blockTime, ctx, spend.Proof); err != nil {
 			return fmt.Errorf("%w: spend proof %d: %w", ErrInvalidShieldedTx, i, err)
 		}
 		if !isDeposit {
@@ -392,8 +392,8 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	return envelope, nil
 }
 
-func verifyShieldedSpend(config *params.ChainConfig, ctx ShieldedProofContext, proof []byte) error {
-	verifier := activeShieldedProofVerifier(config)
+func verifyShieldedSpend(config *params.ChainConfig, blockTime uint64, ctx ShieldedProofContext, proof []byte) error {
+	verifier := activeShieldedProofVerifier(config, blockTime)
 	err := verifier.VerifyShieldedSpend(ctx, proof)
 	if err == nil {
 		return nil
@@ -409,7 +409,7 @@ func verifyShieldedSpend(config *params.ChainConfig, ctx ShieldedProofContext, p
 	return err
 }
 
-func activeShieldedProofVerifier(config *params.ChainConfig) ShieldedProofVerifier {
+func activeShieldedProofVerifier(config *params.ChainConfig, blockTime uint64) ShieldedProofVerifier {
 	shieldedVerifierMu.RLock()
 	verifier := shieldedVerifier
 	configured := shieldedVerifierConfigured
@@ -419,6 +419,11 @@ func activeShieldedProofVerifier(config *params.ChainConfig) ShieldedProofVerifi
 	}
 	configVerifier := shieldedGroth16VerifierFromChainConfig(config)
 	upgradeVerifier := upgradedShieldedGroth16VerifierFromParams(config)
+	if blockTime >= params.MainnetShieldedGroth16RecoveryTime {
+		if recoveryVerifier := recoveryShieldedGroth16VerifierFromParams(config); recoveryVerifier != nil {
+			return recoveryVerifier
+		}
+	}
 	if upgradeVerifier != nil && configVerifier != nil {
 		return fallbackShieldedVerifier{primary: upgradeVerifier, fallback: configVerifier}
 	}

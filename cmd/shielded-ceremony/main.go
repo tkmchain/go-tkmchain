@@ -44,6 +44,8 @@ func main() {
 		err = finalize(os.Args[2:])
 	case "encode-vk":
 		err = encodeVK(os.Args[2:])
+	case "verify-artifacts":
+		err = verifyArtifacts(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -64,6 +66,7 @@ commands:
   contribute-phase2   -in phase2-N.bin -out phase2-N+1.bin
   finalize            -commons commons.bin -beacon <hex-or-text> -pk proving.key -vk verifying.key -vk-hex verifying.hex phase2-1.bin ...
   encode-vk           -vk verifying.key -out verifying.hex
+  verify-artifacts    -pk proving.key -vk verifying.key
 `)
 }
 
@@ -237,6 +240,91 @@ func encodeVK(args []string) error {
 		return err
 	}
 	return writeBytes(*out, []byte(hexVK+"\n"))
+}
+
+func verifyArtifacts(args []string) error {
+	fs := flag.NewFlagSet("verify-artifacts", flag.ExitOnError)
+	pkPath := fs.String("pk", "", "input gnark proving key")
+	vkPath := fs.String("vk", "", "input gnark verifying key")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pkPath == "" || *vkPath == "" {
+		return fmt.Errorf("-pk and -vk are required")
+	}
+	r1cs, err := compileCircuit()
+	if err != nil {
+		return err
+	}
+	pk := groth16.NewProvingKey(ecc.BN254)
+	if err := readObject(*pkPath, pk); err != nil {
+		return err
+	}
+	vk := groth16.NewVerifyingKey(ecc.BN254)
+	if err := readObject(*vkPath, vk); err != nil {
+		return err
+	}
+	assignment, err := assignmentFromVector(shielded.DeterministicTestVectors().Valid)
+	if err != nil {
+		return err
+	}
+	witness, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField())
+	if err != nil {
+		return fmt.Errorf("build full witness: %w", err)
+	}
+	proof, err := groth16.Prove(r1cs, pk, witness)
+	if err != nil {
+		return fmt.Errorf("prove deterministic vector: %w", err)
+	}
+	publicWitness, err := witness.Public()
+	if err != nil {
+		return fmt.Errorf("build public witness: %w", err)
+	}
+	if err := groth16.Verify(proof, vk, publicWitness); err != nil {
+		return fmt.Errorf("verify deterministic proof: %w", err)
+	}
+	fmt.Println("proving key and verifying key passed a full Groth16 prove/verify round trip")
+	return nil
+}
+
+func assignmentFromVector(vector shielded.VectorCase) (*shielded.SpendCircuit, error) {
+	circuit := &shielded.SpendCircuit{
+		ChainID:           vector.Public.ChainID,
+		BlockNumber:       vector.Public.BlockNumber,
+		TxHashHi:          vector.Public.TxHashHi,
+		TxHashLo:          vector.Public.TxHashLo,
+		SpendIndex:        vector.Public.SpendIndex,
+		Nullifier:         vector.Public.Nullifier,
+		Anchor:            vector.Public.Anchor,
+		BalanceCommitment: vector.Public.BalanceCommitment,
+		PublicValue:       vector.Public.PublicValue,
+		OutputRoot:        vector.Public.OutputRoot,
+		BindingSigHash:    vector.Public.BindingSigHash,
+		OwnerSecret:       vector.Private.OwnerSecret,
+		NoteRandomness:    vector.Private.NoteRandomness,
+		NoteValue:         vector.Private.NoteValue,
+		AssetID:           vector.Private.AssetID,
+	}
+	for _, item := range []struct {
+		name string
+		dst  []frontend.Variable
+		src  []string
+	}{
+		{"merklePath", circuit.MerklePath[:], vector.Private.MerklePath},
+		{"merklePathIndex", circuit.MerklePathIndex[:], vector.Private.MerklePathIndex},
+		{"outputRecipient", circuit.OutputRecipient[:], vector.Private.OutputRecipient},
+		{"outputValue", circuit.OutputValue[:], vector.Private.OutputValue},
+		{"outputRandomness", circuit.OutputRandomness[:], vector.Private.OutputRandomness},
+		{"outputCommitment", circuit.OutputCommitment[:], vector.Private.OutputCommitment},
+	} {
+		if len(item.dst) != len(item.src) {
+			return nil, fmt.Errorf("%s vector has %d values, want %d", item.name, len(item.src), len(item.dst))
+		}
+		for i := range item.dst {
+			item.dst[i] = item.src[i]
+		}
+	}
+	return circuit, nil
 }
 
 func compileCircuit() (*cs.R1CS, error) {
