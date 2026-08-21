@@ -59,6 +59,7 @@ type Config struct {
 	SignerPassphraseFile string `json:"signerPassphraseFile"`
 	SignMode             string `json:"signMode"`
 	ProvingKeyPath       string `json:"provingKeyPath"`
+	ProvingKeyV2Path     string `json:"provingKeyV2Path"`
 	NotesPath            string `json:"notesPath"`
 	RequestsPath         string `json:"requestsPath"`
 	GasLimit             uint64 `json:"gasLimit"`
@@ -97,6 +98,7 @@ type DepositRequest struct {
 	Nonce            string    `json:"nonce,omitempty"`
 	GasPriceWei      string    `json:"gasPriceWei,omitempty"`
 	From             string    `json:"from,omitempty"`
+	To               string    `json:"to,omitempty"`
 	RecipientViewKey string    `json:"recipientViewKey,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 }
@@ -117,6 +119,7 @@ type NoteStore struct {
 }
 
 type ShieldedNote struct {
+	Version         uint64   `json:"version,omitempty"`
 	ID              string   `json:"id"`
 	Commitment      string   `json:"commitment,omitempty"`
 	Nullifier       string   `json:"nullifier,omitempty"`
@@ -175,6 +178,8 @@ type Prover struct {
 	ks         *keystore.KeyStore
 	pk         groth16.ProvingKey
 	r1cs       *cs.R1CS
+	pkV2       groth16.ProvingKey
+	r1csV2     *cs.R1CS
 	passphrase string
 	startupErr string
 	mu         sync.Mutex
@@ -228,6 +233,10 @@ func loadConfig(path string) (Config, error) {
 		cfg.SignMode = "pq"
 	}
 	cfg.ProvingKeyPath = strings.TrimSpace(cfg.ProvingKeyPath)
+	cfg.ProvingKeyV2Path = strings.TrimSpace(cfg.ProvingKeyV2Path)
+	if cfg.ProvingKeyV2Path == "" && cfg.ProvingKeyPath != "" {
+		cfg.ProvingKeyV2Path = filepath.Join(filepath.Dir(cfg.ProvingKeyPath), "proving-v2.key")
+	}
 	cfg.NotesPath = strings.TrimSpace(cfg.NotesPath)
 	cfg.RequestsPath = strings.TrimSpace(cfg.RequestsPath)
 	if cfg.GasLimit == 0 {
@@ -246,8 +255,8 @@ func loadConfig(path string) (Config, error) {
 	if cfg.BearerToken == "" {
 		return cfg, errors.New("bearerToken is required")
 	}
-	if cfg.NodeRPC == "" || cfg.ProvingKeyPath == "" || cfg.NotesPath == "" || cfg.RequestsPath == "" {
-		return cfg, errors.New("nodeRPC, provingKeyPath, notesPath, and requestsPath are required")
+	if cfg.NodeRPC == "" || cfg.ProvingKeyPath == "" || cfg.ProvingKeyV2Path == "" || cfg.NotesPath == "" || cfg.RequestsPath == "" {
+		return cfg, errors.New("nodeRPC, provingKeyPath, provingKeyV2Path, notesPath, and requestsPath are required")
 	}
 	if cfg.SignMode != "proof-only" && (cfg.KeystoreDir == "" || cfg.SignerAddress == "") {
 		return cfg, errors.New("keystoreDir and signerAddress are required unless signMode is proof-only")
@@ -273,6 +282,18 @@ func NewProver(cfg Config) (*Prover, error) {
 		log.Printf("proving key not loaded yet: %v", err)
 	} else {
 		prover.pk = pk
+	}
+	r1csV2, err := compileCircuitV2()
+	if err != nil {
+		return nil, err
+	}
+	prover.r1csV2 = r1csV2
+	pkV2 := groth16.NewProvingKey(ecc.BN254)
+	if err := readObject(cfg.ProvingKeyV2Path, pkV2); err != nil {
+		prover.startupErr = strings.TrimSpace(strings.Join([]string{prover.startupErr, "V2: " + err.Error()}, "; "))
+		log.Printf("V2 proving key not loaded yet: %v", err)
+	} else {
+		prover.pkV2 = pkV2
 	}
 	if cfg.SignMode != "proof-only" {
 		prover.ks = keystore.NewKeyStore(cfg.KeystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
@@ -323,9 +344,11 @@ func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"signMode":               p.cfg.SignMode,
 		"signerAddress":          p.cfg.SignerAddress,
 		"provingKeyPath":         p.cfg.ProvingKeyPath,
+		"provingKeyV2Path":       p.cfg.ProvingKeyV2Path,
 		"notesPath":              p.cfg.NotesPath,
 		"requestsPath":           p.cfg.RequestsPath,
 		"hasProvingKey":          p.pk != nil,
+		"hasProvingKeyV2":        p.pkV2 != nil,
 		"hasRPC":                 p.client != nil,
 		"hasKeystore":            p.ks != nil,
 		"hasSpendableNotes":      noteStatus.HasSpendableNotes,
@@ -469,7 +492,7 @@ func (p *Prover) authorized(r *http.Request) bool {
 }
 
 func (p *Prover) ready() bool {
-	return p != nil && p.client != nil && (p.cfg.SignMode == "proof-only" || p.ks != nil) && p.pk != nil && p.r1cs != nil
+	return p != nil && p.client != nil && (p.cfg.SignMode == "proof-only" || p.ks != nil) && p.pk != nil && p.r1cs != nil && p.pkV2 != nil && p.r1csV2 != nil
 }
 
 func (p *Prover) operationContext() (context.Context, context.CancelFunc) {
@@ -1220,6 +1243,25 @@ func (p *Prover) prove(assignment *shielded.SpendCircuit) ([]byte, error) {
 	})
 }
 
+func (p *Prover) proveV2(assignment *shielded.SpendCircuitV2) ([]byte, error) {
+	witness, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField())
+	if err != nil {
+		return nil, err
+	}
+	proof, err := groth16.Prove(p.r1csV2, p.pkV2, witness)
+	if err != nil {
+		return nil, err
+	}
+	bnProof, ok := proof.(*bn254groth16.Proof)
+	if !ok {
+		return nil, fmt.Errorf("unexpected V2 proof type %T", proof)
+	}
+	a := bnProof.Ar.Bytes()
+	b := bnProof.Bs.Bytes()
+	c := bnProof.Krs.Bytes()
+	return core.EncodeShieldedGroth16Proof(core.ShieldedGroth16Proof{A: a[:], B: b[:], C: c[:]})
+}
+
 func compileCircuit() (*cs.R1CS, error) {
 	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1csbuilder.NewBuilder, &shielded.SpendCircuit{})
 	if err != nil {
@@ -1228,6 +1270,18 @@ func compileCircuit() (*cs.R1CS, error) {
 	r1cs, ok := ccs.(*cs.R1CS)
 	if !ok {
 		return nil, fmt.Errorf("unexpected constraint system type %T", ccs)
+	}
+	return r1cs, nil
+}
+
+func compileCircuitV2() (*cs.R1CS, error) {
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1csbuilder.NewBuilder, &shielded.SpendCircuitV2{})
+	if err != nil {
+		return nil, err
+	}
+	r1cs, ok := ccs.(*cs.R1CS)
+	if !ok {
+		return nil, fmt.Errorf("unexpected V2 constraint system type %T", ccs)
 	}
 	return r1cs, nil
 }

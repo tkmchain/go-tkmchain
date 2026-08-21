@@ -264,10 +264,7 @@ func verifyArtifacts(args []string) error {
 	if err := readObject(*vkPath, vk); err != nil {
 		return err
 	}
-	assignment, err := assignmentFromVector(shielded.DeterministicTestVectors().Valid)
-	if err != nil {
-		return err
-	}
+	assignment := shielded.DeterministicV2Assignment()
 	witness, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField())
 	if err != nil {
 		return fmt.Errorf("build full witness: %w", err)
@@ -287,48 +284,8 @@ func verifyArtifacts(args []string) error {
 	return nil
 }
 
-func assignmentFromVector(vector shielded.VectorCase) (*shielded.SpendCircuit, error) {
-	circuit := &shielded.SpendCircuit{
-		ChainID:           vector.Public.ChainID,
-		BlockNumber:       vector.Public.BlockNumber,
-		TxHashHi:          vector.Public.TxHashHi,
-		TxHashLo:          vector.Public.TxHashLo,
-		SpendIndex:        vector.Public.SpendIndex,
-		Nullifier:         vector.Public.Nullifier,
-		Anchor:            vector.Public.Anchor,
-		BalanceCommitment: vector.Public.BalanceCommitment,
-		PublicValue:       vector.Public.PublicValue,
-		OutputRoot:        vector.Public.OutputRoot,
-		BindingSigHash:    vector.Public.BindingSigHash,
-		OwnerSecret:       vector.Private.OwnerSecret,
-		NoteRandomness:    vector.Private.NoteRandomness,
-		NoteValue:         vector.Private.NoteValue,
-		AssetID:           vector.Private.AssetID,
-	}
-	for _, item := range []struct {
-		name string
-		dst  []frontend.Variable
-		src  []string
-	}{
-		{"merklePath", circuit.MerklePath[:], vector.Private.MerklePath},
-		{"merklePathIndex", circuit.MerklePathIndex[:], vector.Private.MerklePathIndex},
-		{"outputRecipient", circuit.OutputRecipient[:], vector.Private.OutputRecipient},
-		{"outputValue", circuit.OutputValue[:], vector.Private.OutputValue},
-		{"outputRandomness", circuit.OutputRandomness[:], vector.Private.OutputRandomness},
-		{"outputCommitment", circuit.OutputCommitment[:], vector.Private.OutputCommitment},
-	} {
-		if len(item.dst) != len(item.src) {
-			return nil, fmt.Errorf("%s vector has %d values, want %d", item.name, len(item.src), len(item.dst))
-		}
-		for i := range item.dst {
-			item.dst[i] = item.src[i]
-		}
-	}
-	return circuit, nil
-}
-
 func compileCircuit() (*cs.R1CS, error) {
-	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1csbuilder.NewBuilder, &shielded.SpendCircuit{})
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1csbuilder.NewBuilder, &shielded.SpendCircuitV2{})
 	if err != nil {
 		return nil, err
 	}

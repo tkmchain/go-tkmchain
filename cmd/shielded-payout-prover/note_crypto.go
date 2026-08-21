@@ -19,19 +19,34 @@ import (
 )
 
 const (
-	shieldedNotePayloadFormat = "TKM_SHIELDED_NOTE_PAYLOAD_V3"
-	shieldedNoteKDFInfo       = "TKM_SHIELDED_NOTE_X25519_XCHACHA20POLY1305_V1"
+	shieldedNotePayloadFormat   = "TKM_SHIELDED_NOTE_PAYLOAD_V3"
+	shieldedNotePayloadFormatV2 = "TKM_SHIELDED_NOTE_PAYLOAD_V4"
+	shieldedNoteKDFInfo         = "TKM_SHIELDED_NOTE_X25519_XCHACHA20POLY1305_V1"
 )
 
 type shieldedNoteOpening struct {
 	Format         string `json:"format"`
+	Version        uint64 `json:"version,omitempty"`
 	Recipient      string `json:"recipient"`
-	OwnerSecret    string `json:"ownerSecret"`
+	OwnerSecret    string `json:"ownerSecret,omitempty"`
 	AssetID        string `json:"assetId"`
 	NoteValueWei   string `json:"noteValueWei"`
 	NoteRandomness string `json:"noteRandomness"`
 	Commitment     string `json:"commitment"`
 	Nullifier      string `json:"nullifier"`
+}
+
+func noteOpeningV2(recipient common.Address, asset, value, randomness *big.Int, commitment, nullifier common.Hash) shieldedNoteOpening {
+	return shieldedNoteOpening{
+		Format:         shieldedNotePayloadFormatV2,
+		Version:        core.ShieldedTxVersionV2,
+		Recipient:      recipient.Hex(),
+		AssetID:        asset.String(),
+		NoteValueWei:   value.String(),
+		NoteRandomness: randomness.String(),
+		Commitment:     commitment.Hex(),
+		Nullifier:      nullifier.Hex(),
+	}
 }
 
 func parseViewPublicKey(raw string) ([]byte, error) {
@@ -74,7 +89,9 @@ func encryptShieldedNote(commitment common.Hash, opening shieldedNoteOpening, re
 	if _, err := rand.Read(nonce); err != nil {
 		return core.ShieldedOutput{}, err
 	}
-	opening.Format = shieldedNotePayloadFormat
+	if opening.Format == "" {
+		opening.Format = shieldedNotePayloadFormat
+	}
 	opening.Commitment = commitment.Hex()
 	plain, err := json.Marshal(opening)
 	if err != nil {

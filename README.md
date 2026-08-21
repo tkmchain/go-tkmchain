@@ -19,6 +19,7 @@ Automated builds are available for stable releases and the unstable master branc
 
 - [Kyoto Release Notes](docs/kyoto-release.md)
 - [Shielded Privacy Release Notes](docs/shielded-privacy-release.md)
+- [Shielded V2 Recipient Binding](docs/shielded-v2-recipient-binding-20260820.md)
 - [Post-Quantum Wallet Integration](docs/pq-wallet-integration.md)
 
 ---
@@ -58,6 +59,19 @@ The recovery Groth16 verifier activates on mainnet at
 proving.key:  7c3dc3b9f33e522e84665189fa02c08299d209daaa80f96d2dfa6ad43dc2be40
 verifying.key: 24a3dcf939acc41bc236c628e556ad80fb0a8e381f8f93a095fcc44196fcea9b
 verifying.hex: 214b4671b3110d14936117b92cb3a4266895afd7d0725fe1099377c02bbc0fef
+```
+
+Recipient-bound Shielded V2 activates at `2026-08-27 12:00:00 UTC`
+(`1787832000`). V2 binds every note to the ML-DSA-87 account recovered from
+the transaction signature, enables payments to another person's
+`tkmshield2.` payment code, and uses a separately domain-separated circuit and
+key pair. V1 envelopes are accepted before the timestamp and V2 envelopes are
+required at and after it.
+
+```text
+proving.key:  248d2a299233c0d57e5a03d30cba62d4dde8f716594e67585842065b5eebd626
+verifying.key: de7585bcaea8bbf14fbd7e7a42aa2724e6e1ee925f62fa507a4d38403ed9d62b
+verifying.hex: f244511eee64c0af44c97dd2fef4e2158fe52690e4c1c0cd03d2113907be6924
 ```
 
 ---

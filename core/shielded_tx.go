@@ -19,8 +19,8 @@ import (
 
 const (
 	shieldedTxMagic                 = "TKMSHIELD1"
-	shieldedTxVersion               = uint64(1)
 	shieldedTxIntentDomain          = "TKM_SHIELDED_INTENT_V1"
+	shieldedTxIntentDomainV2        = "TKM_SHIELDED_INTENT_V2"
 	shieldedMinEncryptedOutputBytes = 32
 	shieldedMinNonceBytes           = 12
 	shieldedMaxEncryptedBytes       = 16 * 1024
@@ -32,6 +32,8 @@ const (
 
 	// ShieldedMerkleDepth is the fixed tree depth used by the shielded circuit.
 	ShieldedMerkleDepth = shieldedMerkleDepth
+	ShieldedTxVersionV1 = uint64(1)
+	ShieldedTxVersionV2 = uint64(2)
 )
 
 var (
@@ -69,6 +71,8 @@ type ShieldedTransaction struct {
 
 // ShieldedProofContext is the exact public input passed into the ZK verifier.
 type ShieldedProofContext struct {
+	Version           uint64
+	Sender            common.Address
 	ChainID           *big.Int
 	BlockNumber       *big.Int
 	TxHash            common.Hash
@@ -240,8 +244,12 @@ func ShieldedTransactionIntentHash(tx *types.Transaction, envelope *ShieldedTran
 	if blobFeeCap == nil {
 		blobFeeCap = new(big.Int)
 	}
+	intentDomain := shieldedTxIntentDomain
+	if envelope.Version == ShieldedTxVersionV2 {
+		intentDomain = shieldedTxIntentDomainV2
+	}
 	payload := shieldedIntentPayload{
-		Domain:                []byte(shieldedTxIntentDomain),
+		Domain:                []byte(intentDomain),
 		TxType:                tx.Type(),
 		ChainID:               tx.ChainId(),
 		Nonce:                 tx.Nonce(),
@@ -310,6 +318,14 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 	for i, output := range envelope.Outputs {
 		outputCommitments[i] = output.Commitment
 	}
+	var sender common.Address
+	if envelope.Version == ShieldedTxVersionV2 {
+		var err error
+		sender, err = types.Sender(types.MakeSigner(config, blockNumber, blockTime), tx)
+		if err != nil {
+			return fmt.Errorf("%w: recover V2 PQ sender: %v", ErrInvalidShieldedTx, err)
+		}
+	}
 	for i, spend := range envelope.Spends {
 		if isDeposit {
 			if i != 0 {
@@ -327,6 +343,8 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 			}
 		}
 		ctx := ShieldedProofContext{
+			Version:           envelope.Version,
+			Sender:            sender,
 			ChainID:           config.ChainID,
 			BlockNumber:       blockNumber,
 			TxHash:            intentHash,
@@ -338,7 +356,7 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 			OutputCommitments: outputCommitments,
 			BindingSig:        append([]byte(nil), envelope.BindingSig...),
 		}
-		if err := verifyShieldedSpend(config, blockTime, ctx, spend.Proof); err != nil {
+		if err := verifyShieldedSpend(config, blockTime, envelope.Version, ctx, spend.Proof); err != nil {
 			return fmt.Errorf("%w: spend proof %d: %w", ErrInvalidShieldedTx, i, err)
 		}
 		if !isDeposit {
@@ -379,7 +397,11 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	if to := tx.To(); to == nil || *to != params.ShieldedPoolAddress {
 		return nil, fmt.Errorf("%w: shielded tx must target %s", ErrInvalidShieldedTx, params.ShieldedPoolAddress.Hex())
 	}
-	if err := validateShieldedEnvelope(envelope); err != nil {
+	expectedVersion := ShieldedTxVersionV1
+	if params.IsMainnetShieldedV2(config, blockTime) {
+		expectedVersion = ShieldedTxVersionV2
+	}
+	if err := validateShieldedEnvelope(envelope, expectedVersion); err != nil {
 		return nil, err
 	}
 	isDeposit := isShieldedDeposit(envelope, tx.Value())
@@ -392,8 +414,8 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	return envelope, nil
 }
 
-func verifyShieldedSpend(config *params.ChainConfig, blockTime uint64, ctx ShieldedProofContext, proof []byte) error {
-	verifier := activeShieldedProofVerifier(config, blockTime)
+func verifyShieldedSpend(config *params.ChainConfig, blockTime uint64, version uint64, ctx ShieldedProofContext, proof []byte) error {
+	verifier := activeShieldedProofVerifier(config, blockTime, version)
 	err := verifier.VerifyShieldedSpend(ctx, proof)
 	if err == nil {
 		return nil
@@ -409,12 +431,18 @@ func verifyShieldedSpend(config *params.ChainConfig, blockTime uint64, ctx Shiel
 	return err
 }
 
-func activeShieldedProofVerifier(config *params.ChainConfig, blockTime uint64) ShieldedProofVerifier {
+func activeShieldedProofVerifier(config *params.ChainConfig, blockTime uint64, version uint64) ShieldedProofVerifier {
 	shieldedVerifierMu.RLock()
 	verifier := shieldedVerifier
 	configured := shieldedVerifierConfigured
 	shieldedVerifierMu.RUnlock()
 	if configured {
+		return verifier
+	}
+	if version == ShieldedTxVersionV2 {
+		if v2Verifier := v2ShieldedGroth16VerifierFromParams(config); v2Verifier != nil {
+			return v2Verifier
+		}
 		return verifier
 	}
 	configVerifier := shieldedGroth16VerifierFromChainConfig(config)
@@ -436,9 +464,9 @@ func activeShieldedProofVerifier(config *params.ChainConfig, blockTime uint64) S
 	return verifier
 }
 
-func validateShieldedEnvelope(tx *ShieldedTransaction) error {
-	if tx.Version != shieldedTxVersion {
-		return fmt.Errorf("%w: unsupported version %d", ErrInvalidShieldedTx, tx.Version)
+func validateShieldedEnvelope(tx *ShieldedTransaction, expectedVersion uint64) error {
+	if tx.Version != expectedVersion {
+		return fmt.Errorf("%w: envelope version %d is not active; expected version %d", ErrInvalidShieldedTx, tx.Version, expectedVersion)
 	}
 	if len(tx.Spends) == 0 && len(tx.Outputs) == 0 {
 		return fmt.Errorf("%w: empty shielded envelope", ErrInvalidShieldedTx)

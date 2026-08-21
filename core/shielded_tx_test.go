@@ -36,7 +36,7 @@ func (f shieldedVerifierFunc) VerifyShieldedSpend(ctx ShieldedProofContext, proo
 func testShieldedEnvelope(t *testing.T, spends int) *ShieldedTransaction {
 	t.Helper()
 	tx := &ShieldedTransaction{
-		Version:           shieldedTxVersion,
+		Version:           ShieldedTxVersionV1,
 		BalanceCommitment: common.HexToHash("0xabc"),
 		BindingSig:        common.BigToHash(big.NewInt(9)).Bytes(),
 	}
@@ -114,6 +114,27 @@ func TestShieldedEnvelopeRoundTrip(t *testing.T) {
 	}
 	if got.Version != want.Version || len(got.Spends) != 1 || len(got.Outputs) != shieldedOutputSlots {
 		t.Fatalf("decoded shielded envelope = %+v", got)
+	}
+}
+
+func TestShieldedV2EnvelopeActivationIsVersionExclusive(t *testing.T) {
+	v1 := testShieldedEnvelope(t, 1)
+	v1tx := testShieldedTx(t, v1, new(big.Int))
+	before := params.MainnetShieldedV2Time - 1
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), before, v1tx); err != nil {
+		t.Fatalf("V1 rejected before V2 activation: %v", err)
+	}
+	v2 := testShieldedEnvelope(t, 1)
+	v2.Version = ShieldedTxVersionV2
+	v2tx := testShieldedTx(t, v2, new(big.Int))
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), before, v2tx); err == nil {
+		t.Fatal("V2 accepted before activation")
+	}
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedV2Time, v1tx); err == nil {
+		t.Fatal("new V1 envelope accepted after V2 activation")
+	}
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedV2Time, v2tx); err != nil {
+		t.Fatalf("V2 rejected at activation: %v", err)
 	}
 }
 
@@ -278,11 +299,11 @@ func TestMainnetRecoveryVerifierActivation(t *testing.T) {
 	if recovery == nil {
 		t.Fatal("mainnet recovery verifier is unavailable")
 	}
-	before := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime-1)
+	before := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime-1, ShieldedTxVersionV1)
 	if before == recovery {
 		t.Fatal("recovery verifier activated before recovery timestamp")
 	}
-	after := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime)
+	after := activeShieldedProofVerifier(params.MainnetChainConfig, params.MainnetShieldedGroth16RecoveryTime, ShieldedTxVersionV1)
 	if after != recovery {
 		t.Fatal("recovery verifier did not activate at recovery timestamp")
 	}
@@ -357,7 +378,7 @@ func testShieldedGroth16Material(t *testing.T) ([]byte, []byte) {
 	_, _, g1, g2 := bn254.Generators()
 	g1Bytes := g1.Bytes()
 	g2Bytes := g2.Bytes()
-	ic := make([][]byte, shieldedPublicInputs+1)
+	ic := make([][]byte, shieldedPublicInputsV1+1)
 	for i := range ic {
 		ic[i] = g1Bytes[:]
 	}
@@ -516,19 +537,19 @@ func TestValidateShieldedEnvelopeRejectsNonCanonicalFieldInputs(t *testing.T) {
 		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 	}
 	envelope.Spends[0].Nullifier = nonCanonical
-	if err := validateShieldedEnvelope(envelope); err == nil {
+	if err := validateShieldedEnvelope(envelope, ShieldedTxVersionV1); err == nil {
 		t.Fatal("non-canonical nullifier accepted")
 	}
 
 	envelope = testShieldedEnvelope(t, 1)
 	envelope.Outputs[0].Commitment = nonCanonical
-	if err := validateShieldedEnvelope(envelope); err == nil {
+	if err := validateShieldedEnvelope(envelope, ShieldedTxVersionV1); err == nil {
 		t.Fatal("non-canonical output commitment accepted")
 	}
 
 	envelope = testShieldedEnvelope(t, 1)
 	envelope.BindingSig = []byte("short")
-	if err := validateShieldedEnvelope(envelope); err == nil {
+	if err := validateShieldedEnvelope(envelope, ShieldedTxVersionV1); err == nil {
 		t.Fatal("short binding hash accepted")
 	}
 }
@@ -536,7 +557,7 @@ func TestValidateShieldedEnvelopeRejectsNonCanonicalFieldInputs(t *testing.T) {
 func TestValidateShieldedEnvelopeRequiresPaddedOutputs(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 1)
 	envelope.Outputs = envelope.Outputs[:1]
-	if err := validateShieldedEnvelope(envelope); err == nil {
+	if err := validateShieldedEnvelope(envelope, ShieldedTxVersionV1); err == nil {
 		t.Fatal("unpadded output set accepted")
 	}
 }

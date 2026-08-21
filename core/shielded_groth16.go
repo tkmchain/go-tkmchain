@@ -20,9 +20,11 @@ import (
 const (
 	shieldedGroth16ProofMagic = "TKMG16V1"
 	shieldedGroth16VKMagic    = "TKMG16VK1"
-	shieldedPublicInputs      = 11
+	shieldedPublicInputsV1    = 11
+	shieldedPublicInputsV2    = 12
 
-	shieldedDomainOutput = uint64(1004)
+	shieldedDomainOutput   = uint64(1004)
+	shieldedDomainOutputV2 = uint64(2004)
 )
 
 var ErrShieldedVerifyingKeyUnavailable = errors.New("shielded verifying key unavailable")
@@ -68,6 +70,7 @@ var (
 	shieldedGroth16ConfigCache   shieldedGroth16VerifierCache
 	shieldedGroth16UpgradeCache  shieldedGroth16VerifierCache
 	shieldedGroth16RecoveryCache shieldedGroth16VerifierCache
+	shieldedGroth16V2Cache       shieldedGroth16VerifierCache
 )
 
 // NewShieldedGroth16Verifier creates a production BN254 Groth16 verifier.
@@ -118,6 +121,16 @@ func recoveryShieldedGroth16VerifierFromParams(config *params.ChainConfig) Shiel
 		return nil
 	}
 	return shieldedGroth16VerifierFromBytes(params.MainnetShieldedGroth16RecoveryVerifyingKey, &shieldedGroth16RecoveryCache)
+}
+
+func v2ShieldedGroth16VerifierFromParams(config *params.ChainConfig) ShieldedProofVerifier {
+	if config == nil || config.ChainID == nil || params.MainnetChainConfig == nil || params.MainnetChainConfig.ChainID == nil {
+		return nil
+	}
+	if config.ChainID.Cmp(params.MainnetChainConfig.ChainID) != 0 || len(params.MainnetShieldedGroth16V2VerifyingKey) == 0 {
+		return nil
+	}
+	return shieldedGroth16VerifierFromBytes(params.MainnetShieldedGroth16V2VerifyingKey, &shieldedGroth16V2Cache)
 }
 
 func shieldedGroth16VerifierFromBytes(encoded []byte, cache *shieldedGroth16VerifierCache) ShieldedProofVerifier {
@@ -171,8 +184,8 @@ func DecodeShieldedGroth16VerifyingKey(encoded []byte) (*parsedShieldedGroth16Ve
 	if err := rlp.DecodeBytes(encoded[len(shieldedGroth16VKMagic):], &raw); err != nil {
 		return nil, fmt.Errorf("%w: malformed Groth16 verifying key: %v", ErrShieldedVerifyingKeyUnavailable, err)
 	}
-	if len(raw.IC) != shieldedPublicInputs+1 {
-		return nil, fmt.Errorf("%w: verifying key has %d IC points, want %d", ErrShieldedVerifyingKeyUnavailable, len(raw.IC), shieldedPublicInputs+1)
+	if len(raw.IC) != shieldedPublicInputsV1+1 && len(raw.IC) != shieldedPublicInputsV2+1 {
+		return nil, fmt.Errorf("%w: verifying key has %d IC points, want %d (V1) or %d (V2)", ErrShieldedVerifyingKeyUnavailable, len(raw.IC), shieldedPublicInputsV1+1, shieldedPublicInputsV2+1)
 	}
 	vk := &parsedShieldedGroth16VerifyingKey{ic: make([]bn254.G1Affine, len(raw.IC))}
 	var err error
@@ -219,7 +232,22 @@ func (v *shieldedGroth16Verifier) VerifyShieldedSpend(ctx ShieldedProofContext, 
 	if err != nil {
 		return err
 	}
-	inputs := shieldedProofPublicInputs(ctx)
+	var inputs []fr.Element
+	switch len(v.vk.ic) {
+	case shieldedPublicInputsV1 + 1:
+		if ctx.Version != 0 && ctx.Version != ShieldedTxVersionV1 {
+			return fmt.Errorf("%w: V1 verifying key cannot verify envelope version %d", ErrInvalidShieldedTx, ctx.Version)
+		}
+		v1 := shieldedProofPublicInputs(ctx)
+		inputs = v1[:]
+	case shieldedPublicInputsV2 + 1:
+		if ctx.Version != ShieldedTxVersionV2 {
+			return fmt.Errorf("%w: V2 verifying key cannot verify envelope version %d", ErrInvalidShieldedTx, ctx.Version)
+		}
+		inputs = shieldedProofPublicInputsV2(ctx)
+	default:
+		return ErrShieldedVerifyingKeyUnavailable
+	}
 	vkX := v.vk.ic[0]
 	for i := range inputs {
 		var term bn254.G1Affine
@@ -253,6 +281,9 @@ func validateShieldedProofContext(ctx ShieldedProofContext) error {
 	}
 	if ctx.PublicValue == nil || ctx.PublicValue.Sign() < 0 || ctx.PublicValue.BitLen() > 64 {
 		return fmt.Errorf("%w: public value must be a 64-bit unsigned value", ErrInvalidShieldedTx)
+	}
+	if ctx.Version == ShieldedTxVersionV2 && ctx.Sender == (common.Address{}) {
+		return fmt.Errorf("%w: V2 proof context requires the recovered PQ sender", ErrInvalidShieldedTx)
 	}
 	if !isCanonicalShieldedFieldHash(ctx.Nullifier) {
 		return fmt.Errorf("%w: nullifier is not a canonical BN254 field element", ErrInvalidShieldedTx)
@@ -350,9 +381,9 @@ func decodeG2(encoded []byte) (bn254.G2Affine, error) {
 	return p, nil
 }
 
-func shieldedProofPublicInputs(ctx ShieldedProofContext) [shieldedPublicInputs]fr.Element {
+func shieldedProofPublicInputs(ctx ShieldedProofContext) [shieldedPublicInputsV1]fr.Element {
 	txHashHi, txHashLo := fieldElementsFromHashLimbs(ctx.TxHash)
-	return [shieldedPublicInputs]fr.Element{
+	return [shieldedPublicInputsV1]fr.Element{
 		fieldElementFromBig(ctx.ChainID),
 		fieldElementFromBig(ctx.BlockNumber),
 		txHashHi,
@@ -367,9 +398,35 @@ func shieldedProofPublicInputs(ctx ShieldedProofContext) [shieldedPublicInputs]f
 	}
 }
 
+func shieldedProofPublicInputsV2(ctx ShieldedProofContext) []fr.Element {
+	txHashHi, txHashLo := fieldElementsFromHashLimbs(ctx.TxHash)
+	return []fr.Element{
+		fieldElementFromBig(ctx.ChainID),
+		fieldElementFromBig(ctx.BlockNumber),
+		txHashHi,
+		txHashLo,
+		fieldElementFromUint64(uint64(ctx.SpendIndex)),
+		fieldElementFromHash(ctx.Nullifier),
+		fieldElementFromHash(ctx.Anchor),
+		fieldElementFromHash(ctx.BalanceCommitment),
+		fieldElementFromBig(ctx.PublicValue),
+		fieldElementFromHash(shieldedOutputCommitmentsRootV2(ctx.OutputCommitments)),
+		fieldElementFromHash(common.BytesToHash(ctx.BindingSig)),
+		fieldElementFromBig(ctx.Sender.Big()),
+	}
+}
+
 func shieldedOutputCommitmentsRoot(commitments []common.Hash) common.Hash {
+	return shieldedOutputCommitmentsRootWithDomain(commitments, shieldedDomainOutput)
+}
+
+func shieldedOutputCommitmentsRootV2(commitments []common.Hash) common.Hash {
+	return shieldedOutputCommitmentsRootWithDomain(commitments, shieldedDomainOutputV2)
+}
+
+func shieldedOutputCommitmentsRootWithDomain(commitments []common.Hash, outputDomain uint64) common.Hash {
 	hasher := mimc.NewMiMC()
-	domain := fieldElementFromUint64(shieldedDomainOutput)
+	domain := fieldElementFromUint64(outputDomain)
 	domainBytes := domain.Bytes()
 	hasher.Write(domainBytes[:])
 	for _, commitment := range commitments {

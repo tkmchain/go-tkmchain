@@ -159,6 +159,7 @@ var (
 		tkmProverConfigFlag,
 		tkmProverBinaryFlag,
 		tkmProverKeyURLFlag,
+		tkmProverV2KeyURLFlag,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
