@@ -44,14 +44,19 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          # actions/setup-go adds Go to the Windows PATH. Preserve it in MSYS2.
-          path-type: inherit
           update: true
           install: >-
             git
             make
             cmake
             mingw-w64-ucrt-x86_64-toolchain
+
+      - name: Find Go for MSYS2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $goBin = Split-Path -Parent (Get-Command go).Source
+          "GO_BIN=$goBin" >> $env:GITHUB_ENV
 
       - name: Build gtkm and shielded payout prover
         if: runner.os != 'Windows'
@@ -60,7 +65,10 @@ jobs:
       - name: Build gtkm and shielded payout prover
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        run: make gtkm shielded-payout-prover
+        run: |
+          export PATH="$(cygpath -u "$GO_BIN"):$PATH"
+          go version
+          make gtkm shielded-payout-prover
 
       - name: Upload release binaries
         uses: actions/upload-artifact@v4
