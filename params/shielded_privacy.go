@@ -39,9 +39,9 @@ var MainnetShieldedGroth16UpgradedVerifyingKey = mustDecodeOptionalHex(mainnetSh
 const MainnetShieldedGroth16RecoveryTime uint64 = 1787227200
 
 // MainnetShieldedV2Time activates recipient-bound V2 notes at
-// 2026-08-27 12:00:00 UTC. Nodes reject V2 envelopes before this timestamp and
+// 2026-08-21 09:00:00 UTC. Nodes reject V2 envelopes before this timestamp and
 // reject new V1 envelopes at or after it.
-const MainnetShieldedV2Time uint64 = 1787832000
+const MainnetShieldedV2Time uint64 = 1787302800
 
 // MainnetShieldedGroth16RecoveryVerifyingKey matches the publicly distributed
 // recovery proving key and applies only at and after the recovery timestamp.
