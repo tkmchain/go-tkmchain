@@ -61,8 +61,8 @@ verifying.key: 24a3dcf939acc41bc236c628e556ad80fb0a8e381f8f93a095fcc44196fcea9b
 verifying.hex: 214b4671b3110d14936117b92cb3a4266895afd7d0725fe1099377c02bbc0fef
 ```
 
-Recipient-bound Shielded V2 activates at `2026-08-27 12:00:00 UTC`
-(`1787832000`). V2 binds every note to the ML-DSA-87 account recovered from
+Recipient-bound Shielded V2 activates at `2026-08-21 09:00:00 UTC`
+(`1787302800`). V2 binds every note to the ML-DSA-87 account recovered from
 the transaction signature, enables payments to another person's
 `tkmshield2.` payment code, and uses a separately domain-separated circuit and
 key pair. V1 envelopes are accepted before the timestamp and V2 envelopes are
