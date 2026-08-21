@@ -20,15 +20,12 @@ jobs:
           - runner: ubuntu-latest
             platform: linux
             artifact: release-linux
-            randomx_dir: build/_workspace/randomx-linux
           - runner: macos-latest
             platform: macos
             artifact: release-macos
-            randomx_dir: build/_workspace/randomx-macos
           - runner: windows-latest
             platform: windows
             artifact: release-windows
-            randomx_dir: build/_workspace/randomx-windows
 
     steps:
       - name: Check out source
@@ -64,8 +61,6 @@ jobs:
 
       - name: Build and package Linux or macOS binaries
         if: runner.os != 'Windows'
-        env:
-          RANDOMX_DIR: ${{ matrix.randomx_dir }}
         run: |
           make gtkm shielded-payout-prover
           archive="gtkm-${GITHUB_REF_NAME}-${{ matrix.platform }}"
@@ -76,8 +71,6 @@ jobs:
       - name: Build and package Windows binaries
         if: runner.os == 'Windows'
         shell: msys2 {0}
-        env:
-          RANDOMX_DIR: ${{ matrix.randomx_dir }}
         run: |
           export PATH="$(cygpath -u "$GO_BIN"):$PATH"
           go version
