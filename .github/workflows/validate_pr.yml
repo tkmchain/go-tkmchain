@@ -67,10 +67,13 @@ jobs:
             const match = prTitle.match(titleRegex);
             const dirPart = match[1];
             const directories = dirPart.split(',').map(d => d.trim());
+            // `ci` is a conventional scope for workflow and automation changes.
+            // It does not correspond to a directory in the repository.
+            const allowedScopes = new Set(['ci']);
             const missingDirs = [];
             for (const dir of directories) {
               const fullPath = path.join(process.env.GITHUB_WORKSPACE, dir);
-              if (!fs.existsSync(fullPath)) {
+              if (!allowedScopes.has(dir) && !fs.existsSync(fullPath)) {
                 missingDirs.push(dir);
               }
             }
