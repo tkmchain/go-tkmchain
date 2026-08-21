@@ -68,6 +68,14 @@ the transaction signature, enables payments to another person's
 key pair. V1 envelopes are accepted before the timestamp and V2 envelopes are
 required at and after it.
 
+V2 also supports proof-backed shielded withdrawals. `POST
+/build-withdrawal` spends one note, creates an encrypted V2 change note when
+needed, and releases the proven public value from the shielded pool to the
+transparent `0x` recipient encoded in the signed intent. The endpoint returns
+an unsigned PQ transaction; the ML-DSA-87 key and passphrase remain in the
+client. This reuses the V2 circuit/proving key, but every validator must run a
+binary containing the withdrawal consensus rules before a withdrawal is sent.
+
 ```text
 proving.key:  248d2a299233c0d57e5a03d30cba62d4dde8f716594e67585842065b5eebd626
 verifying.key: de7585bcaea8bbf14fbd7e7a42aa2724e6e1ee925f62fa507a4d38403ed9d62b

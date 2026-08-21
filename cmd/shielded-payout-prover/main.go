@@ -308,6 +308,7 @@ func (p *Prover) Serve() error {
 	mux.HandleFunc("/deposit", p.handleDeposit)
 	mux.HandleFunc("/build-deposit", p.handleBuildDeposit)
 	mux.HandleFunc("/build-transfer", p.handleBuildTransfer)
+	mux.HandleFunc("/build-withdrawal", p.handleBuildWithdrawal)
 	server := &http.Server{Addr: p.cfg.Listen, Handler: p.corsHandler(mux), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("shielded payout prover listening on %s", p.cfg.Listen)
 	return server.ListenAndServe()
@@ -338,6 +339,7 @@ func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := map[string]any{
 		"ok":                     p.ready(),
 		"buildReady":             p.ready(),
+		"withdrawalBuildReady":   p.ready() && p.pkV2 != nil && p.r1csV2 != nil,
 		"payoutReady":            p.ready() && noteStatus.HasSpendableNotes,
 		"listen":                 p.cfg.Listen,
 		"nodeRPC":                p.cfg.NodeRPC,

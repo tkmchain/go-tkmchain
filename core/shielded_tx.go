@@ -11,10 +11,12 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/holiman/uint256"
 )
 
 const (
@@ -67,6 +69,11 @@ type ShieldedTransaction struct {
 	Outputs           []ShieldedOutput
 	BalanceCommitment common.Hash
 	BindingSig        []byte
+	// WithdrawalRecipient and WithdrawalValue are optional trailing fields so
+	// previously encoded V1/V2 envelopes remain decodable. A non-zero pair asks
+	// consensus to release a proof-backed public value from the shielded pool.
+	WithdrawalRecipient common.Address `rlp:"optional"`
+	WithdrawalValue     *big.Int       `rlp:"optional"`
 }
 
 // ShieldedProofContext is the exact public input passed into the ZK verifier.
@@ -274,11 +281,13 @@ func ShieldedTransactionIntentHash(tx *types.Transaction, envelope *ShieldedTran
 
 func stripShieldedProofs(tx *ShieldedTransaction) *ShieldedTransaction {
 	cpy := &ShieldedTransaction{
-		Version:           tx.Version,
-		Spends:            make([]ShieldedSpend, len(tx.Spends)),
-		Outputs:           make([]ShieldedOutput, len(tx.Outputs)),
-		BalanceCommitment: tx.BalanceCommitment,
-		BindingSig:        make([]byte, common.HashLength),
+		Version:             tx.Version,
+		Spends:              make([]ShieldedSpend, len(tx.Spends)),
+		Outputs:             make([]ShieldedOutput, len(tx.Outputs)),
+		BalanceCommitment:   tx.BalanceCommitment,
+		BindingSig:          make([]byte, common.HashLength),
+		WithdrawalRecipient: tx.WithdrawalRecipient,
+		WithdrawalValue:     copyBigInt(tx.WithdrawalValue),
 	}
 	for i, spend := range tx.Spends {
 		cpy.Spends[i] = ShieldedSpend{
@@ -309,6 +318,14 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		return nil
 	}
 	isDeposit := isShieldedDeposit(envelope, tx.Value())
+	publicValue := shieldedPublicValue(envelope, tx.Value())
+	withdrawalValue := shieldedWithdrawalValue(envelope)
+	if withdrawalValue.Sign() > 0 {
+		amount := uint256.MustFromBig(withdrawalValue)
+		if statedb.GetBalance(params.ShieldedPoolAddress).Cmp(amount) < 0 {
+			return fmt.Errorf("%w: shielded pool balance is smaller than withdrawal value", ErrInvalidShieldedTx)
+		}
+	}
 	txHash := tx.Hash()
 	intentHash, err := ShieldedTransactionIntentHash(tx, envelope)
 	if err != nil {
@@ -352,7 +369,7 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 			Nullifier:         spend.Nullifier,
 			Anchor:            spend.Anchor,
 			BalanceCommitment: envelope.BalanceCommitment,
-			PublicValue:       new(big.Int).Set(tx.Value()),
+			PublicValue:       new(big.Int).Set(publicValue),
 			OutputCommitments: outputCommitments,
 			BindingSig:        append([]byte(nil), envelope.BindingSig...),
 		}
@@ -363,6 +380,11 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 			seen[spend.Nullifier] = struct{}{}
 			statedb.SetState(params.ShieldedPoolAddress, shieldedNullifierSlot(spend.Nullifier), txHash)
 		}
+	}
+	if withdrawalValue.Sign() > 0 {
+		amount := uint256.MustFromBig(withdrawalValue)
+		statedb.SubBalance(params.ShieldedPoolAddress, amount, tracing.BalanceChangeTransfer)
+		statedb.AddBalance(envelope.WithdrawalRecipient, amount, tracing.BalanceChangeTransfer)
 	}
 	for _, output := range envelope.Outputs {
 		slot := shieldedCommitmentSlot(output.Commitment)
@@ -405,8 +427,28 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 		return nil, err
 	}
 	isDeposit := isShieldedDeposit(envelope, tx.Value())
+	if envelope.WithdrawalValue != nil && envelope.WithdrawalValue.Sign() < 0 {
+		return nil, fmt.Errorf("%w: shielded withdrawal value cannot be negative", ErrInvalidShieldedTx)
+	}
+	withdrawalValue := shieldedWithdrawalValue(envelope)
 	if tx.Value().Sign() != 0 && !isDeposit {
 		return nil, fmt.Errorf("%w: transparent value is only allowed for shielded deposits", ErrInvalidShieldedTx)
+	}
+	if withdrawalValue.Sign() > 0 {
+		if isDeposit || tx.Value().Sign() != 0 {
+			return nil, fmt.Errorf("%w: shielded deposit and withdrawal cannot be combined", ErrInvalidShieldedTx)
+		}
+		if len(envelope.Spends) != 1 {
+			return nil, fmt.Errorf("%w: shielded withdrawal must spend exactly one private note", ErrInvalidShieldedTx)
+		}
+		if envelope.WithdrawalRecipient == (common.Address{}) {
+			return nil, fmt.Errorf("%w: shielded withdrawal recipient is required", ErrInvalidShieldedTx)
+		}
+		if withdrawalValue.BitLen() > 64 {
+			return nil, fmt.Errorf("%w: shielded withdrawal value exceeds uint64", ErrInvalidShieldedTx)
+		}
+	} else if envelope.WithdrawalRecipient != (common.Address{}) {
+		return nil, fmt.Errorf("%w: shielded withdrawal value is required", ErrInvalidShieldedTx)
 	}
 	if tx.Value().Sign() == 0 && len(envelope.Spends) == 0 {
 		return nil, fmt.Errorf("%w: shielded tx must spend at least one private note", ErrInvalidShieldedTx)
@@ -663,6 +705,30 @@ func isShieldedDeposit(envelope *ShieldedTransaction, value *big.Int) bool {
 		len(envelope.Spends) == 1 &&
 		envelope.Spends[0].Nullifier == (common.Hash{}) &&
 		envelope.Spends[0].Anchor == (common.Hash{})
+}
+
+func shieldedWithdrawalValue(envelope *ShieldedTransaction) *big.Int {
+	if envelope == nil || envelope.WithdrawalValue == nil || envelope.WithdrawalValue.Sign() <= 0 {
+		return new(big.Int)
+	}
+	return envelope.WithdrawalValue
+}
+
+func shieldedPublicValue(envelope *ShieldedTransaction, transactionValue *big.Int) *big.Int {
+	if withdrawal := shieldedWithdrawalValue(envelope); withdrawal.Sign() > 0 {
+		return withdrawal
+	}
+	if transactionValue == nil {
+		return new(big.Int)
+	}
+	return transactionValue
+}
+
+func copyBigInt(value *big.Int) *big.Int {
+	if value == nil {
+		return nil
+	}
+	return new(big.Int).Set(value)
 }
 
 func shieldedMerkleRootKnown(statedb shieldedStateReader, root common.Hash) bool {

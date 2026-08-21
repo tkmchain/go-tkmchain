@@ -8,9 +8,11 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	shieldedcircuit "github.com/ethereum/go-ethereum/zk/shielded"
+	"github.com/holiman/uint256"
 )
 
 type testShieldedVerifier struct {
@@ -117,6 +119,23 @@ func TestShieldedEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestShieldedWithdrawalEnvelopeRoundTrip(t *testing.T) {
+	want := testShieldedEnvelope(t, 1)
+	want.WithdrawalRecipient = common.HexToAddress("0x1234")
+	want.WithdrawalValue = big.NewInt(7)
+	data, err := EncodeShieldedTransaction(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := DecodeShieldedTransaction(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.WithdrawalRecipient != want.WithdrawalRecipient || got.WithdrawalValue == nil || got.WithdrawalValue.Cmp(want.WithdrawalValue) != 0 {
+		t.Fatalf("decoded shielded withdrawal = %+v", got)
+	}
+}
+
 func TestShieldedV2EnvelopeActivationIsVersionExclusive(t *testing.T) {
 	v1 := testShieldedEnvelope(t, 1)
 	v1tx := testShieldedTx(t, v1, new(big.Int))
@@ -197,6 +216,27 @@ func TestShieldedTransactionIntentHashExcludesFinalizedProofFields(t *testing.T)
 	}
 	if nullifierChangedIntentHash == intentHash {
 		t.Fatal("intent hash did not change after nullifier update")
+	}
+}
+
+func TestShieldedTransactionIntentHashBindsWithdrawal(t *testing.T) {
+	envelope := testShieldedEnvelope(t, 1)
+	envelope.WithdrawalRecipient = common.HexToAddress("0x1234")
+	envelope.WithdrawalValue = big.NewInt(7)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	want, err := ShieldedTransactionIntentHash(tx, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := *envelope
+	changed.WithdrawalRecipient = common.HexToAddress("0x5678")
+	changedTx := testShieldedTx(t, &changed, new(big.Int))
+	got, err := ShieldedTransactionIntentHash(changedTx, &changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == want {
+		t.Fatal("withdrawal recipient was not bound into the shielded intent hash")
 	}
 }
 
@@ -459,6 +499,51 @@ func TestProcessShieldedSpendStoresNullifierAndCommitment(t *testing.T) {
 	}
 	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err == nil {
 		t.Fatal("duplicate nullifier accepted")
+	}
+}
+
+func TestProcessShieldedWithdrawalReleasesProvenPublicValue(t *testing.T) {
+	recipient := common.HexToAddress("0x1234")
+	SetShieldedProofVerifier(shieldedVerifierFunc(func(ctx ShieldedProofContext, proof []byte) error {
+		if ctx.PublicValue.Cmp(big.NewInt(7)) != 0 {
+			t.Fatalf("withdrawal public value = %s, want 7", ctx.PublicValue)
+		}
+		return nil
+	}))
+	defer SetShieldedProofVerifier(nil)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := testShieldedEnvelope(t, 1)
+	envelope.WithdrawalRecipient = recipient
+	envelope.WithdrawalValue = big.NewInt(7)
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
+	statedb.AddBalance(params.ShieldedPoolAddress, uint256.NewInt(10), tracing.BalanceChangeUnspecified)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+		t.Fatal(err)
+	}
+	if got := statedb.GetBalance(params.ShieldedPoolAddress); !got.Eq(uint256.NewInt(3)) {
+		t.Fatalf("shielded pool balance = %s, want 3", got)
+	}
+	if got := statedb.GetBalance(recipient); !got.Eq(uint256.NewInt(7)) {
+		t.Fatalf("withdrawal recipient balance = %s, want 7", got)
+	}
+}
+
+func TestShieldedWithdrawalRejectsInvalidPublicRelease(t *testing.T) {
+	envelope := testShieldedEnvelope(t, 1)
+	envelope.WithdrawalRecipient = common.HexToAddress("0x1234")
+	envelope.WithdrawalValue = new(big.Int).Lsh(big.NewInt(1), 65)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	if err := ValidateShieldedTransactionBasics(params.EgyptChainConfig, big.NewInt(1), 0, tx); err == nil {
+		t.Fatal("oversized shielded withdrawal accepted")
+	}
+	envelope.WithdrawalValue = nil
+	tx = testShieldedTx(t, envelope, new(big.Int))
+	if err := ValidateShieldedTransactionBasics(params.EgyptChainConfig, big.NewInt(1), 0, tx); err == nil {
+		t.Fatal("shielded withdrawal recipient without value accepted")
 	}
 }
 

@@ -29,6 +29,17 @@ type BuildTransferRequest struct {
 	Note             ShieldedNote `json:"note"`
 }
 
+type BuildWithdrawalRequest struct {
+	RequestID     string       `json:"requestId"`
+	From          string       `json:"from"`
+	To            string       `json:"to"`
+	AmountWei     string       `json:"amountWei"`
+	ChangeViewKey string       `json:"changeViewKey"`
+	Nonce         string       `json:"nonce,omitempty"`
+	GasPriceWei   string       `json:"gasPriceWei,omitempty"`
+	Note          ShieldedNote `json:"note"`
+}
+
 type unsignedPQTransaction struct {
 	ChainID    string `json:"chainId"`
 	Nonce      string `json:"nonce"`
@@ -117,6 +128,37 @@ func (p *Prover) handleBuildTransfer(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := p.operationContext()
 	defer cancel()
 	resp, err := p.BuildTransfer(ctx, req)
+	if err != nil {
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusBadRequest, resp)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (p *Prover) handleBuildWithdrawal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !p.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !p.acquireBuildSlot() {
+		writeJSON(w, http.StatusTooManyRequests, BuildShieldedResponse{Error: "proof builder is busy; retry later"})
+		return
+	}
+	defer p.releaseBuildSlot()
+	var req BuildWithdrawalRequest
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, BuildShieldedResponse{Error: err.Error()})
+		return
+	}
+	ctx, cancel := p.operationContext()
+	defer cancel()
+	resp, err := p.BuildWithdrawal(ctx, req)
 	if err != nil {
 		resp.Error = err.Error()
 		writeJSON(w, http.StatusBadRequest, resp)
@@ -303,6 +345,35 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 		SpentNullifier: draft.Envelope.Spends[0].Nullifier.Hex(),
 		CreatedNotes:   created,
 	}, nil
+}
+
+func (p *Prover) BuildWithdrawal(ctx context.Context, req BuildWithdrawalRequest) (BuildShieldedResponse, error) {
+	if !p.ready() {
+		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(strings.TrimSpace(req.RequestID)) < 8 {
+		return BuildShieldedResponse{}, errors.New("requestId must contain at least 8 characters")
+	}
+	if !isValidAddress(req.From) || !isValidAddress(req.To) {
+		return BuildShieldedResponse{}, errors.New("valid from and withdrawal recipient addresses are required")
+	}
+	if _, err := parseViewPublicKey(req.ChangeViewKey); err != nil {
+		return BuildShieldedResponse{}, fmt.Errorf("change %w", err)
+	}
+	amountWei, ok := parseBigFlexible(req.AmountWei)
+	if !ok || amountWei.Sign() <= 0 || amountWei.BitLen() > 64 {
+		return BuildShieldedResponse{}, errors.New("amountWei must be a positive uint64 value")
+	}
+	chainID, nonce, gasPrice, err := p.proofTransactionContext(ctx, req.From, req.Nonce, req.GasPriceWei)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
+	if p.activeShieldedVersion(ctx, chainID) != core.ShieldedTxVersionV2 {
+		return BuildShieldedResponse{}, errors.New("shielded withdrawals require the recipient-bound V2 circuit")
+	}
+	return p.buildWithdrawalV2(ctx, req, amountWei, chainID, nonce, gasPrice)
 }
 
 func (p *Prover) proofTransactionContext(ctx context.Context, from, nonceRaw, gasPriceRaw string) (*big.Int, uint64, *big.Int, error) {
