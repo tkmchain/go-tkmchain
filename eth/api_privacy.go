@@ -172,6 +172,21 @@ func (api *PrivacyAPI) CommitmentActive() bool {
 	return api.e.privacyCommitmentsActive()
 }
 
+// ShieldedV2ActivationTime returns the recipient-bound V2 fork timestamp.
+func (api *PrivacyAPI) ShieldedV2ActivationTime() hexutil.Uint64 {
+	return hexutil.Uint64(params.MainnetShieldedV2Time)
+}
+
+// ShieldedV2Active reports whether recipient-bound V2 envelopes are active at
+// the canonical chain head.
+func (api *PrivacyAPI) ShieldedV2Active() bool {
+	if api == nil || api.e == nil || api.e.blockchain == nil {
+		return false
+	}
+	head := api.e.blockchain.CurrentBlock()
+	return head != nil && params.IsMainnetShieldedV2(api.e.blockchain.Config(), head.Time)
+}
+
 // Defaults returns privacy-focused client defaults.
 func (api *PrivacyAPI) Defaults() PrivacyDefaults {
 	return PrivacyDefaults{

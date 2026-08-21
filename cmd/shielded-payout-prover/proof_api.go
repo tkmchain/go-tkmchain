@@ -42,11 +42,25 @@ type unsignedPQTransaction struct {
 }
 
 type BuildShieldedResponse struct {
-	Transaction    *unsignedPQTransaction `json:"transaction,omitempty"`
-	IntentHash     string                 `json:"intentHash,omitempty"`
-	SpentNullifier string                 `json:"spentNullifier,omitempty"`
-	CreatedNotes   []ShieldedNote         `json:"createdNotes,omitempty"`
-	Error          string                 `json:"error,omitempty"`
+	Transaction     *unsignedPQTransaction  `json:"transaction,omitempty"`
+	IntentHash      string                  `json:"intentHash,omitempty"`
+	SpentNullifier  string                  `json:"spentNullifier,omitempty"`
+	CreatedNotes    []ShieldedNote          `json:"createdNotes,omitempty"`
+	ShieldedVersion uint64                  `json:"shieldedVersion,omitempty"`
+	OutputOpenings  []ShieldedOutputOpening `json:"outputOpenings,omitempty"`
+	Error           string                  `json:"error,omitempty"`
+}
+
+// ShieldedOutputOpening lets a locally signing client independently recompute
+// the V2 note commitment before authorizing the transaction. It is returned
+// only to the authenticated requestor and never written into the transaction.
+type ShieldedOutputOpening struct {
+	Index      uint64 `json:"index"`
+	Recipient  string `json:"recipient"`
+	AssetID    string `json:"assetId"`
+	ValueWei   string `json:"valueWei"`
+	Randomness string `json:"randomness"`
+	Commitment string `json:"commitment"`
 }
 
 func (p *Prover) handleBuildDeposit(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +175,9 @@ func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShi
 	if err != nil {
 		return BuildShieldedResponse{}, err
 	}
+	if p.activeShieldedVersion(ctx, chainID) == core.ShieldedTxVersionV2 {
+		return p.buildDepositV2(ctx, req, amountWei, assetID, chainID, nonce, gasPrice)
+	}
 	req.CreatedAt = time.Now().UTC()
 	draft, assignment, note, _, err := p.buildDepositDraft(req, amountWei, assetID, ownerSecret, chainID, new(big.Int))
 	if err != nil {
@@ -213,9 +230,6 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 	if !isValidAddress(req.From) || !isValidAddress(req.To) {
 		return BuildShieldedResponse{}, errors.New("valid from and to addresses are required")
 	}
-	if !strings.EqualFold(common.HexToAddress(req.From).Hex(), common.HexToAddress(req.To).Hex()) {
-		return BuildShieldedResponse{}, errors.New("V1 proof-only transfers are limited to self-shielding; third-party payments require the recipient-bound V2 circuit")
-	}
 	if _, err := parseViewPublicKey(req.RecipientViewKey); err != nil {
 		return BuildShieldedResponse{}, err
 	}
@@ -229,6 +243,12 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 	chainID, nonce, gasPrice, err := p.proofTransactionContext(ctx, req.From, req.Nonce, req.GasPriceWei)
 	if err != nil {
 		return BuildShieldedResponse{}, err
+	}
+	if p.activeShieldedVersion(ctx, chainID) == core.ShieldedTxVersionV2 {
+		return p.buildTransferV2(ctx, req, amountWei, chainID, nonce, gasPrice)
+	}
+	if !strings.EqualFold(common.HexToAddress(req.From).Hex(), common.HexToAddress(req.To).Hex()) {
+		return BuildShieldedResponse{}, errors.New("V1 proof-only transfers are limited to self-shielding; third-party payments activate with the recipient-bound V2 circuit")
 	}
 	payout := PayoutRequest{
 		RequestID:        req.RequestID,

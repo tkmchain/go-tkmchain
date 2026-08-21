@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,9 +21,11 @@ import (
 )
 
 const (
-	tkmProvingKeySHA256  = "7c3dc3b9f33e522e84665189fa02c08299d209daaa80f96d2dfa6ad43dc2be40"
-	tkmProvingKeyURL     = "https://raw.githubusercontent.com/tkmchain/go-tkmchain/shielded-groth16-recovery-20260820/prover-keys/shielded-groth16-recovery-20260820/proving.key"
-	tkmProvingKeyMaxSize = 128 << 20
+	tkmProvingKeySHA256   = "7c3dc3b9f33e522e84665189fa02c08299d209daaa80f96d2dfa6ad43dc2be40"
+	tkmProvingKeyURL      = "https://raw.githubusercontent.com/tkmchain/go-tkmchain/shielded-groth16-recovery-20260820/prover-keys/shielded-groth16-recovery-20260820/proving.key"
+	tkmProvingKeyV2SHA256 = "248d2a299233c0d57e5a03d30cba62d4dde8f716594e67585842065b5eebd626"
+	tkmProvingKeyV2URL    = "https://raw.githubusercontent.com/tkmchain/go-tkmchain/shielded-v2-recipient-binding-20260820/prover-keys/shielded-v2-recipient-binding-20260820/proving.key"
+	tkmProvingKeyMaxSize  = 128 << 20
 )
 
 var (
@@ -42,6 +45,11 @@ var (
 		Name:  "tkmprover.key-url",
 		Value: tkmProvingKeyURL,
 		Usage: "trusted URL used to download the shared proving key (used with --tkmprover)",
+	}
+	tkmProverV2KeyURLFlag = &cli.StringFlag{
+		Name:  "tkmprover.v2-key-url",
+		Value: tkmProvingKeyV2URL,
+		Usage: "trusted URL used to download the recipient-bound V2 proving key (used with --tkmprover)",
 	}
 )
 
@@ -102,6 +110,7 @@ type tkmProverConfig struct {
 	SignerPassphraseFile string `json:"signerPassphraseFile"`
 	SignMode             string `json:"signMode"`
 	ProvingKeyPath       string `json:"provingKeyPath"`
+	ProvingKeyV2Path     string `json:"provingKeyV2Path"`
 	NotesPath            string `json:"notesPath"`
 	RequestsPath         string `json:"requestsPath"`
 	GasLimit             uint64 `json:"gasLimit"`
@@ -144,7 +153,20 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 				return err
 			}
 		}
-		return ensureTkmProvingKey(ctx, cfg.ProvingKeyPath)
+		if cfg.ProvingKeyV2Path == "" {
+			cfg.ProvingKeyV2Path = filepath.Join(filepath.Dir(configPath), "proving-v2.key")
+			encoded, err = json.MarshalIndent(cfg, "", "  ")
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(configPath, append(encoded, '\n'), 0600); err != nil {
+				return err
+			}
+		}
+		if err := ensureTkmProvingKey(ctx, cfg.ProvingKeyPath); err != nil {
+			return err
+		}
+		return ensureTkmProvingKeyV2(ctx, cfg.ProvingKeyV2Path)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect tkmprover config %q: %w", configPath, err)
 	}
@@ -159,6 +181,10 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 	nodeRPC := fmt.Sprintf("http://127.0.0.1:%d", port)
 	pkPath := filepath.Join(dir, "proving.key")
 	if err := ensureTkmProvingKey(ctx, pkPath); err != nil {
+		return err
+	}
+	pkV2Path := filepath.Join(dir, "proving-v2.key")
+	if err := ensureTkmProvingKeyV2(ctx, pkV2Path); err != nil {
 		return err
 	}
 	bearer := make([]byte, 32)
@@ -176,7 +202,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 			}
 		}
 	}
-	cfg := tkmProverConfig{Listen: "127.0.0.1:8787", AllowedOrigin: "https://wallet.tkmchain.site", BearerToken: hex.EncodeToString(bearer), NodeRPC: nodeRPC, SignMode: "proof-only", ProvingKeyPath: pkPath, NotesPath: filepath.Join(dataDir, "notes.json"), RequestsPath: filepath.Join(dataDir, "requests.json"), GasLimit: 3000000, SubmitSync: false, ReceiptTimeoutMs: 20000}
+	cfg := tkmProverConfig{Listen: "127.0.0.1:8787", AllowedOrigin: "https://wallet.tkmchain.site", BearerToken: hex.EncodeToString(bearer), NodeRPC: nodeRPC, SignMode: "proof-only", ProvingKeyPath: pkPath, ProvingKeyV2Path: pkV2Path, NotesPath: filepath.Join(dataDir, "notes.json"), RequestsPath: filepath.Join(dataDir, "requests.json"), GasLimit: 3000000, SubmitSync: false, ReceiptTimeoutMs: 20000}
 	encoded, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -190,15 +216,33 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 }
 
 func verifyTkmProvingKey(path string) error {
+	return verifyTkmProvingKeyHash(path, tkmProvingKeySHA256)
+}
+
+func verifyTkmProvingKeyHash(path, expectedSHA256 string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	digest := sha256.Sum256(data)
-	if got := hex.EncodeToString(digest[:]); got != tkmProvingKeySHA256 {
-		return fmt.Errorf("shielded proving key %q has SHA-256 %s, want %s", path, got, tkmProvingKeySHA256)
+	if got := hex.EncodeToString(digest[:]); got != expectedSHA256 {
+		return fmt.Errorf("shielded proving key %q has SHA-256 %s, want %s", path, got, expectedSHA256)
 	}
 	return nil
+}
+
+func ensureTkmProvingKeyV2(ctx *cli.Context, path string) error {
+	if tkmProvingKeyV2SHA256 == "" {
+		return errors.New("recipient-bound V2 proving-key hash is not embedded")
+	}
+	if err := verifyTkmProvingKeyHash(path, tkmProvingKeyV2SHA256); err == nil {
+		return nil
+	}
+	keyURL := ctx.String(tkmProverV2KeyURLFlag.Name)
+	if keyURL == "" {
+		return fmt.Errorf("matching V2 shielded proving key is unavailable at %q and --%s is empty", path, tkmProverV2KeyURLFlag.Name)
+	}
+	return downloadTkmProvingKey(ctx.Context, path, keyURL, tkmProvingKeyV2SHA256, tkmProvingKeyMaxSize)
 }
 
 func ensureTkmProvingKey(ctx *cli.Context, path string) error {

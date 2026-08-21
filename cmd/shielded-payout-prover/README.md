@@ -5,7 +5,7 @@
 - pool mode builds, signs, and submits authenticated `/deposit` and `/payout` requests;
 - `proof-only` mode exposes `/build-deposit` and `/build-transfer`, returns an unsigned type-`0x06` transaction, and never loads a signer or submits a transaction.
 
-The service fails closed. Proof-only builders require the proving key and node
+The service fails closed. Proof-only builders require the proving keys and node
 RPC but no signer or funded prover account. Pool-mode submission additionally
 requires its PQ signer and real spendable notes.
 
@@ -29,6 +29,7 @@ Required files:
 ```text
 /home/mike/shielded-prover/config.json
 /home/mike/shielded-prover/proving.key
+/home/mike/shielded-prover/proving-v2.key
 /home/mike/shielded-prover/notes.json
 /home/mike/shielded-prover/requests.json
 ```
@@ -39,6 +40,7 @@ Permissions:
 chmod 700 /home/mike/shielded-prover
 chmod 600 /home/mike/shielded-prover/config.json
 chmod 400 /home/mike/shielded-prover/proving.key
+chmod 400 /home/mike/shielded-prover/proving-v2.key
 chmod 600 /home/mike/shielded-prover/notes.json /home/mike/shielded-prover/requests.json
 ```
 
@@ -57,6 +59,7 @@ Example:
   "signerPassphraseFile": "/home/mike/shielded-prover/signer.pass",
   "signMode": "pq",
   "provingKeyPath": "/home/mike/shielded-prover/proving.key",
+  "provingKeyV2Path": "/home/mike/shielded-prover/proving-v2.key",
   "notesPath": "/home/mike/shielded-prover/notes.json",
   "requestsPath": "/home/mike/shielded-prover/requests.json",
   "gasLimit": 3000000,
@@ -68,7 +71,7 @@ Example:
 For production after the quantum fork, keep `"signMode": "pq"` and use an ML-DSA-87 keystore account. Legacy signing is only for pre-fork or private testing.
 
 `gtkm --tkmprover` creates a separate `proof-only` configuration automatically,
-downloads and verifies the shared proving key, generates a bearer token, clears
+downloads and verifies both shared proving keys, generates a bearer token, clears
 all signer fields, and restricts browser CORS access to `allowedOrigin`.
 
 ## Non-custodial Wallet Builders
@@ -107,8 +110,10 @@ Both endpoints return:
 ```
 
 The browser must verify the chain ID, nonce, gas, public value, shielded-pool
-recipient, nullifier, and `TKMSHIELD1` prefix before signing. It then signs with
-ML-DSA-87 locally and submits through `eth_sendRawTransaction`.
+recipient, nullifier, and `TKMSHIELD1` prefix before signing. For V2 it must
+also recompute each recipient-bound MiMC commitment from `outputOpenings` and
+compare it with the encoded envelope. It then signs with ML-DSA-87 locally and
+submits through `eth_sendRawTransaction`.
 
 Proof-only mode does not require or consume `notes.json` inventory and it never
 funds a transaction. Each wallet discovers its own encrypted canonical notes.
@@ -116,12 +121,13 @@ The first real note is created only when that wallet submits a positive-value
 shielded deposit; generating a spendable note without matching on-chain value
 would be unauthorized minting.
 
-Real output openings use `TKM_SHIELDED_NOTE_PAYLOAD_V3`, ephemeral X25519,
+V1 output openings use `TKM_SHIELDED_NOTE_PAYLOAD_V3`; V2 uses
+`TKM_SHIELDED_NOTE_PAYLOAD_V4`. Both use ephemeral X25519,
 HKDF-SHA256, and XChaCha20-Poly1305. The payment code supplies the recipient's
 viewing key. Proof-only requests disclose note openings to the prover, so bind
-it to loopback and run it on a machine controlled by the wallet owner.
+access with TLS, origin checks, request limits, and an unguessable bearer token.
 
-### V1 ownership limitation
+### V1 ownership limitation and V2 migration
 
 The current V1 circuit binds a note to a private owner field and randomness,
 but it does not prove that the owner field belongs to the recipient's PQ key.
@@ -129,8 +135,10 @@ A sender-controlled builder knows the output opening and could therefore spend
 a third-party recipient's V1 note. The official browser wallet deliberately
 permits self-shielding only, and `/build-transfer` rejects requests whose
 `from` and `to` addresses differ. Secure recipient payments need a
-recipient-bound V2 circuit, new matching Groth16 keys, and a future consensus
-activation.
+recipient-bound V2 circuit. At `2026-08-27 12:00:00 UTC`, mainnet requires V2.
+The V2 circuit can migrate an official V1 self-note only when its legacy owner
+field equals the PQ transaction sender. All new outputs are bound to their
+recipient address and use separate V2 commitment/nullifier domains.
 
 ## Pool Wiring
 
