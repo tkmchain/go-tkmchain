@@ -78,7 +78,7 @@ jobs:
           archive="gtkm-${GITHUB_REF_NAME}-windows"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
-          zip -r "release/$archive.zip" "$archive"
+          (cd release && zip -r "$archive.zip" "$archive")
 
       - name: Upload platform archive
         uses: actions/upload-artifact@v4
