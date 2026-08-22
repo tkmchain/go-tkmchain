@@ -4,10 +4,25 @@ on:
   push:
     tags:
       - 'v*'
+    # Trigger once when this workflow update lands on the default branch. The
+    # fallback RELEASE_TAG below rebuilds the existing v1.21.0 release without
+    # moving its immutable source tag.
+    branches:
+      - 'v1.18.0'
+    paths:
+      - '.github/workflows/release.yml'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+env:
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v1.21.0' }}
 
 jobs:
   build:
@@ -32,6 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -63,7 +79,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           make gtkm shielded-payout-prover
-          archive="gtkm-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
@@ -75,7 +91,7 @@ jobs:
           export PATH="$(cygpath -u "$GO_BIN"):$PATH"
           go version
           make gtkm shielded-payout-prover
-          archive="gtkm-${GITHUB_REF_NAME}-windows"
+          archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
           (cd release && zip -r "$archive.zip" "$archive")
@@ -105,7 +121,9 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release-assets/*.tar.gz
             release-assets/*.zip
