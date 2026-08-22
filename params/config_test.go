@@ -30,6 +30,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTKMChainIDs(t *testing.T) {
+	if got := RandomXChainConfig.ChainID.Int64(); got != TKMMainnetChainID {
+		t.Fatalf("RandomX chain ID = %d, want %d", got, TKMMainnetChainID)
+	}
+	if got := MainnetChainConfig.ChainID.Int64(); got != TKMMainnetChainID {
+		t.Fatalf("mainnet chain ID = %d, want %d", got, TKMMainnetChainID)
+	}
+}
+
 func TestCheckCompatible(t *testing.T) {
 	type test struct {
 		stored, new   *ChainConfig

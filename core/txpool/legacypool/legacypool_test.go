@@ -444,6 +444,67 @@ func TestInvalidTransactions(t *testing.T) {
 	}
 }
 
+func TestPruneInvalidShieldedTransactionsUnblocksNonce(t *testing.T) {
+	pool, key := setupPool()
+	defer pool.Close()
+
+	root := common.HexToHash("0x1234")
+	envelope := &core.ShieldedTransaction{
+		Spends: []core.ShieldedSpend{{
+			Nullifier: common.HexToHash("0x5678"),
+			Anchor:    root,
+		}},
+	}
+	data, err := core.EncodeShieldedTransaction(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := types.NewTransaction(0, params.ShieldedPoolAddress, new(big.Int), 100000, big.NewInt(1), data)
+	shielded, err := types.SignTx(unsigned, types.LatestSigner(params.TestChainConfig), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := types.Sender(pool.signer, shielded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testAddBalance(pool, from, new(big.Int).SetUint64(params.Ether))
+	pool.mu.Lock()
+	pool.currentState.SetState(params.ShieldedPoolAddress, core.ShieldedMerkleRootSlot(root), common.HexToHash("0x1"))
+	pool.mu.Unlock()
+
+	laterUnsigned := types.NewTransaction(1, common.Address{}, big.NewInt(100), 100000, big.NewInt(1), nil)
+	later, err := types.SignTx(laterUnsigned, types.LatestSigner(params.TestChainConfig), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := pool.addRemotesSync([]*types.Transaction{shielded, later}); errs[0] != nil || errs[1] != nil {
+		t.Fatalf("add transactions errors = %v", errs)
+	}
+	if nonce := pool.Nonce(from); nonce != 2 {
+		t.Fatalf("pending nonce before reorg = %d, want 2", nonce)
+	}
+
+	pool.mu.Lock()
+	pool.currentState.SetState(params.ShieldedPoolAddress, core.ShieldedMerkleRootSlot(root), common.Hash{})
+	pool.pruneInvalidShieldedTransactions()
+	pool.mu.Unlock()
+
+	if pool.Has(shielded.Hash()) {
+		t.Fatal("stale shielded transaction remains in pool")
+	}
+	if !pool.Has(later.Hash()) {
+		t.Fatal("valid later transaction was deleted instead of demoted")
+	}
+	if nonce := pool.Nonce(from); nonce != 0 {
+		t.Fatalf("pending nonce after prune = %d, want 0", nonce)
+	}
+	pending, queued := pool.Stats()
+	if pending != 0 || queued != 1 {
+		t.Fatalf("pool stats after prune = pending %d queued %d, want 0/1", pending, queued)
+	}
+}
+
 func TestQueue(t *testing.T) {
 	t.Parallel()
 

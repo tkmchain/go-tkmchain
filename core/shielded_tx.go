@@ -782,6 +782,39 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 	return new(big.Int).Sub(cost, sponsor)
 }
 
+// ValidateShieldedTransactionState rejects shielded transactions whose public
+// state references are not valid at the supplied canonical state. It performs
+// no proof verification and does not mutate state, so transaction pools can use
+// it both when accepting transactions and after a chain reorganisation.
+func ValidateShieldedTransactionState(statedb *state.StateDB, tx *types.Transaction) error {
+	if statedb == nil || tx == nil {
+		return nil
+	}
+	envelope, ok, err := DecodeShieldedTransaction(tx.Data())
+	if err != nil {
+		return fmt.Errorf("%w: malformed envelope: %v", ErrInvalidShieldedTx, err)
+	}
+	if !ok {
+		return nil
+	}
+	if !isShieldedDeposit(envelope, tx.Value()) {
+		for _, spend := range envelope.Spends {
+			if !shieldedMerkleRootKnown(statedb, spend.Anchor) {
+				return fmt.Errorf("%w: unknown shielded note root %s", ErrInvalidShieldedTx, spend.Anchor.Hex())
+			}
+			if stored := statedb.GetState(params.ShieldedPoolAddress, shieldedNullifierSlot(spend.Nullifier)); stored != (common.Hash{}) {
+				return fmt.Errorf("%w: nullifier already spent %s", ErrInvalidShieldedTx, spend.Nullifier.Hex())
+			}
+		}
+	}
+	for _, output := range envelope.Outputs {
+		if stored := statedb.GetState(params.ShieldedPoolAddress, shieldedCommitmentSlot(output.Commitment)); stored != (common.Hash{}) {
+			return fmt.Errorf("%w: commitment already exists %s", ErrInvalidShieldedTx, output.Commitment.Hex())
+		}
+	}
+	return nil
+}
+
 func copyBigInt(value *big.Int) *big.Int {
 	if value == nil {
 		return nil

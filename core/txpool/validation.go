@@ -303,6 +303,9 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if next > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, next, tx.Nonce())
 	}
+	if err := core.ValidateShieldedTransactionState(opts.State, tx); err != nil {
+		return err
+	}
 	// Ensure the transaction doesn't produce a nonce gap in pools that do not
 	// support arbitrary orderings
 	if opts.FirstNonceGap != nil {

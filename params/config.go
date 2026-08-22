@@ -39,6 +39,9 @@ var (
 func newUint64(val uint64) *uint64 { return &val }
 
 const (
+	// TKMMainnetChainID is the EIP-155 chain ID used by TKM Chain mainnet.
+	TKMMainnetChainID int64 = 8979
+
 	// MainnetKyotoTime is 2026-07-15 11:31:59 UTC.
 	MainnetKyotoTime uint64 = 1784115119
 	// MainnetPhoneTime is 2026-07-22 08:30:00 UTC.
@@ -63,7 +66,7 @@ type RandomXConfig struct {
 
 // RandomXChainConfig
 var RandomXChainConfig = &ChainConfig{
-	ChainID:                      big.NewInt(8979),
+	ChainID:                      big.NewInt(TKMMainnetChainID),
 	HomesteadBlock:               big.NewInt(0),
 	DAOForkBlock:                 nil,
 	DAOForkSupport:               true,
@@ -269,7 +272,7 @@ var (
 // MainnetChainConfig is the chain parameters for RandomX mainnet.
 // Values are based on your actual genesis.json
 var MainnetChainConfig = &ChainConfig{
-	ChainID:                      big.NewInt(8979), // Your genesis chainId is 1
+	ChainID:                      big.NewInt(TKMMainnetChainID),
 	HomesteadBlock:               big.NewInt(0),
 	DAOForkBlock:                 nil,
 	DAOForkSupport:               true,

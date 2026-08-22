@@ -154,6 +154,36 @@ func TestShieldedGasSponsorEnvelopeRoundTripAndPreBalanceCost(t *testing.T) {
 	}
 }
 
+func TestValidateShieldedTransactionState(t *testing.T) {
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := testShieldedEnvelope(t, 1)
+	tx := testShieldedTx(t, envelope, new(big.Int))
+	if err := ValidateShieldedTransactionState(statedb, tx); !errors.Is(err, ErrInvalidShieldedTx) {
+		t.Fatalf("unknown root error = %v, want %v", err, ErrInvalidShieldedTx)
+	}
+
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
+	if err := ValidateShieldedTransactionState(statedb, tx); err != nil {
+		t.Fatalf("known root rejected: %v", err)
+	}
+
+	statedb.SetState(params.ShieldedPoolAddress, shieldedNullifierSlot(envelope.Spends[0].Nullifier), common.HexToHash("0x1"))
+	if err := ValidateShieldedTransactionState(statedb, tx); !errors.Is(err, ErrInvalidShieldedTx) {
+		t.Fatalf("spent nullifier error = %v, want %v", err, ErrInvalidShieldedTx)
+	}
+
+	deposit := testShieldedEnvelope(t, 1)
+	deposit.Spends[0].Nullifier = common.Hash{}
+	deposit.Spends[0].Anchor = common.Hash{}
+	depositTx := testShieldedTx(t, deposit, big.NewInt(1))
+	if err := ValidateShieldedTransactionState(statedb, depositTx); err != nil {
+		t.Fatalf("deposit rejected without root: %v", err)
+	}
+}
+
 func TestShieldedGasSponsorValidation(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 1)
 	envelope.Version = ShieldedTxVersionV2

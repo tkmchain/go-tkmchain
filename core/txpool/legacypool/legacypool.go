@@ -1245,6 +1245,7 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		pool.reset(reset.oldHead, reset.newHead)
+		pool.pruneInvalidShieldedTransactions()
 
 		// Nonces were reset, discard any events that became stale
 		for addr := range events {
@@ -1303,6 +1304,25 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		pool.txFeed.Send(core.NewTxsEvent{Txs: txs})
 	}
+}
+
+// pruneInvalidShieldedTransactions removes transactions whose Merkle roots,
+// nullifiers, or output commitments became invalid at the canonical head. A
+// reorganisation can otherwise leave an unmineable shielded transaction at the
+// next account nonce and indefinitely block every later transaction.
+func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
+	var invalid []common.Hash
+	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+		if err := core.ValidateShieldedTransactionState(pool.currentState, tx); err != nil {
+			log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			invalid = append(invalid, hash)
+		}
+		return true
+	})
+	for _, hash := range invalid {
+		pool.removeTx(hash, true, true)
+	}
+	invalidTxMeter.Mark(int64(len(invalid)))
 }
 
 // reset retrieves the current state of the blockchain and ensures the content
