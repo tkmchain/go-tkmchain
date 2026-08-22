@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
 	shieldedcircuit "github.com/ethereum/go-ethereum/zk/shielded"
 	"github.com/holiman/uint256"
@@ -133,6 +134,52 @@ func TestShieldedWithdrawalEnvelopeRoundTrip(t *testing.T) {
 	}
 	if !ok || got.WithdrawalRecipient != want.WithdrawalRecipient || got.WithdrawalValue == nil || got.WithdrawalValue.Cmp(want.WithdrawalValue) != 0 {
 		t.Fatalf("decoded shielded withdrawal = %+v", got)
+	}
+}
+
+func TestShieldedGasSponsorEnvelopeRoundTripAndPreBalanceCost(t *testing.T) {
+	want := testShieldedEnvelope(t, 1)
+	want.Version = ShieldedTxVersionV2
+	want.GasSponsorValue = big.NewInt(40000)
+	tx := testShieldedPQTkmTx(t, want, "", nil, nil)
+	got, ok, err := DecodeShieldedTransaction(tx.Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got.GasSponsorValue == nil || got.GasSponsorValue.Cmp(want.GasSponsorValue) != 0 {
+		t.Fatalf("decoded shielded gas sponsor = %+v", got)
+	}
+	if cost := ShieldedTransactionPreBalanceCost(tx); cost.Cmp(big.NewInt(60000)) != 0 {
+		t.Fatalf("pre-balance cost = %s, want 60000", cost)
+	}
+}
+
+func TestShieldedGasSponsorValidation(t *testing.T) {
+	envelope := testShieldedEnvelope(t, 1)
+	envelope.Version = ShieldedTxVersionV2
+	envelope.GasSponsorValue = big.NewInt(100000)
+	tx := testShieldedPQTkmTx(t, envelope, "", nil, nil)
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedGasSponsorTime-1, tx); err == nil {
+		t.Fatal("gas sponsorship accepted before activation")
+	}
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedGasSponsorTime, tx); err != nil {
+		t.Fatalf("valid full gas sponsorship rejected: %v", err)
+	}
+	if cost := ShieldedTransactionPreBalanceCost(tx); cost.Sign() != 0 {
+		t.Fatalf("fully sponsored pre-balance cost = %s, want 0", cost)
+	}
+
+	envelope.GasSponsorValue = big.NewInt(100001)
+	tx = testShieldedPQTkmTx(t, envelope, "", nil, nil)
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedGasSponsorTime, tx); err == nil {
+		t.Fatal("gas sponsorship above maximum transaction cost accepted")
+	}
+
+	envelope.Version = ShieldedTxVersionV1
+	envelope.GasSponsorValue = big.NewInt(1)
+	tx = testShieldedPQTkmTx(t, envelope, "", nil, nil)
+	if err := ValidateShieldedTransactionBasics(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedV2Time-1, tx); err == nil {
+		t.Fatal("V1 gas sponsorship accepted")
 	}
 }
 
@@ -529,6 +576,68 @@ func TestProcessShieldedWithdrawalReleasesProvenPublicValue(t *testing.T) {
 	}
 	if got := statedb.GetBalance(recipient); !got.Eq(uint256.NewInt(7)) {
 		t.Fatalf("withdrawal recipient balance = %s, want 7", got)
+	}
+}
+
+func TestProcessShieldedSpendFundsGasFromPrivateNote(t *testing.T) {
+	key, err := pqcrypto.NewMLDSA87FromSeed(make([]byte, pqcrypto.MLDSA87SeedSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient := common.HexToAddress("0x1234")
+	envelope := testShieldedEnvelope(t, 1)
+	envelope.Version = ShieldedTxVersionV2
+	envelope.WithdrawalRecipient = recipient
+	envelope.WithdrawalValue = big.NewInt(7)
+	envelope.GasSponsorValue = big.NewInt(9)
+	data, err := EncodeShieldedTransaction(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := types.MakeSigner(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedGasSponsorTime)
+	tx, err := types.SignNewPQTkmTx(key, signer, &types.PQTkmTx{
+		ChainID:   new(big.Int).Set(params.MainnetChainConfig.ChainID),
+		GasTipCap: big.NewInt(1),
+		GasFeeCap: big.NewInt(1),
+		Gas:       100000,
+		To:        &params.ShieldedPoolAddress,
+		Value:     new(big.Int),
+		Data:      data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetShieldedProofVerifier(shieldedVerifierFunc(func(ctx ShieldedProofContext, proof []byte) error {
+		if ctx.Sender != sender {
+			t.Fatalf("proof sender = %s, want %s", ctx.Sender, sender)
+		}
+		if ctx.PublicValue.Cmp(big.NewInt(16)) != 0 {
+			t.Fatalf("proof public value = %s, want 16", ctx.PublicValue)
+		}
+		return nil
+	}))
+	defer SetShieldedProofVerifier(nil)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
+	statedb.AddBalance(params.ShieldedPoolAddress, uint256.NewInt(20), tracing.BalanceChangeUnspecified)
+	if err := processShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetShieldedGasSponsorTime, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+		t.Fatal(err)
+	}
+	if got := statedb.GetBalance(params.ShieldedPoolAddress); !got.Eq(uint256.NewInt(4)) {
+		t.Fatalf("shielded pool balance = %s, want 4", got)
+	}
+	if got := statedb.GetBalance(recipient); !got.Eq(uint256.NewInt(7)) {
+		t.Fatalf("withdrawal recipient balance = %s, want 7", got)
+	}
+	if got := statedb.GetBalance(sender); !got.Eq(uint256.NewInt(9)) {
+		t.Fatalf("gas-funded sender balance = %s, want 9", got)
 	}
 }
 

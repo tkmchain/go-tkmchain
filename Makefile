@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm shielded-payout-prover clef devp2p abigen bootnode evm rlpdump all \
+.PHONY: gtkm shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
         test lint fmt clean devtools help \
         randomx randomx-clean randomx-install randomx-check \
         randomx-windows randomx-darwin randomx-linux randomx-all \
@@ -23,10 +23,19 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # LDFLAGS for version injection
 LDFLAGS = -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
+# A stable timestamp keeps the final Go link action cacheable between identical
+# production builds. Source/package hashes still invalidate the cache normally.
+PRODUCTION_BUILD_TIME ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || echo "unknown")
+PRODUCTION_LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(PRODUCTION_BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
+
+# Keep compilation below the memory-thrashing point on small validator VPSes.
+# Operators with more RAM can override this, for example: make production GO_BUILD_P=4
+GO_BUILD_P ?= 2
 
 # RandomX configuration
 RANDOMX_REPO ?= https://github.com/tevador/RandomX.git
 RANDOMX_VERSION ?= v2.0.1
+RANDOMX_ARCH ?= native
 RANDOMX_DIR ?= build/_workspace/randomx
 RANDOMX_SRC_DIR ?= $(RANDOMX_DIR)/src
 
@@ -97,8 +106,26 @@ all: $(CMDS)
 	@echo "�� Output directory: $(GOBIN)"
 	@ls -la $(GOBIN)/* 2>/dev/null || echo "No binaries found."
 
+#? production: Build only the node and its managed shielded prover.
+production: production-gtkm production-prover
+	@echo "✅ Production runtime built successfully!"
+	@ls -lh $(GOBIN)/gtkm $(GOBIN)/shielded-payout-prover
+
+production-gtkm: $(RANDOMX_LIB_HOST)
+	@echo "Building stripped production gtkm (parallelism $(GO_BUILD_P))..."
+	@mkdir -p $(GOBIN)
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
+		go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
+	@echo "✅ Built: $(GOBIN)/gtkm"
+
+production-prover:
+	@echo "Building stripped production shielded prover (parallelism $(GO_BUILD_P))..."
+	@mkdir -p $(GOBIN)
+	go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
+	@echo "✅ Built: $(GOBIN)/shielded-payout-prover"
+
 #? gtkm: Build gtkm with RandomX support.
-gtkm: randomx
+gtkm: $(RANDOMX_LIB_HOST)
 	@echo "Building gtkm with RandomX..."
 	@if [ ! -f "$(RANDOMX_LIB_HOST)" ]; then \
 		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_HOST)"; \
@@ -117,7 +144,7 @@ shielded-payout-prover:
 	go build $(LDFLAGS) -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
 
 #? clef: Build clef (transaction signing tool).
-clef: randomx
+clef: $(RANDOMX_LIB_HOST)
 	@echo "Building clef..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
@@ -125,7 +152,7 @@ clef: randomx
 	@echo "✅ Built: $(GOBIN)/clef"
 
 #? devp2p: Build devp2p (networking utilities).
-devp2p: randomx
+devp2p: $(RANDOMX_LIB_HOST)
 	@echo "Building devp2p..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
@@ -133,7 +160,7 @@ devp2p: randomx
 	@echo "✅ Built: $(GOBIN)/devp2p"
 
 #? abigen: Build abigen (ABI code generator).
-abigen: randomx
+abigen: $(RANDOMX_LIB_HOST)
 	@echo "Building abigen..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
@@ -141,7 +168,7 @@ abigen: randomx
 	@echo "✅ Built: $(GOBIN)/abigen"
 
 #? bootnode: Build bootnode (bootstrap node).
-bootnode: randomx
+bootnode: $(RANDOMX_LIB_HOST)
 	@echo "Building bootnode..."
 	@mkdir -p $(GOBIN)
 	@if [ -d "./cmd/bootnode" ]; then \
@@ -153,7 +180,7 @@ bootnode: randomx
 	fi
 
 #? evm: Build evm (EVM debugger).
-evm: randomx
+evm: $(RANDOMX_LIB_HOST)
 	@echo "Building evm..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
@@ -161,7 +188,7 @@ evm: randomx
 	@echo "✅ Built: $(GOBIN)/evm"
 
 #? rlpdump: Build rlpdump (RLP dumper).
-rlpdump: randomx
+rlpdump: $(RANDOMX_LIB_HOST)
 	@echo "Building rlpdump..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
@@ -208,6 +235,11 @@ help: Makefile
 # RANDOMX BUILD TARGETS (per platform)
 # ====================================================
 
+# Treat the static library as the real dependency so ordinary incremental
+# builds do not rerun CMake when the pinned RandomX artifact already exists.
+$(RANDOMX_LIB_HOST):
+	@$(MAKE) randomx-host
+
 #? randomx: Clone and build tevador/RandomX static library for host.
 randomx: randomx-host
 
@@ -230,7 +262,7 @@ randomx-host:
 	echo "Running CMake..."; \
 	HOST_OS="$$(uname -s)"; \
 	HOST_ARCH="$$(uname -m)"; \
-	CMAKE_ARCH_ARGS="-DARCH=native"; \
+	CMAKE_ARCH_ARGS="-DARCH=$(RANDOMX_ARCH)"; \
 	if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then CMAKE_ARCH_ARGS="-DARCH=default -DARCH_ID=arm64 -DARM_ID=arm64"; fi; \
 	if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "aarch64" ]; then CMAKE_ARCH_ARGS="-DARCH=default -DARCH_ID=aarch64 -DARM_ID=aarch64"; fi; \
 	cmake "$$SOURCE_DIR" $$CMAKE_ARCH_ARGS -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \

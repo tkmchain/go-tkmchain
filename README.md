@@ -76,6 +76,15 @@ an unsigned PQ transaction; the ML-DSA-87 key and passphrase remain in the
 client. This reuses the V2 circuit/proving key, but every validator must run a
 binary containing the withdrawal consensus rules before a withdrawal is sent.
 
+At `2026-08-22 13:00:00 UTC` (`1787403600`), V2 private spends can reserve
+their maximum transaction gas cost inside the proof. Consensus releases that
+reserve to the recovered PQ sender before normal gas purchase, so transfers and
+withdrawals work with a zero transparent balance. Nodes reject non-zero
+`gasSponsorValue` fields before that timestamp. The client subtracts the reserve
+from shielded change and must verify it before signing. Values remain uint64 per
+proof; clients send larger amounts as several single-note proofs using the same
+keys.
+
 ```text
 proving.key:  248d2a299233c0d57e5a03d30cba62d4dde8f716594e67585842065b5eebd626
 verifying.key: de7585bcaea8bbf14fbd7e7a42aa2724e6e1ee925f62fa507a4d38403ed9d62b
@@ -611,13 +620,15 @@ newDiff = currentDiff * ratio / 100
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.site/docs/getting-started/installing-gtkm).
 
-Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. You can install them using your favourite package manager. Once the dependencies are installed, run:
+Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
 
 ```shell
-make gtkm
+make production
 ```
 
-or, to build the full suite of utilities:
+This reuses an existing RandomX library and Go's build cache. Override
+`GO_BUILD_P=4` only on a machine with more memory. To build the full developer
+utility suite (`clef`, `devp2p`, `abigen`, `evm`, and `rlpdump`) as well:
 
 ```shell
 make all
@@ -871,6 +882,7 @@ The go-tkmchain binaries (i.e. all code inside of the `cmd` directory) are licen
 
 ```shell
 # Build
+make production              # Fast server build: gtkm + managed prover
 make gtkm                    # Build only gtkm
 make all                     # Build all tools
 make cross-windows           # Build Windows 64-bit

@@ -593,7 +593,7 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 		ExistingCost: func(addr common.Address, nonce uint64) *big.Int {
 			if list := pool.pending[addr]; list != nil {
 				if tx := list.txs.Get(nonce); tx != nil {
-					return tx.Cost()
+					return core.ShieldedTransactionPreBalanceCost(tx)
 				}
 			}
 			return nil

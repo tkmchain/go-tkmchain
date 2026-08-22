@@ -86,7 +86,7 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 		var err error
 		binary, err = exec.LookPath("shielded-payout-prover")
 		if err != nil {
-			return nil, fmt.Errorf("find shielded-payout-prover: %w (build it with make all or pass --tkmprover.bin)", err)
+			return nil, fmt.Errorf("find shielded-payout-prover: %w (build it with make production or pass --tkmprover.bin)", err)
 		}
 	}
 

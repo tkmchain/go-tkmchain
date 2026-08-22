@@ -43,6 +43,11 @@ const MainnetShieldedGroth16RecoveryTime uint64 = 1787227200
 // reject new V1 envelopes at or after it.
 const MainnetShieldedV2Time uint64 = 1787302800
 
+// MainnetShieldedGasSponsorTime activates proof-backed gas sponsorship at
+// 2026-08-22 13:00:00 UTC. Nodes reject non-zero sponsorship fields before
+// this timestamp.
+const MainnetShieldedGasSponsorTime uint64 = 1787403600
+
 // MainnetShieldedGroth16RecoveryVerifyingKey matches the publicly distributed
 // recovery proving key and applies only at and after the recovery timestamp.
 var MainnetShieldedGroth16RecoveryVerifyingKey = mustDecodeOptionalHex(mainnetShieldedGroth16RecoveryVKHex)
@@ -54,6 +59,13 @@ var MainnetShieldedGroth16V2VerifyingKey = mustDecodeOptionalHex(mainnetShielded
 func IsMainnetShieldedV2(config *ChainConfig, blockTime uint64) bool {
 	return config != nil && config.ChainID != nil && MainnetChainConfig != nil && MainnetChainConfig.ChainID != nil &&
 		config.ChainID.Cmp(MainnetChainConfig.ChainID) == 0 && blockTime >= MainnetShieldedV2Time
+}
+
+// IsMainnetShieldedGasSponsor reports whether proof-backed gas sponsorship is
+// active for the mainnet chain at blockTime.
+func IsMainnetShieldedGasSponsor(config *ChainConfig, blockTime uint64) bool {
+	return config != nil && config.ChainID != nil && MainnetChainConfig != nil && MainnetChainConfig.ChainID != nil &&
+		config.ChainID.Cmp(MainnetChainConfig.ChainID) == 0 && blockTime >= MainnetShieldedGasSponsorTime
 }
 
 type shieldedGroth16VerifyingKeyEnvelope struct {

@@ -26,6 +26,14 @@ func (p *Prover) activeShieldedVersion(ctx context.Context, chainID *big.Int) ui
 	return core.ShieldedTxVersionV1
 }
 
+func (p *Prover) shieldedGasSponsorshipActive(ctx context.Context, chainID *big.Int) bool {
+	if chainID == nil || params.MainnetChainConfig == nil || params.MainnetChainConfig.ChainID == nil || chainID.Cmp(params.MainnetChainConfig.ChainID) != 0 {
+		return false
+	}
+	header, err := p.client.HeaderByNumber(ctx, nil)
+	return err == nil && header != nil && header.Time >= params.MainnetShieldedGasSponsorTime
+}
+
 func (p *Prover) buildDepositV2(ctx context.Context, req DepositRequest, amountWei *big.Int, assetID string, chainID *big.Int, nonce uint64, gasPrice *big.Int) (BuildShieldedResponse, error) {
 	if p.pkV2 == nil || p.r1csV2 == nil {
 		return BuildShieldedResponse{}, errors.New("recipient-bound V2 proving key is not ready")
@@ -183,6 +191,10 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 	}
 	sender := common.HexToAddress(req.From)
 	senderElement := fieldElementFromBig(sender.Big())
+	gasSponsor, err := p.shieldedGasSponsorValue(ctx, chainID, sender, gasPrice)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	legacyInput := req.Note.Version < core.ShieldedTxVersionV2
 	ownerSecret := "0"
 	inputCommitment := fieldHash(shielded.DomainNoteV2, senderElement, asset, fieldElementFromBig(noteValue), randomness)
@@ -201,7 +213,11 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		return BuildShieldedResponse{}, err
 	}
 	recipient := common.HexToAddress(req.To)
-	changeWei := new(big.Int).Sub(noteValue, amountWei)
+	requiredWei := new(big.Int).Add(amountWei, gasSponsor)
+	if noteValue.Cmp(requiredWei) < 0 {
+		return BuildShieldedResponse{}, fmt.Errorf("input note is smaller than transfer amount plus gas sponsorship (%s wei required)", requiredWei)
+	}
+	changeWei := new(big.Int).Sub(noteValue, requiredWei)
 	recipients := [shielded.OutputSlots]fr.Element{fieldElementFromBig(recipient.Big()), senderElement, zeroElement(), zeroElement()}
 	values := [shielded.OutputSlots]fr.Element{fieldElementFromBig(amountWei), fieldElementFromBig(changeWei), zeroElement(), zeroElement()}
 	outputRandomness := [shielded.OutputSlots]fr.Element{randomElement(), randomElement(), randomElement(), randomElement()}
@@ -234,7 +250,8 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		}
 	}
 	outputRoot := hashFromField(fieldHash(shielded.DomainOutputV2, commitments[:]...))
-	balance := fieldHash(shielded.DomainBalV2, fieldElementFromBig(noteValue), fieldElementFromBig(noteValue), zeroElement(), asset, fieldElementFromHash(outputRoot))
+	totalOutput := new(big.Int).Add(amountWei, changeWei)
+	balance := fieldHash(shielded.DomainBalV2, fieldElementFromBig(noteValue), fieldElementFromBig(totalOutput), fieldElementFromBig(gasSponsor), asset, fieldElementFromHash(outputRoot))
 	envelope := &core.ShieldedTransaction{
 		Version: core.ShieldedTxVersionV2,
 		Spends: []core.ShieldedSpend{{
@@ -245,6 +262,7 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		Outputs:           outputs,
 		BalanceCommitment: hashFromField(balance),
 		BindingSig:        make([]byte, common.HashLength),
+		GasSponsorValue:   optionalPositiveBig(gasSponsor),
 	}
 	data, err := core.EncodeShieldedTransaction(envelope)
 	if err != nil {
@@ -259,7 +277,7 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 	if legacyInput {
 		legacyFlag = "1"
 	}
-	assignment := newV2Assignment(chainID, sender, new(big.Int), intentHash, envelope.Spends[0].Nullifier, envelope.Spends[0].Anchor, envelope.BalanceCommitment, new(big.Int), outputRoot, legacyFlag, ownerSecret, noteValue.String(), assetID)
+	assignment := newV2Assignment(chainID, sender, new(big.Int), intentHash, envelope.Spends[0].Nullifier, envelope.Spends[0].Anchor, envelope.BalanceCommitment, gasSponsor, outputRoot, legacyFlag, ownerSecret, noteValue.String(), assetID)
 	assignment.NoteRandomness = req.Note.NoteRandomness
 	fillCircuitArraysV2(assignment, req.Note.MerklePath, req.Note.MerklePathIndex, recipients, values, outputRandomness, commitments)
 	binding := fieldHash(shielded.DomainBindV2,
@@ -323,6 +341,7 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		SpentNullifier:  envelope.Spends[0].Nullifier.Hex(),
 		CreatedNotes:    created,
 		ShieldedVersion: core.ShieldedTxVersionV2,
+		GasSponsorWei:   gasSponsor.String(),
 		OutputOpenings:  openings,
 	}, nil
 }
@@ -356,6 +375,10 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 	}
 	sender := common.HexToAddress(req.From)
 	senderElement := fieldElementFromBig(sender.Big())
+	gasSponsor, err := p.shieldedGasSponsorValue(ctx, chainID, sender, gasPrice)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	legacyInput := req.Note.Version < core.ShieldedTxVersionV2
 	ownerSecret := "0"
 	inputCommitment := fieldHash(shielded.DomainNoteV2, senderElement, asset, fieldElementFromBig(noteValue), randomness)
@@ -373,7 +396,11 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 	if err != nil {
 		return BuildShieldedResponse{}, err
 	}
-	changeWei := new(big.Int).Sub(noteValue, amountWei)
+	publicValue := new(big.Int).Add(amountWei, gasSponsor)
+	if noteValue.Cmp(publicValue) < 0 {
+		return BuildShieldedResponse{}, fmt.Errorf("input note is smaller than withdrawal amount plus gas sponsorship (%s wei required)", publicValue)
+	}
+	changeWei := new(big.Int).Sub(noteValue, publicValue)
 	recipients := [shielded.OutputSlots]fr.Element{senderElement, zeroElement(), zeroElement(), zeroElement()}
 	values := [shielded.OutputSlots]fr.Element{fieldElementFromBig(changeWei), zeroElement(), zeroElement(), zeroElement()}
 	outputRandomness := [shielded.OutputSlots]fr.Element{randomElement(), randomElement(), randomElement(), randomElement()}
@@ -398,7 +425,7 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 		outputs = append(outputs, output)
 	}
 	outputRoot := hashFromField(fieldHash(shielded.DomainOutputV2, commitments[:]...))
-	balance := fieldHash(shielded.DomainBalV2, fieldElementFromBig(noteValue), fieldElementFromBig(changeWei), fieldElementFromBig(amountWei), asset, fieldElementFromHash(outputRoot))
+	balance := fieldHash(shielded.DomainBalV2, fieldElementFromBig(noteValue), fieldElementFromBig(changeWei), fieldElementFromBig(publicValue), asset, fieldElementFromHash(outputRoot))
 	envelope := &core.ShieldedTransaction{
 		Version: core.ShieldedTxVersionV2,
 		Spends: []core.ShieldedSpend{{
@@ -411,6 +438,7 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 		BindingSig:          make([]byte, common.HashLength),
 		WithdrawalRecipient: common.HexToAddress(req.To),
 		WithdrawalValue:     new(big.Int).Set(amountWei),
+		GasSponsorValue:     optionalPositiveBig(gasSponsor),
 	}
 	data, err := core.EncodeShieldedTransaction(envelope)
 	if err != nil {
@@ -425,7 +453,7 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 	if legacyInput {
 		legacyFlag = "1"
 	}
-	assignment := newV2Assignment(chainID, sender, new(big.Int), intentHash, envelope.Spends[0].Nullifier, envelope.Spends[0].Anchor, envelope.BalanceCommitment, amountWei, outputRoot, legacyFlag, ownerSecret, noteValue.String(), assetID)
+	assignment := newV2Assignment(chainID, sender, new(big.Int), intentHash, envelope.Spends[0].Nullifier, envelope.Spends[0].Anchor, envelope.BalanceCommitment, publicValue, outputRoot, legacyFlag, ownerSecret, noteValue.String(), assetID)
 	assignment.NoteRandomness = req.Note.NoteRandomness
 	fillCircuitArraysV2(assignment, req.Note.MerklePath, req.Note.MerklePathIndex, recipients, values, outputRandomness, commitments)
 	binding := fieldHash(shielded.DomainBindV2,
@@ -481,8 +509,16 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 		SpentNullifier:  envelope.Spends[0].Nullifier.Hex(),
 		CreatedNotes:    created,
 		ShieldedVersion: core.ShieldedTxVersionV2,
+		GasSponsorWei:   gasSponsor.String(),
 		OutputOpenings:  openings,
 	}, nil
+}
+
+func optionalPositiveBig(value *big.Int) *big.Int {
+	if value == nil || value.Sign() <= 0 {
+		return nil
+	}
+	return new(big.Int).Set(value)
 }
 
 func newV2Assignment(chainID *big.Int, sender common.Address, blockNumber *big.Int, intentHash common.Hash, nullifier, anchor, balance common.Hash, publicValue *big.Int, outputRoot common.Hash, legacyInput, ownerSecret, noteValue, assetID string) *shielded.SpendCircuitV2 {

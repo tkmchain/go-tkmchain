@@ -187,6 +187,22 @@ func (api *PrivacyAPI) ShieldedV2Active() bool {
 	return head != nil && params.IsMainnetShieldedV2(api.e.blockchain.Config(), head.Time)
 }
 
+// ShieldedGasSponsorActivationTime returns the proof-backed gas sponsorship
+// fork timestamp.
+func (api *PrivacyAPI) ShieldedGasSponsorActivationTime() hexutil.Uint64 {
+	return hexutil.Uint64(params.MainnetShieldedGasSponsorTime)
+}
+
+// ShieldedGasSponsorActive reports whether proof-backed gas sponsorship is
+// active at the canonical chain head.
+func (api *PrivacyAPI) ShieldedGasSponsorActive() bool {
+	if api == nil || api.e == nil || api.e.blockchain == nil {
+		return false
+	}
+	head := api.e.blockchain.CurrentBlock()
+	return head != nil && params.IsMainnetShieldedGasSponsor(api.e.blockchain.Config(), head.Time)
+}
+
 // Defaults returns privacy-focused client defaults.
 func (api *PrivacyAPI) Defaults() PrivacyDefaults {
 	return PrivacyDefaults{

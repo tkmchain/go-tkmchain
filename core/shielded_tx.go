@@ -74,6 +74,7 @@ type ShieldedTransaction struct {
 	// consensus to release a proof-backed public value from the shielded pool.
 	WithdrawalRecipient common.Address `rlp:"optional"`
 	WithdrawalValue     *big.Int       `rlp:"optional"`
+	GasSponsorValue     *big.Int       `rlp:"optional"`
 }
 
 // ShieldedProofContext is the exact public input passed into the ZK verifier.
@@ -288,6 +289,7 @@ func stripShieldedProofs(tx *ShieldedTransaction) *ShieldedTransaction {
 		BindingSig:          make([]byte, common.HashLength),
 		WithdrawalRecipient: tx.WithdrawalRecipient,
 		WithdrawalValue:     copyBigInt(tx.WithdrawalValue),
+		GasSponsorValue:     copyBigInt(tx.GasSponsorValue),
 	}
 	for i, spend := range tx.Spends {
 		cpy.Spends[i] = ShieldedSpend{
@@ -320,10 +322,12 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 	isDeposit := isShieldedDeposit(envelope, tx.Value())
 	publicValue := shieldedPublicValue(envelope, tx.Value())
 	withdrawalValue := shieldedWithdrawalValue(envelope)
-	if withdrawalValue.Sign() > 0 {
-		amount := uint256.MustFromBig(withdrawalValue)
+	gasSponsorValue := shieldedGasSponsorValue(envelope)
+	publicRelease := new(big.Int).Add(withdrawalValue, gasSponsorValue)
+	if publicRelease.Sign() > 0 {
+		amount := uint256.MustFromBig(publicRelease)
 		if statedb.GetBalance(params.ShieldedPoolAddress).Cmp(amount) < 0 {
-			return fmt.Errorf("%w: shielded pool balance is smaller than withdrawal value", ErrInvalidShieldedTx)
+			return fmt.Errorf("%w: shielded pool balance is smaller than public release value", ErrInvalidShieldedTx)
 		}
 	}
 	txHash := tx.Hash()
@@ -386,6 +390,11 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		statedb.SubBalance(params.ShieldedPoolAddress, amount, tracing.BalanceChangeTransfer)
 		statedb.AddBalance(envelope.WithdrawalRecipient, amount, tracing.BalanceChangeTransfer)
 	}
+	if gasSponsorValue.Sign() > 0 {
+		amount := uint256.MustFromBig(gasSponsorValue)
+		statedb.SubBalance(params.ShieldedPoolAddress, amount, tracing.BalanceChangeTransfer)
+		statedb.AddBalance(sender, amount, tracing.BalanceChangeTransfer)
+	}
 	for _, output := range envelope.Outputs {
 		slot := shieldedCommitmentSlot(output.Commitment)
 		if stored := statedb.GetState(params.ShieldedPoolAddress, slot); stored != (common.Hash{}) {
@@ -430,7 +439,11 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	if envelope.WithdrawalValue != nil && envelope.WithdrawalValue.Sign() < 0 {
 		return nil, fmt.Errorf("%w: shielded withdrawal value cannot be negative", ErrInvalidShieldedTx)
 	}
+	if envelope.GasSponsorValue != nil && envelope.GasSponsorValue.Sign() < 0 {
+		return nil, fmt.Errorf("%w: shielded gas sponsorship cannot be negative", ErrInvalidShieldedTx)
+	}
 	withdrawalValue := shieldedWithdrawalValue(envelope)
+	gasSponsorValue := shieldedGasSponsorValue(envelope)
 	if tx.Value().Sign() != 0 && !isDeposit {
 		return nil, fmt.Errorf("%w: transparent value is only allowed for shielded deposits", ErrInvalidShieldedTx)
 	}
@@ -449,6 +462,21 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 		}
 	} else if envelope.WithdrawalRecipient != (common.Address{}) {
 		return nil, fmt.Errorf("%w: shielded withdrawal value is required", ErrInvalidShieldedTx)
+	}
+	if gasSponsorValue.Sign() > 0 {
+		if !params.IsMainnetShieldedGasSponsor(config, blockTime) {
+			return nil, fmt.Errorf("%w: shielded gas sponsorship is not active", ErrInvalidShieldedTx)
+		}
+		if envelope.Version != ShieldedTxVersionV2 || isDeposit || tx.Value().Sign() != 0 || len(envelope.Spends) != 1 {
+			return nil, fmt.Errorf("%w: shielded gas sponsorship requires one V2 private spend", ErrInvalidShieldedTx)
+		}
+		maxGasCost := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())
+		if gasSponsorValue.Cmp(maxGasCost) > 0 {
+			return nil, fmt.Errorf("%w: shielded gas sponsorship exceeds maximum transaction gas cost", ErrInvalidShieldedTx)
+		}
+	}
+	if new(big.Int).Add(withdrawalValue, gasSponsorValue).BitLen() > 64 {
+		return nil, fmt.Errorf("%w: shielded public release exceeds uint64", ErrInvalidShieldedTx)
 	}
 	if tx.Value().Sign() == 0 && len(envelope.Spends) == 0 {
 		return nil, fmt.Errorf("%w: shielded tx must spend at least one private note", ErrInvalidShieldedTx)
@@ -714,14 +742,44 @@ func shieldedWithdrawalValue(envelope *ShieldedTransaction) *big.Int {
 	return envelope.WithdrawalValue
 }
 
+func shieldedGasSponsorValue(envelope *ShieldedTransaction) *big.Int {
+	if envelope == nil || envelope.GasSponsorValue == nil || envelope.GasSponsorValue.Sign() <= 0 {
+		return new(big.Int)
+	}
+	return envelope.GasSponsorValue
+}
+
 func shieldedPublicValue(envelope *ShieldedTransaction, transactionValue *big.Int) *big.Int {
-	if withdrawal := shieldedWithdrawalValue(envelope); withdrawal.Sign() > 0 {
-		return withdrawal
+	publicRelease := new(big.Int).Add(shieldedWithdrawalValue(envelope), shieldedGasSponsorValue(envelope))
+	if publicRelease.Sign() > 0 {
+		return publicRelease
 	}
 	if transactionValue == nil {
 		return new(big.Int)
 	}
 	return transactionValue
+}
+
+// ShieldedTransactionPreBalanceCost returns the amount the sender must already
+// hold before execution. A valid V2 spend can prove and release part of its
+// private note to the sender before the normal gas purchase occurs.
+func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
+	if tx == nil {
+		return new(big.Int)
+	}
+	cost := tx.Cost()
+	envelope, ok, err := DecodeShieldedTransaction(tx.Data())
+	if err != nil || !ok {
+		return cost
+	}
+	sponsor := shieldedGasSponsorValue(envelope)
+	if sponsor.Sign() == 0 {
+		return cost
+	}
+	if sponsor.Cmp(cost) >= 0 {
+		return new(big.Int)
+	}
+	return new(big.Int).Sub(cost, sponsor)
 }
 
 func copyBigInt(value *big.Int) *big.Int {
