@@ -571,6 +571,15 @@ func TestProcessShieldedSpendStoresNullifierAndCommitment(t *testing.T) {
 	if got := statedb.GetState(params.ShieldedPoolAddress, shieldedNullifierSlot(envelope.Spends[0].Nullifier)); got != tx.Hash() {
 		t.Fatalf("nullifier state = %s, want %s", got, tx.Hash())
 	}
+	if !ShieldedNullifierSpent(statedb, envelope.Spends[0].Nullifier) {
+		t.Fatal("processed nullifier reported as unspent")
+	}
+	if got := ShieldedNullifierTransaction(statedb, envelope.Spends[0].Nullifier); got != tx.Hash() {
+		t.Fatalf("canonical nullifier transaction = %s, want %s", got, tx.Hash())
+	}
+	if ShieldedNullifierSpent(statedb, common.HexToHash("0xdeadbeef")) {
+		t.Fatal("unknown nullifier reported as spent")
+	}
 	if got := statedb.GetState(params.ShieldedPoolAddress, shieldedCommitmentSlot(envelope.Outputs[0].Commitment)); got != envelope.Outputs[0].PayloadHash {
 		t.Fatalf("commitment state = %s, want %s", got, envelope.Outputs[0].PayloadHash)
 	}

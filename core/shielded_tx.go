@@ -638,6 +638,22 @@ func shieldedNullifierSlot(nullifier common.Hash) common.Hash {
 	return crypto.Keccak256Hash([]byte("TKM_SHIELDED_NULLIFIER_V1"), nullifier.Bytes())
 }
 
+// ShieldedNullifierTransaction returns the canonical transaction hash which
+// spent nullifier, or the zero hash when the nullifier is still unspent.
+//
+// Nullifier status APIs must use this consensus-backed state instead of the
+// optional privacy metadata database. The latter is populated only by legacy
+// registration calls and can therefore lag canonical shielded transactions.
+func ShieldedNullifierTransaction(statedb shieldedStateReader, nullifier common.Hash) common.Hash {
+	return statedb.GetState(params.ShieldedPoolAddress, shieldedNullifierSlot(nullifier))
+}
+
+// ShieldedNullifierSpent reports whether nullifier has been spent in canonical
+// chain state.
+func ShieldedNullifierSpent(statedb shieldedStateReader, nullifier common.Hash) bool {
+	return ShieldedNullifierTransaction(statedb, nullifier) != (common.Hash{})
+}
+
 // ShieldedMerkleNextIndex returns the next shielded commitment leaf index.
 func ShieldedMerkleNextIndex(statedb shieldedStateReader) uint64 {
 	return uint64FromHash(statedb.GetState(params.ShieldedPoolAddress, ShieldedMerkleNextIndexSlot()))

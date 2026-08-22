@@ -257,6 +257,32 @@ func (api *PrivacyAPI) SpendNullifier(nullifier common.Hash, proofHash common.Ha
 
 // NullifierStatus returns whether an opaque private note nullifier has already been spent.
 func (api *PrivacyAPI) NullifierStatus(nullifier common.Hash) (PrivacyNullifierStatus, error) {
+	// Canonical shielded transactions record nullifiers directly in consensus
+	// state. Prefer that source whenever a blockchain is available; the legacy
+	// privacy metadata database is optional and is not updated by block import.
+	if api.e != nil && api.e.blockchain != nil {
+		statedb, err := api.e.currentPrivacyState()
+		if err != nil {
+			return PrivacyNullifierStatus{}, err
+		}
+		txHash := core.ShieldedNullifierTransaction(statedb, nullifier)
+		if txHash == (common.Hash{}) {
+			return PrivacyNullifierStatus{Nullifier: nullifier}, nil
+		}
+		status := PrivacyNullifierStatus{
+			Nullifier: nullifier,
+			ProofHash: txHash,
+			Spent:     true,
+		}
+		if _, blockNumber, encryptedSpendData, err := api.e.privacyShieldedSpendTx(nullifier, txHash, nil); err == nil {
+			status.SpentHeight = hexutil.Uint64(blockNumber)
+			status.EncryptedSpendData = hexutil.Bytes(encryptedSpendData)
+		}
+		return status, nil
+	}
+
+	// Preserve the metadata-only fallback for API tests and legacy deployments
+	// which do not have an attached blockchain.
 	info, ok := api.e.getPrivacyNullifier(nullifier)
 	if !ok {
 		return PrivacyNullifierStatus{Nullifier: nullifier}, nil
