@@ -155,6 +155,12 @@ func TestPrivacyCommitmentRecordsPersistSorted(t *testing.T) {
 
 func TestPrivacyDefaultsPreferCommitments(t *testing.T) {
 	api, _ := newTestPrivacyAPI()
+	if got := uint64(api.ShieldedGasSponsorActivationTime()); got != params.MainnetShieldedGasSponsorTime {
+		t.Fatalf("gas sponsor activation time = %d, want %d", got, params.MainnetShieldedGasSponsorTime)
+	}
+	if api.ShieldedGasSponsorActive() {
+		t.Fatal("gas sponsorship active without a canonical blockchain")
+	}
 	defaults := api.Defaults()
 	if !defaults.CommitmentMode || defaults.LegacyAddressRegistry {
 		t.Fatalf("privacy defaults = %+v, want commitment mode without legacy registry", defaults)

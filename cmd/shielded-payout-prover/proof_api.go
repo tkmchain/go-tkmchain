@@ -58,6 +58,7 @@ type BuildShieldedResponse struct {
 	SpentNullifier  string                  `json:"spentNullifier,omitempty"`
 	CreatedNotes    []ShieldedNote          `json:"createdNotes,omitempty"`
 	ShieldedVersion uint64                  `json:"shieldedVersion,omitempty"`
+	GasSponsorWei   string                  `json:"gasSponsorWei,omitempty"`
 	OutputOpenings  []ShieldedOutputOpening `json:"outputOpenings,omitempty"`
 	Error           string                  `json:"error,omitempty"`
 }
@@ -399,6 +400,21 @@ func (p *Prover) proofTransactionContext(ctx context.Context, from, nonceRaw, ga
 		return nil, 0, nil, err
 	}
 	return chainID, nonce, gasPrice, nil
+}
+
+func (p *Prover) shieldedGasSponsorValue(ctx context.Context, chainID *big.Int, sender common.Address, gasPrice *big.Int) (*big.Int, error) {
+	if !p.shieldedGasSponsorshipActive(ctx, chainID) {
+		return new(big.Int), nil
+	}
+	maxGasCost := new(big.Int).Mul(new(big.Int).SetUint64(p.cfg.GasLimit), gasPrice)
+	balance, err := p.client.BalanceAt(ctx, sender, nil)
+	if err != nil {
+		return nil, fmt.Errorf("read sender balance for shielded gas sponsorship: %w", err)
+	}
+	if balance.Cmp(maxGasCost) >= 0 {
+		return new(big.Int), nil
+	}
+	return new(big.Int).Sub(maxGasCost, balance), nil
 }
 
 func makeUnsignedPQTransaction(chainID *big.Int, nonce uint64, gasPrice *big.Int, gas uint64, value *big.Int, data []byte) *unsignedPQTransaction {

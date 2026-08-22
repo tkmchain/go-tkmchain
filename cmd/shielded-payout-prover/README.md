@@ -12,9 +12,13 @@ requires its PQ signer and real spendable notes.
 ## Build
 
 ```sh
-cd /home/mike/go-tkmchain
-go build -o /home/mike/shielded-prover/shielded-payout-prover ./cmd/shielded-payout-prover
+cd ~/go-tkmchain
+make production
 ```
+
+The production target builds only `gtkm` and the managed prover, skips
+developer utilities, reuses the existing RandomX artifact, limits Go package
+parallelism on small VPSes, and strips debug data from the deployed binaries.
 
 ## Runtime Files
 
@@ -110,10 +114,13 @@ Both endpoints return:
 ```
 
 The browser must verify the chain ID, nonce, gas, public value, shielded-pool
-recipient, nullifier, and `TKMSHIELD1` prefix before signing. For V2 it must
-also recompute each recipient-bound MiMC commitment from `outputOpenings` and
-compare it with the encoded envelope. It then signs with ML-DSA-87 locally and
-submits through `eth_sendRawTransaction`.
+recipient, nullifier, `gasSponsorWei`, and `TKMSHIELD1` prefix before signing.
+For V2 it must also recompute each recipient-bound MiMC commitment from
+`outputOpenings` and compare it with the encoded envelope. It then signs with
+ML-DSA-87 locally and submits through `eth_sendRawTransaction`. A V2 transfer
+or withdrawal reserves any transparent gas shortfall from its input note after
+the `2026-08-22 13:00:00 UTC` consensus activation; no funded prover account is
+involved. Before activation the prover returns zero sponsorship.
 
 Proof-only mode does not require or consume `notes.json` inventory and it never
 funds a transaction. Each wallet discovers its own encrypted canonical notes.
@@ -227,7 +234,7 @@ Schema:
 }
 ```
 
-Values must fit in unsigned 64-bit integers because the current circuit constrains note values with `api.ToBinary(..., 64)`. A single note can therefore carry at most `18446744073709551615` base units.
+Values must fit in unsigned 64-bit integers because the current circuit constrains note values with `api.ToBinary(..., 64)`. A single note can therefore carry at most `18446744073709551615` base units. Wallets can send larger totals by creating and submitting several proofs sequentially; this does not require new Groth16 keys.
 
 For pool operation, use notes no larger than `0xffffffff22e4c000` wei, which is `18.44674407` TKM at the pool's 8-decimal payout precision. A miner owed more than that is paid across multiple payout cycles.
 

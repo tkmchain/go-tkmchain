@@ -231,6 +231,18 @@ func TestPrivacyCommitmentForkSchedule(t *testing.T) {
 	}
 }
 
+func TestShieldedGasSponsorForkSchedule(t *testing.T) {
+	if IsMainnetShieldedGasSponsor(MainnetChainConfig, MainnetShieldedGasSponsorTime-1) {
+		t.Fatal("shielded gas sponsorship active before scheduled timestamp")
+	}
+	if !IsMainnetShieldedGasSponsor(MainnetChainConfig, MainnetShieldedGasSponsorTime) {
+		t.Fatal("shielded gas sponsorship inactive at scheduled timestamp")
+	}
+	if IsMainnetShieldedGasSponsor(EgyptChainConfig, MainnetShieldedGasSponsorTime) {
+		t.Fatal("mainnet shielded gas sponsorship enabled for a different chain")
+	}
+}
+
 func TestQuantumResistantForkSchedule(t *testing.T) {
 	if !EgyptChainConfig.IsQuantumResistant(big.NewInt(0), 0) {
 		t.Fatal("Egypt quantum-resistant transactions are not active at genesis")

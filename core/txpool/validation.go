@@ -313,7 +313,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	// Ensure the transactor has enough funds to cover the transaction costs
 	var (
 		balance = opts.State.GetBalance(from).ToBig()
-		cost    = tx.Cost()
+		cost    = core.ShieldedTransactionPreBalanceCost(tx)
 	)
 	if balance.Cmp(cost) < 0 {
 		return fmt.Errorf("%w: balance %v, tx cost %v, overshot %v", core.ErrInsufficientFunds, balance, cost, new(big.Int).Sub(cost, balance))

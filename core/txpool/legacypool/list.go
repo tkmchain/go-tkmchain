@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/holiman/uint256"
 )
@@ -325,7 +326,7 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 		}
 	}
 	// Add new tx cost to totalcost
-	cost, overflow := uint256.FromBig(tx.Cost())
+	cost, overflow := uint256.FromBig(core.ShieldedTransactionPreBalanceCost(tx))
 	if overflow {
 		return false, nil
 	}
@@ -379,7 +380,7 @@ func (l *list) Filter(costLimit *uint256.Int, gasLimit uint64) (types.Transactio
 
 	// Filter out all the transactions above the account's funds
 	removed := l.txs.Filter(func(tx *types.Transaction) bool {
-		return tx.Gas() > gasLimit || tx.Cost().Cmp(costLimit.ToBig()) > 0
+		return tx.Gas() > gasLimit || core.ShieldedTransactionPreBalanceCost(tx).Cmp(costLimit.ToBig()) > 0
 	})
 
 	if len(removed) == 0 {
@@ -470,7 +471,7 @@ func (l *list) LastElement() *types.Transaction {
 // total cost of all transactions.
 func (l *list) subTotalCost(txs []*types.Transaction) {
 	for _, tx := range txs {
-		_, underflow := l.totalcost.SubOverflow(l.totalcost, uint256.MustFromBig(tx.Cost()))
+		_, underflow := l.totalcost.SubOverflow(l.totalcost, uint256.MustFromBig(core.ShieldedTransactionPreBalanceCost(tx)))
 		if underflow {
 			panic("totalcost underflow")
 		}
