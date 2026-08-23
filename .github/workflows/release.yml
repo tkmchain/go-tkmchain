@@ -99,60 +99,76 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  build-debian13:
-    name: Build Debian 13 binaries
-    runs-on: ubuntu-latest
-    container:
-      image: debian:13-slim
+build-debian13:
+  name: Build Debian 13 binaries
+  runs-on: ubuntu-latest
+  container:
+    image: debian:13-slim
 
-    steps:
-      - name: Install Debian 13 build tools
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            cmake \
-            git \
-            gzip \
-            pkg-config \
-            tar
-          rm -rf /var/lib/apt/lists/*
+  steps:
+    - name: Install Debian 13 build tools
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends \
+          build-essential \
+          ca-certificates \
+          cmake \
+          git \
+          gzip \
+          pkg-config \
+          tar
+        rm -rf /var/lib/apt/lists/*
 
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+    - name: Check out source
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ env.RELEASE_TAG }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.5'
-          check-latest: true
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.5'
+        check-latest: true
 
-      - name: Verify Debian and Go versions
-        run: |
-          cat /etc/os-release
-          go version
+    # Add this step to fix Git configuration
+    - name: Configure Git for Debian container
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        git config --global --add safe.directory /__w/$(basename $GITHUB_REPOSITORY)/$(basename $GITHUB_REPOSITORY)
+        # Also set Git user info to avoid any potential issues
+        git config --global user.email "ci@debian.local"
+        git config --global user.name "CI Build"
+        # Show Git configuration for debugging
+        git config --list
 
-      - name: Build and package Debian 13 binaries
-        run: |
-          make gtkm shielded-payout-prover
-          archive="gtkm-${RELEASE_TAG}-debian13-amd64"
-          mkdir -p "release/$archive"
-          cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
-          tar -C release -czf "release/$archive.tar.gz" "$archive"
+    - name: Verify Debian and Go versions
+      run: |
+        cat /etc/os-release
+        git --version
+        go version
 
-      - name: Upload Debian 13 archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-debian13
-          path: release/*.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+    - name: Build and package Debian 13 binaries
+      run: |
+        # Set GOFLAGS to disable VCS stamping
+        export GOFLAGS="-buildvcs=false"
+        # Also set GIT_CONFIG to ensure Git picks up the config
+        export GIT_CONFIG_GLOBAL=/root/.gitconfig
+        make gtkm shielded-payout-prover
+        archive="gtkm-${RELEASE_TAG}-debian13-amd64"
+        mkdir -p "release/$archive"
+        cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
+        tar -C release -czf "release/$archive.tar.gz" "$archive"
+
+    - name: Upload Debian 13 archive
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-debian13
+        path: release/*.tar.gz
+        if-no-files-found: error
+        retention-days: 1
 
   release:
     name: Publish GitHub release
