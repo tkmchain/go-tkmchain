@@ -4,7 +4,10 @@
 package keystore
 
 import (
+	"encoding/json"
 	"math/big"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -59,6 +62,92 @@ func TestPQAccountCreateExportImportAndSign(t *testing.T) {
 	}
 	if from != imported.Address {
 		t.Fatalf("sender mismatch: got %s want %s", from, imported.Address)
+	}
+}
+
+func TestPQAccountShieldedPaymentCodeWithoutPassphrase(t *testing.T) {
+	ks := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
+	account, createdCode, err := ks.NewPQAccountWithShieldedPaymentCode("pass", big.NewInt(8979))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(createdCode, "tkmshield2.") {
+		t.Fatalf("created payment code = %q", createdCode)
+	}
+	storedCode, err := ks.PQShieldedPaymentCode(account, big.NewInt(8979))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedCode != createdCode {
+		t.Fatalf("stored payment code = %q, want %q", storedCode, createdCode)
+	}
+}
+
+func TestPQAccountRejectsTamperedShieldedIdentity(t *testing.T) {
+	ks := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
+	account, _, err := ks.NewPQAccountWithShieldedPaymentCode("pass", big.NewInt(8979))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encrypted encryptedPQKeyJSONV4
+	if err := json.Unmarshal(keyJSON, &encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if encrypted.ShieldedViewPublicKey[0] == '0' {
+		encrypted.ShieldedViewPublicKey = "1" + encrypted.ShieldedViewPublicKey[1:]
+	} else {
+		encrypted.ShieldedViewPublicKey = "0" + encrypted.ShieldedViewPublicKey[1:]
+	}
+	tamperedJSON, err := json.Marshal(encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(account.URL.Path, tamperedJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ks.PQShieldedPaymentCode(account, big.NewInt(8979)); err == nil || !strings.Contains(err.Error(), "unauthenticated") {
+		t.Fatalf("tampered shielded identity error = %v", err)
+	}
+}
+
+func TestPQAccountUpdateAddsShieldedIdentityToLegacyKeyfile(t *testing.T) {
+	ks := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
+	account, err := ks.NewPQAccount("old-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encrypted encryptedPQKeyJSONV4
+	if err := json.Unmarshal(keyJSON, &encrypted); err != nil {
+		t.Fatal(err)
+	}
+	encrypted.ShieldedViewPublicKey = ""
+	encrypted.ShieldedViewSignature = ""
+	legacyJSON, err := json.Marshal(encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(account.URL.Path, legacyJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ks.PQShieldedPaymentCode(account, big.NewInt(8979)); err == nil || !strings.Contains(err.Error(), "predates") {
+		t.Fatalf("legacy keyfile payment-code error = %v", err)
+	}
+	if err := ks.Update(account, "old-pass", "new-pass"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ks.PQShieldedPaymentCode(account, big.NewInt(8979)); err != nil {
+		t.Fatalf("updated keyfile payment code: %v", err)
+	}
+	if _, err := ks.ExportPQ(account, "new-pass", "export-pass"); err != nil {
+		t.Fatalf("updated PQ passphrase was not applied: %v", err)
 	}
 }
 

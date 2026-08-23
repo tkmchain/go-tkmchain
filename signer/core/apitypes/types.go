@@ -147,6 +147,28 @@ func (args *SendTxArgs) ToTransaction() (*types.Transaction, error) {
 	}
 	var data types.TxData
 	switch {
+	case args.Type != nil && uint64(*args.Type) == types.PQTkmTxType:
+		if args.ChainID == nil {
+			return nil, errors.New("chainId is required for PQ transactions")
+		}
+		if args.MaxFeePerGas == nil || args.MaxPriorityFeePerGas == nil {
+			return nil, errors.New("maxFeePerGas and maxPriorityFeePerGas are required for PQ transactions")
+		}
+		al := types.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		data = &types.PQTkmTx{
+			To:         to,
+			ChainID:    (*big.Int)(args.ChainID),
+			Nonce:      uint64(args.Nonce),
+			Gas:        uint64(args.Gas),
+			GasFeeCap:  (*big.Int)(args.MaxFeePerGas),
+			GasTipCap:  (*big.Int)(args.MaxPriorityFeePerGas),
+			Value:      (*big.Int)(&args.Value),
+			Data:       args.data(),
+			AccessList: al,
+		}
 	case args.Type != nil && uint64(*args.Type) == types.RandomXTxType:
 		al := types.AccessList{}
 		if args.AccessList != nil {

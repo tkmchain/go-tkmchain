@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -44,9 +45,9 @@ const (
 	// numberOfAccountsToDerive For hardware wallets, the number of accounts to derive
 	numberOfAccountsToDerive = 10
 	// ExternalAPIVersion -- see extapi_changelog.md
-	ExternalAPIVersion = "6.1.0"
+	ExternalAPIVersion = "6.2.0"
 	// InternalAPIVersion -- see intapi_changelog.md
-	InternalAPIVersion = "7.0.1"
+	InternalAPIVersion = "7.1.0"
 )
 
 // ExternalAPI defines the external API through which signing requests are made.
@@ -55,6 +56,8 @@ type ExternalAPI interface {
 	List(ctx context.Context) ([]common.Address, error)
 	// New request to create a new account
 	New(ctx context.Context) (common.Address, error)
+	// NewPQ requests creation of an ML-DSA-87 account and public shielded identity.
+	NewPQ(ctx context.Context) (*PQAccountResult, error)
 	// SignTransaction request to sign the specified transaction
 	SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*ethapi.SignTransactionResult, error)
 	// SignData - request to sign the given data (plus prefix)
@@ -119,6 +122,14 @@ type SignerAPI struct {
 	validator   Validator
 	rejectMode  bool
 	credentials storage.Storage
+}
+
+// PQAccountResult is the public identity returned for a newly created
+// post-quantum account. It contains no seed or private viewing material.
+type PQAccountResult struct {
+	Address             common.Address `json:"address"`
+	Algorithm           string         `json:"algorithm"`
+	ShieldedPaymentCode string         `json:"shieldedPaymentCode"`
 }
 
 // Metadata about a request
@@ -420,6 +431,58 @@ func (api *SignerAPI) New(ctx context.Context) (common.Address, error) {
 		return common.Address{}, ErrRequestDenied
 	}
 	return api.newAccount()
+}
+
+// NewPQ creates a password-protected ML-DSA-87 account after normal Clef UI
+// approval and returns its public tkmshield2 identity.
+func (api *SignerAPI) NewPQ(ctx context.Context) (*PQAccountResult, error) {
+	if be := api.am.Backends(keystore.KeyStoreType); len(be) == 0 {
+		return nil, errors.New("password based accounts not supported")
+	}
+	if api.chainID == nil || api.chainID.Sign() <= 0 {
+		return nil, errors.New("a positive Clef chain ID is required for shielded payment codes")
+	}
+	if resp, err := api.UI.ApproveNewAccount(&NewAccountRequest{MetadataFromContext(ctx)}); err != nil {
+		return nil, err
+	} else if !resp.Approved {
+		return nil, ErrRequestDenied
+	}
+	return api.newPQAccount()
+}
+
+func (api *SignerAPI) newPQAccount() (*PQAccountResult, error) {
+	be := api.am.Backends(keystore.KeyStoreType)
+	if len(be) == 0 {
+		return nil, errors.New("password based accounts not supported")
+	}
+	for i := 0; i < 3; i++ {
+		resp, err := api.UI.OnInputRequired(UserInputRequest{
+			"New PQ account password",
+			fmt.Sprintf("Please enter a password for the new ML-DSA-87 account (attempt %d of 3)", i),
+			true})
+		if err != nil {
+			log.Warn("error obtaining password", "attempt", i, "error", err)
+			continue
+		}
+		if pwErr := ValidatePasswordFormat(resp.Text); pwErr != nil {
+			api.UI.ShowError(fmt.Sprintf("PQ account creation attempt #%d failed due to password requirements: %v", i+1, pwErr))
+			continue
+		}
+		acc, paymentCode, err := be[0].(*keystore.KeyStore).NewPQAccountWithShieldedPaymentCode(resp.Text, api.chainID)
+		if err != nil {
+			return nil, err
+		}
+		result := &PQAccountResult{
+			Address:             acc.Address,
+			Algorithm:           pqcrypto.AlgorithmMLDSA87,
+			ShieldedPaymentCode: paymentCode,
+		}
+		log.Info("Your new post-quantum key was generated", "address", acc.Address, "shieldedPaymentCode", paymentCode)
+		log.Warn("Please backup your key file!", "path", acc.URL.Path)
+		log.Warn("Please remember your password!")
+		return result, nil
+	}
+	return nil, errors.New("PQ account creation failed")
 }
 
 // newAccount is the internal method to create a new account. It should be used

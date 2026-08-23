@@ -29,12 +29,14 @@ type PQKey struct {
 }
 
 type encryptedPQKeyJSONV4 struct {
-	Address   string     `json:"address"`
-	Algorithm string     `json:"algorithm"`
-	PublicKey string     `json:"publicKey"`
-	Crypto    CryptoJSON `json:"crypto"`
-	Id        string     `json:"id"`
-	Version   int        `json:"version"`
+	Address               string     `json:"address"`
+	Algorithm             string     `json:"algorithm"`
+	PublicKey             string     `json:"publicKey"`
+	ShieldedViewPublicKey string     `json:"shieldedViewPublicKey,omitempty"`
+	ShieldedViewSignature string     `json:"shieldedViewSignature,omitempty"`
+	Crypto                CryptoJSON `json:"crypto"`
+	Id                    string     `json:"id"`
+	Version               int        `json:"version"`
 }
 
 // NewPQKey creates a new ML-DSA-87 key.
@@ -85,13 +87,23 @@ func EncryptPQKey(key *PQKey, auth string, scryptN, scryptP int) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	viewPublicKey, err := pqcrypto.ShieldedViewPublicKey(key.Seed)
+	if err != nil {
+		return nil, err
+	}
+	viewSignature, err := pqcrypto.SignShieldedViewBinding(key.Seed, key.Address, viewPublicKey)
+	if err != nil {
+		return nil, err
+	}
 	encrypted := encryptedPQKeyJSONV4{
-		Address:   hex.EncodeToString(key.Address[:]),
-		Algorithm: key.Algorithm,
-		PublicKey: hex.EncodeToString(key.PublicKey),
-		Crypto:    cryptoStruct,
-		Id:        key.Id.String(),
-		Version:   pqKeyVersion,
+		Address:               hex.EncodeToString(key.Address[:]),
+		Algorithm:             key.Algorithm,
+		PublicKey:             hex.EncodeToString(key.PublicKey),
+		ShieldedViewPublicKey: hex.EncodeToString(viewPublicKey),
+		ShieldedViewSignature: hex.EncodeToString(viewSignature),
+		Crypto:                cryptoStruct,
+		Id:                    key.Id.String(),
+		Version:               pqKeyVersion,
 	}
 	return json.Marshal(encrypted)
 }
@@ -135,6 +147,23 @@ func DecryptPQKey(keyjson []byte, auth string) (*PQKey, error) {
 	if key.Address != addr || !bytes.Equal(key.PublicKey, pub) {
 		zeroPQKey(key)
 		return nil, fmt.Errorf("PQ key content mismatch")
+	}
+	if encrypted.ShieldedViewPublicKey != "" {
+		viewPublicKey, err := hex.DecodeString(encrypted.ShieldedViewPublicKey)
+		if err != nil {
+			zeroPQKey(key)
+			return nil, err
+		}
+		expectedViewPublicKey, err := pqcrypto.ShieldedViewPublicKey(key.Seed)
+		if err != nil || !bytes.Equal(viewPublicKey, expectedViewPublicKey) {
+			zeroPQKey(key)
+			return nil, fmt.Errorf("PQ shielded viewing key mismatch")
+		}
+		viewSignature, err := hex.DecodeString(encrypted.ShieldedViewSignature)
+		if err != nil || !pqcrypto.VerifyShieldedViewBinding(key.PublicKey, key.Address, viewPublicKey, viewSignature) {
+			zeroPQKey(key)
+			return nil, fmt.Errorf("PQ shielded viewing key signature mismatch")
+		}
 	}
 	key.Id = id
 	return key, nil

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/urfave/cli/v2"
 )
 
@@ -112,7 +113,8 @@ Print a short summary of all accounts`,
 				Description: `
     gtkm account new
 
-Creates a new ML-DSA-87 post-quantum account and prints the address.
+Creates a new ML-DSA-87 post-quantum account and prints its public address and
+mainnet tkmshield2 payment code.
 
 The account is saved in encrypted format, you are prompted for a password.
 
@@ -261,15 +263,16 @@ func accountCreate(ctx *cli.Context) error {
 		password = utils.GetPassPhrase("Your new account is locked with a password. Please give a password. Do not forget this password.", true)
 	}
 	ks := keystore.NewKeyStore(keydir, scryptN, scryptP)
-	account, err := ks.NewPQAccount(password)
+	account, paymentCode, err := ks.NewPQAccountWithShieldedPaymentCode(password, params.MainnetChainConfig.ChainID)
 
 	if err != nil {
 		utils.Fatalf("Failed to create account: %v", err)
 	}
 	fmt.Printf("\nYour new post-quantum key was generated\n\n")
-	fmt.Printf("Key algorithm:               ML-DSA-87\n")
-	fmt.Printf("Public address of the key:   %s\n", account.Address.Hex())
-	fmt.Printf("Path of the secret key file: %s\n\n", account.URL.Path)
+	fmt.Printf("Key algorithm:           ML-DSA-87\n")
+	fmt.Printf("Public address:          %s\n", account.Address.Hex())
+	fmt.Printf("Shielded payment code:   %s\n", paymentCode)
+	fmt.Printf("Path of secret key file: %s\n\n", account.URL.Path)
 	fmt.Printf("- You can share your public address with anyone. Others need it to interact with you.\n")
 	fmt.Printf("- You must NEVER share the secret key with anyone! The key controls access to your funds!\n")
 	fmt.Printf("- You must BACKUP your key file! Without the key, it's impossible to access account funds!\n")

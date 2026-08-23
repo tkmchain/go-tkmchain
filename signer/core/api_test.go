@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/signer/core"
@@ -213,6 +215,76 @@ func TestNewAcc(t *testing.T) {
 	}
 	if err != core.ErrRequestDenied {
 		t.Fatal("Expected deny")
+	}
+}
+
+func TestNewPQAccountAndSignContractTransactions(t *testing.T) {
+	t.Parallel()
+	api, control := setup(t)
+	control.approveCh <- "Y"
+	control.inputCh <- "a_long_password"
+	account, err := api.NewPQ(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.Algorithm != pqcrypto.AlgorithmMLDSA87 {
+		t.Fatalf("algorithm = %q, want %q", account.Algorithm, pqcrypto.AlgorithmMLDSA87)
+	}
+	if !strings.HasPrefix(account.ShieldedPaymentCode, "tkmshield2.") {
+		t.Fatalf("shielded payment code = %q", account.ShieldedPaymentCode)
+	}
+	time.Sleep(250 * time.Millisecond)
+
+	for _, test := range []struct {
+		name string
+		to   *common.MixedcaseAddress
+		data hexutil.Bytes
+	}{
+		{name: "evm-create", data: hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xf3}},
+		{name: "tvm-call", to: func() *common.MixedcaseAddress {
+			address := common.NewMixedcaseAddress(common.HexToAddress("0x00000000000000000000000000000000000000f2"))
+			return &address
+		}(), data: hexutil.Bytes{'T', 'K', 'M', 'T', 'V', 'M', '1'}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			txType := hexutil.Uint64(types.PQTkmTxType)
+			chainID := (*hexutil.Big)(big.NewInt(1337))
+			feeCap := (*hexutil.Big)(big.NewInt(20))
+			tipCap := (*hexutil.Big)(big.NewInt(2))
+			accessList := types.AccessList{}
+			args := apitypes.SendTxArgs{
+				From:                 common.NewMixedcaseAddress(account.Address),
+				To:                   test.to,
+				Gas:                  500000,
+				MaxFeePerGas:         feeCap,
+				MaxPriorityFeePerGas: tipCap,
+				Nonce:                0,
+				Type:                 &txType,
+				Input:                &test.data,
+				AccessList:           &accessList,
+				ChainID:              chainID,
+			}
+			control.approveCh <- "Y"
+			control.inputCh <- "a_long_password"
+			signed, err := api.SignTransaction(t.Context(), args, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tx types.Transaction
+			if err := tx.UnmarshalBinary(signed.Raw); err != nil {
+				t.Fatal(err)
+			}
+			if tx.Type() != types.PQTkmTxType {
+				t.Fatalf("signed tx type = %d, want %d", tx.Type(), types.PQTkmTxType)
+			}
+			sender, err := types.Sender(types.NewQuantumSigner(big.NewInt(1337)), &tx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sender != account.Address {
+				t.Fatalf("sender = %s, want %s", sender, account.Address)
+			}
+		})
 	}
 }
 

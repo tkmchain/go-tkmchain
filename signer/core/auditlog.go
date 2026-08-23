@@ -46,6 +46,13 @@ func (l *AuditLogger) New(ctx context.Context) (common.Address, error) {
 	return l.api.New(ctx)
 }
 
+func (l *AuditLogger) NewPQ(ctx context.Context) (*PQAccountResult, error) {
+	l.log.Info("NewPQ", "type", "request", "metadata", MetadataFromContext(ctx).String())
+	result, err := l.api.NewPQ(ctx)
+	l.log.Info("NewPQ", "type", "response", "data", result, "error", err)
+	return result, err
+}
+
 func (l *AuditLogger) SignTransaction(ctx context.Context, args apitypes.SendTxArgs, methodSelector *string) (*ethapi.SignTransactionResult, error) {
 	sel := "<nil>"
 	if methodSelector != nil {

@@ -10,6 +10,13 @@ TL;DR: Given a version number MAJOR.MINOR.PATCH, increment the:
 
 Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 
+### 6.2.0
+
+Added `account_newPQ`, which creates an encrypted ML-DSA-87 account and returns
+its public address, algorithm, and chain-bound `tkmshield2` payment code. Added
+transaction type `0x06` support to `account_signTransaction`, including EVM and
+TVM envelope calls. Private PQ and shielded viewing material never leave Clef.
+
 ### 6.1.0
 
 The API-method `account_signGnosisSafeTx` was added. This method takes two parameters, 

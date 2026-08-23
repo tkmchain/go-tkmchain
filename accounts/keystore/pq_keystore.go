@@ -4,8 +4,10 @@
 package keystore
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -76,6 +78,42 @@ func (ks *KeyStore) AccountAlgorithms() map[common.Address]string {
 		out[account.Address] = algorithm
 	}
 	return out
+}
+
+// PQShieldedPaymentCode returns the public payment code stored alongside a PQ
+// account. No passphrase or private key material is required or exposed.
+func (ks *KeyStore) PQShieldedPaymentCode(a accounts.Account, chainID *big.Int) (string, error) {
+	a, err := ks.Find(a)
+	if err != nil {
+		return "", err
+	}
+	keyjson, err := os.ReadFile(a.URL.Path)
+	if err != nil {
+		return "", err
+	}
+	var encrypted encryptedPQKeyJSONV4
+	if err := json.Unmarshal(keyjson, &encrypted); err != nil {
+		return "", err
+	}
+	if encrypted.Version != pqKeyVersion || encrypted.Algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return "", errors.New("account is not an ML-DSA-87 key")
+	}
+	if encrypted.ShieldedViewPublicKey == "" {
+		return "", errors.New("PQ keyfile predates public shielded identity metadata; export or update it locally first")
+	}
+	viewPublicKey, err := hex.DecodeString(encrypted.ShieldedViewPublicKey)
+	if err != nil {
+		return "", err
+	}
+	publicKey, err := hex.DecodeString(encrypted.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	viewSignature, err := hex.DecodeString(encrypted.ShieldedViewSignature)
+	if err != nil || !pqcrypto.VerifyShieldedViewBinding(publicKey, a.Address, viewPublicKey, viewSignature) {
+		return "", errors.New("PQ keyfile contains unauthenticated shielded identity metadata")
+	}
+	return pqcrypto.EncodeShieldedPaymentCode(chainID, a.Address, viewPublicKey)
 }
 
 // PreparePQMigration creates a new ML-DSA-87 account and returns the migration

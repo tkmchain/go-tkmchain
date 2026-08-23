@@ -87,9 +87,10 @@ Repeat password: {{.InputLine "foobar"}}
 Your new post-quantum key was generated
 `)
 	geth.ExpectRegexp(`
-Key algorithm:               ML-DSA-87
-Public address of the key:   0x[0-9a-fA-F]{40}
-Path of the secret key file: .*UTC--.+--[0-9a-f]{40}
+Key algorithm:           ML-DSA-87
+Public address:          0x[0-9a-fA-F]{40}
+Shielded payment code:   tkmshield2\.[A-Za-z0-9_-]+
+Path of secret key file: .*UTC--.+--[0-9a-f]{40}
 
 - You can share your public address with anyone. Others need it to interact with you.
 - You must NEVER share the secret key with anyone! The key controls access to your funds!

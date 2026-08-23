@@ -214,6 +214,11 @@ func (api *UIServerAPI) New(ctx context.Context) (common.Address, error) {
 	return api.extApi.newAccount()
 }
 
+// NewPQ creates an ML-DSA-87 account from the trusted Clef UI channel.
+func (api *UIServerAPI) NewPQ(ctx context.Context) (*PQAccountResult, error) {
+	return api.extApi.newPQAccount()
+}
+
 // Other methods to be added, not yet implemented are:
 // - Ruleset interaction: add rules, attest rulefiles
 // - Store metadata about accounts, e.g. naming of accounts

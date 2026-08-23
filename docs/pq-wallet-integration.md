@@ -50,6 +50,12 @@ Required top-level fields:
 - `id`: UUID.
 - `version`: `4`.
 
+Current keyfiles also include `shieldedViewPublicKey`, the public X25519
+viewing key used by `tkmshield2`, and `shieldedViewSignature`, an ML-DSA
+signature binding it to the PQ address and public key. Older version 4 files
+without these two public metadata fields remain decryptable and can be upgraded
+locally with `gtkm account update`.
+
 The encrypted payload is the 32-byte ML-DSA seed, not the expanded private key.
 Legacy ECDSA keyfiles remain `version: 3`.
 
@@ -100,6 +106,7 @@ The node exposes helper methods in the `tkm` namespace:
 - `importLegacyKeyfileWithPassphrase(keyfileJSON, passphrase)`
 - `accountAlgorithm(address)`
 - `accountAlgorithms()`
+- `pqShieldedPaymentCode(address)`
 - `pqMigrationData(publicKey)`
 - `pqMigrationGas(publicKey)`
 - `sendMigrationToPQWithPassphrase(args, publicKey, passphrase)`
@@ -110,6 +117,19 @@ The node exposes helper methods in the `tkm` namespace:
 
 `sendTransactionWithPassphrase` can sign and submit `type: 0x6` transactions
 when the selected account is a PQ account.
+
+`tkm_pqShieldedPaymentCode` is the safe public-identity helper: it verifies the
+ML-DSA binding stored in the local keyfile and returns a chain-bound
+`tkmshield2` code without accepting a passphrase or exposing either private
+key. New integrations should keep signing in Clef or the client. Clef exposes
+`account_newPQ` for account creation and accepts type `0x6` through
+`account_signTransaction`, including EVM contract creation/calls and TVM
+envelope calls.
+
+`gtkm account new` creates an ML-DSA-87 account and prints both `Public
+address: 0x...` and `Shielded payment code: tkmshield2....`. Run `gtkm account
+update 0x...` once to add authenticated shielded metadata to a PQ keyfile made
+by an older release.
 
 ## Migration
 

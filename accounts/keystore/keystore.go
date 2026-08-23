@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/event"
 )
 
@@ -507,6 +508,30 @@ func (ks *KeyStore) NewPQAccount(passphrase string) (accounts.Account, error) {
 	return ks.importPQKey(key, passphrase)
 }
 
+// NewPQAccountWithShieldedPaymentCode creates an ML-DSA-87 account and returns
+// its public tkmshield2 identity for the requested chain.
+func (ks *KeyStore) NewPQAccountWithShieldedPaymentCode(passphrase string, chainID *big.Int) (accounts.Account, string, error) {
+	key, err := NewPQKey()
+	if err != nil {
+		return accounts.Account{}, "", err
+	}
+	defer zeroPQKey(key)
+	code, err := pqcrypto.ShieldedPaymentCode(key.Seed, chainID, key.Address)
+	if err != nil {
+		return accounts.Account{}, "", err
+	}
+	ks.importMu.Lock()
+	defer ks.importMu.Unlock()
+	if ks.cache.hasAddress(key.Address) {
+		return accounts.Account{Address: key.Address}, "", ErrAccountAlreadyExists
+	}
+	account, err := ks.importPQKey(key, passphrase)
+	if err != nil {
+		return accounts.Account{}, "", err
+	}
+	return account, code, nil
+}
+
 // Export exports as a JSON key, encrypted with newPassphrase.
 func (ks *KeyStore) Export(a accounts.Account, passphrase, newPassphrase string) (keyJSON []byte, err error) {
 	_, key, err := ks.getDecryptedKey(a, passphrase)
@@ -639,6 +664,23 @@ func (ks *KeyStore) scryptParams() (int, int) {
 
 // Update changes the passphrase of an existing account.
 func (ks *KeyStore) Update(a accounts.Account, passphrase, newPassphrase string) error {
+	algorithm, err := ks.AccountAlgorithm(a)
+	if err != nil {
+		return err
+	}
+	if algorithm == pqcrypto.AlgorithmMLDSA87 {
+		a, key, err := ks.getDecryptedPQKey(a, passphrase)
+		if err != nil {
+			return err
+		}
+		defer zeroPQKey(key)
+		N, P := ks.scryptParams()
+		keyJSON, err := EncryptPQKey(key, newPassphrase, N, P)
+		if err != nil {
+			return err
+		}
+		return writeKeyFile(a.URL.Path, keyJSON)
+	}
 	a, key, err := ks.getDecryptedKey(a, passphrase)
 	if err != nil {
 		return err

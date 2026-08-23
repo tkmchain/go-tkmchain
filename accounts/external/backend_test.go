@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 )
@@ -81,6 +82,53 @@ func TestSignTxSupportsRandomXTx(t *testing.T) {
 	}
 }
 
+func TestSignTxSupportsPQTkmContractCreation(t *testing.T) {
+	key, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := types.SignNewPQTkmTx(key, types.NewQuantumSigner(big.NewInt(8979)), &types.PQTkmTx{
+		ChainID:   big.NewInt(8979),
+		Nonce:     8,
+		GasTipCap: big.NewInt(3),
+		GasFeeCap: big.NewInt(30),
+		Gas:       500000,
+		Value:     new(big.Int),
+		Data:      []byte{0x60, 0x00, 0x60, 0x00, 0xf3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service := &testAccountService{tx: tx}
+	server := rpc.NewServer()
+	if err := server.RegisterName("account", service); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop()
+	client := rpc.DialInProc(server)
+	defer client.Close()
+
+	signer := &ExternalSigner{client: client}
+	account := accounts.Account{Address: common.HexToAddress("0x0000000000000000000000000000000000000123")}
+	signed, err := signer.SignTx(account, tx, big.NewInt(8979))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signed.Type() != types.PQTkmTxType {
+		t.Fatalf("signed tx type = %d, want %d", signed.Type(), types.PQTkmTxType)
+	}
+	if service.args.Type == nil || uint64(*service.args.Type) != types.PQTkmTxType {
+		t.Fatalf("signer request type = %v, want %d", service.args.Type, types.PQTkmTxType)
+	}
+	if service.args.To != nil {
+		t.Fatalf("PQ contract creation recipient = %v, want nil", service.args.To)
+	}
+	if service.args.Input == nil || string(*service.args.Input) != string(tx.Data()) {
+		t.Fatalf("PQ contract creation data = %x, want %x", service.args.Input, tx.Data())
+	}
+}
+
 func TestSendTxArgsToTransactionSupportsRandomXTx(t *testing.T) {
 	txType := hexutil.Uint64(types.RandomXTxType)
 	args := apitypes.SendTxArgs{
@@ -96,5 +144,39 @@ func TestSendTxArgsToTransactionSupportsRandomXTx(t *testing.T) {
 	}
 	if tx.Type() != types.RandomXTxType {
 		t.Fatalf("tx type = %d, want %d", tx.Type(), types.RandomXTxType)
+	}
+}
+
+func TestSendTxArgsToTransactionSupportsPQTkmTx(t *testing.T) {
+	txType := hexutil.Uint64(types.PQTkmTxType)
+	input := hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xf3}
+	args := apitypes.SendTxArgs{
+		Type:                 &txType,
+		ChainID:              (*hexutil.Big)(big.NewInt(8979)),
+		Gas:                  500000,
+		MaxFeePerGas:         (*hexutil.Big)(big.NewInt(20)),
+		MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(2)),
+		Input:                &input,
+	}
+	tx, err := args.ToTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx.Type() != types.PQTkmTxType {
+		t.Fatalf("tx type = %d, want %d", tx.Type(), types.PQTkmTxType)
+	}
+	if tx.To() != nil {
+		t.Fatalf("contract creation recipient = %v, want nil", tx.To())
+	}
+	if string(tx.Data()) != string(input) {
+		t.Fatalf("contract creation data = %x, want %x", tx.Data(), input)
+	}
+}
+
+func TestSendTxArgsToTransactionRejectsIncompletePQTkmTx(t *testing.T) {
+	txType := hexutil.Uint64(types.PQTkmTxType)
+	args := apitypes.SendTxArgs{Type: &txType}
+	if _, err := args.ToTransaction(); err == nil {
+		t.Fatal("incomplete PQ transaction was accepted")
 	}
 }

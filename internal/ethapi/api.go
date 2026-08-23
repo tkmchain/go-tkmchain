@@ -1914,6 +1914,20 @@ func (api *TKMPaymentAPI) AccountAlgorithms() (map[common.Address]string, error)
 	return ks.AccountAlgorithms(), nil
 }
 
+// PQShieldedPaymentCode returns the public tkmshield2 code for a local PQ
+// account. The viewing private key, PQ seed, and keystore passphrase never
+// cross the RPC boundary.
+func (api *TKMPaymentAPI) PQShieldedPaymentCode(addr common.Address) (string, error) {
+	if api.b == nil || api.b.ChainConfig() == nil {
+		return "", errors.New("chain backend unavailable")
+	}
+	ks, err := api.keystore()
+	if err != nil {
+		return "", err
+	}
+	return ks.PQShieldedPaymentCode(accounts.Account{Address: addr}, api.b.ChainConfig().ChainID)
+}
+
 // PqMigrationData returns calldata that marks a legacy transfer as a migration
 // into the PQ account derived from the supplied ML-DSA-87 public key.
 func (api *TKMPaymentAPI) PqMigrationData(publicKey hexutil.Bytes) (hexutil.Bytes, error) {

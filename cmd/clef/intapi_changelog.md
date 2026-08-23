@@ -10,6 +10,11 @@ TL;DR: Given a version number MAJOR.MINOR.PATCH, increment the:
 
 Additional labels for pre-release and build metadata are available as extensions to the MAJOR.MINOR.PATCH format.
 
+### 7.1.0
+
+Added `clef_newPQ` for trusted UI-driven ML-DSA-87 account creation. The result
+contains the public address, algorithm, and `tkmshield2` payment code.
+
 ### 7.0.1 
 
 Added `clef_New` to the internal API callable from a UI.

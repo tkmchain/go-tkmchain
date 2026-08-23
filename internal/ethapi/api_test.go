@@ -122,6 +122,12 @@ func TestTKMPaymentPqRPCNames(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "method not found") {
 		t.Fatalf("tkm_pqMigrationGas registration error = %v", err)
 	}
+
+	var paymentCode string
+	err = client.Call(&paymentCode, "tkm_pqShieldedPaymentCode", common.Address{})
+	if err == nil || strings.Contains(err.Error(), "method not found") {
+		t.Fatalf("tkm_pqShieldedPaymentCode registration error = %v", err)
+	}
 }
 
 func TestTransaction_RoundTripRpcJSON(t *testing.T) {

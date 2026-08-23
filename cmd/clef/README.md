@@ -178,6 +178,40 @@ Response
 }
 ```
 
+### account_newPQ
+
+#### Create a new password-protected ML-DSA-87 account
+
+The signer generates and encrypts a post-quantum key, derives its public
+X25519 viewing identity locally, and returns a chain-bound shielded payment
+code. Clef never returns the PQ seed or private viewing key. Start Clef with the
+correct `--chainid` because the payment code commits to that chain.
+
+#### Arguments
+
+None
+
+#### Result
+
+- `address` [string]: public `0x` account address
+- `algorithm` [string]: `ML-DSA-87`
+- `shieldedPaymentCode` [string]: public `tkmshield2` payment code
+
+#### Sample call
+
+```json
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "method": "account_newPQ",
+  "params": []
+}
+```
+
+`account_signTransaction` accepts type `0x6` for this account. The same PQ
+envelope signs value transfers, EVM contract creation and calls, and calls to
+the TVM envelope precompile when TVM is active in the chain configuration.
+
 ### account_list
 
 #### List available accounts
