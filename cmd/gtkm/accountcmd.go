@@ -17,9 +17,12 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -27,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/urfave/cli/v2"
 )
@@ -156,6 +160,26 @@ changing your password is only possible interactively.
 `,
 			},
 			{
+				Name:      "shielded-view-key",
+				Usage:     "Export an account's shielded view-only key offline",
+				ArgsUsage: "[address]",
+				Action:    accountShieldedViewKey,
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.KeyStoreDirFlag,
+					utils.PasswordFileFlag,
+				},
+				Description: `
+    gtkm account shielded-view-key [address]
+
+Decrypts a local ML-DSA-87 keyfile and prints the matching mainnet tkmshield2
+payment code and X25519 view-only private key required by tkmexchange-go.
+
+This command runs entirely offline and does not modify the keyfile. If the
+keystore contains exactly one PQ account, the address can be omitted. The view
+key can recognize incoming shielded notes but cannot sign or spend funds.`,
+			},
+			{
 				Name:   "import",
 				Usage:  "Import a private key into a new account",
 				Action: accountImport,
@@ -208,6 +232,103 @@ func makeAccountManager(ctx *cli.Context) *accounts.Manager {
 		utils.Fatalf("Failed to set account manager backends: %v", err)
 	}
 	return am
+}
+
+type pqKeyfileMetadata struct {
+	Address   string `json:"address"`
+	Algorithm string `json:"algorithm"`
+	Version   int    `json:"version"`
+}
+
+func findPQKeyfile(keydir, requestedAddress string) (string, error) {
+	entries, err := os.ReadDir(keydir)
+	if err != nil {
+		return "", fmt.Errorf("read keystore directory: %w", err)
+	}
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(keydir, entry.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var metadata pqKeyfileMetadata
+		if json.Unmarshal(raw, &metadata) != nil || metadata.Version != 4 || metadata.Algorithm != pqcrypto.AlgorithmMLDSA87 || !common.IsHexAddress(metadata.Address) {
+			continue
+		}
+		if requestedAddress != "" && common.HexToAddress(metadata.Address) != common.HexToAddress(requestedAddress) {
+			continue
+		}
+		matches = append(matches, path)
+	}
+	if len(matches) == 0 {
+		if requestedAddress != "" {
+			return "", fmt.Errorf("no ML-DSA-87 keyfile for %s in %s", common.HexToAddress(requestedAddress).Hex(), keydir)
+		}
+		return "", fmt.Errorf("no ML-DSA-87 keyfiles found in %s", keydir)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("keystore contains %d ML-DSA-87 accounts; specify one public address as the command argument", len(matches))
+	}
+	return matches[0], nil
+}
+
+func accountShieldedViewKey(ctx *cli.Context) error {
+	if ctx.Args().Len() > 1 {
+		return errors.New("at most one account address may be specified")
+	}
+	requestedAddress := strings.TrimSpace(ctx.Args().First())
+	if requestedAddress != "" && !common.IsHexAddress(requestedAddress) {
+		return errors.New("address must be specified in hexadecimal form")
+	}
+	cfg := loadBaseConfig(ctx)
+	keydir, isEphemeral, err := cfg.Node.GetKeyStoreDir()
+	if err != nil {
+		return fmt.Errorf("get keystore directory: %w", err)
+	}
+	if isEphemeral {
+		return errors.New("can't use ephemeral directory as keystore path")
+	}
+	keyfile, err := findPQKeyfile(keydir, requestedAddress)
+	if err != nil {
+		return err
+	}
+	keyJSON, err := os.ReadFile(keyfile)
+	if err != nil {
+		return fmt.Errorf("read keyfile: %w", err)
+	}
+	password, fromFile := readPasswordFromFile(ctx.Path(utils.PasswordFileFlag.Name))
+	var key *keystore.PQKey
+	for attempt := 0; attempt < 3; attempt++ {
+		if !fromFile {
+			password = utils.GetPassPhrase(fmt.Sprintf("Unlock PQ account to export its view-only key | Attempt %d/3", attempt+1), false)
+		}
+		key, err = keystore.DecryptPQKey(keyJSON, password)
+		if err == nil || fromFile || !errors.Is(err, keystore.ErrDecrypt) {
+			break
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("decrypt PQ keyfile: %w", err)
+	}
+	defer clear(key.Seed)
+	viewPrivateKey, err := pqcrypto.ShieldedViewPrivateKey(key.Seed)
+	if err != nil {
+		return fmt.Errorf("derive shielded view key: %w", err)
+	}
+	defer clear(viewPrivateKey)
+	paymentCode, err := pqcrypto.ShieldedPaymentCode(key.Seed, params.MainnetChainConfig.ChainID, key.Address)
+	if err != nil {
+		return fmt.Errorf("derive shielded payment code: %w", err)
+	}
+	fmt.Printf("Public address:                    %s\n", key.Address.Hex())
+	fmt.Printf("TKM_SHIELDED_SETTLEMENT_ADDRESS:  %s\n", paymentCode)
+	fmt.Printf("TKM_SHIELDED_VIEW_PRIVATE_KEY:     %s\n", hex.EncodeToString(viewPrivateKey))
+	fmt.Println("\nKeep the view-only key private. It can read incoming shielded payment details but cannot sign or spend funds.")
+	return nil
 }
 
 func accountList(ctx *cli.Context) error {

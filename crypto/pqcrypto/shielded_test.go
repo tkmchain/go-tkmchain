@@ -23,6 +23,14 @@ func TestShieldedPaymentCodeMatchesWebWallet(t *testing.T) {
 	if have, want := hex.EncodeToString(viewPublicKey), "37895750d443bea81eb17a07e247bdccd6578b60f2ccaca22fe10713e9cf3d78"; have != want {
 		t.Fatalf("viewing public key = %s, want %s", have, want)
 	}
+	viewPrivateKey, err := ShieldedViewPrivateKey(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(viewPrivateKey)
+	if have, want := hex.EncodeToString(viewPrivateKey), "1f5fac0ccd5e66e1094d61510cc6b4dd61612442da69b15cd8c0d76415efccf3"; have != want {
+		t.Fatalf("viewing private key = %s, want %s", have, want)
+	}
 	code, err := ShieldedPaymentCode(seed, big.NewInt(8979), common.HexToAddress("0x1111111111111111111111111111111111111111"))
 	if err != nil {
 		t.Fatal(err)
