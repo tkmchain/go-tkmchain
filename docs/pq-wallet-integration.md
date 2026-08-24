@@ -131,6 +131,18 @@ address: 0x...` and `Shielded payment code: tkmshield2....`. Run `gtkm account
 update 0x...` once to add authenticated shielded metadata to a PQ keyfile made
 by an older release.
 
+An exchange operator that needs view-only deposit scanning can export the
+matching X25519 key locally without enabling RPC or exposing the ML-DSA seed:
+
+```bash
+gtkm account shielded-view-key --keystore /path/to/keystore [0xPQAddress]
+```
+
+The address may be omitted when the directory contains exactly one PQ
+keyfile. The command prompts for the keyfile password and prints matching
+`TKM_SHIELDED_SETTLEMENT_ADDRESS` and `TKM_SHIELDED_VIEW_PRIVATE_KEY` values.
+The view key recognizes encrypted incoming notes but cannot sign or spend.
+
 ## Migration
 
 Before `2026-08-10 06:00:00 UTC`, users should:

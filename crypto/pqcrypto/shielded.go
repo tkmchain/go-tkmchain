@@ -37,14 +37,25 @@ type shieldedPaymentCodePayload struct {
 	ViewPublicKey string `json:"k"`
 }
 
-// ShieldedViewPublicKey derives the public X25519 viewing key used by the web
-// wallet from an ML-DSA seed. The private viewing key is cleared before return.
-func ShieldedViewPublicKey(seed []byte) ([]byte, error) {
+// ShieldedViewPrivateKey derives the private X25519 viewing key used to scan
+// shielded notes. It does not permit ML-DSA signing or shielded spending, but
+// callers must still treat it as secret viewing material and clear it after use.
+func ShieldedViewPrivateKey(seed []byte) ([]byte, error) {
 	if len(seed) != MLDSA87SeedSize {
 		return nil, ErrInvalidPrivateKey
 	}
 	viewPrivateKey := make([]byte, 32)
 	if _, err := io.ReadFull(hkdf.New(sha256.New, seed, []byte(shieldedViewSalt), []byte(shieldedViewInfo)), viewPrivateKey); err != nil {
+		return nil, err
+	}
+	return viewPrivateKey, nil
+}
+
+// ShieldedViewPublicKey derives the public X25519 viewing key used by the web
+// wallet from an ML-DSA seed. The private viewing key is cleared before return.
+func ShieldedViewPublicKey(seed []byte) ([]byte, error) {
+	viewPrivateKey, err := ShieldedViewPrivateKey(seed)
+	if err != nil {
 		return nil, err
 	}
 	defer clear(viewPrivateKey)

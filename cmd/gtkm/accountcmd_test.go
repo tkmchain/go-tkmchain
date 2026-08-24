@@ -17,12 +17,16 @@
 package main
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/cespare/cp"
+	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // These tests are 'smoke tests' for the account related
@@ -96,6 +100,44 @@ Path of secret key file: .*UTC--.+--[0-9a-f]{40}
 - You must NEVER share the secret key with anyone! The key controls access to your funds!
 - You must BACKUP your key file! Without the key, it's impossible to access account funds!
 - You must REMEMBER your password! Without the password, it's impossible to decrypt the key!
+`)
+}
+
+func TestAccountShieldedViewKey(t *testing.T) {
+	t.Parallel()
+	keydir := filepath.Join(t.TempDir(), "keystore")
+	passwordFile := filepath.Join(t.TempDir(), "password.txt")
+	if err := os.WriteFile(passwordFile, []byte("view-password\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ks := keystore.NewKeyStore(keydir, keystore.LightScryptN, keystore.LightScryptP)
+	account, paymentCode, err := ks.NewPQAccountWithShieldedPaymentCode("view-password", params.MainnetChainConfig.ChainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := keystore.DecryptPQKey(keyJSON, "view-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(key.Seed)
+	viewPrivateKey, err := pqcrypto.ShieldedViewPrivateKey(key.Seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(viewPrivateKey)
+
+	geth := runGeth(t, "account", "shielded-view-key", "--keystore", keydir, "--password", passwordFile)
+	defer geth.ExpectExit()
+	geth.Expect(`
+Public address:                    ` + account.Address.Hex() + `
+TKM_SHIELDED_SETTLEMENT_ADDRESS:  ` + paymentCode + `
+TKM_SHIELDED_VIEW_PRIVATE_KEY:     ` + hex.EncodeToString(viewPrivateKey) + `
+
+Keep the view-only key private. It can read incoming shielded payment details but cannot sign or spend funds.
 `)
 }
 
