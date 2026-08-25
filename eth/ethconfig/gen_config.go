@@ -62,14 +62,18 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCGasCap               uint64
 		RPCEVMTimeout           time.Duration
 		RPCTxFeeCap             float64
-		OverrideOsaka           *uint64       `toml:",omitempty"`
-		OverrideBPO1            *uint64       `toml:",omitempty"`
-		OverrideBPO2            *uint64       `toml:",omitempty"`
-		OverrideUBT             *uint64       `toml:",omitempty"`
-		RandomXMinerThreads     int           `toml:",omitempty"`
-		TxSyncDefaultTimeout    time.Duration `toml:",omitempty"`
-		TxSyncMaxTimeout        time.Duration `toml:",omitempty"`
-		RangeLimit              uint64        `toml:",omitempty"`
+		OverrideOsaka           *uint64          `toml:",omitempty"`
+		OverrideBPO1            *uint64          `toml:",omitempty"`
+		OverrideBPO2            *uint64          `toml:",omitempty"`
+		OverrideUBT             *uint64          `toml:",omitempty"`
+		MainKingAddress         common.Address   `toml:",omitempty"`
+		KingAddresses           []common.Address `toml:",omitempty"`
+		RandomXMinerThreads     int              `toml:",omitempty"`
+		TxSyncDefaultTimeout    time.Duration    `toml:",omitempty"`
+		TxSyncMaxTimeout        time.Duration    `toml:",omitempty"`
+		RangeLimit              uint64           `toml:",omitempty"`
+		RandomXRAMCache         bool             `toml:",omitempty"`
+		RandomXNoPersist        bool             `toml:",omitempty"`
 	}
 	var enc Config
 	enc.Genesis = c.Genesis
@@ -121,10 +125,14 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.OverrideBPO1 = c.OverrideBPO1
 	enc.OverrideBPO2 = c.OverrideBPO2
 	enc.OverrideUBT = c.OverrideUBT
+	enc.MainKingAddress = c.MainKingAddress
+	enc.KingAddresses = c.KingAddresses
 	enc.RandomXMinerThreads = c.RandomXMinerThreads
 	enc.TxSyncDefaultTimeout = c.TxSyncDefaultTimeout
 	enc.TxSyncMaxTimeout = c.TxSyncMaxTimeout
 	enc.RangeLimit = c.RangeLimit
+	enc.RandomXRAMCache = c.RandomXRAMCache
+	enc.RandomXNoPersist = c.RandomXNoPersist
 	return &enc, nil
 }
 
@@ -176,14 +184,18 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCGasCap               *uint64
 		RPCEVMTimeout           *time.Duration
 		RPCTxFeeCap             *float64
-		OverrideOsaka           *uint64        `toml:",omitempty"`
-		OverrideBPO1            *uint64        `toml:",omitempty"`
-		OverrideBPO2            *uint64        `toml:",omitempty"`
-		OverrideUBT             *uint64        `toml:",omitempty"`
-		RandomXMinerThreads     *int           `toml:",omitempty"`
-		TxSyncDefaultTimeout    *time.Duration `toml:",omitempty"`
-		TxSyncMaxTimeout        *time.Duration `toml:",omitempty"`
-		RangeLimit              *uint64        `toml:",omitempty"`
+		OverrideOsaka           *uint64          `toml:",omitempty"`
+		OverrideBPO1            *uint64          `toml:",omitempty"`
+		OverrideBPO2            *uint64          `toml:",omitempty"`
+		OverrideUBT             *uint64          `toml:",omitempty"`
+		MainKingAddress         *common.Address  `toml:",omitempty"`
+		KingAddresses           []common.Address `toml:",omitempty"`
+		RandomXMinerThreads     *int             `toml:",omitempty"`
+		TxSyncDefaultTimeout    *time.Duration   `toml:",omitempty"`
+		TxSyncMaxTimeout        *time.Duration   `toml:",omitempty"`
+		RangeLimit              *uint64          `toml:",omitempty"`
+		RandomXRAMCache         *bool            `toml:",omitempty"`
+		RandomXNoPersist        *bool            `toml:",omitempty"`
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -336,6 +348,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.OverrideUBT != nil {
 		c.OverrideUBT = dec.OverrideUBT
 	}
+	if dec.MainKingAddress != nil {
+		c.MainKingAddress = *dec.MainKingAddress
+	}
+	if dec.KingAddresses != nil {
+		c.KingAddresses = dec.KingAddresses
+	}
 	if dec.RandomXMinerThreads != nil {
 		c.RandomXMinerThreads = *dec.RandomXMinerThreads
 	}
@@ -347,6 +365,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.RangeLimit != nil {
 		c.RangeLimit = *dec.RangeLimit
+	}
+	if dec.RandomXRAMCache != nil {
+		c.RandomXRAMCache = *dec.RandomXRAMCache
+	}
+	if dec.RandomXNoPersist != nil {
+		c.RandomXNoPersist = *dec.RandomXNoPersist
 	}
 	return nil
 }
