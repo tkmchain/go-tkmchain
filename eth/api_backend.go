@@ -406,7 +406,13 @@ func (b *EthAPIBackend) TxIndexDone() bool {
 }
 
 func (b *EthAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return b.eth.txPool.PoolNonce(addr), nil
+	nonce := b.eth.txPool.PoolNonce(addr)
+	if b.eth.transactionBucket != nil {
+		if reserved := b.eth.transactionBucket.reservedNonce(addr); reserved > nonce {
+			nonce = reserved
+		}
+	}
+	return nonce, nil
 }
 
 func (b *EthAPIBackend) Stats() (runnable int, blocked int) {

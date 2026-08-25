@@ -135,6 +135,7 @@ type Ethereum struct {
 	privacyActivations map[common.Address]privacyActivationInfo
 	privacyCommitments map[common.Hash]privacyCommitmentInfo
 	privacyNullifiers  map[common.Hash]privacyNullifierInfo
+	transactionBucket  *transactionBucket
 	miningStartPending bool
 	miningStartPool    bool
 	phoneService       *TkmPhoneService
@@ -506,6 +507,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
+	eth.transactionBucket = newTransactionBucket(ethereumTransactionBucketBackend{eth: eth}, privacyDb)
 
 	// Start RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, networkID)
@@ -1645,6 +1647,7 @@ func (s *Ethereum) Start() error {
 	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() })
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
+	s.transactionBucket.start()
 
 	log.Info("Tkmchain backend started with RandomX consensus")
 	return nil
@@ -1776,6 +1779,7 @@ func (s *Ethereum) Stop() error {
 	s.closeFilterMaps <- ch
 	<-ch
 	s.filterMaps.Stop()
+	s.transactionBucket.stop()
 	s.txPool.Close()
 	s.blockchain.Stop()
 	s.engine.Close()
