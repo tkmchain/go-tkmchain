@@ -260,6 +260,9 @@ func init() {
 		bintrieCommand,
 		// See tkmphonecmd.go
 		tkmPhoneCommand,
+		// See domaincmd.go
+		domainCommand,
+		emailVMCommand,
 		smartAccountCommand,
 		// See supplycmd.go
 		supplyCommand,

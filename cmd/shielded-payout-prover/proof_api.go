@@ -19,6 +19,7 @@ import (
 
 type BuildTransferRequest struct {
 	RequestID        string       `json:"requestId"`
+	ApplicationData  string       `json:"applicationData,omitempty"`
 	From             string       `json:"from"`
 	To               string       `json:"to"`
 	AmountWei        string       `json:"amountWei"`
@@ -30,14 +31,15 @@ type BuildTransferRequest struct {
 }
 
 type BuildWithdrawalRequest struct {
-	RequestID     string       `json:"requestId"`
-	From          string       `json:"from"`
-	To            string       `json:"to"`
-	AmountWei     string       `json:"amountWei"`
-	ChangeViewKey string       `json:"changeViewKey"`
-	Nonce         string       `json:"nonce,omitempty"`
-	GasPriceWei   string       `json:"gasPriceWei,omitempty"`
-	Note          ShieldedNote `json:"note"`
+	RequestID       string       `json:"requestId"`
+	ApplicationData string       `json:"applicationData,omitempty"`
+	From            string       `json:"from"`
+	To              string       `json:"to"`
+	AmountWei       string       `json:"amountWei"`
+	ChangeViewKey   string       `json:"changeViewKey"`
+	Nonce           string       `json:"nonce,omitempty"`
+	GasPriceWei     string       `json:"gasPriceWei,omitempty"`
+	Note            ShieldedNote `json:"note"`
 }
 
 type unsignedPQTransaction struct {
@@ -270,6 +272,9 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 	if len(strings.TrimSpace(req.RequestID)) < 8 {
 		return BuildShieldedResponse{}, errors.New("requestId must contain at least 8 characters")
 	}
+	if _, err := shieldedSpendData(req.RequestID, req.ApplicationData); err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	if !isValidAddress(req.From) || !isValidAddress(req.To) {
 		return BuildShieldedResponse{}, errors.New("valid from and to addresses are required")
 	}
@@ -295,6 +300,7 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 	}
 	payout := PayoutRequest{
 		RequestID:        req.RequestID,
+		ApplicationData:  req.ApplicationData,
 		PoolWallet:       req.From,
 		To:               req.To,
 		AmountWei:        amountWei.String(),
@@ -357,6 +363,9 @@ func (p *Prover) BuildWithdrawal(ctx context.Context, req BuildWithdrawalRequest
 	if len(strings.TrimSpace(req.RequestID)) < 8 {
 		return BuildShieldedResponse{}, errors.New("requestId must contain at least 8 characters")
 	}
+	if _, err := shieldedSpendData(req.RequestID, req.ApplicationData); err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	if !isValidAddress(req.From) || !isValidAddress(req.To) {
 		return BuildShieldedResponse{}, errors.New("valid from and withdrawal recipient addresses are required")
 	}
@@ -375,6 +384,20 @@ func (p *Prover) BuildWithdrawal(ctx context.Context, req BuildWithdrawalRequest
 		return BuildShieldedResponse{}, errors.New("shielded withdrawals require the recipient-bound V2 circuit")
 	}
 	return p.buildWithdrawalV2(ctx, req, amountWei, chainID, nonce, gasPrice)
+}
+
+func shieldedSpendData(requestID string, applicationData string) ([]byte, error) {
+	if strings.TrimSpace(applicationData) == "" {
+		return []byte(requestID), nil
+	}
+	data, err := hexutil.Decode(strings.TrimSpace(applicationData))
+	if err != nil {
+		return nil, errors.New("applicationData must be 0x-prefixed hexadecimal data")
+	}
+	if len(data) == 0 || len(data) > 12*1024 {
+		return nil, errors.New("applicationData must contain between 1 and 12288 bytes")
+	}
+	return data, nil
 }
 
 func (p *Prover) proofTransactionContext(ctx context.Context, from, nonceRaw, gasPriceRaw string) (*big.Int, uint64, *big.Int, error) {

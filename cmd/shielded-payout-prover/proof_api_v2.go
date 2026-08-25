@@ -42,6 +42,10 @@ func (p *Prover) buildDepositV2(ctx context.Context, req DepositRequest, amountW
 	if err != nil {
 		return BuildShieldedResponse{}, err
 	}
+	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	sender := common.HexToAddress(req.From)
 	recipient := sender
 	if strings.TrimSpace(req.To) != "" {
@@ -85,7 +89,7 @@ func (p *Prover) buildDepositV2(ctx context.Context, req DepositRequest, amountW
 		Spends: []core.ShieldedSpend{{
 			Nullifier:          common.Hash{},
 			Anchor:             common.Hash{},
-			EncryptedSpendData: []byte(req.RequestID),
+			EncryptedSpendData: spendData,
 		}},
 		Outputs:           outputs,
 		BalanceCommitment: hashFromField(balance),
@@ -163,6 +167,10 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		return BuildShieldedResponse{}, errors.New("recipient-bound V2 proving key is not ready")
 	}
 	recipientViewKey, err := parseViewPublicKey(req.RecipientViewKey)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
+	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
 	if err != nil {
 		return BuildShieldedResponse{}, err
 	}
@@ -257,7 +265,7 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 		Spends: []core.ShieldedSpend{{
 			Nullifier:          hashFromField(nullifier),
 			Anchor:             hashFromField(anchor),
-			EncryptedSpendData: []byte(req.RequestID),
+			EncryptedSpendData: spendData,
 		}},
 		Outputs:           outputs,
 		BalanceCommitment: hashFromField(balance),
@@ -347,6 +355,10 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 }
 
 func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalRequest, amountWei, chainID *big.Int, nonce uint64, gasPrice *big.Int) (BuildShieldedResponse, error) {
+	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
+	if err != nil {
+		return BuildShieldedResponse{}, err
+	}
 	if p.pkV2 == nil || p.r1csV2 == nil {
 		return BuildShieldedResponse{}, errors.New("recipient-bound V2 proving key is not ready")
 	}
@@ -431,7 +443,7 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 		Spends: []core.ShieldedSpend{{
 			Nullifier:          hashFromField(nullifier),
 			Anchor:             hashFromField(anchor),
-			EncryptedSpendData: []byte(req.RequestID),
+			EncryptedSpendData: spendData,
 		}},
 		Outputs:             outputs,
 		BalanceCommitment:   hashFromField(balance),

@@ -139,6 +139,8 @@ type Ethereum struct {
 	miningStartPool    bool
 	phoneService       *TkmPhoneService
 	phoneDir           string
+	emailService       *EmailVMService
+	emailDir           string
 	governanceSvc      *GovernanceService
 	governanceDir      string
 }
@@ -309,6 +311,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		privacyCommitments: make(map[common.Hash]privacyCommitmentInfo),
 		privacyNullifiers:  make(map[common.Hash]privacyNullifierInfo),
 		phoneDir:           stack.ResolvePath("phone"),
+		emailDir:           stack.ResolvePath("emailvm"),
 		governanceDir:      stack.ResolvePath("governance"),
 	}
 	if err := eth.loadCheckpoints(); err != nil {
@@ -586,6 +589,14 @@ func (s *Ethereum) APIs() []rpc.API {
 		{
 			Namespace: "tkmphone",
 			Service:   NewTkmPhoneAPI(s),
+		},
+		{
+			Namespace: "tkmdomain",
+			Service:   NewTkmDomainAPI(s),
+		},
+		{
+			Namespace: "emailvm",
+			Service:   NewEmailVMAPI(s),
 		},
 		{
 			Namespace: "tkmgov",

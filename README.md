@@ -526,6 +526,44 @@ For the full operational guide, see [docs/tkmphone.md](./docs/tkmphone.md). Rele
 
 ---
 
+## EmailVM and TKM Domains
+
+`gtkm` provides canonical shielded domain and encrypted-email infrastructure
+through the `tkmdomain` and `emailvm` RPC namespaces. The shared namespace is
+`username@tkm`; custom operators can register names such as `@john` and buy a
+fixed number of subscriber units.
+
+The first canonical PQ-signed shielded claim creates `@tkm` and permanently
+sets its signer as the super address. All operator registration and capacity
+fees go to that address; mailbox sales under custom domains go to the
+operator's configurable payout address.
+
+- Custom domain registration: **30,000 TKM**.
+- Subscriber capacity: **100 TKM per unit**.
+- A 1,000-unit custom domain: **130,000 TKM total**.
+- One mailbox under `@tkm` or an operator domain: **100 TKM**.
+
+From `gtkm attach`:
+
+```javascript
+domain.claimSuper() // only while @tkm is unclaimed; first canonical claim wins
+domain.operator(1000, "130000", "john")
+domain.buy("alice", "john")
+domain.buy("alice", "tkm")
+domain.pending()
+```
+
+These calls return shielded action plans; private notes, proofs, keys, and PQ
+signatures remain in the local wallet. Large fees are split into parallel
+proof-backed installments and activate only after the exact canonical total is
+mined. Encrypted EmailVM messages use the same proof-bound application metadata,
+so no new hardfork or proving ceremony is required.
+
+See [docs/emailvm.md](./docs/emailvm.md) for RPC, CLI, prover, privacy, indexing,
+and operator details.
+
+---
+
 ## ⛏️ RandomX (RX) Mining
 
 Tkmchain uses **RandomX PoW** - an ASIC-resistant mining algorithm optimized for CPUs:

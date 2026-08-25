@@ -24,6 +24,8 @@ var Modules = map[string]string{
 	"eth":            EthJs,
 	"tkm":            EthJs,
 	"tkmphone":       TkmPhoneJs,
+	"tkmdomain":      TkmDomainJs,
+	"emailvm":        EmailVMJs,
 	"tkminstitution": TkmInstitutionJs,
 	"tkmaccount":     TkmAccountJs,
 	"miner":          MinerJs,
@@ -73,6 +75,45 @@ web3._extend({
 			call: 'mainking_addCheckpoint',
 			params: 2
 		})
+	]
+});
+`
+
+const TkmDomainJs = `
+web3._extend({
+	property: 'tkmdomain',
+	methods: [
+		new web3._extend.Method({name: 'status', call: 'tkmdomain_status', params: 0}),
+		new web3._extend.Method({name: 'registrationFee', call: 'tkmdomain_registrationFee', params: 0}),
+		new web3._extend.Method({name: 'subscriberUnitPrice', call: 'tkmdomain_subscriberUnitPrice', params: 0}),
+		new web3._extend.Method({name: 'superAddress', call: 'tkmdomain_superAddress', params: 0}),
+		new web3._extend.Method({name: 'claimSuper', call: 'tkmdomain_claimSuper', params: 0}),
+		new web3._extend.Method({name: 'quote', call: 'tkmdomain_quote', params: 1}),
+		new web3._extend.Method({name: 'operator', call: 'tkmdomain_operator', params: 3}),
+		new web3._extend.Method({name: 'operatorWithPayout', call: 'tkmdomain_operatorWithPayout', params: 4}),
+		new web3._extend.Method({name: 'setPayout', call: 'tkmdomain_setPayout', params: 2}),
+		new web3._extend.Method({name: 'buy', call: 'tkmdomain_buy', params: 2}),
+		new web3._extend.Method({name: 'expand', call: 'tkmdomain_expand', params: 3}),
+		new web3._extend.Method({name: 'get', call: 'tkmdomain_domain', params: 1}),
+		new web3._extend.Method({name: 'list', call: 'tkmdomain_domains', params: 0}),
+		new web3._extend.Method({name: 'mailbox', call: 'tkmdomain_mailbox', params: 1}),
+		new web3._extend.Method({name: 'mailboxes', call: 'tkmdomain_mailboxes', params: 1}),
+		new web3._extend.Method({name: 'pending', call: 'tkmdomain_pending', params: 0}),
+		new web3._extend.Method({name: 'sync', call: 'tkmdomain_sync', params: 0})
+	]
+});
+`
+
+const EmailVMJs = `
+web3._extend({
+	property: 'emailvm',
+	methods: [
+		new web3._extend.Method({name: 'status', call: 'emailvm_status', params: 0}),
+		new web3._extend.Method({name: 'publishKey', call: 'emailvm_publishKey', params: 2}),
+		new web3._extend.Method({name: 'send', call: 'emailvm_send', params: 4}),
+		new web3._extend.Method({name: 'inbox', call: 'emailvm_inbox', params: 1}),
+		new web3._extend.Method({name: 'outbox', call: 'emailvm_outbox', params: 1}),
+		new web3._extend.Method({name: 'message', call: 'emailvm_message', params: 1})
 	]
 });
 `

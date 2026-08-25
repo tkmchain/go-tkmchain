@@ -223,6 +223,8 @@ func (c *Console) initExtensions() error {
 		alias := api
 		if api == "eth" || api == "tkm" {
 			alias = "tkm"
+		} else if api == "tkmdomain" {
+			alias = "domain"
 		}
 		aliases[alias] = api
 		if file, ok := web3ext.Modules[api]; ok {

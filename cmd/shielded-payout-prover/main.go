@@ -69,6 +69,7 @@ type Config struct {
 
 type PayoutRequest struct {
 	RequestID             string    `json:"requestId"`
+	ApplicationData       string    `json:"applicationData,omitempty"`
 	PoolWallet            string    `json:"poolWallet"`
 	To                    string    `json:"to"`
 	AmountAntd            float64   `json:"amountAntd"`
@@ -91,6 +92,7 @@ type PayoutResponse struct {
 
 type DepositRequest struct {
 	RequestID        string    `json:"requestId"`
+	ApplicationData  string    `json:"applicationData,omitempty"`
 	AmountAntd       float64   `json:"amountAntd"`
 	AmountWei        string    `json:"amountWei"`
 	AssetID          string    `json:"assetId,omitempty"`
@@ -784,6 +786,10 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 }
 
 func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, assetID string, ownerSecret string, chainID, blockNumber *big.Int) (draftEnvelope, *shielded.SpendCircuit, ShieldedNote, common.Hash, error) {
+	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
+	if err != nil {
+		return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, err
+	}
 	asset, err := parseFieldElement(assetID)
 	if err != nil {
 		return draftEnvelope{}, nil, ShieldedNote{}, common.Hash{}, fmt.Errorf("invalid assetId: %w", err)
@@ -859,7 +865,7 @@ func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, asset
 	envelope := &core.ShieldedTransaction{
 		Version: 1,
 		Spends: []core.ShieldedSpend{{
-			EncryptedSpendData: []byte(req.RequestID),
+			EncryptedSpendData: spendData,
 		}},
 		Outputs:           outputs,
 		BalanceCommitment: hashFromField(balanceCommitment),
@@ -1015,6 +1021,10 @@ type draftEnvelope struct {
 }
 
 func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amountWei *big.Int, chainID, blockNumber *big.Int, nonce uint64, gasPrice *big.Int) (draftEnvelope, *shielded.SpendCircuit, error) {
+	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
+	if err != nil {
+		return draftEnvelope{}, nil, err
+	}
 	noteValue, ok := parseDecimalBig(note.NoteValueWei)
 	if !ok || noteValue.Sign() <= 0 || noteValue.BitLen() > 64 {
 		return draftEnvelope{}, nil, fmt.Errorf("note %s has invalid uint64 noteValueWei", note.ID)
@@ -1138,7 +1148,7 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 		Spends: []core.ShieldedSpend{{
 			Nullifier:          hashFromField(nullifier),
 			Anchor:             hashFromField(anchor),
-			EncryptedSpendData: []byte(req.RequestID),
+			EncryptedSpendData: spendData,
 		}},
 		Outputs:           outputs,
 		BalanceCommitment: hashFromField(balanceCommitment),

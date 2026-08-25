@@ -1,0 +1,140 @@
+package eth
+
+import (
+	"encoding/hex"
+	"math/big"
+	"testing"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/params"
+)
+
+func TestEmailVMDomainEconomicsAndPlan(t *testing.T) {
+	quote, err := emailVMDomainQuote(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := new(big.Int).Mul(big.NewInt(130_000), big.NewInt(params.Ether))
+	if quote.Cmp(want) != 0 {
+		t.Fatalf("quote = %s, want %s", quote, want)
+	}
+	mainKing := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	service := &EmailVMService{}
+	service.resetLocked()
+	service.superAddress = mainKing
+	api := &TkmDomainAPI{service: service}
+	plan, err := api.Operator(1000, "130000", "John")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Domain != "john" || plan.Recipient != mainKing || plan.AmountWei.ToInt().Cmp(want) != 0 || uint64(plan.PartCount) <= 1 {
+		t.Fatalf("unexpected operator plan: %+v", plan)
+	}
+	action, ok := decodeEmailVMAction(plan.ApplicationData)
+	if !ok || action.Kind != "operator" || action.Domain != "john" || action.Units != 1000 {
+		t.Fatalf("unexpected action: %+v, ok=%v", action, ok)
+	}
+	if _, err := api.Operator(1000, "129999", "john"); err == nil {
+		t.Fatal("incorrect explicit amount was accepted")
+	}
+	payout := common.HexToAddress("0x4000000000000000000000000000000000000004")
+	plan, err = api.OperatorWithPayout(1, "30100", "michael", payout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, ok = decodeEmailVMAction(plan.ApplicationData)
+	if !ok || action.Payout != payout.Hex() {
+		t.Fatalf("operator payout was not bound into the plan: %+v", action)
+	}
+}
+
+func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
+	mainKing := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	operator := common.HexToAddress("0x2000000000000000000000000000000000000002")
+	buyer := common.HexToAddress("0x3000000000000000000000000000000000000003")
+	service := &EmailVMService{}
+	service.resetLocked()
+	service.applySuperLocked(emailVMAction{Domain: "tkm"}, mainKing, common.HexToHash("0x01"), 1)
+	service.applySuperLocked(emailVMAction{Domain: "tkm"}, buyer, common.HexToHash("0x02"), 2)
+	if service.superAddress != mainKing {
+		t.Fatal("the first canonical @tkm claimant did not remain super address")
+	}
+
+	payout := common.HexToAddress("0x4000000000000000000000000000000000000004")
+	action := emailVMAction{Version: emailVMActionVersion, Kind: "operator", Domain: "john", Units: 1, Payout: payout.Hex()}
+	remaining, err := emailVMDomainQuote(action.Units)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := new(big.Int).SetUint64(emailVMMaxWithdrawalPartWei)
+	var index uint64
+	for remaining.Sign() > 0 {
+		value := new(big.Int).Set(part)
+		if value.Cmp(remaining) > 0 {
+			value.Set(remaining)
+		}
+		index++
+		envelope := &core.ShieldedTransaction{WithdrawalRecipient: mainKing, WithdrawalValue: value}
+		service.applyOperatorLocked(action, envelope, operator, common.BigToHash(new(big.Int).SetUint64(index)), index)
+		remaining.Sub(remaining, value)
+	}
+	domain, ok := service.domains["john"]
+	if !ok || domain.Operator != operator || domain.PayoutAddress != payout || uint64(domain.TotalUnits) != 1 || uint64(domain.AvailableUnits) != 1 || len(domain.PaymentTxs) < 2 {
+		t.Fatalf("domain was not activated after exact installments: %+v", domain)
+	}
+
+	buy := emailVMAction{Version: emailVMActionVersion, Kind: "buy", Domain: "john", Username: "alice"}
+	remaining.Set(emailVMSubscriberUnitFee)
+	for remaining.Sign() > 0 {
+		value := new(big.Int).Set(part)
+		if value.Cmp(remaining) > 0 {
+			value.Set(remaining)
+		}
+		index++
+		envelope := &core.ShieldedTransaction{WithdrawalRecipient: payout, WithdrawalValue: value}
+		service.applyMailboxPurchaseLocked(buy, envelope, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index)
+		remaining.Sub(remaining, value)
+	}
+	mailbox, ok := service.mailboxes["alice@john"]
+	if !ok || mailbox.Owner != buyer || uint64(service.domains["john"].AvailableUnits) != 0 {
+		t.Fatalf("mailbox was not activated: %+v", mailbox)
+	}
+	newPayout := common.HexToAddress("0x5000000000000000000000000000000000000005")
+	index++
+	service.applyPayoutLocked(emailVMAction{Domain: "john", Payout: newPayout.Hex()}, operator, common.BigToHash(new(big.Int).SetUint64(index)), index)
+	if service.domains["john"].PayoutAddress != newPayout {
+		t.Fatal("operator payout update was not applied")
+	}
+	service.applyPayoutLocked(emailVMAction{Domain: "john", Payout: buyer.Hex()}, buyer, common.BigToHash(new(big.Int).SetUint64(index+1)), index+1)
+	if service.domains["john"].PayoutAddress != newPayout {
+		t.Fatal("non-owner changed the operator payout address")
+	}
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	index++
+	service.applyMailboxKeyLocked(emailVMAction{Mailbox: "alice@john", Key: hex.EncodeToString(key)}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index)
+	if got := service.mailboxes["alice@john"].EncryptionKey; len(got) != len(key) {
+		t.Fatalf("published key length = %d", len(got))
+	}
+	index++
+	service.applyMessageLocked(emailVMAction{From: "alice@john", To: "alice@john", Ciphertext: "010203", Nonce: "000102030405060708090a0b"}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index, 1234)
+	if len(service.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(service.messages))
+	}
+}
+
+func TestEmailVMNamesAreCanonical(t *testing.T) {
+	if got, err := normalizeEmailDomain("@Michael", false); err != nil || got != "michael" {
+		t.Fatalf("domain normalization = %q, %v", got, err)
+	}
+	if _, err := normalizeEmailDomain("tkm", false); err == nil {
+		t.Fatal("reserved tkm operator domain was accepted")
+	}
+	if got, _, _, err := normalizeEmailAddress("Alice.Smith@John"); err != nil || got != "alice.smith@john" {
+		t.Fatalf("mailbox normalization = %q, %v", got, err)
+	}
+}
