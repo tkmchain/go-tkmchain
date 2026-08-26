@@ -12,14 +12,14 @@ shielded proof, signs locally, and broadcasts the raw transaction.
 
 - The first canonical PQ-signed shielded action that creates `@tkm` becomes
   the permanent super address. Canonical transaction order resolves races.
-- One mailbox/subscriber unit costs exactly **100 TKM**.
-- A custom operator domain has a fixed **30,000 TKM** registration fee.
-- Operators pre-purchase capacity at **100 TKM per subscriber unit**.
-- A 1,000-unit custom domain therefore costs `30000 + (1000 * 100) = 130000 TKM`.
+- One mailbox/subscriber unit costs exactly **1 TKM**.
+- A custom operator domain has a fixed **2,500 TKM** registration fee.
+- Operators pre-purchase capacity at **1 TKM per subscriber unit**.
+- A 1,000-unit custom domain therefore costs `2500 + (1000 * 1) = 3500 TKM`.
 - Every custom-domain registration and capacity expansion transfers its full
   fee to the super address.
-- Each mailbox sold under a custom domain transfers 100 TKM to that domain's
-  configurable payout address. A mailbox under `@tkm` transfers 100 TKM to the
+- Each mailbox sold under a custom domain transfers 1 TKM to that domain's
+  configurable payout address. A mailbox under `@tkm` transfers 1 TKM to the
   super address.
 
 Names are lowercase and canonical. Custom domains contain letters, digits, and
@@ -80,8 +80,8 @@ Prepare a 1,000-subscriber `@john` operator registration:
 
 ```javascript
 domain.quote(1000)
-domain.operator(1000, "130000", "john")
-domain.operatorWithPayout(1000, "130000", "john", "0xOperatorPayout")
+domain.operator(1000, "3500", "john")
+domain.operatorWithPayout(1000, "3500", "john", "0xOperatorPayout")
 domain.pending()
 domain.get("john")
 domain.setPayout("john", "0xNewOperatorPayout")
@@ -109,8 +109,8 @@ The same plans are available outside the JavaScript console:
 ```bash
 ./build/bin/gtkm domain quote 1000
 ./build/bin/gtkm domain claim-tkm
-./build/bin/gtkm domain operator 1000 130000 john
-./build/bin/gtkm domain operator --payout 0xOperatorPayout 1000 130000 john
+./build/bin/gtkm domain operator 1000 3500 john
+./build/bin/gtkm domain operator --payout 0xOperatorPayout 1000 3500 john
 ./build/bin/gtkm domain set-payout john 0xNewOperatorPayout
 ./build/bin/gtkm domain buy alice john
 ./build/bin/gtkm domain buy alice tkm

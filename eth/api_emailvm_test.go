@@ -2,6 +2,7 @@ package eth
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestEmailVMDomainEconomicsAndPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := new(big.Int).Mul(big.NewInt(130_000), big.NewInt(params.Ether))
+	want := new(big.Int).Mul(big.NewInt(3_500), big.NewInt(params.Ether))
 	if quote.Cmp(want) != 0 {
 		t.Fatalf("quote = %s, want %s", quote, want)
 	}
@@ -24,7 +25,7 @@ func TestEmailVMDomainEconomicsAndPlan(t *testing.T) {
 	service.resetLocked()
 	service.superAddress = mainKing
 	api := &TkmDomainAPI{service: service}
-	plan, err := api.Operator(1000, "130000", "John")
+	plan, err := api.Operator(1000, "3500", "John")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,20 +33,40 @@ func TestEmailVMDomainEconomicsAndPlan(t *testing.T) {
 		t.Fatalf("unexpected operator plan: %+v", plan)
 	}
 	action, ok := decodeEmailVMAction(plan.ApplicationData)
-	if !ok || action.Kind != "operator" || action.Domain != "john" || action.Units != 1000 {
+	if !ok || action.Version != emailVMActionVersion || action.Kind != "operator" || action.Domain != "john" || action.Units != 1000 {
 		t.Fatalf("unexpected action: %+v, ok=%v", action, ok)
 	}
-	if _, err := api.Operator(1000, "129999", "john"); err == nil {
+	if _, err := api.Operator(1000, "3499", "john"); err == nil {
 		t.Fatal("incorrect explicit amount was accepted")
 	}
 	payout := common.HexToAddress("0x4000000000000000000000000000000000000004")
-	plan, err = api.OperatorWithPayout(1, "30100", "michael", payout)
+	plan, err = api.OperatorWithPayout(1, "2501", "michael", payout)
 	if err != nil {
 		t.Fatal(err)
 	}
 	action, ok = decodeEmailVMAction(plan.ApplicationData)
 	if !ok || action.Payout != payout.Hex() {
 		t.Fatalf("operator payout was not bound into the plan: %+v", action)
+	}
+}
+
+func TestEmailVMLegacyDomainEconomicsRemainReplayable(t *testing.T) {
+	quote, err := emailVMDomainQuoteForVersion(1000, emailVMLegacyActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := new(big.Int).Mul(big.NewInt(130_000), big.NewInt(params.Ether))
+	if quote.Cmp(want) != 0 {
+		t.Fatalf("legacy quote = %s, want %s", quote, want)
+	}
+	action := emailVMAction{Version: emailVMLegacyActionVersion, Kind: "operator", Domain: "legacy", Units: 1000}
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, ok := decodeEmailVMAction(append(append([]byte(nil), emailVMActionMagic...), encoded...))
+	if !ok || decoded.Version != emailVMLegacyActionVersion {
+		t.Fatalf("legacy action was not decoded: %+v, ok=%v", decoded, ok)
 	}
 }
 

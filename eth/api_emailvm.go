@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	emailVMActionVersion       = uint64(1)
+	emailVMLegacyActionVersion = uint64(1)
+	emailVMActionVersion       = uint64(2)
 	emailVMBuiltinDomain       = "tkm"
 	emailVMMaxDomainUnits      = uint64(1_000_000)
 	emailVMMaxApplicationBytes = 12 * 1024
@@ -37,12 +38,14 @@ const (
 )
 
 var (
-	emailVMActionMagic           = []byte("TKMEMAILVM1")
-	emailVMStateKey              = []byte("tkm-emailvm-state-v2")
-	emailVMDomainRegistrationFee = new(big.Int).Mul(big.NewInt(30_000), big.NewInt(params.Ether))
-	emailVMSubscriberUnitFee     = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
-	emailVMDomainPattern         = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-	emailVMUsernamePattern       = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`)
+	emailVMActionMagic                 = []byte("TKMEMAILVM1")
+	emailVMStateKey                    = []byte("tkm-emailvm-state-v2")
+	emailVMLegacyDomainRegistrationFee = new(big.Int).Mul(big.NewInt(30_000), big.NewInt(params.Ether))
+	emailVMLegacySubscriberUnitFee     = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
+	emailVMDomainRegistrationFee       = new(big.Int).Mul(big.NewInt(2_500), big.NewInt(params.Ether))
+	emailVMSubscriberUnitFee           = new(big.Int).SetUint64(params.Ether)
+	emailVMDomainPattern               = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+	emailVMUsernamePattern             = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`)
 )
 
 type EmailVMService struct {
@@ -280,7 +283,7 @@ func (api *TkmDomainAPI) Quote(totalUnits hexutil.Uint64) (*hexutil.Big, error) 
 
 // Operator returns the shielded-withdrawal plan for registering a custom
 // operator domain. amountTKM is an explicit human confirmation and must equal
-// 30000 + totalUnits*100.
+// 2500 + totalUnits.
 func (api *TkmDomainAPI) Operator(totalUnits hexutil.Uint64, amountTKM string, domain string) (EmailVMActionPlan, error) {
 	return api.operator(totalUnits, amountTKM, domain, common.Address{})
 }
@@ -646,7 +649,7 @@ func (svc *EmailVMService) applyOperatorLocked(action emailVMAction, envelope *c
 	if _, exists := svc.domains[domain]; exists {
 		return
 	}
-	quote, err := emailVMDomainQuote(action.Units)
+	quote, err := emailVMDomainQuoteForVersion(action.Units, action.Version)
 	if err != nil {
 		return
 	}
@@ -657,16 +660,17 @@ func (svc *EmailVMService) applyOperatorLocked(action emailVMAction, envelope *c
 	if svc.superAddress == (common.Address{}) {
 		return
 	}
-	key := fmt.Sprintf("operator:%s:%s:%d:%s", sender.Hex(), domain, action.Units, payout.Hex())
+	registrationFee, subscriberFee := emailVMFees(action.Version)
+	key := emailVMPendingKey(action.Version, fmt.Sprintf("operator:%s:%s:%d:%s", sender.Hex(), domain, action.Units, payout.Hex()))
 	complete, paymentTxs := svc.applyInstallmentLocked(key, "operator", domain, "", sender, svc.superAddress, quote, envelope, txHash, block)
 	if !complete {
 		return
 	}
-	capacity := new(big.Int).Mul(new(big.Int).SetUint64(action.Units), emailVMSubscriberUnitFee)
+	capacity := new(big.Int).Mul(new(big.Int).SetUint64(action.Units), subscriberFee)
 	svc.domains[domain] = EmailDomain{
 		Name: domain, Operator: sender, PayoutAddress: payout, TotalUnits: hexutil.Uint64(action.Units), AvailableUnits: hexutil.Uint64(action.Units),
-		RegistrationFee: (*hexutil.Big)(new(big.Int).Set(emailVMDomainRegistrationFee)), CapacityFee: (*hexutil.Big)(capacity),
-		SubscriberPrice: (*hexutil.Big)(new(big.Int).Set(emailVMSubscriberUnitFee)), RegistrationTx: txHash, PaymentTxs: paymentTxs,
+		RegistrationFee: (*hexutil.Big)(registrationFee), CapacityFee: (*hexutil.Big)(capacity),
+		SubscriberPrice: (*hexutil.Big)(subscriberFee), RegistrationTx: txHash, PaymentTxs: paymentTxs,
 		RegisteredBlock: hexutil.Uint64(block), LastUpdatedBlock: hexutil.Uint64(block),
 	}
 }
@@ -699,11 +703,12 @@ func (svc *EmailVMService) applyExpansionLocked(action emailVMAction, envelope *
 	if !ok || record.Operator != sender || uint64(record.TotalUnits) > emailVMMaxDomainUnits-action.Units {
 		return
 	}
-	quote := new(big.Int).Mul(new(big.Int).SetUint64(action.Units), emailVMSubscriberUnitFee)
+	_, subscriberFee := emailVMFees(action.Version)
+	quote := new(big.Int).Mul(new(big.Int).SetUint64(action.Units), subscriberFee)
 	if svc.superAddress == (common.Address{}) {
 		return
 	}
-	key := fmt.Sprintf("expand:%s:%s:%d", sender.Hex(), domain, action.Units)
+	key := emailVMPendingKey(action.Version, fmt.Sprintf("expand:%s:%s:%d", sender.Hex(), domain, action.Units))
 	complete, _ := svc.applyInstallmentLocked(key, "expand", domain, "", sender, svc.superAddress, quote, envelope, txHash, block)
 	if !complete {
 		return
@@ -744,14 +749,15 @@ func (svc *EmailVMService) applyMailboxPurchaseLocked(action emailVMAction, enve
 			recipient = record.Operator
 		}
 	}
-	key := fmt.Sprintf("buy:%s:%s", sender.Hex(), address)
-	complete, paymentTxs := svc.applyInstallmentLocked(key, "buy", domain, username, sender, recipient, emailVMSubscriberUnitFee, envelope, txHash, block)
+	_, subscriberFee := emailVMFees(action.Version)
+	key := emailVMPendingKey(action.Version, fmt.Sprintf("buy:%s:%s", sender.Hex(), address))
+	complete, paymentTxs := svc.applyInstallmentLocked(key, "buy", domain, username, sender, recipient, subscriberFee, envelope, txHash, block)
 	if !complete {
 		return
 	}
 	svc.mailboxes[address] = EmailMailbox{
 		Address: address, Username: username, Domain: domain, Owner: sender, Operator: operator, PaymentRecipient: recipient,
-		Price: (*hexutil.Big)(new(big.Int).Set(emailVMSubscriberUnitFee)), PurchaseTx: txHash, PaymentTxs: paymentTxs, CreatedBlock: hexutil.Uint64(block),
+		Price: (*hexutil.Big)(subscriberFee), PurchaseTx: txHash, PaymentTxs: paymentTxs, CreatedBlock: hexutil.Uint64(block),
 	}
 	if domain != emailVMBuiltinDomain {
 		record := svc.domains[domain]
@@ -1041,18 +1047,37 @@ func decodeEmailVMAction(data []byte) (emailVMAction, bool) {
 		return emailVMAction{}, false
 	}
 	var action emailVMAction
-	if json.Unmarshal(data[len(emailVMActionMagic):], &action) != nil || action.Version != emailVMActionVersion {
+	if json.Unmarshal(data[len(emailVMActionMagic):], &action) != nil || (action.Version != emailVMLegacyActionVersion && action.Version != emailVMActionVersion) {
 		return emailVMAction{}, false
 	}
 	return action, true
 }
 
 func emailVMDomainQuote(units uint64) (*big.Int, error) {
+	return emailVMDomainQuoteForVersion(units, emailVMActionVersion)
+}
+
+func emailVMDomainQuoteForVersion(units uint64, version uint64) (*big.Int, error) {
 	if units == 0 || units > emailVMMaxDomainUnits {
 		return nil, fmt.Errorf("total units must be between 1 and %d", emailVMMaxDomainUnits)
 	}
-	capacity := new(big.Int).Mul(new(big.Int).SetUint64(units), emailVMSubscriberUnitFee)
-	return new(big.Int).Add(new(big.Int).Set(emailVMDomainRegistrationFee), capacity), nil
+	registrationFee, subscriberFee := emailVMFees(version)
+	capacity := new(big.Int).Mul(new(big.Int).SetUint64(units), subscriberFee)
+	return new(big.Int).Add(registrationFee, capacity), nil
+}
+
+func emailVMFees(version uint64) (registrationFee, subscriberFee *big.Int) {
+	if version == emailVMLegacyActionVersion {
+		return new(big.Int).Set(emailVMLegacyDomainRegistrationFee), new(big.Int).Set(emailVMLegacySubscriberUnitFee)
+	}
+	return new(big.Int).Set(emailVMDomainRegistrationFee), new(big.Int).Set(emailVMSubscriberUnitFee)
+}
+
+func emailVMPendingKey(version uint64, key string) string {
+	if version == emailVMLegacyActionVersion {
+		return key
+	}
+	return fmt.Sprintf("v%d:%s", version, key)
 }
 
 func emailVMWithdrawalAmount(envelope *core.ShieldedTransaction, recipient common.Address) *big.Int {

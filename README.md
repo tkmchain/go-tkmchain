@@ -538,16 +538,16 @@ sets its signer as the super address. All operator registration and capacity
 fees go to that address; mailbox sales under custom domains go to the
 operator's configurable payout address.
 
-- Custom domain registration: **30,000 TKM**.
-- Subscriber capacity: **100 TKM per unit**.
-- A 1,000-unit custom domain: **130,000 TKM total**.
-- One mailbox under `@tkm` or an operator domain: **100 TKM**.
+- Custom domain registration: **2,500 TKM**.
+- Subscriber capacity: **1 TKM per unit**.
+- A 1,000-unit custom domain: **3,500 TKM total**.
+- One mailbox under `@tkm` or an operator domain: **1 TKM**.
 
 From `gtkm attach`:
 
 ```javascript
 domain.claimSuper() // only while @tkm is unclaimed; first canonical claim wins
-domain.operator(1000, "130000", "john")
+domain.operator(1000, "3500", "john")
 domain.buy("alice", "john")
 domain.buy("alice", "tkm")
 domain.pending()
