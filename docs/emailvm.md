@@ -34,6 +34,10 @@ later purchases of the same canonical string or registry hash are rejected.
 Version-1 and version-2 registrations are rebuilt into the same hash registry
 when a node replays the chain.
 
+See [EmailVM Permanent Name Registry](./emailvm-name-registry.md) for the exact
+hash preimage, test vectors, version-3 blockchain payloads, duplicate/race
+rules, RPC responses, and compatibility behavior.
+
 ## Shielded installment orders
 
 The current shielded proof exposes at most a `uint64` public release per

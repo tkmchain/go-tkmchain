@@ -567,7 +567,8 @@ mined. Encrypted EmailVM messages use the same proof-bound application metadata,
 so no new hardfork or proving ceremony is required.
 
 See [docs/emailvm.md](./docs/emailvm.md) for RPC, CLI, prover, privacy, indexing,
-and operator details.
+and operator details. The byte-level uniqueness and hash protocol is defined
+in [docs/emailvm-name-registry.md](./docs/emailvm-name-registry.md).
 
 ---
 
