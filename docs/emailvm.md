@@ -135,9 +135,17 @@ The same plans are available outside the JavaScript console:
 ./build/bin/gtkm domain pending
 ./build/bin/gtkm domain list
 ./build/bin/gtkm domain mailbox alice@john
+./build/bin/gtkm emailvm key alice@john
+./build/bin/gtkm emailvm export-key alice@john --keystore ~/.tkmchain/keystore
 ```
 
 Use `--rpc https://host/rpc` for a remote endpoint. Local IPC is the default.
+`emailvm export-key` resolves the canonical mailbox owner through that public
+RPC, decrypts the matching PQ keyfile locally, and prompts separately for a
+password protecting the exported mail-only keyfile. For controlled automation,
+`--password` and `--mail-password` each accept a local password-file path;
+`--out` selects the output path. The command refuses to overwrite an existing
+file and creates new output with mode `0600`.
 
 ## Prover integration
 
@@ -195,6 +203,9 @@ derived with scrypt. It never contains the ML-DSA-87 seed, shielded viewing
 key, note openings, or spending key. Import therefore requires opening the
 separate owning PQ wallet and verifying every mailbox and published public key
 against the canonical network index.
+The GTKm CLI produces the same version-1 portable format, so a mailbox such as
+`info@tkm` can be exported by `gtkm` and imported into the web wallet, or
+exported by the web wallet and imported into another compatible mail client.
 
 ### Consecutive message submission
 

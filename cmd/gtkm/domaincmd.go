@@ -46,6 +46,7 @@ password, private key, shielded note, or proof is sent to the RPC server.`,
 		Subcommands: []*cli.Command{
 			{Name: "status", Usage: "Show EmailVM index status", Flags: domainFlags, Action: emailVMStatus},
 			{Name: "key", Usage: "Show a mailbox's canonical X25519 public key", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMKey},
+			emailVMExportKeyCommand,
 			{Name: "inbox", Usage: "List canonical encrypted inbox messages", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMInbox},
 			{Name: "outbox", Usage: "List canonical encrypted outbox messages", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMOutbox},
 		},
