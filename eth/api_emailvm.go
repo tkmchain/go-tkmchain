@@ -25,13 +25,14 @@ import (
 )
 
 const (
-	emailVMLegacyActionVersion = uint64(1)
-	emailVMActionVersion       = uint64(2)
-	emailVMBuiltinDomain       = "tkm"
-	emailVMMaxDomainUnits      = uint64(1_000_000)
-	emailVMMaxApplicationBytes = 12 * 1024
-	emailVMMaxCiphertextBytes  = 8 * 1024
-	emailVMMaxKeyBytes         = 4 * 1024
+	emailVMLegacyActionVersion  = uint64(1)
+	emailVMPricingActionVersion = uint64(2)
+	emailVMActionVersion        = uint64(3)
+	emailVMBuiltinDomain        = "tkm"
+	emailVMMaxDomainUnits       = uint64(1_000_000)
+	emailVMMaxApplicationBytes  = 12 * 1024
+	emailVMMaxCiphertextBytes   = 8 * 1024
+	emailVMMaxKeyBytes          = 4 * 1024
 	// Keep 0.1 TKM of the uint64 public-release range available for shielded
 	// gas sponsorship. The prover computes the exact reserve for each part.
 	emailVMMaxWithdrawalPartWei = uint64(18_346_744_073_709_551_615)
@@ -61,6 +62,7 @@ type EmailVMService struct {
 	indexedHash  common.Hash
 	domains      map[string]EmailDomain
 	mailboxes    map[string]EmailMailbox
+	registry     map[common.Hash]EmailNameRegistration
 	keys         map[string]EmailMailboxKey
 	messages     map[common.Hash]EmailMessage
 	pending      map[string]EmailPendingPayment
@@ -72,6 +74,7 @@ type emailVMSnapshot struct {
 	IndexedHash  common.Hash
 	Domains      map[string]EmailDomain
 	Mailboxes    map[string]EmailMailbox
+	Registry     map[common.Hash]EmailNameRegistration
 	Keys         map[string]EmailMailboxKey
 	Messages     map[common.Hash]EmailMessage
 	Pending      map[string]EmailPendingPayment
@@ -81,22 +84,24 @@ type emailVMSnapshot struct {
 }
 
 type emailVMAction struct {
-	Version    uint64 `json:"v"`
-	Kind       string `json:"kind"`
-	Domain     string `json:"domain,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Units      uint64 `json:"units,omitempty"`
-	Mailbox    string `json:"mailbox,omitempty"`
-	From       string `json:"from,omitempty"`
-	To         string `json:"to,omitempty"`
-	Key        string `json:"key,omitempty"`
-	Ciphertext string `json:"ciphertext,omitempty"`
-	Nonce      string `json:"nonce,omitempty"`
-	Payout     string `json:"payout,omitempty"`
+	Version      uint64 `json:"v"`
+	Kind         string `json:"kind"`
+	Domain       string `json:"domain,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Units        uint64 `json:"units,omitempty"`
+	Mailbox      string `json:"mailbox,omitempty"`
+	From         string `json:"from,omitempty"`
+	To           string `json:"to,omitempty"`
+	Key          string `json:"key,omitempty"`
+	Ciphertext   string `json:"ciphertext,omitempty"`
+	Nonce        string `json:"nonce,omitempty"`
+	Payout       string `json:"payout,omitempty"`
+	RegistryHash string `json:"registryHash,omitempty"`
 }
 
 type EmailDomain struct {
 	Name             string         `json:"name"`
+	RegistryHash     common.Hash    `json:"registryHash"`
 	Operator         common.Address `json:"operator"`
 	PayoutAddress    common.Address `json:"payoutAddress"`
 	TotalUnits       hexutil.Uint64 `json:"totalUnits"`
@@ -115,6 +120,7 @@ type EmailDomain struct {
 
 type EmailMailbox struct {
 	Address          string         `json:"address"`
+	RegistryHash     common.Hash    `json:"registryHash"`
 	Username         string         `json:"username"`
 	Domain           string         `json:"domain"`
 	Owner            common.Address `json:"owner"`
@@ -126,6 +132,20 @@ type EmailMailbox struct {
 	CreatedBlock     hexutil.Uint64 `json:"createdBlock"`
 	EncryptionKey    hexutil.Bytes  `json:"encryptionKey,omitempty"`
 	KeyTx            common.Hash    `json:"keyTx,omitempty"`
+}
+
+// EmailNameRegistration is the permanent, canonical name-registry entry for
+// a domain or full mailbox address. The readable name and its deterministic
+// hash are both committed by the proof-bound action stored in the transaction.
+type EmailNameRegistration struct {
+	RegistryHash common.Hash    `json:"registryHash"`
+	Kind         string         `json:"kind"`
+	Name         string         `json:"name"`
+	Domain       string         `json:"domain"`
+	Username     string         `json:"username,omitempty"`
+	Owner        common.Address `json:"owner"`
+	TxHash       common.Hash    `json:"txHash"`
+	Block        hexutil.Uint64 `json:"block"`
 }
 
 type EmailMailboxKey struct {
@@ -149,25 +169,27 @@ type EmailMessage struct {
 }
 
 type EmailVMStatus struct {
-	Ready        bool           `json:"ready"`
-	IndexedBlock hexutil.Uint64 `json:"indexedBlock"`
-	IndexedHash  common.Hash    `json:"indexedHash"`
-	HeadBlock    hexutil.Uint64 `json:"headBlock"`
-	HeadHash     common.Hash    `json:"headHash"`
-	Domains      hexutil.Uint64 `json:"domains"`
-	Mailboxes    hexutil.Uint64 `json:"mailboxes"`
-	Messages     hexutil.Uint64 `json:"messages"`
-	Pending      hexutil.Uint64 `json:"pendingPayments"`
-	Protocol     string         `json:"protocol"`
-	SuperAddress common.Address `json:"superAddress"`
-	SuperClaimed bool           `json:"superClaimed"`
-	SuperTx      common.Hash    `json:"superTx,omitempty"`
-	SuperBlock   hexutil.Uint64 `json:"superBlock,omitempty"`
+	Ready         bool           `json:"ready"`
+	IndexedBlock  hexutil.Uint64 `json:"indexedBlock"`
+	IndexedHash   common.Hash    `json:"indexedHash"`
+	HeadBlock     hexutil.Uint64 `json:"headBlock"`
+	HeadHash      common.Hash    `json:"headHash"`
+	Domains       hexutil.Uint64 `json:"domains"`
+	Mailboxes     hexutil.Uint64 `json:"mailboxes"`
+	Registrations hexutil.Uint64 `json:"registrations"`
+	Messages      hexutil.Uint64 `json:"messages"`
+	Pending       hexutil.Uint64 `json:"pendingPayments"`
+	Protocol      string         `json:"protocol"`
+	SuperAddress  common.Address `json:"superAddress"`
+	SuperClaimed  bool           `json:"superClaimed"`
+	SuperTx       common.Hash    `json:"superTx,omitempty"`
+	SuperBlock    hexutil.Uint64 `json:"superBlock,omitempty"`
 }
 
 type EmailVMActionPlan struct {
 	Kind            string         `json:"kind"`
 	OrderID         common.Hash    `json:"orderId"`
+	RegistryHash    common.Hash    `json:"registryHash,omitempty"`
 	Mailbox         string         `json:"mailbox,omitempty"`
 	Domain          string         `json:"domain,omitempty"`
 	Units           hexutil.Uint64 `json:"units,omitempty"`
@@ -229,6 +251,7 @@ func (svc *EmailVMService) resetLocked() {
 	svc.superBlock = 0
 	svc.domains = make(map[string]EmailDomain)
 	svc.mailboxes = make(map[string]EmailMailbox)
+	svc.registry = make(map[common.Hash]EmailNameRegistration)
 	svc.keys = make(map[string]EmailMailboxKey)
 	svc.messages = make(map[common.Hash]EmailMessage)
 	svc.pending = make(map[string]EmailPendingPayment)
@@ -266,11 +289,14 @@ func (api *TkmDomainAPI) ClaimSuper() (EmailVMActionPlan, error) {
 	if claimed {
 		return EmailVMActionPlan{}, errors.New("@tkm is already claimed")
 	}
-	data, err := encodeEmailVMAction(emailVMAction{Version: emailVMActionVersion, Kind: "super", Domain: emailVMBuiltinDomain})
+	registryHash := emailVMRegistryHash("domain", emailVMBuiltinDomain)
+	data, err := encodeEmailVMAction(emailVMAction{Version: emailVMActionVersion, Kind: "super", Domain: emailVMBuiltinDomain, RegistryHash: registryHash.Hex()})
 	if err != nil {
 		return EmailVMActionPlan{}, err
 	}
-	return metadataPlan("super", "@"+emailVMBuiltinDomain, data), nil
+	plan := metadataPlan("super", "@"+emailVMBuiltinDomain, data)
+	plan.RegistryHash = registryHash
+	return plan, nil
 }
 
 func (api *TkmDomainAPI) Quote(totalUnits hexutil.Uint64) (*hexutil.Big, error) {
@@ -308,11 +334,13 @@ func (api *TkmDomainAPI) operator(totalUnits hexutil.Uint64, amountTKM string, d
 			return EmailVMActionPlan{}, err
 		}
 	}
+	registryHash := emailVMRegistryHash("domain", domain)
 	api.service.lock.Lock()
 	_, exists := api.service.domains[domain]
+	_, hashExists := api.service.registry[registryHash]
 	superAddress := api.service.superAddress
 	api.service.lock.Unlock()
-	if exists {
+	if exists || hashExists {
 		return EmailVMActionPlan{}, errors.New("domain is already registered")
 	}
 	if superAddress == (common.Address{}) {
@@ -326,7 +354,7 @@ func (api *TkmDomainAPI) operator(totalUnits hexutil.Uint64, amountTKM string, d
 	if err != nil || confirmed.Cmp(quote) != 0 {
 		return EmailVMActionPlan{}, fmt.Errorf("amount must equal domain quote %s TKM", weiToWholeTKM(quote))
 	}
-	action := emailVMAction{Version: emailVMActionVersion, Kind: "operator", Domain: domain, Units: uint64(totalUnits)}
+	action := emailVMAction{Version: emailVMActionVersion, Kind: "operator", Domain: domain, Units: uint64(totalUnits), RegistryHash: registryHash.Hex()}
 	if payout != (common.Address{}) {
 		action.Payout = payout.Hex()
 	}
@@ -334,7 +362,9 @@ func (api *TkmDomainAPI) operator(totalUnits hexutil.Uint64, amountTKM string, d
 	if err != nil {
 		return EmailVMActionPlan{}, err
 	}
-	return paymentPlan("operator", "", domain, uint64(totalUnits), superAddress, quote, data), nil
+	plan := paymentPlan("operator", "", domain, uint64(totalUnits), superAddress, quote, data)
+	plan.RegistryHash = registryHash
+	return plan, nil
 }
 
 // SetPayout returns proof-bound metadata for changing where a custom domain's
@@ -378,10 +408,14 @@ func (api *TkmDomainAPI) Buy(username string, domain string) (EmailVMActionPlan,
 		return EmailVMActionPlan{}, err
 	}
 	mailbox := username + "@" + domain
+	registryHash := emailVMRegistryHash("mailbox", mailbox)
 	api.service.lock.Lock()
 	defer api.service.lock.Unlock()
 	if _, exists := api.service.mailboxes[mailbox]; exists {
 		return EmailVMActionPlan{}, errors.New("mailbox is already registered")
+	}
+	if _, exists := api.service.registry[registryHash]; exists {
+		return EmailVMActionPlan{}, errors.New("mailbox hash is already registered")
 	}
 	recipient := api.service.superAddress
 	if recipient == (common.Address{}) {
@@ -400,11 +434,13 @@ func (api *TkmDomainAPI) Buy(username string, domain string) (EmailVMActionPlan,
 			recipient = record.Operator
 		}
 	}
-	data, err := encodeEmailVMAction(emailVMAction{Version: emailVMActionVersion, Kind: "buy", Domain: domain, Username: username})
+	data, err := encodeEmailVMAction(emailVMAction{Version: emailVMActionVersion, Kind: "buy", Domain: domain, Username: username, RegistryHash: registryHash.Hex()})
 	if err != nil {
 		return EmailVMActionPlan{}, err
 	}
-	return paymentPlan("buy", mailbox, domain, 1, recipient, emailVMSubscriberUnitFee, data), nil
+	plan := paymentPlan("buy", mailbox, domain, 1, recipient, emailVMSubscriberUnitFee, data)
+	plan.RegistryHash = registryHash
+	return plan, nil
 }
 
 func (api *TkmDomainAPI) Expand(domain string, additionalUnits hexutil.Uint64, amountTKM string) (EmailVMActionPlan, error) {
@@ -457,7 +493,7 @@ func (api *TkmDomainAPI) Domain(name string) (EmailDomain, error) {
 		if api.service.superAddress == (common.Address{}) {
 			return EmailDomain{}, errors.New("@tkm has not been claimed")
 		}
-		return builtinEmailDomain(api.service.superAddress), nil
+		return builtinEmailDomain(api.service.superAddress, api.service.superTx, api.service.superBlock), nil
 	}
 	record, ok := api.service.domains[name]
 	if !ok {
@@ -467,6 +503,44 @@ func (api *TkmDomainAPI) Domain(name string) (EmailDomain, error) {
 }
 
 func (api *TkmDomainAPI) Domains() ([]EmailDomain, error) { return api.service.domainList() }
+
+// DomainHash returns the deterministic registry hash committed alongside a
+// readable canonical domain name in every new registration transaction.
+func (api *TkmDomainAPI) DomainHash(name string) (common.Hash, error) {
+	name, err := normalizeEmailDomain(name, true)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return emailVMRegistryHash("domain", name), nil
+}
+
+// MailboxHash returns the deterministic registry hash for username@domain.
+func (api *TkmDomainAPI) MailboxHash(username string, domain string) (common.Hash, error) {
+	username, err := normalizeEmailUsername(username)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	domain, err = normalizeEmailDomain(domain, true)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return emailVMRegistryHash("mailbox", username+"@"+domain), nil
+}
+
+// Registration resolves a permanent name-registry entry by hash.
+func (api *TkmDomainAPI) Registration(registryHash common.Hash) (EmailNameRegistration, error) {
+	if err := api.service.sync(); err != nil {
+		return EmailNameRegistration{}, err
+	}
+	api.service.lock.Lock()
+	defer api.service.lock.Unlock()
+	record, ok := api.service.registry[registryHash]
+	if !ok {
+		return EmailNameRegistration{}, errors.New("name registration not found")
+	}
+	return record, nil
+}
+
 func (api *TkmDomainAPI) Mailbox(address string) (EmailMailbox, error) {
 	return api.service.mailbox(address)
 }
@@ -636,9 +710,17 @@ func (svc *EmailVMService) applySuperLocked(action emailVMAction, sender common.
 	if err != nil || domain != emailVMBuiltinDomain || sender == (common.Address{}) || svc.superAddress != (common.Address{}) {
 		return
 	}
+	registryHash, ok := emailVMActionRegistryHash(action, "domain", domain)
+	if !ok {
+		return
+	}
+	if _, exists := svc.registry[registryHash]; exists {
+		return
+	}
 	svc.superAddress = sender
 	svc.superTx = txHash
 	svc.superBlock = block
+	svc.registry[registryHash] = EmailNameRegistration{RegistryHash: registryHash, Kind: "domain", Name: domain, Domain: domain, Owner: sender, TxHash: txHash, Block: hexutil.Uint64(block)}
 }
 
 func (svc *EmailVMService) applyOperatorLocked(action emailVMAction, envelope *core.ShieldedTransaction, sender common.Address, txHash common.Hash, block uint64) {
@@ -646,7 +728,14 @@ func (svc *EmailVMService) applyOperatorLocked(action emailVMAction, envelope *c
 	if err != nil || action.Units == 0 || action.Units > emailVMMaxDomainUnits || sender == (common.Address{}) {
 		return
 	}
+	registryHash, hashOK := emailVMActionRegistryHash(action, "domain", domain)
+	if !hashOK {
+		return
+	}
 	if _, exists := svc.domains[domain]; exists {
+		return
+	}
+	if _, exists := svc.registry[registryHash]; exists {
 		return
 	}
 	quote, err := emailVMDomainQuoteForVersion(action.Units, action.Version)
@@ -668,11 +757,12 @@ func (svc *EmailVMService) applyOperatorLocked(action emailVMAction, envelope *c
 	}
 	capacity := new(big.Int).Mul(new(big.Int).SetUint64(action.Units), subscriberFee)
 	svc.domains[domain] = EmailDomain{
-		Name: domain, Operator: sender, PayoutAddress: payout, TotalUnits: hexutil.Uint64(action.Units), AvailableUnits: hexutil.Uint64(action.Units),
+		Name: domain, RegistryHash: registryHash, Operator: sender, PayoutAddress: payout, TotalUnits: hexutil.Uint64(action.Units), AvailableUnits: hexutil.Uint64(action.Units),
 		RegistrationFee: (*hexutil.Big)(registrationFee), CapacityFee: (*hexutil.Big)(capacity),
 		SubscriberPrice: (*hexutil.Big)(subscriberFee), RegistrationTx: txHash, PaymentTxs: paymentTxs,
 		RegisteredBlock: hexutil.Uint64(block), LastUpdatedBlock: hexutil.Uint64(block),
 	}
+	svc.registry[registryHash] = EmailNameRegistration{RegistryHash: registryHash, Kind: "domain", Name: domain, Domain: domain, Owner: sender, TxHash: txHash, Block: hexutil.Uint64(block)}
 }
 
 func (svc *EmailVMService) applyPayoutLocked(action emailVMAction, sender common.Address, txHash common.Hash, block uint64) {
@@ -731,7 +821,14 @@ func (svc *EmailVMService) applyMailboxPurchaseLocked(action emailVMAction, enve
 		return
 	}
 	address := username + "@" + domain
+	registryHash, hashOK := emailVMActionRegistryHash(action, "mailbox", address)
+	if !hashOK {
+		return
+	}
 	if _, exists := svc.mailboxes[address]; exists {
+		return
+	}
+	if _, exists := svc.registry[registryHash]; exists {
 		return
 	}
 	recipient := svc.superAddress
@@ -756,9 +853,10 @@ func (svc *EmailVMService) applyMailboxPurchaseLocked(action emailVMAction, enve
 		return
 	}
 	svc.mailboxes[address] = EmailMailbox{
-		Address: address, Username: username, Domain: domain, Owner: sender, Operator: operator, PaymentRecipient: recipient,
+		Address: address, RegistryHash: registryHash, Username: username, Domain: domain, Owner: sender, Operator: operator, PaymentRecipient: recipient,
 		Price: (*hexutil.Big)(subscriberFee), PurchaseTx: txHash, PaymentTxs: paymentTxs, CreatedBlock: hexutil.Uint64(block),
 	}
+	svc.registry[registryHash] = EmailNameRegistration{RegistryHash: registryHash, Kind: "mailbox", Name: address, Domain: domain, Username: username, Owner: sender, TxHash: txHash, Block: hexutil.Uint64(block)}
 	if domain != emailVMBuiltinDomain {
 		record := svc.domains[domain]
 		record.UsedUnits++
@@ -861,7 +959,7 @@ func (svc *EmailVMService) status() (EmailVMStatus, error) {
 	if svc.superAddress != (common.Address{}) {
 		domainCount++
 	}
-	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-application-data-v1", SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
+	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Registrations: hexutil.Uint64(len(svc.registry)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-emailvm-registry-v1", SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
 	if svc.eth != nil && svc.eth.blockchain != nil {
 		if head := svc.eth.blockchain.CurrentBlock(); head != nil {
 			status.HeadBlock, status.HeadHash = hexutil.Uint64(head.Number.Uint64()), head.Hash()
@@ -895,7 +993,7 @@ func (svc *EmailVMService) domainList() ([]EmailDomain, error) {
 	defer svc.lock.Unlock()
 	out := make([]EmailDomain, 0, len(svc.domains)+1)
 	if svc.superAddress != (common.Address{}) {
-		out = append(out, builtinEmailDomain(svc.superAddress))
+		out = append(out, builtinEmailDomain(svc.superAddress, svc.superTx, svc.superBlock))
 	}
 	for _, domain := range svc.domains {
 		out = append(out, cloneEmailDomain(domain))
@@ -1002,11 +1100,12 @@ func (svc *EmailVMService) loadLocked() error {
 		svc.pending = snapshot.Pending
 	}
 	svc.superAddress, svc.superTx, svc.superBlock = snapshot.SuperAddress, snapshot.SuperTx, snapshot.SuperBlock
+	svc.ensureRegistryLocked()
 	return nil
 }
 
 func (svc *EmailVMService) saveLocked() error {
-	snapshot := emailVMSnapshot{Initialized: svc.initialized, Indexed: svc.indexed, IndexedHash: svc.indexedHash, Domains: svc.domains, Mailboxes: svc.mailboxes, Keys: svc.keys, Messages: svc.messages, Pending: svc.pending, SuperAddress: svc.superAddress, SuperTx: svc.superTx, SuperBlock: svc.superBlock}
+	snapshot := emailVMSnapshot{Initialized: svc.initialized, Indexed: svc.indexed, IndexedHash: svc.indexedHash, Domains: svc.domains, Mailboxes: svc.mailboxes, Registry: svc.registry, Keys: svc.keys, Messages: svc.messages, Pending: svc.pending, SuperAddress: svc.superAddress, SuperTx: svc.superTx, SuperBlock: svc.superBlock}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
@@ -1047,7 +1146,7 @@ func decodeEmailVMAction(data []byte) (emailVMAction, bool) {
 		return emailVMAction{}, false
 	}
 	var action emailVMAction
-	if json.Unmarshal(data[len(emailVMActionMagic):], &action) != nil || (action.Version != emailVMLegacyActionVersion && action.Version != emailVMActionVersion) {
+	if json.Unmarshal(data[len(emailVMActionMagic):], &action) != nil || action.Version < emailVMLegacyActionVersion || action.Version > emailVMActionVersion {
 		return emailVMAction{}, false
 	}
 	return action, true
@@ -1078,6 +1177,46 @@ func emailVMPendingKey(version uint64, key string) string {
 		return key
 	}
 	return fmt.Sprintf("v%d:%s", version, key)
+}
+
+func emailVMRegistryHash(kind, canonicalName string) common.Hash {
+	return crypto.Keccak256Hash([]byte("TKM_EMAILVM_REGISTRY_V1\x00" + kind + "\x00" + canonicalName))
+}
+
+func emailVMActionRegistryHash(action emailVMAction, kind, canonicalName string) (common.Hash, bool) {
+	expected := emailVMRegistryHash(kind, canonicalName)
+	// Versions 1 and 2 predate explicit registry hashes. Their canonical names
+	// are still migrated into the same permanent hash registry during replay.
+	if action.Version < emailVMActionVersion {
+		return expected, true
+	}
+	return expected, strings.EqualFold(strings.TrimSpace(action.RegistryHash), expected.Hex())
+}
+
+func (svc *EmailVMService) ensureRegistryLocked() {
+	if svc.registry == nil {
+		svc.registry = make(map[common.Hash]EmailNameRegistration)
+	}
+	if svc.superAddress != (common.Address{}) {
+		hash := emailVMRegistryHash("domain", emailVMBuiltinDomain)
+		svc.registry[hash] = EmailNameRegistration{RegistryHash: hash, Kind: "domain", Name: emailVMBuiltinDomain, Domain: emailVMBuiltinDomain, Owner: svc.superAddress, TxHash: svc.superTx, Block: hexutil.Uint64(svc.superBlock)}
+	}
+	for name, record := range svc.domains {
+		hash := emailVMRegistryHash("domain", name)
+		if record.RegistryHash == (common.Hash{}) {
+			record.RegistryHash = hash
+			svc.domains[name] = record
+		}
+		svc.registry[hash] = EmailNameRegistration{RegistryHash: hash, Kind: "domain", Name: name, Domain: name, Owner: record.Operator, TxHash: record.RegistrationTx, Block: record.RegisteredBlock}
+	}
+	for address, record := range svc.mailboxes {
+		hash := emailVMRegistryHash("mailbox", address)
+		if record.RegistryHash == (common.Hash{}) {
+			record.RegistryHash = hash
+			svc.mailboxes[address] = record
+		}
+		svc.registry[hash] = EmailNameRegistration{RegistryHash: hash, Kind: "mailbox", Name: address, Domain: record.Domain, Username: record.Username, Owner: record.Owner, TxHash: record.PurchaseTx, Block: record.CreatedBlock}
+	}
 }
 
 func emailVMWithdrawalAmount(envelope *core.ShieldedTransaction, recipient common.Address) *big.Int {
@@ -1145,8 +1284,8 @@ func weiToWholeTKM(value *big.Int) string {
 	return new(big.Int).Div(new(big.Int).Set(value), big.NewInt(params.Ether)).String()
 }
 
-func builtinEmailDomain(superAddress common.Address) EmailDomain {
-	return EmailDomain{Name: emailVMBuiltinDomain, Operator: superAddress, PayoutAddress: superAddress, SubscriberPrice: (*hexutil.Big)(new(big.Int).Set(emailVMSubscriberUnitFee))}
+func builtinEmailDomain(superAddress common.Address, registrationTx common.Hash, registeredBlock uint64) EmailDomain {
+	return EmailDomain{Name: emailVMBuiltinDomain, RegistryHash: emailVMRegistryHash("domain", emailVMBuiltinDomain), Operator: superAddress, PayoutAddress: superAddress, SubscriberPrice: (*hexutil.Big)(new(big.Int).Set(emailVMSubscriberUnitFee)), RegistrationTx: registrationTx, RegisteredBlock: hexutil.Uint64(registeredBlock)}
 }
 
 func emailVMActionPayout(value string, fallback common.Address) (common.Address, bool) {

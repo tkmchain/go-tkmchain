@@ -26,6 +26,14 @@ Names are lowercase and canonical. Custom domains contain letters, digits, and
 interior hyphens. Mailbox usernames also permit dots and underscores. `tkm` is
 reserved and cannot be registered as a custom operator domain.
 
+Every domain and full mailbox address has a deterministic Keccak-256 registry
+hash. Version-3 actions commit both that hash and the readable canonical
+`domain`/`username` in the shielded transaction's proof-bound application data.
+The first valid registration in canonical block order is stored permanently;
+later purchases of the same canonical string or registry hash are rejected.
+Version-1 and version-2 registrations are rebuilt into the same hash registry
+when a node replays the chain.
+
 ## Shielded installment orders
 
 The current shielded proof exposes at most a `uint64` public release per
@@ -84,6 +92,9 @@ domain.operator(1000, "3500", "john")
 domain.operatorWithPayout(1000, "3500", "john", "0xOperatorPayout")
 domain.pending()
 domain.get("john")
+domain.hash("john")
+domain.mailboxHash("alice", "john")
+domain.registration(domain.mailboxHash("alice", "john"))
 domain.setPayout("john", "0xNewOperatorPayout")
 ```
 
@@ -114,6 +125,9 @@ The same plans are available outside the JavaScript console:
 ./build/bin/gtkm domain set-payout john 0xNewOperatorPayout
 ./build/bin/gtkm domain buy alice john
 ./build/bin/gtkm domain buy alice tkm
+./build/bin/gtkm domain hash john
+./build/bin/gtkm domain mailbox-hash alice john
+./build/bin/gtkm domain registration 0xRegistryHash
 ./build/bin/gtkm domain pending
 ./build/bin/gtkm domain list
 ./build/bin/gtkm domain mailbox alice@john

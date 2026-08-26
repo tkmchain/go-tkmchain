@@ -33,7 +33,8 @@ func TestEmailVMDomainEconomicsAndPlan(t *testing.T) {
 		t.Fatalf("unexpected operator plan: %+v", plan)
 	}
 	action, ok := decodeEmailVMAction(plan.ApplicationData)
-	if !ok || action.Version != emailVMActionVersion || action.Kind != "operator" || action.Domain != "john" || action.Units != 1000 {
+	domainHash := emailVMRegistryHash("domain", "john")
+	if !ok || action.Version != emailVMActionVersion || action.Kind != "operator" || action.Domain != "john" || action.Units != 1000 || action.RegistryHash != domainHash.Hex() || plan.RegistryHash != domainHash {
 		t.Fatalf("unexpected action: %+v, ok=%v", action, ok)
 	}
 	if _, err := api.Operator(1000, "3499", "john"); err == nil {
@@ -68,6 +69,18 @@ func TestEmailVMLegacyDomainEconomicsRemainReplayable(t *testing.T) {
 	if !ok || decoded.Version != emailVMLegacyActionVersion {
 		t.Fatalf("legacy action was not decoded: %+v, ok=%v", decoded, ok)
 	}
+	action.Version = emailVMPricingActionVersion
+	encoded, err = json.Marshal(action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, ok = decodeEmailVMAction(append(append([]byte(nil), emailVMActionMagic...), encoded...))
+	if !ok || decoded.Version != emailVMPricingActionVersion {
+		t.Fatalf("version 2 action was not decoded: %+v, ok=%v", decoded, ok)
+	}
+	if hash, accepted := emailVMActionRegistryHash(decoded, "domain", "legacy"); !accepted || hash != emailVMRegistryHash("domain", "legacy") {
+		t.Fatal("version 2 canonical name was not migrated into the hash registry")
+	}
 }
 
 func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
@@ -83,7 +96,8 @@ func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
 	}
 
 	payout := common.HexToAddress("0x4000000000000000000000000000000000000004")
-	action := emailVMAction{Version: emailVMActionVersion, Kind: "operator", Domain: "john", Units: 1, Payout: payout.Hex()}
+	domainHash := emailVMRegistryHash("domain", "john")
+	action := emailVMAction{Version: emailVMActionVersion, Kind: "operator", Domain: "john", Units: 1, Payout: payout.Hex(), RegistryHash: domainHash.Hex()}
 	remaining, err := emailVMDomainQuote(action.Units)
 	if err != nil {
 		t.Fatal(err)
@@ -101,11 +115,15 @@ func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
 		remaining.Sub(remaining, value)
 	}
 	domain, ok := service.domains["john"]
-	if !ok || domain.Operator != operator || domain.PayoutAddress != payout || uint64(domain.TotalUnits) != 1 || uint64(domain.AvailableUnits) != 1 || len(domain.PaymentTxs) < 2 {
+	if !ok || domain.RegistryHash != domainHash || domain.Operator != operator || domain.PayoutAddress != payout || uint64(domain.TotalUnits) != 1 || uint64(domain.AvailableUnits) != 1 || len(domain.PaymentTxs) < 2 {
 		t.Fatalf("domain was not activated after exact installments: %+v", domain)
 	}
+	if registration := service.registry[domainHash]; registration.Name != "john" || registration.Owner != operator {
+		t.Fatalf("domain registry entry is incomplete: %+v", registration)
+	}
 
-	buy := emailVMAction{Version: emailVMActionVersion, Kind: "buy", Domain: "john", Username: "alice"}
+	mailboxHash := emailVMRegistryHash("mailbox", "alice@john")
+	buy := emailVMAction{Version: emailVMActionVersion, Kind: "buy", Domain: "john", Username: "alice", RegistryHash: mailboxHash.Hex()}
 	remaining.Set(emailVMSubscriberUnitFee)
 	for remaining.Sign() > 0 {
 		value := new(big.Int).Set(part)
@@ -118,8 +136,16 @@ func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
 		remaining.Sub(remaining, value)
 	}
 	mailbox, ok := service.mailboxes["alice@john"]
-	if !ok || mailbox.Owner != buyer || uint64(service.domains["john"].AvailableUnits) != 0 {
+	if !ok || mailbox.RegistryHash != mailboxHash || mailbox.Owner != buyer || uint64(service.domains["john"].AvailableUnits) != 0 {
 		t.Fatalf("mailbox was not activated: %+v", mailbox)
+	}
+	if registration := service.registry[mailboxHash]; registration.Name != "alice@john" || registration.Owner != buyer {
+		t.Fatalf("mailbox registry entry is incomplete: %+v", registration)
+	}
+	duplicate := &core.ShieldedTransaction{WithdrawalRecipient: payout, WithdrawalValue: new(big.Int).Set(emailVMSubscriberUnitFee)}
+	service.applyMailboxPurchaseLocked(buy, duplicate, operator, common.HexToHash("0xffff"), index+1)
+	if service.mailboxes["alice@john"].Owner != buyer || len(service.registry) != 3 {
+		t.Fatal("a duplicate canonical mailbox purchase replaced the first owner")
 	}
 	newPayout := common.HexToAddress("0x5000000000000000000000000000000000000005")
 	index++
@@ -157,5 +183,14 @@ func TestEmailVMNamesAreCanonical(t *testing.T) {
 	}
 	if got, _, _, err := normalizeEmailAddress("Alice.Smith@John"); err != nil || got != "alice.smith@john" {
 		t.Fatalf("mailbox normalization = %q, %v", got, err)
+	}
+	if got := emailVMRegistryHash("domain", "john"); got != common.HexToHash("0x1856997af25dc25a26ab6b7fd3bdc7aba219ee3c7e3091223d6bc20458ed6e04") {
+		t.Fatalf("domain registry hash = %s", got)
+	}
+	if got := emailVMRegistryHash("mailbox", "alice@john"); got != common.HexToHash("0xc39314210816a49799cc7f12397ec4747fe9bdfad23c6b0801a7532b94d2b3c1") {
+		t.Fatalf("mailbox registry hash = %s", got)
+	}
+	if _, ok := emailVMActionRegistryHash(emailVMAction{Version: emailVMActionVersion, RegistryHash: common.HexToHash("0xdead").Hex()}, "domain", "john"); ok {
+		t.Fatal("version 3 action accepted an incorrect registry hash")
 	}
 }

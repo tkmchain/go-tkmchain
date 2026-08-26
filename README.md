@@ -550,8 +550,15 @@ domain.claimSuper() // only while @tkm is unclaimed; first canonical claim wins
 domain.operator(1000, "3500", "john")
 domain.buy("alice", "john")
 domain.buy("alice", "tkm")
+domain.hash("john")
+domain.mailboxHash("alice", "john")
 domain.pending()
 ```
+
+Each canonical domain and full mailbox address is permanently indexed by a
+deterministic Keccak-256 registry hash. New transactions commit both the hash
+and the readable domain/username; the first canonical registration wins and
+the same name cannot be purchased again.
 
 These calls return shielded action plans; private notes, proofs, keys, and PQ
 signatures remain in the local wallet. Large fees are split into parallel

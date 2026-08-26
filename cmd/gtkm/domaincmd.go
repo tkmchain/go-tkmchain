@@ -32,6 +32,9 @@ password, private key, shielded note, or proof is sent to the RPC server.`,
 			{Name: "buy", Usage: "Prepare a mailbox purchase", ArgsUsage: "<username> <operator-domain>", Flags: domainFlags, Action: domainBuy},
 			{Name: "expand", Usage: "Prepare an operator capacity expansion", ArgsUsage: "<additional-units> <amount-tkm> <domain>", Flags: domainFlags, Action: domainExpand},
 			{Name: "list", Usage: "List registered operator domains", Flags: domainFlags, Action: domainList},
+			{Name: "hash", Usage: "Calculate a canonical domain registry hash", ArgsUsage: "<domain>", Flags: domainFlags, Action: domainHash},
+			{Name: "mailbox-hash", Usage: "Calculate a canonical mailbox registry hash", ArgsUsage: "<username> <domain>", Flags: domainFlags, Action: domainMailboxHash},
+			{Name: "registration", Usage: "Resolve a permanent name registration by hash", ArgsUsage: "<registry-hash>", Flags: domainFlags, Action: domainRegistration},
 			{Name: "mailbox", Usage: "Inspect one mailbox", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: domainMailbox},
 			{Name: "mailboxes", Usage: "List mailboxes, optionally under one domain", ArgsUsage: "[domain]", Flags: domainFlags, Action: domainMailboxes},
 			{Name: "pending", Usage: "List partially confirmed domain and mailbox payments", Flags: domainFlags, Action: domainPending},
@@ -106,6 +109,27 @@ func domainMailbox(ctx *cli.Context) error {
 		return errors.New("usage: gtkm domain mailbox <username@domain>")
 	}
 	return domainRPCPrint(ctx, "tkmdomain_mailbox", ctx.Args().First())
+}
+
+func domainHash(ctx *cli.Context) error {
+	if ctx.Args().Len() != 1 {
+		return errors.New("usage: gtkm domain hash <domain>")
+	}
+	return domainRPCPrint(ctx, "tkmdomain_domainHash", ctx.Args().First())
+}
+
+func domainMailboxHash(ctx *cli.Context) error {
+	if ctx.Args().Len() != 2 {
+		return errors.New("usage: gtkm domain mailbox-hash <username> <domain>")
+	}
+	return domainRPCPrint(ctx, "tkmdomain_mailboxHash", ctx.Args().Get(0), ctx.Args().Get(1))
+}
+
+func domainRegistration(ctx *cli.Context) error {
+	if ctx.Args().Len() != 1 {
+		return errors.New("usage: gtkm domain registration <registry-hash>")
+	}
+	return domainRPCPrint(ctx, "tkmdomain_registration", ctx.Args().First())
 }
 
 func domainMailboxes(ctx *cli.Context) error {
