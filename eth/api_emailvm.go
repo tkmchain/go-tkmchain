@@ -132,6 +132,7 @@ type EmailMailbox struct {
 	CreatedBlock     hexutil.Uint64 `json:"createdBlock"`
 	EncryptionKey    hexutil.Bytes  `json:"encryptionKey,omitempty"`
 	KeyTx            common.Hash    `json:"keyTx,omitempty"`
+	KeyBlock         hexutil.Uint64 `json:"keyBlock,omitempty"`
 }
 
 // EmailNameRegistration is the permanent, canonical name-registry entry for
@@ -566,11 +567,41 @@ func (api *EmailVMAPI) PublishKey(mailbox string, publicKey hexutil.Bytes) (Emai
 	if _, err := ecdh.X25519().NewPublicKey(publicKey); err != nil {
 		return EmailVMActionPlan{}, errors.New("invalid X25519 encryption public key")
 	}
+	if err := api.service.sync(); err != nil {
+		return EmailVMActionPlan{}, err
+	}
+	api.service.lock.Lock()
+	_, exists := api.service.mailboxes[mailbox]
+	api.service.lock.Unlock()
+	if !exists {
+		return EmailVMActionPlan{}, errors.New("mailbox must be canonically registered before publishing an encryption key")
+	}
 	data, err := encodeEmailVMAction(emailVMAction{Version: emailVMActionVersion, Kind: "key", Mailbox: mailbox, Key: hex.EncodeToString(publicKey)})
 	if err != nil {
 		return EmailVMActionPlan{}, err
 	}
 	return metadataPlan("key", mailbox, data), nil
+}
+
+// Key returns the latest canonical X25519 public-key publication for mailbox.
+// The matching private key never leaves the client that generated or imported
+// its encrypted portable mail-key file.
+func (api *EmailVMAPI) Key(mailbox string) (EmailMailboxKey, error) {
+	mailbox, _, _, err := normalizeEmailAddress(mailbox)
+	if err != nil {
+		return EmailMailboxKey{}, err
+	}
+	if err := api.service.sync(); err != nil {
+		return EmailMailboxKey{}, err
+	}
+	api.service.lock.Lock()
+	defer api.service.lock.Unlock()
+	record, exists := api.service.keys[mailbox]
+	if !exists {
+		return EmailMailboxKey{}, errors.New("mailbox encryption key is not published")
+	}
+	record.PublicKey = append([]byte(nil), record.PublicKey...)
+	return record, nil
 }
 
 func (api *EmailVMAPI) Send(from string, to string, ciphertext hexutil.Bytes, nonce hexutil.Bytes) (EmailVMActionPlan, error) {
@@ -916,6 +947,7 @@ func (svc *EmailVMService) applyMailboxKeyLocked(action emailVMAction, sender co
 	}
 	record.EncryptionKey = append([]byte(nil), key...)
 	record.KeyTx = txHash
+	record.KeyBlock = hexutil.Uint64(block)
 	svc.mailboxes[mailbox] = record
 	svc.keys[mailbox] = EmailMailboxKey{Mailbox: mailbox, Owner: sender, PublicKey: append([]byte(nil), key...), TxHash: txHash, Block: hexutil.Uint64(block)}
 }

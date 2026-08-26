@@ -2,11 +2,13 @@ package eth
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
@@ -20,6 +22,7 @@ type testTransactionBucketBackend struct {
 	pool          map[common.Hash]*types.Transaction
 	canonical     map[common.Hash]bool
 	submitted     []common.Hash
+	submitErr     error
 }
 
 func newTestTransactionBucketBackend() *testTransactionBucketBackend {
@@ -56,12 +59,34 @@ func (backend *testTransactionBucketBackend) canonicalTransaction(hash common.Ha
 }
 
 func (backend *testTransactionBucketBackend) submitTransaction(_ context.Context, tx *types.Transaction) error {
+	if backend.submitErr != nil {
+		return backend.submitErr
+	}
 	backend.pool[tx.Hash()] = tx
 	backend.submitted = append(backend.submitted, tx.Hash())
 	if tx.Nonce() >= backend.nextPoolNonce {
 		backend.nextPoolNonce = tx.Nonce() + 1
 	}
 	return nil
+}
+
+func TestTransactionBucketFailsPermanentShieldedRejection(t *testing.T) {
+	backend := newTestTransactionBucketBackend()
+	backend.submitErr = errors.New("invalid shielded transaction: nullifier already spent 0x01")
+	bucket := newTransactionBucket(backend, rawdb.NewMemoryDatabase())
+	batch := testBucketBatch(t, bucket, 1)
+
+	bucket.run()
+	status, err := bucket.status(batch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "failed" || status.FailedCount != 1 {
+		t.Fatalf("permanently rejected status = %+v, want failed", status)
+	}
+	if entry := batch.Entries[0]; len(entry.Raw) != 0 || entry.Error == "" {
+		t.Fatalf("permanently rejected entry retained retry data: %+v", entry)
+	}
 }
 
 func testBucketBatch(t *testing.T, bucket *transactionBucket, count uint64) *transactionBucketBatch {
@@ -172,5 +197,79 @@ func TestTransactionBucketBeginRequiresSignedShieldedPQTransaction(t *testing.T)
 	}
 	if len(bucket.batches) != 0 {
 		t.Fatalf("invalid begin created %d batches", len(bucket.batches))
+	}
+}
+
+func TestTransactionBucketAllowsContiguousEmailMessageBatches(t *testing.T) {
+	backend := newTestTransactionBucketBackend()
+	bucket := newTransactionBucket(backend, rawdb.NewMemoryDatabase())
+	address := common.HexToAddress("0x0000000000000000000000000000000000001234")
+	for nonce := uint64(0); nonce < transactionBucketWindowSize; nonce++ {
+		if err := bucket.validateNewBatchLocked(address, 1, true); err != nil {
+			t.Fatalf("message batch %d rejected: %v", nonce, err)
+		}
+		batch := &transactionBucketBatch{
+			ID:            string(rune('a' + nonce)),
+			From:          address,
+			BaseNonce:     nonce,
+			ExpectedCount: 1,
+			State:         "processing",
+			EmailMessage:  true,
+		}
+		bucket.batches[batch.ID] = batch
+		if got := bucket.nextSenderNonceLocked(address); got != nonce+1 {
+			t.Fatalf("next nonce after message %d = %d, want %d", nonce, got, nonce+1)
+		}
+	}
+	if err := bucket.validateNewBatchLocked(address, 1, true); err == nil {
+		t.Fatal("message batch window accepted more than ten unconfirmed messages")
+	}
+}
+
+func TestTransactionBucketRecognizesProofBoundEmailMessage(t *testing.T) {
+	applicationData, err := encodeEmailVMAction(emailVMAction{Kind: "message", From: "alice@tkm", To: "bob@tkm", Ciphertext: "01", Nonce: "000000000000000000000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopeData, err := core.EncodeShieldedTransaction(&core.ShieldedTransaction{
+		Version: core.ShieldedTxVersionV2,
+		Spends:  []core.ShieldedSpend{{EncryptedSpendData: applicationData}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := types.NewTransaction(0, params.ShieldedPoolAddress, new(big.Int), params.TxGas, big.NewInt(1), envelopeData)
+	if !isEmailMessageTransaction(tx) {
+		t.Fatal("proof-bound EmailVM message was not recognized")
+	}
+	applicationData, err = encodeEmailVMAction(emailVMAction{Kind: "key", Mailbox: "alice@tkm", Key: "01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelopeData, err = core.EncodeShieldedTransaction(&core.ShieldedTransaction{
+		Version: core.ShieldedTxVersionV2,
+		Spends:  []core.ShieldedSpend{{EncryptedSpendData: applicationData}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx = types.NewTransaction(0, params.ShieldedPoolAddress, new(big.Int), params.TxGas, big.NewInt(1), envelopeData)
+	if isEmailMessageTransaction(tx) {
+		t.Fatal("non-message EmailVM action received parallel message treatment")
+	}
+}
+
+func TestTransactionBucketKeepsOrdinaryBatchesExclusive(t *testing.T) {
+	backend := newTestTransactionBucketBackend()
+	bucket := newTransactionBucket(backend, rawdb.NewMemoryDatabase())
+	address := common.HexToAddress("0x0000000000000000000000000000000000001234")
+	bucket.batches["ordinary"] = &transactionBucketBatch{
+		ID: "ordinary", From: address, BaseNonce: 0, ExpectedCount: 2, State: "processing",
+	}
+	if err := bucket.validateNewBatchLocked(address, 1, true); err == nil {
+		t.Fatal("EmailVM message overlapped an ordinary shielded batch")
+	}
+	if err := bucket.validateNewBatchLocked(address, 1, false); err == nil {
+		t.Fatal("ordinary shielded batch overlapped an active batch")
 	}
 }

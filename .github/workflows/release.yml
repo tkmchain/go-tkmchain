@@ -87,7 +87,8 @@ jobs:
           make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
-          cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
+          cp build/bin/gtkm "release/$archive/gtkm.exe"
+          cp build/bin/shielded-payout-prover "release/$archive/shielded-payout-prover.exe"
           (cd release && zip -r "$archive.zip" "$archive")
 
       - name: Upload platform archive

@@ -165,6 +165,7 @@ Publish a 32-byte X25519 mailbox encryption public key:
 
 ```javascript
 emailvm.publishKey("alice@john", "0x...")
+emailvm.key("alice@john")
 ```
 
 Construct an encrypted message action:
@@ -180,6 +181,37 @@ emailvm.inbox("bob@tkm")
 emailvm.outbox("alice@john")
 emailvm.message("0xMessageId")
 ```
+
+`emailvm.key` returns the canonical mailbox, owner, public key, publication
+transaction, and block. `gtkm emailvm key alice@john` exposes the same record
+from scripts. A publication plan is rejected until the mailbox itself is
+canonically registered, and the index accepts the key only when the canonical
+PQ transaction sender owns that mailbox.
+
+The web wallet can export a password-encrypted portable EmailVM mail keyfile.
+It contains the X25519 decryption private key, owner address, mailbox names,
+and public key authenticated with XChaCha20-Poly1305; its encryption key is
+derived with scrypt. It never contains the ML-DSA-87 seed, shielded viewing
+key, note openings, or spending key. Import therefore requires opening the
+separate owning PQ wallet and verifying every mailbox and published public key
+against the canonical network index.
+
+### Consecutive message submission
+
+Each message remains a normal locally signed, proof-backed shielded
+transaction and must spend a distinct available note. The durable daemon
+bucket permits up to ten one-transaction EmailVM message batches from the same
+sender at consecutive nonces. This lets the browser encrypt, prove, and submit
+different messages without waiting for each preceding message to confirm. The
+wallet serializes local note selection and reserves a note as soon as its raw
+transaction is accepted, preventing duplicate-nullifier and nonce races.
+
+The bucket submits each valid carrier to the txpool immediately and the miner
+rebuilds work on the normal new-transaction event. Inclusion is in the next
+eligible block subject to canonical nonce order, block gas capacity, and
+consensus validation; neither the RPC nor the wallet can guarantee a block
+before one is produced. Ordinary large shielded batches remain exclusive so a
+deposit or withdrawal cannot overlap another reserved nonce range.
 
 The node verifies that the canonical PQ transaction sender owns the `from`
 mailbox. EmailVM v1 publishes X25519 encryption keys; transaction authorization

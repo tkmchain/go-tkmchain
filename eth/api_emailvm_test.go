@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
@@ -166,6 +167,16 @@ func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
 	service.applyMailboxKeyLocked(emailVMAction{Mailbox: "alice@john", Key: hex.EncodeToString(key)}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index)
 	if got := service.mailboxes["alice@john"].EncryptionKey; len(got) != len(key) {
 		t.Fatalf("published key length = %d", len(got))
+	}
+	keyRecord, ok := service.keys["alice@john"]
+	if !ok || keyRecord.Owner != buyer || len(keyRecord.PublicKey) != len(key) {
+		t.Fatalf("canonical network key record is incomplete: %+v", keyRecord)
+	}
+	wrongKey := append([]byte(nil), key...)
+	wrongKey[0] ^= 0xff
+	service.applyMailboxKeyLocked(emailVMAction{Mailbox: "alice@john", Key: hex.EncodeToString(wrongKey)}, operator, common.HexToHash("0xeeee"), index+1)
+	if got := service.mailboxes["alice@john"].EncryptionKey; !bytes.Equal(got, key) {
+		t.Fatal("non-owner replaced the canonical mailbox encryption key")
 	}
 	index++
 	service.applyMessageLocked(emailVMAction{From: "alice@john", To: "alice@john", Ciphertext: "010203", Nonce: "000102030405060708090a0b"}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index, 1234)

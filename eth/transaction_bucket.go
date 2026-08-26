@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +112,7 @@ type transactionBucketBatch struct {
 	UpdatedAt       int64                              `json:"updatedAt"`
 	ExpiresAt       int64                              `json:"expiresAt"`
 	CompletedAt     int64                              `json:"completedAt,omitempty"`
+	EmailMessage    bool                               `json:"emailMessage,omitempty"`
 	Entries         map[uint64]*transactionBucketEntry `json:"-"`
 }
 
@@ -248,6 +250,7 @@ func (bucket *transactionBucket) begin(expected uint64, raw []byte) (Transaction
 		return TransactionBatchBegin{}, err
 	}
 	baseNonce := tx.Nonce()
+	emailMessage := expected == 1 && isEmailMessageTransaction(tx)
 	if expected > math.MaxUint64-baseNonce {
 		return TransactionBatchBegin{}, errors.New("transaction batch nonce range overflows uint64")
 	}
@@ -272,6 +275,7 @@ func (bucket *transactionBucket) begin(expected uint64, raw []byte) (Transaction
 		CreatedAt:       now.Unix(),
 		UpdatedAt:       now.Unix(),
 		ExpiresAt:       now.Add(transactionBucketActiveTTL).Unix(),
+		EmailMessage:    emailMessage,
 		Entries:         make(map[uint64]*transactionBucketEntry),
 	}
 	entry := &transactionBucketEntry{
@@ -287,10 +291,10 @@ func (bucket *transactionBucket) begin(expected uint64, raw []byte) (Transaction
 	}
 	bucket.mu.Lock()
 	defer bucket.mu.Unlock()
-	if active := bucket.activeBatchForSenderLocked(from, ""); active != nil {
-		return TransactionBatchBegin{}, fmt.Errorf("sender already has active transaction batch %s", active.ID)
+	if err := bucket.validateNewBatchLocked(from, expected, emailMessage); err != nil {
+		return TransactionBatchBegin{}, err
 	}
-	if current := bucket.backend.poolNonce(from); current != baseNonce {
+	if current := bucket.nextSenderNonceLocked(from); current != baseNonce {
 		return TransactionBatchBegin{}, fmt.Errorf("first transaction nonce is stale: have %d, want %d; rebuild the first proof", baseNonce, current)
 	}
 	if bucket.totalRawBytesLocked()+uint64(len(raw)) > transactionBucketMaxRawBytes {
@@ -302,6 +306,9 @@ func (bucket *transactionBucket) begin(expected uint64, raw []byte) (Transaction
 		return TransactionBatchBegin{}, err
 	}
 	bucket.scheduleBatchLocked(batch, now)
+	if batch.State == "failed" {
+		return TransactionBatchBegin{}, errors.New(batch.Error)
+	}
 	return TransactionBatchBegin{
 		BatchID:          id,
 		CancelToken:      token,
@@ -312,6 +319,65 @@ func (bucket *transactionBucket) begin(expected uint64, raw []byte) (Transaction
 		ExpiresAt:        hexutil.Uint64(batch.ExpiresAt),
 		FirstTransaction: queueResult(batch, entry),
 	}, nil
+}
+
+func permanentTransactionBucketError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "invalid shielded transaction") ||
+		strings.Contains(message, "nullifier already spent") ||
+		strings.Contains(message, "invalid pq transaction") ||
+		strings.Contains(message, "invalid transaction signature") ||
+		strings.Contains(message, "intrinsic gas too low")
+}
+
+func isEmailMessageTransaction(tx *types.Transaction) bool {
+	if tx == nil {
+		return false
+	}
+	envelope, ok, err := core.DecodeShieldedTransaction(tx.Data())
+	if err != nil || !ok || len(envelope.Spends) != 1 {
+		return false
+	}
+	action, ok := decodeEmailVMAction(envelope.Spends[0].EncryptedSpendData)
+	return ok && action.Kind == "message"
+}
+
+// validateNewBatchLocked keeps ordinary shielded batches exclusive while
+// allowing one txpool window of independently signed EmailVM messages. Every
+// parallel message still uses a distinct sequential account nonce and passes
+// normal shielded proof and nullifier validation during txpool admission.
+func (bucket *transactionBucket) validateNewBatchLocked(address common.Address, expected uint64, emailMessage bool) error {
+	activeMessages := uint64(0)
+	for _, batch := range bucket.batches {
+		if batch.From != address || (batch.State != "receiving" && batch.State != "processing") {
+			continue
+		}
+		if !emailMessage || !batch.EmailMessage || expected != 1 || batch.ExpectedCount != 1 {
+			return fmt.Errorf("sender already has active transaction batch %s", batch.ID)
+		}
+		activeMessages++
+	}
+	if activeMessages >= transactionBucketWindowSize {
+		return fmt.Errorf("sender already has %d unconfirmed EmailVM messages; wait for one canonical block", activeMessages)
+	}
+	return nil
+}
+
+func (bucket *transactionBucket) nextSenderNonceLocked(address common.Address) uint64 {
+	nonce := bucket.backend.poolNonce(address)
+	for _, batch := range bucket.batches {
+		if batch.From != address || (batch.State != "receiving" && batch.State != "processing") {
+			continue
+		}
+		end := batch.BaseNonce + batch.ExpectedCount
+		if end > nonce {
+			nonce = end
+		}
+	}
+	return nonce
 }
 
 func (bucket *transactionBucket) validateRawTransaction(raw []byte) (*types.Transaction, common.Address, error) {
@@ -600,6 +666,17 @@ func (bucket *transactionBucket) scheduleBatchLocked(batch *transactionBucketBat
 		entry.LastAttempt = now.Unix()
 		submitErr := bucket.backend.submitTransaction(context.Background(), tx)
 		if bucket.backend.poolTransaction(entry.Hash) == nil {
+			if permanentTransactionBucketError(submitErr) {
+				entry.Status = "failed"
+				entry.Error = submitErr.Error()
+				batch.State = "failed"
+				batch.Error = fmt.Sprintf("transaction %d permanently rejected: %s", index, entry.Error)
+				batch.CompletedAt = now.Unix()
+				batch.RawBytes -= uint64(len(entry.Raw))
+				entry.Raw = nil
+				changed = append(changed, entry)
+				break
+			}
 			if submitErr != nil {
 				entry.Error = submitErr.Error()
 			} else {
@@ -614,6 +691,13 @@ func (bucket *transactionBucket) scheduleBatchLocked(batch *transactionBucketBat
 		batch.Error = ""
 		inflight++
 		changed = append(changed, entry)
+	}
+	if batch.State == "failed" {
+		batch.UpdatedAt = now.Unix()
+		if err := bucket.persistLocked(batch, changed...); err != nil {
+			log.Error("Failed to persist rejected shielded transaction batch", "batch", batch.ID, "err", err)
+		}
+		return
 	}
 	status := batchStatus(batch)
 	if uint64(status.ConfirmedCount) == batch.ExpectedCount {
@@ -633,15 +717,6 @@ func (bucket *transactionBucket) scheduleBatchLocked(batch *transactionBucketBat
 			log.Error("Failed to persist shielded transaction batch progress", "batch", batch.ID, "err", err)
 		}
 	}
-}
-
-func (bucket *transactionBucket) activeBatchForSenderLocked(address common.Address, except string) *transactionBucketBatch {
-	for _, batch := range bucket.batches {
-		if batch.ID != except && batch.From == address && (batch.State == "receiving" || batch.State == "processing") {
-			return batch
-		}
-	}
-	return nil
 }
 
 func (bucket *transactionBucket) totalRawBytesLocked() uint64 {

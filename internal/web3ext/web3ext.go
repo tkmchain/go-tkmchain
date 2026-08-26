@@ -112,6 +112,7 @@ web3._extend({
 	property: 'emailvm',
 	methods: [
 		new web3._extend.Method({name: 'status', call: 'emailvm_status', params: 0}),
+		new web3._extend.Method({name: 'key', call: 'emailvm_key', params: 1}),
 		new web3._extend.Method({name: 'publishKey', call: 'emailvm_publishKey', params: 2}),
 		new web3._extend.Method({name: 'send', call: 'emailvm_send', params: 4}),
 		new web3._extend.Method({name: 'inbox', call: 'emailvm_inbox', params: 1}),

@@ -45,6 +45,7 @@ password, private key, shielded note, or proof is sent to the RPC server.`,
 		Usage: "Inspect canonical encrypted EmailVM messages",
 		Subcommands: []*cli.Command{
 			{Name: "status", Usage: "Show EmailVM index status", Flags: domainFlags, Action: emailVMStatus},
+			{Name: "key", Usage: "Show a mailbox's canonical X25519 public key", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMKey},
 			{Name: "inbox", Usage: "List canonical encrypted inbox messages", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMInbox},
 			{Name: "outbox", Usage: "List canonical encrypted outbox messages", ArgsUsage: "<username@domain>", Flags: domainFlags, Action: emailVMOutbox},
 		},
@@ -56,6 +57,13 @@ func domainClaimSuper(ctx *cli.Context) error { return domainRPCPrint(ctx, "tkmd
 func domainList(ctx *cli.Context) error       { return domainRPCPrint(ctx, "tkmdomain_domains") }
 func domainPending(ctx *cli.Context) error    { return domainRPCPrint(ctx, "tkmdomain_pending") }
 func emailVMStatus(ctx *cli.Context) error    { return domainRPCPrint(ctx, "emailvm_status") }
+
+func emailVMKey(ctx *cli.Context) error {
+	if ctx.Args().Len() != 1 {
+		return errors.New("usage: gtkm emailvm key <username@domain>")
+	}
+	return domainRPCPrint(ctx, "emailvm_key", ctx.Args().First())
+}
 
 func domainQuote(ctx *cli.Context) error {
 	units, err := domainUnitsArg(ctx, 1)
