@@ -84,11 +84,31 @@ jobs:
         run: |
           export PATH="$(cygpath -u "$GO_BIN"):$PATH"
           go version
-          make gtkm shielded-payout-prover
+
+          # RandomX is C++, so the ordinary host link flags would leave gtkm.exe
+          # dependent on MSYS2's libstdc++-6.dll (and usually libwinpthread).
+          # Link those MinGW runtimes statically so the release is portable to a
+          # clean Windows installation.
+          windows_randomx_ldflags="-Lbuild/_workspace/randomx/build-host -lrandomx -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm"
+          make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
+          make shielded-payout-prover
+
           archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
           cp build/bin/gtkm "release/$archive/gtkm.exe"
           cp build/bin/shielded-payout-prover "release/$archive/shielded-payout-prover.exe"
+
+          # Do not publish executables that only work inside the MSYS2 runner.
+          for binary in "release/$archive/gtkm.exe" "release/$archive/shielded-payout-prover.exe"; do
+            runtime_dlls="$(objdump -p "$binary" | sed -n 's/^[[:space:]]*DLL Name: //p')"
+            echo "Imported DLLs for $binary:"
+            printf '%s\n' "$runtime_dlls"
+            if printf '%s\n' "$runtime_dlls" | grep -Eiq '^(libstdc\+\+-6|libgcc_s_[^.]+-1|libwinpthread-1)\.dll$'; then
+              echo "ERROR: $binary still depends on a MinGW runtime DLL" >&2
+              exit 1
+            fi
+          done
+
           (cd release && zip -r "$archive.zip" "$archive")
 
       - name: Upload platform archive
