@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -179,7 +180,7 @@ func TestEmailVMCanonicalInstallmentsAndMessage(t *testing.T) {
 		t.Fatal("non-owner replaced the canonical mailbox encryption key")
 	}
 	index++
-	service.applyMessageLocked(emailVMAction{From: "alice@john", To: "alice@john", Ciphertext: "010203", Nonce: "000102030405060708090a0b"}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index, 1234)
+	service.applyMessageLocked(emailVMAction{From: "alice@john", To: "alice@john", Ciphertext: "010203", Nonce: "000102030405060708090a0b"}, buyer, common.BigToHash(new(big.Int).SetUint64(index)), index, 0, 1234)
 	if len(service.messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(service.messages))
 	}
@@ -203,5 +204,40 @@ func TestEmailVMNamesAreCanonical(t *testing.T) {
 	}
 	if _, ok := emailVMActionRegistryHash(emailVMAction{Version: emailVMActionVersion, RegistryHash: common.HexToHash("0xdead").Hex()}, "domain", "john"); ok {
 		t.Fatal("version 3 action accepted an incorrect registry hash")
+	}
+}
+
+func TestEmailVMMessagesPersistAsIndividualDatabaseRecords(t *testing.T) {
+	db := memorydb.New()
+	defer db.Close()
+	owner := common.HexToAddress("0x3000000000000000000000000000000000000003")
+	svc := &EmailVMService{db: db}
+	svc.resetLocked()
+	svc.initialized = true
+	svc.mailboxes["alice@tkm"] = EmailMailbox{Address: "alice@tkm", Owner: owner}
+	svc.mailboxes["bob@tkm"] = EmailMailbox{Address: "bob@tkm", Owner: owner}
+	svc.applyMessageLocked(emailVMAction{From: "alice@tkm", To: "bob@tkm", Ciphertext: "0102", Nonce: "000102030405060708090a0b"}, owner, common.HexToHash("0x11"), 10, 0, 100)
+	svc.applyMessageLocked(emailVMAction{From: "alice@tkm", To: "bob@tkm", Ciphertext: "0304", Nonce: "010102030405060708090a0b"}, owner, common.HexToHash("0x12"), 11, 0, 101)
+	if err := svc.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if len(svc.dirtyMessages) != 0 {
+		t.Fatal("saved messages remained dirty")
+	}
+
+	reloaded := &EmailVMService{db: db}
+	reloaded.resetLocked()
+	if err := reloaded.loadLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.messages) != 2 || len(reloaded.inboxIndex["bob@tkm"]) != 2 || len(reloaded.outboxIndex["alice@tkm"]) != 2 {
+		t.Fatalf("durable message indexes were not restored: messages=%d inbox=%d outbox=%d", len(reloaded.messages), len(reloaded.inboxIndex["bob@tkm"]), len(reloaded.outboxIndex["alice@tkm"]))
+	}
+	page, err := reloaded.messagePageLocked("bob@tkm", true, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].TxHash != common.HexToHash("0x12") || !page.HasMore || uint64(page.NextOffset) != 1 || uint64(page.Total) != 2 {
+		t.Fatalf("unexpected newest-first message page: %+v", page)
 	}
 }

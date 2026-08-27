@@ -117,6 +117,8 @@ web3._extend({
 		new web3._extend.Method({name: 'send', call: 'emailvm_send', params: 4}),
 		new web3._extend.Method({name: 'inbox', call: 'emailvm_inbox', params: 1}),
 		new web3._extend.Method({name: 'outbox', call: 'emailvm_outbox', params: 1}),
+		new web3._extend.Method({name: 'inboxPage', call: 'emailvm_inboxPage', params: 3}),
+		new web3._extend.Method({name: 'outboxPage', call: 'emailvm_outboxPage', params: 3}),
 		new web3._extend.Method({name: 'message', call: 'emailvm_message', params: 1})
 	]
 });

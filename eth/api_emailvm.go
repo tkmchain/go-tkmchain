@@ -41,6 +41,7 @@ const (
 var (
 	emailVMActionMagic                 = []byte("TKMEMAILVM1")
 	emailVMStateKey                    = []byte("tkm-emailvm-state-v2")
+	emailVMMessagePrefix               = []byte("tkm-emailvm-message-v1/")
 	emailVMLegacyDomainRegistrationFee = new(big.Int).Mul(big.NewInt(30_000), big.NewInt(params.Ether))
 	emailVMLegacySubscriberUnitFee     = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
 	emailVMDomainRegistrationFee       = new(big.Int).Mul(big.NewInt(2_500), big.NewInt(params.Ether))
@@ -50,22 +51,25 @@ var (
 )
 
 type EmailVMService struct {
-	lock         sync.Mutex
-	eth          *Ethereum
-	superAddress common.Address
-	superTx      common.Hash
-	superBlock   uint64
-	db           ethdb.KeyValueStore
-	dir          string
-	initialized  bool
-	indexed      uint64
-	indexedHash  common.Hash
-	domains      map[string]EmailDomain
-	mailboxes    map[string]EmailMailbox
-	registry     map[common.Hash]EmailNameRegistration
-	keys         map[string]EmailMailboxKey
-	messages     map[common.Hash]EmailMessage
-	pending      map[string]EmailPendingPayment
+	lock          sync.Mutex
+	eth           *Ethereum
+	superAddress  common.Address
+	superTx       common.Hash
+	superBlock    uint64
+	db            ethdb.KeyValueStore
+	dir           string
+	initialized   bool
+	indexed       uint64
+	indexedHash   common.Hash
+	domains       map[string]EmailDomain
+	mailboxes     map[string]EmailMailbox
+	registry      map[common.Hash]EmailNameRegistration
+	keys          map[string]EmailMailboxKey
+	messages      map[common.Hash]EmailMessage
+	inboxIndex    map[string][]common.Hash
+	outboxIndex   map[string][]common.Hash
+	dirtyMessages map[common.Hash]struct{}
+	pending       map[string]EmailPendingPayment
 }
 
 type emailVMSnapshot struct {
@@ -76,7 +80,7 @@ type emailVMSnapshot struct {
 	Mailboxes    map[string]EmailMailbox
 	Registry     map[common.Hash]EmailNameRegistration
 	Keys         map[string]EmailMailboxKey
-	Messages     map[common.Hash]EmailMessage
+	Messages     map[common.Hash]EmailMessage `json:",omitempty"`
 	Pending      map[string]EmailPendingPayment
 	SuperAddress common.Address
 	SuperTx      common.Hash
@@ -166,7 +170,18 @@ type EmailMessage struct {
 	BodyHash   common.Hash    `json:"bodyHash"`
 	TxHash     common.Hash    `json:"txHash"`
 	Block      hexutil.Uint64 `json:"block"`
+	TxIndex    hexutil.Uint64 `json:"transactionIndex"`
 	Timestamp  hexutil.Uint64 `json:"timestamp"`
+}
+
+// EmailMessagePage is a bounded, newest-first view over the durable message
+// index. Offset is stable while the canonical head is unchanged.
+type EmailMessagePage struct {
+	Messages   []EmailMessage `json:"messages"`
+	Offset     hexutil.Uint64 `json:"offset"`
+	NextOffset hexutil.Uint64 `json:"nextOffset"`
+	Total      hexutil.Uint64 `json:"total"`
+	HasMore    bool           `json:"hasMore"`
 }
 
 type EmailVMStatus struct {
@@ -181,6 +196,8 @@ type EmailVMStatus struct {
 	Messages      hexutil.Uint64 `json:"messages"`
 	Pending       hexutil.Uint64 `json:"pendingPayments"`
 	Protocol      string         `json:"protocol"`
+	MessageStore  string         `json:"messageStore"`
+	PageLimit     hexutil.Uint64 `json:"messagePageLimit"`
 	SuperAddress  common.Address `json:"superAddress"`
 	SuperClaimed  bool           `json:"superClaimed"`
 	SuperTx       common.Hash    `json:"superTx,omitempty"`
@@ -239,6 +256,12 @@ func newEmailVMService(e *Ethereum, db ethdb.KeyValueStore, dir string) *EmailVM
 		// The canonical chain remains the source of truth, so a corrupt optional
 		// index is safely discarded and rebuilt on the next query.
 		svc.resetLocked()
+	} else if len(svc.dirtyMessages) > 0 {
+		// Migrate legacy snapshots immediately instead of waiting for the next
+		// block to arrive before creating individual message records.
+		if err := svc.saveLocked(); err != nil {
+			svc.resetLocked()
+		}
 	}
 	return svc
 }
@@ -255,6 +278,9 @@ func (svc *EmailVMService) resetLocked() {
 	svc.registry = make(map[common.Hash]EmailNameRegistration)
 	svc.keys = make(map[string]EmailMailboxKey)
 	svc.messages = make(map[common.Hash]EmailMessage)
+	svc.inboxIndex = make(map[string][]common.Hash)
+	svc.outboxIndex = make(map[string][]common.Hash)
+	svc.dirtyMessages = make(map[common.Hash]struct{})
 	svc.pending = make(map[string]EmailPendingPayment)
 }
 
@@ -632,6 +658,12 @@ func (api *EmailVMAPI) Inbox(mailbox string) ([]EmailMessage, error) {
 func (api *EmailVMAPI) Outbox(mailbox string) ([]EmailMessage, error) {
 	return api.service.messageList(mailbox, false)
 }
+func (api *EmailVMAPI) InboxPage(mailbox string, offset hexutil.Uint64, limit hexutil.Uint64) (EmailMessagePage, error) {
+	return api.service.messagePage(mailbox, true, uint64(offset), uint64(limit))
+}
+func (api *EmailVMAPI) OutboxPage(mailbox string, offset hexutil.Uint64, limit hexutil.Uint64) (EmailMessagePage, error) {
+	return api.service.messagePage(mailbox, false, uint64(offset), uint64(limit))
+}
 func (api *EmailVMAPI) Message(id common.Hash) (EmailMessage, error) {
 	if err := api.service.sync(); err != nil {
 		return EmailMessage{}, err
@@ -676,6 +708,9 @@ func (svc *EmailVMService) sync() error {
 	if svc.initialized {
 		canonical := svc.eth.blockchain.GetBlockByNumber(svc.indexed)
 		if canonical == nil || canonical.Hash() != svc.indexedHash || svc.indexed > head.Number.Uint64() {
+			if err := svc.purgeMessageRecordsLocked(); err != nil {
+				return err
+			}
 			svc.resetLocked()
 		}
 	}
@@ -691,8 +726,8 @@ func (svc *EmailVMService) sync() error {
 		if block == nil {
 			return fmt.Errorf("canonical block %d is unavailable", number)
 		}
-		for _, tx := range block.Transactions() {
-			svc.applyTransactionLocked(block, tx)
+		for txIndex, tx := range block.Transactions() {
+			svc.applyTransactionLocked(block, tx, uint64(txIndex))
 		}
 		svc.initialized = true
 		svc.indexed = number
@@ -704,7 +739,7 @@ func (svc *EmailVMService) sync() error {
 	return svc.saveLocked()
 }
 
-func (svc *EmailVMService) applyTransactionLocked(block *types.Block, tx *types.Transaction) {
+func (svc *EmailVMService) applyTransactionLocked(block *types.Block, tx *types.Transaction, txIndex uint64) {
 	envelope, ok, err := core.DecodeShieldedTransaction(tx.Data())
 	if err != nil || !ok || envelope == nil || len(envelope.Spends) == 0 {
 		return
@@ -732,7 +767,7 @@ func (svc *EmailVMService) applyTransactionLocked(block *types.Block, tx *types.
 	case "key":
 		svc.applyMailboxKeyLocked(action, sender, tx.Hash(), blockNumber)
 	case "message":
-		svc.applyMessageLocked(action, sender, tx.Hash(), blockNumber, block.Time())
+		svc.applyMessageLocked(action, sender, tx.Hash(), blockNumber, txIndex, block.Time())
 	}
 }
 
@@ -952,7 +987,7 @@ func (svc *EmailVMService) applyMailboxKeyLocked(action emailVMAction, sender co
 	svc.keys[mailbox] = EmailMailboxKey{Mailbox: mailbox, Owner: sender, PublicKey: append([]byte(nil), key...), TxHash: txHash, Block: hexutil.Uint64(block)}
 }
 
-func (svc *EmailVMService) applyMessageLocked(action emailVMAction, sender common.Address, txHash common.Hash, block uint64, timestamp uint64) {
+func (svc *EmailVMService) applyMessageLocked(action emailVMAction, sender common.Address, txHash common.Hash, block, txIndex, timestamp uint64) {
 	from, _, _, err := normalizeEmailAddress(action.From)
 	if err != nil {
 		return
@@ -975,10 +1010,17 @@ func (svc *EmailVMService) applyMessageLocked(action emailVMAction, sender commo
 		return
 	}
 	id := crypto.Keccak256Hash([]byte("TKMEMAIL_MESSAGE_V1"), txHash.Bytes(), []byte(from), []byte(to), nonce, ciphertext)
-	svc.messages[id] = EmailMessage{
-		ID: id, From: from, To: to, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...),
-		BodyHash: crypto.Keccak256Hash(ciphertext), TxHash: txHash, Block: hexutil.Uint64(block), Timestamp: hexutil.Uint64(timestamp),
+	if _, exists := svc.messages[id]; exists {
+		return
 	}
+	message := EmailMessage{
+		ID: id, From: from, To: to, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...),
+		BodyHash: crypto.Keccak256Hash(ciphertext), TxHash: txHash, Block: hexutil.Uint64(block), TxIndex: hexutil.Uint64(txIndex), Timestamp: hexutil.Uint64(timestamp),
+	}
+	svc.messages[id] = message
+	svc.inboxIndex[to] = append(svc.inboxIndex[to], id)
+	svc.outboxIndex[from] = append(svc.outboxIndex[from], id)
+	svc.dirtyMessages[id] = struct{}{}
 }
 
 func (svc *EmailVMService) status() (EmailVMStatus, error) {
@@ -991,7 +1033,7 @@ func (svc *EmailVMService) status() (EmailVMStatus, error) {
 	if svc.superAddress != (common.Address{}) {
 		domainCount++
 	}
-	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Registrations: hexutil.Uint64(len(svc.registry)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-emailvm-registry-v1", SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
+	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Registrations: hexutil.Uint64(len(svc.registry)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-emailvm-registry-v1", MessageStore: "keyvalue-v1", PageLimit: 100, SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
 	if svc.eth != nil && svc.eth.blockchain != nil {
 		if head := svc.eth.blockchain.CurrentBlock(); head != nil {
 			status.HeadBlock, status.HeadHash = hexutil.Uint64(head.Number.Uint64()), head.Hash()
@@ -1088,19 +1130,65 @@ func (svc *EmailVMService) messageList(mailbox string, inbox bool) ([]EmailMessa
 	if _, ok := svc.mailboxes[mailbox]; !ok {
 		return nil, errors.New("mailbox not found")
 	}
-	out := make([]EmailMessage, 0)
-	for _, message := range svc.messages {
-		if (inbox && message.To == mailbox) || (!inbox && message.From == mailbox) {
+	ids := svc.outboxIndex[mailbox]
+	if inbox {
+		ids = svc.inboxIndex[mailbox]
+	}
+	out := make([]EmailMessage, 0, len(ids))
+	for _, id := range ids {
+		if message, ok := svc.messages[id]; ok {
 			out = append(out, cloneEmailMessage(message))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Block == out[j].Block {
-			return bytes.Compare(out[i].ID[:], out[j].ID[:]) < 0
-		}
-		return out[i].Block < out[j].Block
-	})
 	return out, nil
+}
+
+func (svc *EmailVMService) messagePage(mailbox string, inbox bool, offset, limit uint64) (EmailMessagePage, error) {
+	if err := svc.sync(); err != nil {
+		return EmailMessagePage{}, err
+	}
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	return svc.messagePageLocked(mailbox, inbox, offset, limit)
+}
+
+func (svc *EmailVMService) messagePageLocked(mailbox string, inbox bool, offset, limit uint64) (EmailMessagePage, error) {
+	mailbox, _, _, err := normalizeEmailAddress(mailbox)
+	if err != nil {
+		return EmailMessagePage{}, err
+	}
+	if limit == 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		return EmailMessagePage{}, errors.New("message page limit must not exceed 100")
+	}
+	if _, ok := svc.mailboxes[mailbox]; !ok {
+		return EmailMessagePage{}, errors.New("mailbox not found")
+	}
+	ids := svc.outboxIndex[mailbox]
+	if inbox {
+		ids = svc.inboxIndex[mailbox]
+	}
+	total := uint64(len(ids))
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	messages := make([]EmailMessage, 0, end-offset)
+	for index := offset; index < end; index++ {
+		id := ids[total-1-index]
+		if message, ok := svc.messages[id]; ok {
+			messages = append(messages, cloneEmailMessage(message))
+		}
+	}
+	return EmailMessagePage{
+		Messages: messages, Offset: hexutil.Uint64(offset), NextOffset: hexutil.Uint64(end),
+		Total: hexutil.Uint64(total), HasMore: end < total,
+	}, nil
 }
 
 func (svc *EmailVMService) loadLocked() error {
@@ -1126,26 +1214,68 @@ func (svc *EmailVMService) loadLocked() error {
 		svc.keys = snapshot.Keys
 	}
 	if snapshot.Messages != nil {
-		svc.messages = snapshot.Messages
+		for id, message := range snapshot.Messages {
+			svc.messages[id] = message
+			svc.dirtyMessages[id] = struct{}{}
+		}
 	}
 	if snapshot.Pending != nil {
 		svc.pending = snapshot.Pending
 	}
 	svc.superAddress, svc.superTx, svc.superBlock = snapshot.SuperAddress, snapshot.SuperTx, snapshot.SuperBlock
+	iterator := svc.db.NewIterator(emailVMMessagePrefix, nil)
+	defer iterator.Release()
+	for iterator.Next() {
+		var message EmailMessage
+		if err := json.Unmarshal(iterator.Value(), &message); err != nil {
+			return fmt.Errorf("decode EmailVM message record: %w", err)
+		}
+		if message.ID == (common.Hash{}) {
+			return errors.New("EmailVM message database contains a record without an ID")
+		}
+		svc.messages[message.ID] = message
+	}
+	if err := iterator.Error(); err != nil {
+		return err
+	}
+	svc.rebuildMessageIndexesLocked()
 	svc.ensureRegistryLocked()
 	return nil
 }
 
 func (svc *EmailVMService) saveLocked() error {
-	snapshot := emailVMSnapshot{Initialized: svc.initialized, Indexed: svc.indexed, IndexedHash: svc.indexedHash, Domains: svc.domains, Mailboxes: svc.mailboxes, Registry: svc.registry, Keys: svc.keys, Messages: svc.messages, Pending: svc.pending, SuperAddress: svc.superAddress, SuperTx: svc.superTx, SuperBlock: svc.superBlock}
+	var snapshotMessages map[common.Hash]EmailMessage
+	if svc.db == nil {
+		snapshotMessages = svc.messages
+	}
+	snapshot := emailVMSnapshot{Initialized: svc.initialized, Indexed: svc.indexed, IndexedHash: svc.indexedHash, Domains: svc.domains, Mailboxes: svc.mailboxes, Registry: svc.registry, Keys: svc.keys, Messages: snapshotMessages, Pending: svc.pending, SuperAddress: svc.superAddress, SuperTx: svc.superTx, SuperBlock: svc.superBlock}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
 	if svc.db != nil {
-		if err := svc.db.Put(emailVMStateKey, data); err != nil {
+		batch := svc.db.NewBatch()
+		defer batch.Close()
+		for id := range svc.dirtyMessages {
+			message, ok := svc.messages[id]
+			if !ok {
+				continue
+			}
+			encoded, err := json.Marshal(message)
+			if err != nil {
+				return err
+			}
+			if err := batch.Put(emailVMMessageKey(id), encoded); err != nil {
+				return err
+			}
+		}
+		if err := batch.Put(emailVMStateKey, data); err != nil {
 			return err
 		}
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		clear(svc.dirtyMessages)
 	}
 	if svc.dir == "" {
 		return nil
@@ -1158,6 +1288,53 @@ func (svc *EmailVMService) saveLocked() error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func emailVMMessageKey(id common.Hash) []byte {
+	key := make([]byte, 0, len(emailVMMessagePrefix)+len(id))
+	key = append(key, emailVMMessagePrefix...)
+	return append(key, id[:]...)
+}
+
+func (svc *EmailVMService) rebuildMessageIndexesLocked() {
+	svc.inboxIndex = make(map[string][]common.Hash)
+	svc.outboxIndex = make(map[string][]common.Hash)
+	ordered := make([]EmailMessage, 0, len(svc.messages))
+	for _, message := range svc.messages {
+		ordered = append(ordered, message)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Block == ordered[j].Block {
+			if ordered[i].TxIndex != ordered[j].TxIndex {
+				return ordered[i].TxIndex < ordered[j].TxIndex
+			}
+			return bytes.Compare(ordered[i].ID[:], ordered[j].ID[:]) < 0
+		}
+		return ordered[i].Block < ordered[j].Block
+	})
+	for _, message := range ordered {
+		svc.inboxIndex[message.To] = append(svc.inboxIndex[message.To], message.ID)
+		svc.outboxIndex[message.From] = append(svc.outboxIndex[message.From], message.ID)
+	}
+}
+
+func (svc *EmailVMService) purgeMessageRecordsLocked() error {
+	if svc.db == nil {
+		return nil
+	}
+	iterator := svc.db.NewIterator(emailVMMessagePrefix, nil)
+	defer iterator.Release()
+	batch := svc.db.NewBatch()
+	defer batch.Close()
+	for iterator.Next() {
+		if err := batch.Delete(append([]byte(nil), iterator.Key()...)); err != nil {
+			return err
+		}
+	}
+	if err := iterator.Error(); err != nil {
+		return err
+	}
+	return batch.Write()
 }
 
 func encodeEmailVMAction(action emailVMAction) ([]byte, error) {

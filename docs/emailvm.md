@@ -188,7 +188,29 @@ After the carrier shielded transaction is canonical:
 emailvm.inbox("bob@tkm")
 emailvm.outbox("alice@john")
 emailvm.message("0xMessageId")
+emailvm.inboxPage("bob@tkm", "0x0", "0x32")
+emailvm.outboxPage("alice@john", "0x0", "0x32")
 ```
+
+### Durable message storage
+
+The canonical shielded transaction is the permanent source of every encrypted
+message. GTKm additionally stores each validated `EmailMessage` as its own
+key/value database record and maintains in-memory inbox/outbox indexes rebuilt
+from those records at startup. Records contain the message ID, sender,
+recipient, ciphertext, nonce, ciphertext hash, carrier transaction hash,
+canonical block, transaction index, and block timestamp. Plaintext and private keys are never
+written by the daemon.
+
+The previous all-in-one EmailVM snapshot is migrated automatically. New
+snapshots no longer grow with every ciphertext. A canonical-chain reorganization
+purges the derived message records and deterministically rebuilds them from the
+new canonical blocks, so the database cannot make an orphaned message appear
+canonical.
+
+`inboxPage` and `outboxPage` return at most 100 newest-first records and include
+`offset`, `nextOffset`, `total`, and `hasMore`. The original `inbox` and `outbox`
+methods remain compatible with existing clients.
 
 `emailvm.key` returns the canonical mailbox, owner, public key, publication
 transaction, and block. `gtkm emailvm key alice@john` exposes the same record

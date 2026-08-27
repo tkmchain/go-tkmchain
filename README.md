@@ -566,6 +566,11 @@ proof-backed installments and activate only after the exact canonical total is
 mined. Encrypted EmailVM messages use the same proof-bound application metadata,
 so no new hardfork or proving ceremony is required.
 
+Canonical encrypted messages are also stored as individual GTKm database
+records with inbox/outbox indexes. The paginated `emailvm_inboxPage` and
+`emailvm_outboxPage` RPC methods return message IDs, transaction hashes, blocks,
+timestamps, nonces, hashes, and ciphertext without exposing plaintext or keys.
+
 See [docs/emailvm.md](./docs/emailvm.md) for RPC, CLI, prover, privacy, indexing,
 and operator details. The byte-level uniqueness and hash protocol is defined
 in [docs/emailvm-name-registry.md](./docs/emailvm-name-registry.md).
