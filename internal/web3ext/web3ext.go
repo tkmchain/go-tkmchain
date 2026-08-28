@@ -115,6 +115,7 @@ web3._extend({
 		new web3._extend.Method({name: 'key', call: 'emailvm_key', params: 1}),
 		new web3._extend.Method({name: 'publishKey', call: 'emailvm_publishKey', params: 2}),
 		new web3._extend.Method({name: 'send', call: 'emailvm_send', params: 4}),
+		new web3._extend.Method({name: 'deliverOTP', call: 'emailvm_deliverOTP', params: 2}),
 		new web3._extend.Method({name: 'inbox', call: 'emailvm_inbox', params: 1}),
 		new web3._extend.Method({name: 'outbox', call: 'emailvm_outbox', params: 1}),
 		new web3._extend.Method({name: 'inboxPage', call: 'emailvm_inboxPage', params: 3}),

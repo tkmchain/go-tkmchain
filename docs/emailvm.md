@@ -192,6 +192,18 @@ emailvm.inboxPage("bob@tkm", "0x0", "0x32")
 emailvm.outboxPage("alice@john", "0x0", "0x32")
 ```
 
+TKMChat registration services can ask the local daemon to deliver a temporary
+six-digit challenge into an existing mailbox:
+
+```javascript
+emailvm.deliverOTP("info@tkm", "123456")
+```
+
+The raw JSON-RPC method is `emailvm_deliverOTP`. It requires the mailbox to be
+registered and to have a published EmailVM encryption key. OTP delivery is
+node-local service state for account verification; permanent user messages and
+mailbox/domain ownership continue to come from canonical shielded transactions.
+
 ### Durable message storage
 
 The canonical shielded transaction is the permanent source of every encrypted

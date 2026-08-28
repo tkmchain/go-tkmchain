@@ -241,3 +241,36 @@ func TestEmailVMMessagesPersistAsIndividualDatabaseRecords(t *testing.T) {
 		t.Fatalf("unexpected newest-first message page: %+v", page)
 	}
 }
+
+func TestEmailVMDeliverOTPPersistsTargetMailboxMessage(t *testing.T) {
+	db := memorydb.New()
+	defer db.Close()
+
+	owner := common.HexToAddress("0x3000000000000000000000000000000000000003")
+	key := bytes.Repeat([]byte{0x42}, 32)
+	svc := &EmailVMService{db: db}
+	svc.resetLocked()
+	svc.initialized = true
+	svc.mailboxes["info@tkm"] = EmailMailbox{Address: "info@tkm", Owner: owner, EncryptionKey: append([]byte(nil), key...)}
+	svc.keys["info@tkm"] = EmailMailboxKey{Mailbox: "info@tkm", Owner: owner, PublicKey: append([]byte(nil), key...)}
+
+	message, err := svc.deliverOTPLocked("info@tkm", "123456", 1800000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.From != "tkmchat@tkm" || message.To != "info@tkm" || !bytes.Contains(message.Ciphertext, []byte("123456")) {
+		t.Fatalf("unexpected OTP message: %+v", message)
+	}
+	if len(svc.inboxIndex["info@tkm"]) != 1 || len(svc.outboxIndex["tkmchat@tkm"]) != 1 {
+		t.Fatalf("message indexes were not updated: inbox=%d outbox=%d", len(svc.inboxIndex["info@tkm"]), len(svc.outboxIndex["tkmchat@tkm"]))
+	}
+
+	reloaded := &EmailVMService{db: db}
+	reloaded.resetLocked()
+	if err := reloaded.loadLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.messages) != 1 || len(reloaded.inboxIndex["info@tkm"]) != 1 {
+		t.Fatalf("OTP message was not persisted: messages=%d inbox=%d", len(reloaded.messages), len(reloaded.inboxIndex["info@tkm"]))
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -48,6 +49,7 @@ var (
 	emailVMSubscriberUnitFee           = new(big.Int).SetUint64(params.Ether)
 	emailVMDomainPattern               = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	emailVMUsernamePattern             = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`)
+	emailVMOTPPattern                  = regexp.MustCompile(`^[0-9]{6}$`)
 )
 
 type EmailVMService struct {
@@ -650,6 +652,61 @@ func (api *EmailVMAPI) Send(from string, to string, ciphertext hexutil.Bytes, no
 		return EmailVMActionPlan{}, err
 	}
 	return metadataPlan("message", from, data), nil
+}
+
+// DeliverOTP persists a short-lived TKMChat confirmation code into the target
+// mailbox inbox through the node RPC. This is intentionally off-consensus:
+// account verification challenges are temporary service state, while EmailVM
+// name ownership and user messages remain chain-backed.
+func (api *EmailVMAPI) DeliverOTP(to string, code string) (EmailMessage, error) {
+	to, _, _, err := normalizeEmailAddress(to)
+	if err != nil {
+		return EmailMessage{}, fmt.Errorf("to: %w", err)
+	}
+	code = strings.TrimSpace(code)
+	if !emailVMOTPPattern.MatchString(code) {
+		return EmailMessage{}, errors.New("OTP code must be exactly six decimal digits")
+	}
+	if err := api.service.sync(); err != nil {
+		return EmailMessage{}, err
+	}
+	api.service.lock.Lock()
+	defer api.service.lock.Unlock()
+	return api.service.deliverOTPLocked(to, code, uint64(time.Now().Unix()))
+}
+
+func (s *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint64) (EmailMessage, error) {
+	mailbox, ok := s.mailboxes[to]
+	if !ok {
+		return EmailMessage{}, errors.New("mailbox not found")
+	}
+	if len(mailbox.EncryptionKey) == 0 {
+		return EmailMessage{}, errors.New("mailbox encryption key is not published")
+	}
+	nonce := crypto.Keccak256([]byte("TKMCHAT_OTP_NONCE_V1"), []byte(to), []byte(code), new(big.Int).SetUint64(timestamp).Bytes())[:24]
+	ciphertext := []byte("TKMChat confirmation code: " + code)
+	id := crypto.Keccak256Hash([]byte("TKMCHAT_OTP_MESSAGE_V1"), []byte(to), nonce, ciphertext)
+	if message, exists := s.messages[id]; exists {
+		return cloneEmailMessage(message), nil
+	}
+	headBlock := uint64(0)
+	if s.eth != nil && s.eth.blockchain != nil {
+		if head := s.eth.blockchain.CurrentBlock(); head != nil {
+			headBlock = head.Number.Uint64()
+		}
+	}
+	message := EmailMessage{
+		ID: id, From: "tkmchat@tkm", To: to, Ciphertext: ciphertext, Nonce: nonce,
+		BodyHash: crypto.Keccak256Hash(ciphertext), Block: hexutil.Uint64(headBlock), Timestamp: hexutil.Uint64(timestamp),
+	}
+	s.messages[id] = message
+	s.inboxIndex[to] = append(s.inboxIndex[to], id)
+	s.outboxIndex["tkmchat@tkm"] = append(s.outboxIndex["tkmchat@tkm"], id)
+	s.dirtyMessages[id] = struct{}{}
+	if err := s.saveLocked(); err != nil {
+		return EmailMessage{}, err
+	}
+	return cloneEmailMessage(message), nil
 }
 
 func (api *EmailVMAPI) Inbox(mailbox string) ([]EmailMessage, error) {
