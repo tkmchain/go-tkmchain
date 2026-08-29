@@ -142,6 +142,8 @@ The address may be omitted when the directory contains exactly one PQ
 keyfile. The command prompts for the keyfile password and prints matching
 `TKM_SHIELDED_SETTLEMENT_ADDRESS` and `TKM_SHIELDED_VIEW_PRIVATE_KEY` values.
 The view key recognizes encrypted incoming notes but cannot sign or spend.
+See [TKMShield2 Exchange Deposit RPC Integration](./tkmshield2-exchange-rpc.md)
+for the recommended exchange scanner flow.
 
 ## Migration
 
