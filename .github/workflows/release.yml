@@ -208,6 +208,7 @@ jobs:
           npm test --prefix internal/gui/wallet-engine
           npm run build --prefix internal/gui/wallet-engine
           python3 build/wallet-signing/windows-metadata.py --publisher TKMChain --version "${RELEASE_TAG#v}"
+          make randomx-windows
           make gtkm-gui-windows
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
           archive="TKM-Wallet-${RELEASE_TAG}-windows-x64"
