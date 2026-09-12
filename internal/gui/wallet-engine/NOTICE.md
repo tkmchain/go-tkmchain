@@ -1,0 +1,1 @@
+TKM wallet primitives reused from the local TKM exchange browser signer and TKM web wallet. ML-DSA-87, shield2 note encryption, recipient-bound proof validation and transaction serialization are preserved. Third-party packages and licenses are recorded in package-lock.json and their distributed license files. Build: npm ci && npm test && npm run build.

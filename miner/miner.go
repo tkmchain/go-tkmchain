@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -44,6 +45,9 @@ type Backend interface {
 
 // Miner creates blocks and searches for proof-of-work values (RandomX).
 type Miner struct {
+	closeOnce       sync.Once
+	pendingProvider func() (*types.Block, *state.StateDB)
+
 	mux      *event.TypeMux
 	worker   *worker // RandomX worker
 	recommit time.Duration
@@ -91,12 +95,14 @@ func (miner *Miner) Stop() {
 
 // Close shuts down the miner and releases resources.
 func (miner *Miner) Close() {
-	if miner.stratum != nil {
-		miner.stratum.Stop()
-		miner.stratum = nil
-	}
-	miner.worker.close()
-	close(miner.exitCh)
+	miner.closeOnce.Do(func() {
+		if miner.stratum != nil {
+			miner.stratum.Stop()
+			miner.stratum = nil
+		}
+		miner.worker.close()
+		close(miner.exitCh)
+	})
 }
 
 // Mining returns true if the miner is currently running.
@@ -137,11 +143,18 @@ func (miner *Miner) SetGasLimit(gasLimit uint64) {
 
 // Pending returns the currently pending block and its associated state.
 func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
+	if miner.pendingProvider != nil {
+		return miner.pendingProvider()
+	}
 	return miner.worker.pending()
 }
 
 // PendingBlock returns the currently pending block.
 func (miner *Miner) PendingBlock() *types.Block {
+	if miner.pendingProvider != nil {
+		block, _ := miner.pendingProvider()
+		return block
+	}
 	return miner.worker.pendingBlock()
 }
 
@@ -278,18 +291,18 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 	newHeader.Nonce = nonce
 	newHeader.MixDigest = digest
 	prepareSealedHeader(newHeader, task.block)
-	
+
 	config := chain.Config()
 	moneroProof := config != nil && config.IsRandomXMonero(newHeader.Number)
-	
+
 	if err := miner.engine.VerifyHeader(chain, newHeader); err != nil {
 		if moneroProof {
 			// For Monero-style blocks, we need to compute the actual RandomX output
 			// and set it as MixDigest, because XMRig doesn't return the hash itself.
-			log.Warn("Monero proof verification failed with submitted digest", 
-				"err", err, 
+			log.Warn("Monero proof verification failed with submitted digest",
+				"err", err,
 				"submitted_digest", digest.Hex())
-			
+
 			// Try to compute the RandomX hash using the engine
 			if rxEngine, ok := miner.engine.(interface {
 				ComputeRandomXHash(header *types.Header) (common.Hash, error)
@@ -297,12 +310,12 @@ func (miner *Miner) SubmitWork(nonce types.BlockNonce, hash common.Hash, digest 
 				// First try with empty MixDigest to see if the engine can compute it
 				testHeader := types.CopyHeader(newHeader)
 				testHeader.MixDigest = common.Hash{}
-				
+
 				computedHash, computeErr := rxEngine.ComputeRandomXHash(testHeader)
 				if computeErr == nil {
-					log.Info("Computed RandomX hash for Monero proof", 
+					log.Info("Computed RandomX hash for Monero proof",
 						"computed_hash", computedHash.Hex())
-					
+
 					// Check if this hash meets Monero difficulty
 					if rxEngine2, ok := miner.engine.(interface {
 						MeetsMoneroDifficulty(hash common.Hash, difficulty *big.Int) bool
@@ -453,4 +466,10 @@ func (miner *Miner) StartExternal(coinbase common.Address) {
 		time.Sleep(500 * time.Millisecond)
 		miner.worker.generateWorkForExternal()
 	}()
+}
+
+// SetPendingProvider installs the synchronous pending builder used by an isolated simulator.
+// The provider must be set before the node starts serving RPC requests.
+func (miner *Miner) SetPendingProvider(provider func() (*types.Block, *state.StateDB)) {
+	miner.pendingProvider = provider
 }

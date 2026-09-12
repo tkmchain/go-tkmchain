@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -142,6 +143,8 @@ type PhonePendingOperatorApproval struct {
 }
 
 type PhoneNumber struct {
+	PreviousOwner  common.Address `json:"previousOwner,omitempty"`
+	OwnerSignature hexutil.Bytes  `json:"ownerSignature,omitempty"`
 	Number         string         `json:"number"`
 	Owner          common.Address `json:"owner"`
 	Operator       common.Address `json:"operator"`
@@ -239,11 +242,12 @@ const (
 )
 
 type PhoneDeviceKey struct {
-	Number    string         `json:"number"`
-	Device    string         `json:"device"`
-	PublicKey hexutil.Bytes  `json:"publicKey"`
-	CreatedAt hexutil.Uint64 `json:"createdAt"`
-	Active    bool           `json:"active"`
+	OwnerSignature hexutil.Bytes  `json:"ownerSignature,omitempty"`
+	Number         string         `json:"number"`
+	Device         string         `json:"device"`
+	PublicKey      hexutil.Bytes  `json:"publicKey"`
+	CreatedAt      hexutil.Uint64 `json:"createdAt"`
+	Active         bool           `json:"active"`
 }
 
 type RegisteredPhoneNumber struct {
@@ -1576,12 +1580,20 @@ func (svc *TkmPhoneService) RegisterDeviceKey(number string, device string, publ
 	if err := svc.verifyNumberOwnerSignature(number, "register-device", payload, signature); err != nil {
 		return PhoneDeviceKey{}, err
 	}
-	key := PhoneDeviceKey{Number: number, Device: device, PublicKey: append([]byte(nil), publicKey...), CreatedAt: hexutil.Uint64(time.Now().Unix()), Active: true}
+	key := PhoneDeviceKey{OwnerSignature: append([]byte(nil), signature...), Number: number, Device: device, PublicKey: append([]byte(nil), publicKey...), CreatedAt: hexutil.Uint64(time.Now().Unix()), Active: true}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	record, ok := svc.numbers[number]
 	if !ok || !record.Active {
 		return PhoneDeviceKey{}, errors.New("number not found")
+	}
+	if err := verifyPhoneAddressSignature(record.Owner, svc.deviceKeySigningHash(number, device, publicKey), signature); err != nil {
+		return PhoneDeviceKey{}, err
+	}
+	for _, existing := range svc.devices[number] {
+		if existing.Active && existing.Device == device && bytes.Equal(existing.PublicKey, publicKey) {
+			return existing, nil
+		}
 	}
 	if !record.InUse {
 		record.InUse = true
@@ -1616,7 +1628,16 @@ func (svc *TkmPhoneService) TransferNumber(number string, newOwner common.Addres
 	if !ok || !record.Active {
 		return PhoneNumber{}, errors.New("number not found")
 	}
+	if err := verifyPhoneAddressSignature(record.Owner, svc.transferNumberSigningHash(number, newOwner), signature); err != nil {
+		return PhoneNumber{}, err
+	}
+	record.PreviousOwner = record.Owner
+	record.OwnerSignature = append([]byte(nil), signature...)
 	record.Owner = newOwner
+	delete(svc.devices, number)
+	delete(svc.recovery, number)
+	record.InUse = false
+	record.InUseAt = 0
 	svc.refreshNumberOwnershipHashesLocked(&record)
 	svc.numbers[number] = record
 	svc.addPropagationLocked("number-transferred", 0, record.TransferHash, uint64(time.Now().Unix()), record)
@@ -2487,6 +2508,11 @@ func (svc *TkmPhoneService) verifyNumberDeviceOrOwnerSignature(number string, ac
 		if !device.Active {
 			continue
 		}
+		if len(device.PublicKey) == pqcrypto.MLDSA87PublicKeySize {
+			if address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, device.PublicKey); err == nil && address == signer {
+				return nil
+			}
+		}
 		if len(device.PublicKey) == common.AddressLength && bytes.Equal(device.PublicKey, signer.Bytes()) {
 			return nil
 		}
@@ -2524,6 +2550,9 @@ func (svc *TkmPhoneService) transferNumberSigningHash(number string, newOwner co
 }
 
 func recoverPhoneActionSigner(digest common.Hash, signature []byte) (common.Address, error) {
+	if bytes.HasPrefix(signature, phonePQPrefix) {
+		return recoverPhonePQSigner(digest, signature)
+	}
 	if len(signature) != crypto.SignatureLength {
 		return common.Address{}, fmt.Errorf("signature must be %d bytes", crypto.SignatureLength)
 	}
@@ -2542,6 +2571,16 @@ func recoverPhoneActionSigner(digest common.Hash, signature []byte) (common.Addr
 }
 
 func verifyPhoneAddressSignature(want common.Address, digest common.Hash, signature []byte) error {
+	if bytes.HasPrefix(signature, phonePQPrefix) {
+		signer, err := recoverPhonePQSigner(digest, signature)
+		if err != nil {
+			return err
+		}
+		if signer != want {
+			return errors.New("PQ phone signature does not match owner")
+		}
+		return nil
+	}
 	if want == (common.Address{}) {
 		return errors.New("owner address is not configured")
 	}
@@ -2647,6 +2686,35 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		if number.Number == "" {
 			return errors.New("invalid propagated number")
 		}
+		if prop.Kind == "number-transferred" {
+			previous, ok := svc.numbers[number.Number]
+			if !ok {
+				return errors.New("previous phone ownership is required before importing a transfer")
+			}
+			if previous.Owner == number.Owner && previous.TransferHash == number.TransferHash {
+				return nil
+			}
+			if previous.Owner != number.PreviousOwner {
+				return errors.New("propagated transfer does not match current owner")
+			}
+			if err := verifyPhoneAddressSignature(previous.Owner, svc.transferNumberSigningHash(number.Number, number.Owner), number.OwnerSignature); err != nil {
+				return err
+			}
+			// Only the new owner is authorized by this signature. Preserve all other provenance locally.
+			expected := previous
+			expected.PreviousOwner = previous.Owner
+			expected.Owner = number.Owner
+			expected.OwnerSignature = append([]byte(nil), number.OwnerSignature...)
+			expected.InUse = false
+			expected.InUseAt = 0
+			svc.refreshNumberOwnershipHashesLocked(&expected)
+			if expected.TransferHash != number.TransferHash || prop.Hash != expected.TransferHash {
+				return errors.New("invalid propagated transfer hash")
+			}
+			number = expected
+			delete(svc.devices, number.Number)
+			delete(svc.recovery, number.Number)
+		}
 		svc.numbers[number.Number] = number
 		if uint64(prop.RefID) > svc.nextID {
 			svc.nextID = uint64(prop.RefID)
@@ -2656,8 +2724,15 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		if err := json.Unmarshal(prop.Payload, &key); err != nil {
 			return err
 		}
-		if key.Number == "" || key.Device == "" {
+		if key.Number == "" || key.Device == "" || !key.Active || prop.Hash != svc.randomXServiceHash("device-key", []byte(key.Number), []byte(key.Device), key.PublicKey) {
 			return errors.New("invalid propagated device key")
+		}
+		owner, ok := svc.numbers[key.Number]
+		if !ok || !owner.Active {
+			return errors.New("device registration requires an active owned number")
+		}
+		if err := verifyPhoneAddressSignature(owner.Owner, svc.deviceKeySigningHash(key.Number, key.Device, key.PublicKey), key.OwnerSignature); err != nil {
+			return err
 		}
 		keys := svc.devices[key.Number]
 		for _, existing := range keys {
@@ -2892,6 +2967,9 @@ func (svc *TkmPhoneService) randomXServiceHash(label string, parts ...[]byte) co
 }
 
 func (svc *TkmPhoneService) verifyMainKingSignature(digest common.Hash, signature []byte) error {
+	if bytes.HasPrefix(signature, phonePQPrefix) {
+		return verifyPhoneAddressSignature(svc.mainKing, digest, signature)
+	}
 	if svc.mainKing == (common.Address{}) {
 		return errors.New("main king address is not configured")
 	}

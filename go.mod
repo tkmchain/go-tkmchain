@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
+	github.com/GopeedLab/webview_go v0.0.0-20260423085439-7a2f88b6e9b5
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/VictoriaMetrics/fastcache v1.13.0
 	github.com/aws/aws-sdk-go-v2 v1.21.2

@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {ethers} from 'ethers';
+import {seedFromPhrase,newRecoveryPhrase,recoveryPhraseForKeyfile,validateRecipient} from './engine.js';
+import {createPQKeystore} from './vendor/pq.js';
+import {deriveShieldedIdentity} from './vendor/shielded.js';
+test('24 words recover the same PQ seed, address and shield2 identity',async()=>{
+ const seed=new Uint8Array(32).fill(7);const phrase=ethers.Mnemonic.fromEntropy(seed).phrase;
+ assert.equal(seedFromPhrase(phrase),ethers.hexlify(seed));
+ const a=await createPQKeystore('fixture-password',{seed,scryptN:1024});
+ const b=await createPQKeystore('different-password',{seed:ethers.getBytes(seedFromPhrase(phrase)),scryptN:1024});
+ assert.equal(a.address,b.address);assert.equal(a.publicKey,b.publicKey);
+ assert.equal(await recoveryPhraseForKeyfile(a,'fixture-password'),phrase);
+ const identity=deriveShieldedIdentity(seed,'0x'+a.address,8979);
+ assert.equal(validateRecipient(identity.paymentCode).address.toLowerCase(),'0x'+a.address);
+ assert.throws(()=>validateRecipient(identity.paymentCode.replace('tkmshield2.','tkmshield1.')));
+ assert.throws(()=>seedFromPhrase('abandon '.repeat(24)));
+ assert.equal(newRecoveryPhrase().split(' ').length,24);
+ await assert.rejects(recoveryPhraseForKeyfile(a,'wrong-password'));
+});

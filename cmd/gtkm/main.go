@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
+
 	//        "github.com/ethereum/go-ethereum/eth"
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -247,6 +248,8 @@ func init() {
 		consoleCommand,
 		attachCommand,
 		javascriptCommand,
+		// See guicmd.go:
+		guiCommand,
 		// See misccmd.go:
 		versionCommand,
 		licenseCommand,

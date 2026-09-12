@@ -23,6 +23,7 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # LDFLAGS for version injection
 LDFLAGS = -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
+WIN_GUI_LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT) -H windowsgui"
 # A stable timestamp keeps the final Go link action cacheable between identical
 # production builds. Source/package hashes still invalidate the cache normally.
 PRODUCTION_BUILD_TIME ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || echo "unknown")
@@ -136,6 +137,44 @@ gtkm: $(RANDOMX_LIB_HOST)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 	go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
+
+#? gtkm-gui: Build gtkm with the native desktop GUI (requires libgtk-3-dev + libwebkit2gtk-4.1-dev).
+gtkm-gui: $(RANDOMX_LIB_HOST)
+	@echo "Building gtkm with desktop GUI (webkit2gtk)..."
+	@if [ ! -f "$(RANDOMX_LIB_HOST)" ]; then \
+		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_HOST)"; \
+		echo "Please run 'make randomx' first to build the library"; \
+		exit 1; \
+	fi
+	@mkdir -p $(GOBIN)
+	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
+	go build $(LDFLAGS) -tags "randomx,cgo,gtkmgui" -o $(GOBIN)/gtkm-gui ./cmd/gtkm
+	@echo "✅ Built: $(GOBIN)/gtkm-gui"
+
+#? gtkm-gui-windows: Cross-compile the desktop GUI for Windows 64-bit (requires mingw-w64 + WebView2 runtime on the target).
+gtkm-gui-windows: $(RANDOMX_LIB_WINDOWS)
+	@echo "Cross-compiling gtkm desktop GUI for Windows 64-bit..."
+	@if [ ! -f "$(RANDOMX_LIB_WINDOWS)" ]; then \
+		echo "ERROR: RandomX Windows library not found at $(RANDOMX_LIB_WINDOWS)"; \
+		echo "Please run 'make randomx-windows' first to build the library"; \
+		exit 1; \
+	fi
+	@if ! command -v $(MINGW64_CC) >/dev/null 2>&1 || ! command -v $(MINGW64_CXX) >/dev/null 2>&1; then \
+		echo "ERROR: mingw-w64 toolchain not found ($(MINGW64_CC) / $(MINGW64_CXX))"; \
+		echo "Install it with: sudo apt-get install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64"; \
+		exit 1; \
+	fi
+	@mkdir -p $(GOBIN)
+	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW64_CC) CXX=$(MINGW64_CXX) \
+		CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
+		CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_WINDOWS) -lrandomx -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic" \
+		go build $(WIN_GUI_LDFLAGS) -tags "randomx,cgo,gtkmgui" -o $(GOBIN)/gtkm-gui-windows-amd64$(CROSS_WINDOWS_EXT) ./cmd/gtkm
+	@echo "✅ Built: $(GOBIN)/gtkm-gui-windows-amd64$(CROSS_WINDOWS_EXT)"
+	@echo "Requires the Microsoft Edge WebView2 runtime on the target machine."
+
+#? gtkm-android: Build the Android app (node embedded) as a sideloadable debug APK.
+gtkm-android:
+	@./android/build.sh
 
 #? shielded-payout-prover: Build the shielded prover managed by gtkm.
 shielded-payout-prover:

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -139,6 +140,7 @@ type Ethereum struct {
 	miningStartPending bool
 	miningStartPool    bool
 	phoneService       *TkmPhoneService
+	downloaderAPI      *downloader.DownloaderAPI
 	phoneDir           string
 	emailService       *EmailVMService
 	emailDir           string
@@ -148,6 +150,20 @@ type Ethereum struct {
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
 func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
+	return newEthereum(stack, config, nil)
+}
+
+// NewSimulated creates an isolated, ephemeral backend with a test consensus engine.
+// It cannot be used with persistent storage, peers, or externally exposed RPC.
+func NewSimulated(stack *node.Node, config *ethconfig.Config, engine consensus.Engine) (*Ethereum, error) {
+	c := stack.Config()
+	if engine == nil || c.DataDir != "" || c.P2P.MaxPeers != 0 || !c.P2P.NoDiscovery || c.HTTPHost != "" || c.WSHost != "" || c.IPCPath != "" {
+		return nil, errors.New("simulated backend requires an isolated in-memory node")
+	}
+	return newEthereum(stack, config, engine)
+}
+
+func newEthereum(stack *node.Node, config *ethconfig.Config, engine consensus.Engine) (*Ethereum, error) {
 	// Ensure configuration values are compatible and sane
 	if !config.SyncMode.IsValid() {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
@@ -272,7 +288,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		randomxConfig.PersistDataset = !config.RandomXNoPersist
 		engineConfig.RandomX = &randomxConfig
 	}
-	engine, err := ethconfig.CreateConsensusEngine(&engineConfig, chainDb, config.RandomXMinerThreads, config.RandomXRAMCache)
+	if engine == nil {
+		engine, err = ethconfig.CreateConsensusEngine(&engineConfig, chainDb, config.RandomXMinerThreads, config.RandomXRAMCache)
+	}
 	if err != nil {
 		rotatingKingDb.Close()
 		checkpointDb.Close()
@@ -482,6 +500,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}); err != nil {
 		return nil, err
 	}
+	eth.downloaderAPI = downloader.NewDownloaderAPI(eth.handler.downloader, eth.blockchain)
 
 	// Initialize connection dropper
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
@@ -586,7 +605,7 @@ func (s *Ethereum) APIs() []rpc.API {
 		},
 		{
 			Namespace: "tkm",
-			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain),
+			Service:   s.downloaderAPI,
 		},
 		{
 			Namespace: "tkmphone",
@@ -1243,8 +1262,8 @@ func (s *Ethereum) unlockHeightForTime(unlock time.Time) uint64 {
 	if unlock.After(now) {
 		seconds = uint64(unlock.Sub(now).Seconds())
 	}
-	blocks := seconds / uint64(randomx.TargetBlockTimeSeconds)
-	if seconds%uint64(randomx.TargetBlockTimeSeconds) != 0 {
+	blocks := seconds / randomx.TargetBlockTimeSeconds
+	if seconds%randomx.TargetBlockTimeSeconds != 0 {
 		blocks++
 	}
 	return head.Number.Uint64() + blocks
@@ -1771,6 +1790,8 @@ func (s *Ethereum) Stop() error {
 		log.Warn("Failed to stop RandomX miner during shutdown", "err", err)
 	}
 
+	s.miner.Close()
+	s.downloaderAPI.Close()
 	s.discmix.Close()
 	s.dropper.Stop()
 	s.handler.Stop()

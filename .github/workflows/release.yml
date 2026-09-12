@@ -184,11 +184,138 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-windows-gui:
+    name: Build Windows GUI wallet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: internal/gui/wallet-engine/package-lock.json
+      - name: Install Windows cross compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - name: Build wallet assets and Windows executables
+        run: |
+          npm ci --prefix internal/gui/wallet-engine
+          npm test --prefix internal/gui/wallet-engine
+          npm run build --prefix internal/gui/wallet-engine
+          python3 build/wallet-signing/windows-metadata.py --publisher TKMChain --version "${RELEASE_TAG#v}"
+          make gtkm-gui-windows
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
+          archive="TKM-Wallet-${RELEASE_TAG}-windows-x64"
+          mkdir -p "release/$archive/licenses"
+          cp build/bin/gtkm-gui-windows-amd64.exe "release/$archive/TKM-Wallet.exe"
+          cp build/bin/shielded-payout-prover.exe "release/$archive/"
+          cp internal/gui/wallet-engine/licenses/* "release/$archive/licenses/"
+          cp internal/gui/README.md "release/$archive/README.md"
+          printf '%s\n' 'Requires Microsoft Edge WebView2 Runtime. Windows executables have publisher metadata but are not Authenticode signed.' > "release/$archive/INSTALL.txt"
+          for binary in "release/$archive/"*.exe; do
+            if x86_64-w64-mingw32-objdump -p "$binary" | grep -Eiq 'DLL Name: (libstdc\+\+-6|libgcc_s_[^.]+-1|libwinpthread-1)\.dll'; then
+              echo "Unexpected MinGW runtime dependency in $binary" >&2
+              exit 1
+            fi
+          done
+          (cd release && zip -r "$archive.zip" "$archive")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-gui
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  build-android:
+    name: Build signed Android wallet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Prepare Android release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.TKM_ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.TKM_ANDROID_KEY_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.TKM_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          umask 077
+          if [[ -z "$KEYSTORE_BASE64" || -z "$KEY_ALIAS" || -z "$KEYSTORE_PASSWORD" ]]; then
+            echo 'Configure TKM_ANDROID_KEYSTORE_BASE64, TKM_ANDROID_KEY_ALIAS and TKM_ANDROID_KEYSTORE_PASSWORD repository secrets before releasing.' >&2
+            exit 1
+          fi
+          signing_dir="$RUNNER_TEMP/tkm-signing"
+          mkdir -p "$signing_dir"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$signing_dir/release.p12"
+          printf '%s' "$KEYSTORE_PASSWORD" > "$signing_dir/password"
+          {
+            echo "TKM_ANDROID_KEYSTORE=$signing_dir/release.p12"
+            echo "TKM_ANDROID_KEY_ALIAS=$KEY_ALIAS"
+            echo "TKM_ANDROID_STORE_PASSWORD_FILE=$signing_dir/password"
+            echo "TKM_ANDROID_KEY_PASSWORD_FILE=$signing_dir/password"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: internal/gui/wallet-engine/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Install Android SDK and NDK
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'ndk;27.2.12479018'
+      - name: Build and verify signed APK
+        env:
+          TKM_ANDROID_BUILD_VARIANT: release
+          TKM_PUBLISHER: TKMChain
+        run: |
+          npm ci --prefix internal/gui/wallet-engine
+          npm run build --prefix internal/gui/wallet-engine
+          make randomx-host
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          export GRADLE_BIN="$(command -v gradle)"
+          export TKM_ANDROID_VERSION_NAME="${RELEASE_TAG#v}"
+          if [[ ! "$TKM_ANDROID_VERSION_NAME" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo 'Android releases require a vMAJOR.MINOR.PATCH tag' >&2
+            exit 1
+          fi
+          export TKM_ANDROID_VERSION_CODE="$((10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 1000 + 10#${BASH_REMATCH[3]}))"
+          ./android/build.sh
+          mkdir -p release
+          apk="release/TKM-Wallet-${RELEASE_TAG}-android-arm64.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$apk"
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$apk"
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/tkm-signing"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: release/*.apk
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Publish GitHub release
     needs:
       - build
       - build-debian13
+      - build-windows-gui
+      - build-android
     runs-on: ubuntu-latest
 
     steps:
@@ -203,6 +330,10 @@ jobs:
           ls -la release-assets/
           echo "Found $(find release-assets -type f | wc -l) files"
 
+      - name: Generate release checksums
+        working-directory: release-assets
+        run: sha256sum *.tar.gz *.zip *.apk > SHA256SUMS
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -212,3 +343,5 @@ jobs:
           files: |
             release-assets/*.tar.gz
             release-assets/*.zip
+            release-assets/*.apk
+            release-assets/SHA256SUMS

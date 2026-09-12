@@ -24,6 +24,18 @@
 /build/dist/
 /gtkm*.zip
 
+# Android app build outputs
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.kotlin/
+
+# Android app bundled node binary + runtime lib (produced by android/build.sh)
+/android/app/src/main/assets/gtkm
+/android/app/src/main/assets/shielded-payout-prover
+/android/app/src/main/assets/libc++_shared.so
+
 # used by the build/ci.go archive + upload tool
 /gtkm*.tar.gz
 /gtkm*.tar.gz.sig
@@ -74,3 +86,21 @@ cmd/gtkm/gtkm
 cmd/rlpdump/rlpdump
 cmd/workload/workload
 cmd/keeper/keeper
+
+# Native wallet generated dependencies and downloadable binaries
+internal/gui/wallet-engine/node_modules/
+build/wallet-release/
+android/app/src/main/jniLibs/
+
+# Private release credentials and generated PE resources
+*.jks
+*.keystore
+*.p12
+*.pfx
+android/keystore.properties
+cmd/gtkm/wallet_version_windows_amd64.syso
+cmd/shielded-payout-prover/wallet_version_windows_amd64.syso
+
+# Local build byproducts
+/gtkm
+/build/wallet-signing/__pycache__/

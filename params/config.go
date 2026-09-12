@@ -382,8 +382,15 @@ var (
 			Cancun: DefaultCancunBlobConfig,
 		},
 	}
-	AllDevChainProtocolChanges = TestChainConfig
-	MergedTestChainConfig      = &ChainConfig{
+	// Development chains use the conventional simulator identity, independent of RandomX test chains.
+	AllDevChainProtocolChanges = func() *ChainConfig {
+		config := *TestChainConfig
+		config.ChainID = big.NewInt(1337)
+		config.ShanghaiTime = new(uint64)
+		config.CancunTime = new(uint64)
+		return &config
+	}()
+	MergedTestChainConfig = &ChainConfig{
 		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,

@@ -34,6 +34,8 @@ type DownloaderAPI struct {
 	chain                     *core.BlockChain
 	installSyncSubscription   chan chan interface{}
 	uninstallSyncSubscription chan *uninstallSyncSubscriptionRequest
+	quit                      chan struct{}
+	closeOnce                 sync.Once
 }
 
 // NewDownloaderAPI creates a new DownloaderAPI. The API has an internal event loop that
@@ -46,9 +48,15 @@ func NewDownloaderAPI(d *Downloader, chain *core.BlockChain) *DownloaderAPI {
 		chain:                     chain,
 		installSyncSubscription:   make(chan chan interface{}),
 		uninstallSyncSubscription: make(chan *uninstallSyncSubscriptionRequest),
+		quit:                      make(chan struct{}),
 	}
 	go api.eventLoop()
 	return api
+}
+
+// Close terminates the status event loop when its hosting node shuts down.
+func (api *DownloaderAPI) Close() {
+	api.closeOnce.Do(func() { close(api.quit) })
 }
 
 // eventLoop runs a loop until the event mux closes. It will install and uninstall
@@ -106,6 +114,8 @@ func (api *DownloaderAPI) eventLoop() {
 			}
 		case <-sub.Err():
 			// The downloader is terminated or other internal error occurs
+			return
+		case <-api.quit:
 			return
 		case <-checkTimer.C:
 			if !started {
