@@ -15,6 +15,12 @@ Automated builds are available for stable releases and the unstable master branc
 
 ---
 
+## TKM Exchange
+
+[![TKM EXCHANGE](https://exchange.tkmchain.site)](https://exchange.tkmchain.site)
+
+---
+
 ## Release Notes
 
 - [Kyoto Release Notes](docs/kyoto-release.md)
