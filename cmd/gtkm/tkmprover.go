@@ -131,11 +131,12 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		if cfg.AllowedOrigin == "" {
 			cfg.AllowedOrigin = "https://wallet.tkmchain.site"
 		}
-		cfg.SignMode = "proof-only"
-		cfg.SubmitSync = false
-		cfg.KeystoreDir = ""
-		cfg.SignerAddress = ""
-		cfg.SignerPassphraseFile = ""
+		// Preserve an explicitly configured signing identity. Operators use this
+		// file to run a payout prover; resetting it here would silently downgrade
+		// a live pool to proof-only mode whenever the node restarts.
+		if cfg.SignMode == "" {
+			cfg.SignMode = "proof-only"
+		}
 		encoded, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
 			return err
