@@ -273,7 +273,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to the removed `tools` package on some runners.
+          # Install the supported platform-tools package instead; build-specific
+          # platforms, build-tools, and NDK are installed in the next step.
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
