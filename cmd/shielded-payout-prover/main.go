@@ -729,6 +729,36 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 		return "", ShieldedNote{}, err
 	}
 
+	if p.activeShieldedVersion(ctx, chainID) == core.ShieldedTxVersionV2 {
+		built, err := p.buildDepositV2(ctx, req, amountWei, assetID, chainID, nonce, gasPrice)
+		if err != nil {
+			return "", ShieldedNote{}, err
+		}
+		if built.Transaction == nil || len(built.CreatedNotes) == 0 {
+			return "", ShieldedNote{}, errors.New("V2 deposit builder returned no transaction or note")
+		}
+		data, err := hexutil.Decode(built.Transaction.Data)
+		if err != nil {
+			return "", ShieldedNote{}, err
+		}
+		tx := p.unsignedTxWithValue(chainID, nonce, gasPrice, amountWei, data)
+		signed, err := p.ks.SignTxWithPassphrase(accounts.Account{Address: signerAddr}, p.passphrase, tx, chainID)
+		if err != nil {
+			return "", ShieldedNote{}, err
+		}
+		timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
+		receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
+		note := built.CreatedNotes[0]
+		note.CreatedTxHash = signed.Hash().Hex()
+		note.Status = "pending"
+		if err != nil || receipt == nil {
+			return signed.Hash().Hex(), note, firstErr(err, errors.New("nil receipt"))
+		}
+		txHash := receipt.TxHash.Hex()
+		note = p.finalizeNoteWitness(ctx, note, common.HexToHash(note.Commitment), txHash)
+		return txHash, note, nil
+	}
+
 	draft, assignment, note, commitment, err := p.buildDepositDraft(req, amountWei, assetID, ownerSecret, chainID, proofBlock)
 	if err != nil {
 		return "", ShieldedNote{}, err
@@ -1819,4 +1849,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func firstErr(a, b error) error {
+	if a != nil {
+		return a
+	}
+	return b
 }
