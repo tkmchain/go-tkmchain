@@ -163,7 +163,11 @@ func (api *RandomXAPI) VerifyShareRaw(nonceHex, headerHashHex, claimedDigest str
 			return digest, nil
 		}
 	}
-	return common.Hash{}, errors.New("submitted digest does not match the RandomX result")
+	values := make([]string, len(computed))
+	for i, digest := range computed {
+		values[i] = digest.Hex()
+	}
+	return common.Hash{}, fmt.Errorf("submitted digest does not match the RandomX result (calculated %s)", strings.Join(values, ","))
 }
 
 func randomXDigestMatches(computed, submitted string) bool {

@@ -255,10 +255,7 @@ func (miner *Miner) VerifyWork(nonce types.BlockNonce, hash common.Hash) ([]comm
 	if !exists || task == nil || task.block == nil || !isCurrentMiningCandidate(head, task.block) {
 		return nil, errors.New("stale or unknown mining work")
 	}
-	header := types.CopyHeader(task.block.Header())
-	header.Nonce = nonce
-	header.MixDigest = common.Hash{}
-	prepareSealedHeader(header, task.block)
+	header := task.block.Header()
 	rx, ok := miner.engine.(*consensusrandomx.RandomX)
 	if !ok {
 		return nil, fmt.Errorf("randomx hash verifier unavailable for consensus engine %T", miner.engine)
@@ -275,8 +272,7 @@ func (miner *Miner) VerifyWork(nonce types.BlockNonce, hash common.Hash) ([]comm
 	candidates = append(candidates, lowWord, highWord)
 	results := make([]common.Hash, 0, len(candidates))
 	for _, candidate := range candidates {
-		header.Nonce = candidate
-		computed, err := rx.ComputeRandomXHash(header)
+		computed, err := rx.ComputeRandomXHashForWork(chain, header, hash, candidate)
 		if err != nil {
 			return nil, err
 		}

@@ -137,6 +137,13 @@ func (rx *RandomX) GetWork() ([]string, error) {
 	return nil, errors.New("randomx native mining is unavailable in this build")
 }
 
+// ComputeRandomXHashForWork is kept in the fallback build so callers can
+// compile without the native RandomX tag. Native verification requires the
+// cgo RandomX implementation.
+func (rx *RandomX) ComputeRandomXHashForWork(chain consensus.ChainHeaderReader, header *types.Header, sealHash common.Hash, nonce types.BlockNonce) (common.Hash, error) {
+	return common.Hash{}, errors.New("randomx native mining is unavailable in this build")
+}
+
 func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHex string) (bool, error) {
 	return false, errors.New("randomx native mining is unavailable in this build")
 }

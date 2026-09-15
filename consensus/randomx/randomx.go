@@ -638,10 +638,13 @@ func (rx *RandomX) VerifySeal(chain consensus.ChainHeaderReader, header *types.H
 	if header.Difficulty == nil || header.Difficulty.Sign() <= 0 {
 		return fmt.Errorf("invalid proof: non-positive difficulty")
 	}
+	// A zero digest is never a valid RandomX proof, including Monero-mode
+	// blocks. Reject it before invoking the VM so production nodes cannot
+	// accept or propagate an empty proof.
+	if header.MixDigest == (common.Hash{}) {
+		return fmt.Errorf("invalid proof: empty mix digest")
+	}
 	if !moneroProof && requiresStrictSealFields(num) {
-		if header.MixDigest == (common.Hash{}) {
-			return fmt.Errorf("invalid proof: empty mix digest")
-		}
 		if header.Nonce == (types.BlockNonce{}) {
 			return fmt.Errorf("invalid proof: empty nonce")
 		}
@@ -728,20 +731,49 @@ func (rx *RandomX) ComputeRandomXHash(header *types.Header) (common.Hash, error)
 	if rx.isClosed() {
 		return common.Hash{}, errEngineClosed
 	}
-	
+
 	epoch := rx.epochForBlock(rx.chain, header.Number.Uint64())
 	if err := rx.updateCacheForEpoch(epoch); err != nil {
 		return common.Hash{}, err
 	}
-	
+
 	vm, err := rx.getVM()
 	if err != nil {
 		return common.Hash{}, err
 	}
 	defer vm.Close()
-	
+
 	_, hash := rx.randomXHash(header, vm)
 	return hash, nil
+}
+
+// ComputeRandomXHashForWork hashes the exact 40-byte work blob distributed to
+// external miners: the seal hash followed by the eight-byte nonce. The seal
+// hash is supplied separately because it is the immutable job identifier; it
+// must not be reconstructed from a header altered with the submitted nonce.
+func (rx *RandomX) ComputeRandomXHashForWork(chain consensus.ChainHeaderReader, header *types.Header, sealHash common.Hash, nonce types.BlockNonce) (common.Hash, error) {
+	if rx.isClosed() {
+		return common.Hash{}, errEngineClosed
+	}
+	if header == nil || header.Number == nil {
+		return common.Hash{}, errInvalidWork
+	}
+	epoch := rx.epochForBlock(chain, header.Number.Uint64())
+	if err := rx.updateCacheForEpoch(epoch); err != nil {
+		return common.Hash{}, err
+	}
+	vm, err := rx.getVM()
+	if err != nil {
+		return common.Hash{}, err
+	}
+	defer vm.Close()
+
+	input := make([]byte, 40)
+	copy(input[:32], sealHash[:])
+	copy(input[32:], nonce[:])
+	output := make([]byte, 32)
+	vm.CalculateHash(input, output)
+	return common.BytesToHash(output), nil
 }
 
 // MeetsMoneroDifficulty checks if a hash meets the Monero difficulty
