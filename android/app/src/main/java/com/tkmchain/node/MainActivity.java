@@ -1,6 +1,7 @@
 package com.tkmchain.node;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -60,6 +61,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        Intent keepAlive = new Intent(this, NodeKeepAliveService.class);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(keepAlive);
+        } else {
+            startService(keepAlive);
+        }
 
         binDir = new File(getApplicationInfo().nativeLibraryDir);
         dataDir = new File(getFilesDir(), "node");
@@ -191,6 +199,8 @@ public class MainActivity extends Activity {
         cmd.add(dataDir.getAbsolutePath());
         cmd.add("--networkid");
         cmd.add("8979");
+        cmd.add("--syncmode");
+        cmd.add("snap");
         cmd.add("--cache");
         cmd.add("512");
         cmd.add("--http");
