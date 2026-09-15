@@ -971,6 +971,31 @@ func (p *Prover) buildSignSubmit(ctx context.Context, req PayoutRequest, note Sh
 		return "", nil, err
 	}
 
+	if p.activeShieldedVersion(ctx, chainID) == core.ShieldedTxVersionV2 {
+		built, err := p.buildTransferV2(ctx, BuildTransferRequest{RequestID: req.RequestID, ApplicationData: req.ApplicationData, From: req.PoolWallet, To: req.To, AmountWei: amountWei.String(), RecipientViewKey: req.RecipientViewKey, ChangeViewKey: req.ChangeViewKey, Nonce: fmt.Sprintf("0x%x", nonce), GasPriceWei: gasPrice.String(), Note: note}, amountWei, chainID, nonce, gasPrice)
+		if err != nil {
+			return "", nil, err
+		}
+		if built.Transaction == nil {
+			return "", nil, errors.New("V2 payout builder returned no transaction")
+		}
+		data, err := hexutil.Decode(built.Transaction.Data)
+		if err != nil {
+			return "", nil, err
+		}
+		tx := p.unsignedTxWithValue(chainID, nonce, gasPrice, new(big.Int), data)
+		signed, err := p.ks.SignTxWithPassphrase(accounts.Account{Address: signerAddr}, p.passphrase, tx, chainID)
+		if err != nil {
+			return "", nil, err
+		}
+		timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
+		receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
+		if err != nil || receipt == nil {
+			return signed.Hash().Hex(), nil, firstErr(err, errors.New("nil receipt"))
+		}
+		return receipt.TxHash.Hex(), firstChangeNote(built.CreatedNotes), nil
+	}
+
 	draft, assignment, err := p.buildDraftEnvelope(req, note, amountWei, chainID, proofBlock, nonce, gasPrice)
 	if err != nil {
 		return "", nil, err
@@ -1856,4 +1881,11 @@ func firstErr(a, b error) error {
 		return a
 	}
 	return b
+}
+
+func firstChangeNote(notes []ShieldedNote) *ShieldedNote {
+	if len(notes) == 0 {
+		return nil
+	}
+	return &notes[0]
 }
