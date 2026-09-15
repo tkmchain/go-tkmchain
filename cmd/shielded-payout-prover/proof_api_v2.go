@@ -135,6 +135,7 @@ func (p *Prover) buildDepositV2(ctx context.Context, req DepositRequest, amountW
 		ID:             "deposit-" + req.RequestID,
 		Commitment:     commitment.Hex(),
 		Nullifier:      nullifier.Hex(),
+		OwnerSecret:    sender.Big().String(),
 		NoteRandomness: randomness[0].BigInt(new(big.Int)).String(),
 		NoteValueWei:   amountWei.String(),
 		AssetID:        assetID,
