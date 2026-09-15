@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	consensusrandomx "github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -240,6 +241,48 @@ func (miner *Miner) GetWork() ([4]string, error) {
 		"target", result[2][:16])
 
 	return result, nil
+}
+
+// VerifyWork recomputes the RandomX result for a current external-mining job.
+// It is intentionally separate from SubmitWork: pool servers use it to verify
+// partial shares without attempting to import them as network blocks.
+func (miner *Miner) VerifyWork(nonce types.BlockNonce, hash common.Hash) ([]common.Hash, error) {
+	chain := miner.eth.BlockChain()
+	head := chain.CurrentBlock()
+	miner.worker.pendingMu.RLock()
+	task, exists := miner.worker.pendingTasks[hash]
+	miner.worker.pendingMu.RUnlock()
+	if !exists || task == nil || task.block == nil || !isCurrentMiningCandidate(head, task.block) {
+		return nil, errors.New("stale or unknown mining work")
+	}
+	header := types.CopyHeader(task.block.Header())
+	header.Nonce = nonce
+	header.MixDigest = common.Hash{}
+	prepareSealedHeader(header, task.block)
+	rx, ok := miner.engine.(*consensusrandomx.RandomX)
+	if !ok {
+		return nil, fmt.Errorf("randomx hash verifier unavailable for consensus engine %T", miner.engine)
+	}
+	candidates := []types.BlockNonce{nonce}
+	var reversed types.BlockNonce
+	for i := range nonce {
+		reversed[i] = nonce[len(nonce)-1-i]
+	}
+	candidates = append(candidates, reversed)
+	var lowWord, highWord types.BlockNonce
+	copy(lowWord[:4], nonce[4:])
+	copy(highWord[4:], nonce[:4])
+	candidates = append(candidates, lowWord, highWord)
+	results := make([]common.Hash, 0, len(candidates))
+	for _, candidate := range candidates {
+		header.Nonce = candidate
+		computed, err := rx.ComputeRandomXHash(header)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, computed)
+	}
+	return results, nil
 }
 
 // SubmitWork submits a proof-of-work solution from an external miner (XMRig).

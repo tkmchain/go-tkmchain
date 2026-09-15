@@ -17,8 +17,10 @@
 package eth
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -138,6 +140,46 @@ func (api *RandomXAPI) SubmitWorkRaw(nonceHex, headerHashHex, mixDigestHex strin
 		log.Warn("❌ RandomX solution rejected by miner", "nonce", nonce)
 	}
 	return ok
+}
+
+// VerifyShareRaw recomputes a partial-share digest for pool accounting. It
+// never submits a block, and only accepts a nonce for the current work item.
+func (api *RandomXAPI) VerifyShareRaw(nonceHex, headerHashHex, claimedDigest string) (common.Hash, error) {
+	if api.e.Miner() == nil {
+		return common.Hash{}, errors.New("miner not available")
+	}
+	var nonce types.BlockNonce
+	nonceBytes := common.FromHex(nonceHex)
+	if len(nonceBytes) != len(nonce) {
+		return common.Hash{}, errors.New("invalid nonce length")
+	}
+	copy(nonce[:], nonceBytes)
+	computed, err := api.e.Miner().VerifyWork(nonce, common.HexToHash(headerHashHex))
+	if err != nil {
+		return common.Hash{}, err
+	}
+	for _, digest := range computed {
+		if randomXDigestMatches(digest.Hex(), claimedDigest) {
+			return digest, nil
+		}
+	}
+	return common.Hash{}, errors.New("submitted digest does not match the RandomX result")
+}
+
+func randomXDigestMatches(computed, submitted string) bool {
+	want := strings.TrimPrefix(strings.ToLower(computed), "0x")
+	got := strings.TrimPrefix(strings.ToLower(submitted), "0x")
+	if len(want) != 64 || len(got) != 64 {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1 {
+		return true
+	}
+	reversed := make([]byte, len(got))
+	for i := 0; i < len(got); i += 2 {
+		copy(reversed[i:i+2], got[len(got)-2-i:len(got)-i])
+	}
+	return subtle.ConstantTimeCompare([]byte(want), reversed) == 1
 }
 
 // GetCurrentHeight returns the current block height for XMRig reference.
