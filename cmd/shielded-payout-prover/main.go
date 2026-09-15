@@ -595,6 +595,11 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (txHash s
 
 	txHash, changeNote, err := p.buildSignSubmit(ctx, req, note, amountWei)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "nullifier already spent") {
+			notes.Notes[noteIndex].Status = "spent"
+			notes.Notes[noteIndex].SpentRequestID = req.RequestID
+			_ = writeNoteStore(p.cfg.NotesPath, notes)
+		}
 		p.recordError(db, req, note.ID, err.Error())
 		return "", err
 	}
