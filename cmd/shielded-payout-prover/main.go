@@ -452,7 +452,7 @@ func (p *Prover) handlePayout(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	txHash, err := p.ProcessPayout(ctx, req)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, PayoutResponse{Status: "waiting", Error: err.Error()})
+		writeJSON(w, http.StatusBadRequest, PayoutResponse{Status: "waiting", TxHash: txHash, Error: err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, PayoutResponse{Status: "sent", TxHash: txHash})
@@ -601,7 +601,7 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (txHash s
 			_ = writeNoteStore(p.cfg.NotesPath, notes)
 		}
 		p.recordError(db, req, note.ID, err.Error())
-		return "", err
+		return txHash, err
 	}
 	notes.Notes[noteIndex].Status = "spent"
 	notes.Notes[noteIndex].SpentRequestID = req.RequestID
