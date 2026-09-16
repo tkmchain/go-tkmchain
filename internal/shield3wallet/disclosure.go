@@ -15,7 +15,7 @@ import (
 )
 
 // PaymentDisclosure authorizes inspection of one payment output, never a wallet.
-// Its note opening can also link that output's eventual nullifier.
+// It contains no recipient nullifier key and cannot identify later spends.
 type PaymentDisclosure struct {
 	Version         uint64        `json:"version"`
 	ChainID         uint64        `json:"chainId"`

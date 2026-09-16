@@ -83,7 +83,7 @@ DARWIN_ARM64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_ARM64) -lrandomx -lc
 DARWIN_RANDOMX_LDFLAGS = $(DARWIN_AMD64_RANDOMX_LDFLAGS)
 
 # List of all commands to build (skip bootnode if not exists)
-CMDS = gtkm shielded-payout-prover clef devp2p abigen evm rlpdump
+CMDS = gtkm shielded-payout-prover shield3-relay clef devp2p abigen evm rlpdump
 # bootnode is optional - add if exists
 ifneq ($(wildcard ./cmd/bootnode),)
 CMDS += bootnode
@@ -900,3 +900,9 @@ shield3-host:
 	./scripts/shield3-build.sh
 shield3-windows:
 	GOOS=windows CC=$(MINGW64_CC) SHIELD3_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield3-build.sh
+
+#? shield3-relay: Build the shared Shield3 relay with its native verifier.
+.PHONY: shield3-relay
+shield3-relay: shield3-host
+	@mkdir -p $(GOBIN)
+	go build $(LDFLAGS) -tags shield3 -o $(GOBIN)/shield3-relay ./cmd/shield3-relay

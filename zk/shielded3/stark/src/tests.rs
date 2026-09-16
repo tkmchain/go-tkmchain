@@ -45,7 +45,7 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     let input = note(&public[..4], &owner, &secret[5..10], &secret[10..18]);
     let mut nullifier = vec![DOMAIN_NULLIFIER];
     nullifier.extend(&public[..4]);
-    nullifier.extend(owner);
+    nullifier.extend(hash(&[DOMAIN_NULLIFIER_KEY, 11, 22, 33, 44, 55]));
     nullifier.extend(&secret[5..18]);
     public[33..38].copy_from_slice(&hash(&nullifier));
     let mut path = (0..MERKLE_DEPTH)
@@ -92,7 +92,10 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
 }
 fn run(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
     let tokens = canonical_words(secret, SECRET_WORDS).unwrap();
-    let digests = path
+    let Ok(active) = spending_paths(public, path) else {
+        return false;
+    };
+    let digests: Vec<_> = active
         .iter()
         .map(|p| Digest::new(p.map(BFieldElement::new)))
         .collect::<Vec<_>>();
@@ -164,7 +167,9 @@ fn refresh_commitments(public: &mut [u64], secret: &[u64], path: &[[u64; 5]]) {
     public[28..33].copy_from_slice(&root);
     let mut nullifier = vec![DOMAIN_NULLIFIER];
     nullifier.extend(&public[..4]);
-    nullifier.extend(hash(&owner));
+    let mut key = vec![DOMAIN_NULLIFIER_KEY];
+    key.extend(&secret[..5]);
+    nullifier.extend(hash(&key));
     nullifier.extend(&secret[5..18]);
     public[33..38].copy_from_slice(&hash(&nullifier));
     for i in 0..4 {
@@ -318,7 +323,8 @@ fn private_send_cap_and_change_owner() {
 
 #[test]
 fn deposits_require_exact_public_funding() {
-    let (mut public, mut secret, path) = fixture();
+    let (mut public, mut secret, mut path) = fixture();
+    path[..4 * MERKLE_DEPTH].fill([0; 5]);
     public[58] = 1;
     public[87] = 0;
     public[28..38].fill(0);
@@ -423,7 +429,7 @@ fn multi_fixture(count: usize) -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     let mut leaves = vec![note(&public[..4], &owner, &secret[5..10], &secret[10..18])];
     let mut n = vec![DOMAIN_NULLIFIER];
     n.extend(&public[..4]);
-    n.extend(owner);
+    n.extend(hash(&[DOMAIN_NULLIFIER_KEY, 11, 22, 33, 44, 55]));
     n.extend(&secret[5..18]);
     public[33..38].copy_from_slice(&hash(&n));
     for i in 1..count {
@@ -441,7 +447,7 @@ fn multi_fixture(count: usize) -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
         ));
         let mut n = vec![DOMAIN_NULLIFIER];
         n.extend(&public[..4]);
-        n.extend(owner);
+        n.extend(hash(&[DOMAIN_NULLIFIER_KEY, 11, 22, 33, 44, 55]));
         n.extend(&secret[base..base + 13]);
         public[72 + (i - 1) * 5..77 + (i - 1) * 5].copy_from_slice(&hash(&n));
     }
@@ -500,4 +506,39 @@ fn real_four_input_stark_roundtrip() {
     let mut bad = public.clone();
     bad[72] ^= 1;
     assert!(verify_spend(&bad, &proof).is_err());
+}
+
+#[test]
+fn sender_known_opening_does_not_identify_nullifier() {
+    let (mut public, secret, path) = fixture();
+    let mut old = vec![DOMAIN_NULLIFIER];
+    old.extend(&public[..4]);
+    old.extend(hash(&[DOMAIN_OWNER, 11, 22, 33, 44, 55]));
+    old.extend(&secret[5..18]);
+    assert_ne!(public[33..38], hash(&old));
+    public[33..38].copy_from_slice(&hash(&old));
+    assert!(!run(&public, &secret, &path));
+}
+#[test]
+fn single_input_trace_omits_unused_paths() {
+    let (public, secret, path) = fixture();
+    let active = spending_paths(&public, &path).unwrap();
+    assert_eq!(active.len(), MERKLE_DEPTH * 5);
+    let tokens = canonical_words(&secret, SECRET_WORDS).unwrap();
+    let digests: Vec<_> = active
+        .iter()
+        .map(|p| Digest::new(p.map(BFieldElement::new)))
+        .collect();
+    let (aet, _) = VM::trace_execution(
+        spend_program(),
+        PublicInput::new(canonical_words(&public, PUBLIC_WORDS).unwrap()),
+        NonDeterminism::new(tokens).with_digests(digests),
+    )
+    .unwrap();
+    eprintln!(
+        "single-input padded trace: {} rows; tables: {:?}",
+        aet.padded_height(),
+        aet.height()
+    );
+    assert!(aet.padded_height() <= 32768);
 }

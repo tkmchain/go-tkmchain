@@ -41,8 +41,10 @@ four stamp indices), followed by three 14-word input openings: randomness (5),
 value (8 u32 limbs), index (1). All active inputs belong to the same proved
 hidden owner. Four depth-32 input paths precede four depth-32 stamp paths,
 **256 five-word digests** total. Inactive additional openings/nullifiers/paths
-are canonical zeros. Hash domains are owner 3001, commitment 3002, nullifier
-3003 and stamped-owner leaf 3004. Full-width checked addition conserves the
+are canonical zeros. The VM consumes only active input paths and the four
+output stamp paths; deposits consume only stamp paths. Shared fixed hashing,
+Merkle and range-check routines reduce the hashed program size. Hash domains are owner 3001, commitment 3002, nullifier
+3003, stamped-owner leaf 3004 and recipient-secret nullifier key 3005. Full-width checked addition conserves the
 aggregate input value; duplicate inputs and aggregate overflow are invalid.
 
 Proof encoding is canonical and bounded to 8 MiB, with a maximum padded trace
@@ -70,10 +72,13 @@ followed by successful AEAD authentication.
 Incoming, outgoing, stamp and selective-disclosure auditor seeds are derived independently from the wallet
 seed, scoped to chain and purpose. A receiving code authenticates its owner,
 ML-KEM public keys and encrypted stamp with ML-DSA-87. Public keys allow
-encapsulation, never note or stamp decryption. A viewing backup contains
-incoming and outgoing private KEM seeds; scans disclose incoming/spent notes
-and outgoing recipients/amounts without the spending secret. A separate stamp
-seed opens the original private name and country. Random hiding commitments
+encapsulation, never note or stamp decryption. Version-2 incoming viewing
+backups contain only the incoming private KEM seed and cannot identify later
+spends. Full viewing backups add the outgoing seed and independent nullifier
+key, allowing history/spend tracking without the spending secret. Stamp-only
+disclosures export one authenticated name/country record and its 32-byte record
+key; the master stamp KEM seed stays private. This record key cannot open or
+recognize payment output stamps. Random hiding commitments
 prevent guessing stamps from hashes of short names or countries.
 
 Encryption hides private note values and recipient records. The existing PQ
@@ -209,3 +214,23 @@ for the relay authorization protocol, durable draft reservations, scoped
 payment disclosures, wallet instructions, RPC surface and rollout requirements.
 These features activate at the existing Antartical time. There is no additional
 fork timestamp. Every validating node must embed the updated fixed relation.
+
+## Recipient-secret spend identifiers and wallet additions
+
+The spending relation derives `nk = Tip5(3005 || spendingSecret)` internally.
+Nullifiers use `nk` in place of the public owner digest; choosing an independent
+key per proof is impossible. Original senders and selected-payment auditors
+know the note opening but cannot identify its later nullifier. Full viewing
+keys include `nk`; version-2 incoming keys deliberately do not. Incoming scans
+report cumulative receipts, never a spendable balance or spend identifiers.
+
+`BuildBatch` / `BuildRelayedBatch` construct one to three payments atomically,
+combining up to four inputs and retaining slot 3 as private change. The sum of
+payment slots is consensus-limited to 5 million TKM. Desktop/Android share the
+batch editor, scoped key exports/imported scans and automatic relay submission.
+`make shield3-relay` builds the noncustodial operator service with durable quote
+leases, nonce-specific signed records and process locking. Network endpoints
+are user-selected HTTPS URLs (HTTP is permitted only on loopback). See the
+[Antartical guide](../../docs/SHIELD3_ANTARTICAL.md) for configuration and limits.
+All nodes must rebuild this updated native relation before the existing
+Antartical activation. The fork time remains unchanged.

@@ -36,27 +36,77 @@ type OwnedNote struct {
 type HistoryEntry struct {
 	Direction string `json:"direction"`
 	Note
-	Commitment      shielded3.Digest `json:"commitment"`
-	TransactionHash common.Hash      `json:"transactionHash"`
-	SpentBy         common.Hash      `json:"spentBy"`
-	Pending         bool             `json:"pending"`
+	Commitment       shielded3.Digest `json:"commitment"`
+	TransactionHash  common.Hash      `json:"transactionHash"`
+	SpentBy          common.Hash      `json:"spentBy"`
+	Pending          bool             `json:"pending"`
+	SpendStatusKnown bool             `json:"spendStatusKnown"`
 }
 type ScanResult struct {
-	History    []HistoryEntry `json:"history"`
-	BalanceWei string         `json:"balanceWei"`
-	Notes      []OwnedNote    `json:"notes"`
-	HeadHash   common.Hash    `json:"headHash"`
-	HeadNumber hexutil.Uint64 `json:"headNumber"`
-}
-type ViewKey struct {
-	ChainID  uint64           `json:"chainId"`
-	Owner    shielded3.Digest `json:"owner"`
-	Incoming hexutil.Bytes    `json:"incoming"`
-	Outgoing hexutil.Bytes    `json:"outgoing"`
+	SpendStatusKnown bool           `json:"spendStatusKnown"`
+	ReceivedWei      string         `json:"receivedWei"`
+	History          []HistoryEntry `json:"history"`
+	BalanceWei       string         `json:"balanceWei"`
+	Notes            []OwnedNote    `json:"notes"`
+	HeadHash         common.Hash    `json:"headHash"`
+	HeadNumber       hexutil.Uint64 `json:"headNumber"`
 }
 
-func (i *Identity) ViewKey() ViewKey {
-	return ViewKey{i.ChainID, i.Owner, common.CopyBytes(i.IncomingSeed), common.CopyBytes(i.OutgoingSeed)}
+// A full viewing key identifies spends without authorizing them. Incoming
+// keys decrypt receipts only, and deliberately lack the independent nullifier key.
+type ViewKey struct {
+	Version      uint64            `json:"version"`
+	Scope        string            `json:"scope"`
+	ChainID      uint64            `json:"chainId"`
+	Owner        shielded3.Digest  `json:"owner"`
+	Incoming     hexutil.Bytes     `json:"incoming"`
+	Outgoing     hexutil.Bytes     `json:"outgoing,omitempty"`
+	NullifierKey *shielded3.Digest `json:"nullifierKey,omitempty"`
+}
+
+func (i *Identity) ScopedViewKey(scope string) (ViewKey, error) {
+	v := ViewKey{Version: 2, Scope: scope, ChainID: i.ChainID, Owner: i.Owner}
+	switch scope {
+	case "incoming":
+		v.Incoming = common.CopyBytes(i.IncomingSeed)
+	case "full":
+		v.Incoming = common.CopyBytes(i.IncomingSeed)
+		v.Outgoing = common.CopyBytes(i.OutgoingSeed)
+		key := i.NullifierKey
+		v.NullifierKey = &key
+	default:
+		return ViewKey{}, errors.New("choose incoming or full viewing scope")
+	}
+	return v, nil
+}
+func (i *Identity) ViewKey() ViewKey { v, _ := i.ScopedViewKey("full"); return v }
+func (v *ViewKey) Clear() {
+	clear(v.Incoming)
+	clear(v.Outgoing)
+	if v.NullifierKey != nil {
+		clear(v.NullifierKey[:])
+	}
+}
+func (v ViewKey) validate() error {
+	if v.Version != 2 || v.ChainID == 0 || v.Owner == (shielded3.Digest{}) || len(v.Incoming) != pqcrypto.ShieldedV3ViewKeySize {
+		return errors.New("invalid or obsolete Shield3 viewing key; re-export a scoped key")
+	}
+	switch v.Scope {
+	case "incoming":
+		if len(v.Outgoing) != 0 || v.NullifierKey != nil {
+			return errors.New("incoming viewing keys must not contain outgoing or nullifier keys")
+		}
+	case "full":
+		if len(v.Outgoing) != pqcrypto.ShieldedV3ViewKeySize || v.NullifierKey == nil || *v.NullifierKey == (shielded3.Digest{}) {
+			return errors.New("incomplete full viewing key")
+		}
+		if _, err := shielded3.DigestFromBytes(v.NullifierKey.Bytes()); err != nil {
+			return err
+		}
+	default:
+		return errors.New("unknown viewing key scope")
+	}
+	return nil
 }
 
 type scanOutput struct {
@@ -107,21 +157,31 @@ func NoteCommitment(chainID uint64, n Note) (shielded3.Digest, error) {
 	}
 	return shielded3.HashWords(words)
 }
-func NoteNullifier(chainID uint64, n Note) (shielded3.Digest, error) {
+func NoteNullifier(chainID uint64, n Note, key shielded3.Digest) (shielded3.Digest, error) {
+	if key == (shielded3.Digest{}) {
+		return shielded3.Digest{}, errors.New("nullifier viewing key required")
+	}
 	words, err := noteWords(chainID, n, 3003)
 	if err != nil {
 		return shielded3.Digest{}, err
 	}
+	copy(words[5:10], key[:])
 	return shielded3.HashWords(words)
 }
 
 // Scanning needs viewing keys only; note ownership still requires the separate
-// spending-secret preimage in the proof. Nullifiers use private note openings.
+// spending-secret preimage in the proof. Incoming scans never query spends.
 func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 	result := ScanResult{BalanceWei: "0", Notes: make([]OwnedNote, 0)}
-	if view.ChainID == 0 || len(view.Incoming) != pqcrypto.ShieldedV3ViewKeySize || (len(view.Outgoing) != 0 && len(view.Outgoing) != pqcrypto.ShieldedV3ViewKeySize) {
-		return result, errors.New("invalid Shield3 viewing key")
+	if err := view.validate(); err != nil {
+		return result, err
 	}
+	result.SpendStatusKnown = view.Scope == "full"
+	result.ReceivedWei = "0"
+	if !result.SpendStatusKnown {
+		result.BalanceWei = ""
+	}
+
 	var chain hexutil.Big
 	if err := rpc.CallContext(ctx, &chain, "eth_chainId"); err != nil {
 		return result, err
@@ -163,6 +223,7 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 		}
 	}
 	total := new(big.Int)
+	received := new(big.Int)
 	seen := make(map[shielded3.Digest]bool)
 	for from := low; from <= uint64(head.Number); {
 		to := from + 31
@@ -211,7 +272,19 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 				continue
 			}
 			seen[commitment] = true
-			nullifier, err := NoteNullifier(view.ChainID, note)
+			value, err := parseAmount(note.ValueWei)
+			if err != nil {
+				return result, err
+			}
+			if value.Sign() == 0 {
+				continue
+			}
+			received.Add(received, value)
+			if !result.SpendStatusKnown {
+				result.History = append(result.History, HistoryEntry{Direction: "incoming", Note: note, Commitment: commitment, TransactionHash: out.TransactionHash})
+				continue
+			}
+			nullifier, err := NoteNullifier(view.ChainID, note, *view.NullifierKey)
 			if err != nil {
 				return result, err
 			}
@@ -222,14 +295,7 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 			if err = rpc.CallContext(ctx, &spent, "tkmprivacy_shieldedV3NullifierStatus", nullifier); err != nil {
 				return result, err
 			}
-			value, err := parseAmount(note.ValueWei)
-			if err != nil {
-				return result, err
-			}
-			if value.Sign() == 0 {
-				continue
-			}
-			result.History = append(result.History, HistoryEntry{Direction: "incoming", Note: note, Commitment: commitment, TransactionHash: out.TransactionHash, SpentBy: spent.TransactionHash, Pending: spent.Pending})
+			result.History = append(result.History, HistoryEntry{Direction: "incoming", Note: note, Commitment: commitment, TransactionHash: out.TransactionHash, SpentBy: spent.TransactionHash, Pending: spent.Pending, SpendStatusKnown: true})
 			if spent.Pending || spent.TransactionHash != (common.Hash{}) {
 				continue
 			}
@@ -248,7 +314,10 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 	if canonical.Hash != head.Hash {
 		return ScanResult{}, errors.New("chain changed during scan; retry against the canonical chain")
 	}
-	result.BalanceWei = total.String()
+	result.ReceivedWei = received.String()
+	if result.SpendStatusKnown {
+		result.BalanceWei = total.String()
+	}
 	return result, nil
 }
 
@@ -259,16 +328,18 @@ var buildSlot = make(chan struct{}, 1)
 // Build constructs and locally verifies a bounded four-input spend/deposit. It
 // never submits a transaction; the caller signs and broadcasts once explicitly.
 func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, deposit bool) (*types.Transaction, error) {
-	return build(ctx, rpc, seed, identity, to, amount, deposit, nil)
+	return build(ctx, rpc, seed, identity, []Payment{{to, amount}}, deposit, nil)
 }
 
-func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
-	if amount == nil || amount.Sign() <= 0 || amount.Cmp(shielded3.MaxSendWei()) > 0 {
-		return nil, errors.New("Shield3 maximum send is 5000000 TKM")
+func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
+	amount, err := validatePayments(identity, payments)
+	if err != nil {
+		return nil, err
 	}
-	if identity == nil || to.ChainID != identity.ChainID {
-		return nil, errors.New("Shield3 recipient chain mismatch")
+	if deposit && len(payments) != 1 {
+		return nil, errors.New("shielding requires exactly one destination")
 	}
+
 	select {
 	case buildSlot <- struct{}{}:
 		defer func() { <-buildSlot }()
@@ -286,8 +357,10 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 	if err := RequireRegisteredStamp(ctx, rpc, self); err != nil {
 		return nil, err
 	}
-	if err := RequireRegisteredStamp(ctx, rpc, to); err != nil {
-		return nil, err
+	for _, payment := range payments {
+		if err := RequireRegisteredStamp(ctx, rpc, payment.Recipient); err != nil {
+			return nil, err
+		}
 	}
 	var nonce hexutil.Uint64
 	var gasPrice *big.Int
@@ -347,8 +420,7 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		}
 	} else {
 		view := identity.ViewKey()
-		defer clear(view.Incoming)
-		defer clear(view.Outgoing)
+		defer view.Clear()
 		scan, err := Scan(ctx, rpc, view)
 		if err != nil {
 			return nil, err
@@ -398,38 +470,37 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		envelope.Anchor = paths[0].Root
 		change.Sub(total, required)
 	}
-	var recipientStampPath, selfStampPath core.ShieldedV3Path
-	if err := rpc.CallContext(ctx, &recipientStampPath, "tkmprivacy_antarticalStampPath", to.Owner); err != nil {
-		return nil, err
-	}
-	if err := rpc.CallContext(ctx, &selfStampPath, "tkmprivacy_antarticalStampPath", identity.Owner); err != nil {
-		return nil, err
-	}
-	if !recipientStampPath.Found || !selfStampPath.Found || recipientStampPath.Root != selfStampPath.Root {
-		return nil, errors.New("stamp registry changed; retry against the canonical chain")
-	}
-	envelope.StampRoot = recipientStampPath.Root
-	for slot := 0; slot < 4; slot++ {
-		path := recipientStampPath
-		if slot == 3 {
-			path = selfStampPath
-		}
-		witness.StampIndices[slot] = uint32(path.Index)
-		witness.StampPaths[slot] = path.Path
-		recipient := to
-		value := new(big.Int)
-		if slot == 0 {
-			value.Set(amount)
+	recipients := [4]PaymentPayload{}
+	values := [4]*big.Int{}
+	self.IncomingPublicKey, self.StampPublicKey = identity.IncomingPublicKey, identity.StampPublicKey
+	for slot := range recipients {
+		recipients[slot], values[slot] = self, new(big.Int)
+		if slot < len(payments) {
+			recipients[slot], values[slot] = payments[slot].Recipient, payments[slot].Amount
 		}
 		if slot == 3 {
-			recipient = PaymentPayload{ChainID: identity.ChainID, Address: identity.Address, Owner: identity.Owner, IncomingPublicKey: identity.IncomingPublicKey, StampPublicKey: identity.StampPublicKey, Stamp: *identity.Stamp}
-			value.Set(change)
+			values[slot] = change
 		}
+	}
+	for slot := range recipients {
+		recipient, value := recipients[slot], values[slot]
+		var path core.ShieldedV3Path
+		if err := rpc.CallContext(ctx, &path, "tkmprivacy_antarticalStampPath", recipient.Owner); err != nil {
+			return nil, err
+		}
+		if !path.Found || path.Index >= uint64(1)<<32 || (slot > 0 && path.Root != envelope.StampRoot) {
+			return nil, errors.New("stamp registry changed or recipient is unstamped; retry against the canonical chain")
+		}
+		envelope.StampRoot = path.Root
+		witness.StampIndices[slot], witness.StampPaths[slot] = uint32(path.Index), path.Path
 		random, err := shielded3.GenerateSecret()
 		if err != nil {
 			return nil, err
 		}
-		limbs, _ := shielded3.AmountFromBig(value)
+		limbs, err := shielded3.AmountFromBig(value)
+		if err != nil {
+			return nil, err
+		}
 		witness.Outputs[slot] = shielded3.OutputOpening{Owner: recipient.Owner, Randomness: random, Value: limbs}
 		note := Note{recipient.Owner, random, value.String(), recipient.Address}
 		commitment, err := NoteCommitment(identity.ChainID, note)
@@ -456,6 +527,7 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 			return nil, err
 		}
 	}
+
 	if relay != nil {
 		envelope.Relayed = true
 		envelope.ValidUntil = relay.ValidUntil

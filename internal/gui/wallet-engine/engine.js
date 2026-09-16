@@ -5,7 +5,7 @@ import {decodeShieldedPaymentCode, deriveShieldedIdentity, clearShieldedIdentity
 import {TkmChainAPI} from './vendor/api.js';
 import {sendTKM as sendV2} from './shield2-send.js';
 import {shield3Status,sendShield3,shield3Scan} from './shield3.js';
-export {shield3Status,shield3Identity,shield3ViewKeys,shield3Scan,shield3Funds, shield3RegisterStamp,shield3StampSponsorship,shield3Relay,shield3ReviewRelayOffer,shield3Disclosure,validateShield3Amount,validateShield3Recipient} from './shield3.js';
+export {shield3Status,shield3Identity,shield3ViewKeys,shield3ViewScan,shield3ViewStamp,shield3FetchRelayOffer,shield3Scan,shield3Funds, shield3RegisterStamp,shield3StampSponsorship,shield3Relay,shield3ReviewRelayOffer,shield3Disclosure,validateShield3Amount,validateShield3Payments,validateShield3Recipient} from './shield3.js';
 export async function sendTKM(options){const status=await shield3Status(options);return status.active?sendShield3(options):sendV2(options)}
 export {decodeShieldedPaymentCode};
 

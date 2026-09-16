@@ -32,6 +32,7 @@ type PaymentCode struct {
 type Identity struct {
 	ChainID           uint64
 	Address           common.Address
+	NullifierKey      shielded3.Digest
 	SpendingSecret    shielded3.Digest
 	Owner             shielded3.Digest
 	IncomingSeed      []byte
@@ -49,6 +50,7 @@ func (i *Identity) Clear() {
 		return
 	}
 	clear(i.SpendingSecret[:])
+	clear(i.NullifierKey[:])
 	clear(i.IncomingSeed)
 	clear(i.OutgoingSeed)
 	clear(i.StampSeed)
@@ -111,6 +113,11 @@ func NewIdentity(seed []byte, chainID uint64, stamp *pqcrypto.ShieldedV3StampRec
 	if err != nil {
 		return fail(err)
 	}
+	identity.NullifierKey, err = shielded3.HashWords(append([]uint64{3005}, identity.SpendingSecret[:]...))
+	if err != nil {
+		return fail(err)
+	}
+
 	for _, role := range []struct {
 		purpose        pqcrypto.ShieldedV3Purpose
 		secret, public *[]byte

@@ -17,6 +17,7 @@ pub const FIELD_MODULUS: u64 = 0xffff_ffff_0000_0001;
 pub const DOMAIN_OWNER: u64 = 3001;
 pub const DOMAIN_NOTE: u64 = 3002;
 pub const DOMAIN_NULLIFIER: u64 = 3003;
+pub const DOMAIN_NULLIFIER_KEY: u64 = 3005;
 
 // Public word order: chain lo/hi, asset lo/hi, public value (eight u32 limbs),
 // transaction intent (sixteen u32 words), anchor (five field words),
@@ -28,6 +29,7 @@ pub const DOMAIN_NULLIFIER: u64 = 3003;
 enum Word {
     Literal(u64),
     Memory(usize),
+    Pointer(usize, usize),
 }
 
 struct Assembly(String);
@@ -80,6 +82,23 @@ impl Assembly {
                         self.emit(&format!("push {end} read_mem {count} pop 1"));
                         i += count;
                     }
+                    Word::Pointer(pointer, end) => {
+                        let mut count = 1;
+                        while count < 5 && i + count < reversed.len() {
+                            match reversed[i + count] {
+                                Word::Pointer(next_pointer, next)
+                                    if next_pointer == pointer && next + count == end =>
+                                {
+                                    count += 1
+                                }
+                                _ => break,
+                            }
+                        }
+                        self.emit(&format!(
+                            "push {pointer} read_mem 1 pop 1 push {end} add read_mem {count} pop 1"
+                        ));
+                        i += count;
+                    }
                 }
             }
             self.emit("sponge_absorb");
@@ -90,12 +109,19 @@ impl Assembly {
         self.digest(300);
     }
     fn note(&mut self, owner: usize, randomness: usize, value: usize) {
+        self.emit(&format!(
+            "push {owner} push {randomness} push {value} call note_hash"
+        ));
+    }
+    fn note_routine(&mut self) {
+        self.emit("note_hash: push 402 write_mem 1 pop 1 push 401 write_mem 1 pop 1 push 400 write_mem 1 pop 1");
         let mut words = vec![Word::Literal(DOMAIN_NOTE)];
-        words.extend((0..4).map(Word::Memory)); // chain and asset
-        words.extend((owner..owner + 5).map(Word::Memory));
-        words.extend((value..value + 8).map(Word::Memory));
-        words.extend((randomness..randomness + 5).map(Word::Memory));
+        words.extend((0..4).map(Word::Memory));
+        words.extend((0..5).map(|offset| Word::Pointer(400, offset)));
+        words.extend((0..8).map(|offset| Word::Pointer(402, offset)));
+        words.extend((0..5).map(|offset| Word::Pointer(401, offset)));
         self.hash(words);
+        self.emit("return");
     }
 }
 
@@ -122,16 +148,10 @@ pub fn spend_program() -> Program {
             a.emit(&format!("push {} write_mem {count} pop 1", base + i));
         }
     }
-    for i in 0..28 {
-        a.u32(i);
-    }
-    for i in 1010..1019 {
-        a.u32(i);
-    }
+    a.emit("push 0 push 28 call check_range");
+    a.emit("push 1010 push 9 call check_range");
     for i in 0..4 {
-        for j in 0..8 {
-            a.u32(1029 + 18 * i + j);
-        }
+        a.emit(&format!("push {} push 8 call check_range", 1029 + 18 * i));
     }
     // Chain ID is nonzero. Input value is a nonzero 256-bit integer.
     a.load(0);
@@ -166,13 +186,18 @@ pub fn spend_program() -> Program {
     owner.extend((1000..1005).map(Word::Memory));
     a.hash(owner);
     a.store_digest(200);
+    // Bind the key to the same owner preimage; arbitrary keys enable double spends.
+    let mut key = vec![Word::Literal(DOMAIN_NULLIFIER_KEY)];
+    key.extend((1000..1005).map(Word::Memory));
+    a.hash(key);
+    a.store_digest(210);
     a.load(58);
     a.emit("push 0 eq skiz call private_spend");
     a.load(58);
     a.emit("push 1 eq skiz call public_deposit");
     // Three additional notes share the same hidden spending owner. The public
     // input count determines which openings must prove membership and a unique
-    // nullifier; inactive slots are zero and consume constrained dummy paths.
+    // nullifier; inactive slots are zero and consume no VM digest paths.
     for i in 0..3 {
         a.emit("push 0");
         for count in i + 2..=4 {
@@ -197,19 +222,11 @@ pub fn spend_program() -> Program {
     // stay private; output owners and registration indices are not public.
     for i in 0..4 {
         a.u32(1091 + i);
-        let mut stamp = vec![
-            Word::Literal(DOMAIN_STAMP),
-            Word::Memory(0),
-            Word::Memory(1),
-        ];
-        stamp.extend((1019 + 18 * i..1024 + 18 * i).map(Word::Memory));
-        a.hash(stamp);
+        a.emit(&format!("push {} call stamp_hash", 1019 + 18 * i));
         a.store_digest(310);
         a.load(1091 + i);
         a.digest(310);
-        for _ in 0..MERKLE_DEPTH {
-            a.emit("merkle_step");
-        }
+        a.emit("call merkle_path");
         a.assert_digest(67);
         a.emit("push 0 eq assert");
     }
@@ -296,26 +313,13 @@ pub fn spend_program() -> Program {
     a.store_digest(205);
     a.load(1018);
     a.digest(205);
-    for _ in 0..MERKLE_DEPTH {
-        a.emit("merkle_step");
-    }
+    a.emit("call merkle_path");
     a.assert_digest(28);
     a.emit("push 0 eq assert");
-    let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
-    nullifier.extend((0..4).map(Word::Memory));
-    nullifier.extend((200..205).map(Word::Memory));
-    nullifier.extend((1005..1018).map(Word::Memory));
-    a.hash(nullifier);
+    a.emit("push 1005 call nullifier_hash");
     a.assert_digest(33);
     a.emit("return");
     a.emit("public_deposit:");
-    // Consume the fixed note-path prefix also for deposits, so stamp paths
-    // have the same position in all witness encodings.
-    a.emit("push 0 push 0 push 0 push 0 push 0 push 0");
-    for _ in 0..MERKLE_DEPTH {
-        a.emit("merkle_step");
-    }
-    a.emit("pop 5 pop 1");
     for i in 28..38 {
         a.load(i);
         a.emit("push 0 eq assert");
@@ -332,9 +336,7 @@ pub fn spend_program() -> Program {
         let base = 1095 + 14 * i;
         let nullifier = 72 + 5 * i;
         a.emit(&format!("extra_spend_{i}:"));
-        for j in 5..14 {
-            a.u32(base + j);
-        }
+        a.emit(&format!("push {} push 9 call check_range", base + 5));
         a.emit("push 1");
         for j in 5..13 {
             a.load(base + j);
@@ -345,16 +347,10 @@ pub fn spend_program() -> Program {
         a.store_digest(205);
         a.load(base + 13);
         a.digest(205);
-        for _ in 0..MERKLE_DEPTH {
-            a.emit("merkle_step");
-        }
+        a.emit("call merkle_path");
         a.assert_digest(28);
         a.emit("push 0 eq assert");
-        let mut words = vec![Word::Literal(DOMAIN_NULLIFIER)];
-        words.extend((0..4).map(Word::Memory));
-        words.extend((200..205).map(Word::Memory));
-        words.extend((base..base + 13).map(Word::Memory));
-        a.hash(words);
+        a.emit(&format!("push {base} call nullifier_hash"));
         a.assert_digest(nullifier);
         // No repeated input, even when a malicious witness opens it twice.
         for previous in std::iter::once(33).chain((0..i).map(|j| 72 + 5 * j)) {
@@ -384,20 +380,31 @@ pub fn spend_program() -> Program {
             a.load(nullifier + j);
             a.emit("push 0 eq assert");
         }
-        a.emit("push 0 push 0 push 0 push 0 push 0 push 0");
-        for _ in 0..MERKLE_DEPTH {
-            a.emit("merkle_step");
-        }
-        let mut dummy = Digest::new([BFieldElement::new(0); 5]);
-        for _ in 0..MERKLE_DEPTH {
-            dummy = Tip5::hash_pair(dummy, Digest::new([BFieldElement::new(0); 5]));
-        }
-        // Canonical all-zero inactive paths have a fixed derived root.
-        for word in dummy.values().iter().rev() {
-            a.emit(&format!("push {}", word.value()));
-        }
-        a.emit("assert_vector pop 5 push 0 eq assert return");
+        a.emit("return");
     }
+    a.emit("merkle_path: push 32 push 320 write_mem 1 pop 1 call merkle_loop return");
+    a.emit("merkle_loop: merkle_step push 320 read_mem 1 pop 1 push -1 add dup 0 push 320 write_mem 1 pop 1 push 0 eq skiz return recurse");
+    a.emit(
+        "check_range: push 330 write_mem 1 pop 1 push 331 write_mem 1 pop 1 call range_loop return",
+    );
+    a.emit("range_loop: push 331 read_mem 1 pop 1 dup 0 call check_u32 push 1 add push 331 write_mem 1 pop 1 push 330 read_mem 1 pop 1 push -1 add dup 0 push 330 write_mem 1 pop 1 push 0 eq skiz return recurse");
+    a.emit("nullifier_hash: push 400 write_mem 1 pop 1");
+    let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
+    nullifier.extend((0..4).map(Word::Memory));
+    nullifier.extend((210..215).map(Word::Memory));
+    nullifier.extend((0..13).map(|offset| Word::Pointer(400, offset)));
+    a.hash(nullifier);
+    a.emit("return");
+    a.emit("stamp_hash: push 400 write_mem 1 pop 1");
+    let mut stamp = vec![
+        Word::Literal(DOMAIN_STAMP),
+        Word::Memory(0),
+        Word::Memory(1),
+    ];
+    stamp.extend((0..5).map(|offset| Word::Pointer(400, offset)));
+    a.hash(stamp);
+    a.emit("return");
+    a.note_routine();
     a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
     Program::from_code(&a.0).expect("valid, fixed Shield3 assembly")
 }
@@ -452,16 +459,34 @@ fn public_input(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
 }
 
 pub fn prove_spend(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> Result<Vec<u64>, String> {
+    let active_path = spending_paths(public, path)?;
     let public = public_input(public)?;
     let tokens = canonical_words(secret, SECRET_WORDS)?;
-    if path.len() != PATH_DIGESTS {
-        return Err("invalid Merkle path depth".into());
-    }
-    let digests = path
+    let digests = active_path
         .iter()
         .map(|d| canonical_words(d, 5).map(|words| Digest::new(words.try_into().unwrap())))
         .collect::<Result<Vec<_>, _>>()?;
     prove_program(spend_program(), public, tokens, digests)
+}
+
+// Keep the bounded helper ABI but omit unused note paths from the VM. Zero
+// inactive encodings cannot shift active paths or output stamp witnesses.
+fn spending_paths(public: &[u64], path: &[[u64; 5]]) -> Result<Vec<[u64; 5]>, String> {
+    public_input(public)?;
+    if path.len() != PATH_DIGESTS {
+        return Err("invalid Merkle path depth".into());
+    }
+    let end = public[87] as usize * MERKLE_DEPTH;
+    if path[end..4 * MERKLE_DEPTH]
+        .iter()
+        .flatten()
+        .any(|&v| v != 0)
+    {
+        return Err("nonzero inactive input path".into());
+    }
+    let mut active = path[..end].to_vec();
+    active.extend_from_slice(&path[4 * MERKLE_DEPTH..]);
+    Ok(active)
 }
 
 fn prove_program(
@@ -588,7 +613,9 @@ pub fn describe_spend(
     }
     let mut null_words = vec![DOMAIN_NULLIFIER];
     null_words.extend(&public[..4]);
-    null_words.extend(&owner_words);
+    let mut key_words = vec![DOMAIN_NULLIFIER_KEY];
+    key_words.extend(&secret[..5]);
+    null_words.extend(hash(&key_words).values().map(|v| v.value()));
     null_words.extend(&secret[5..18]);
     let nullifier = hash(&null_words);
     let mut result = Vec::with_capacity(40);
@@ -639,6 +666,29 @@ fn owner_program() -> Program {
     a.hash(owner);
     a.assert_digest(2);
     a.emit("halt");
+    a.emit("merkle_path: push 32 push 320 write_mem 1 pop 1 call merkle_loop return");
+    a.emit("merkle_loop: merkle_step push 320 read_mem 1 pop 1 push -1 add dup 0 push 320 write_mem 1 pop 1 push 0 eq skiz return recurse");
+    a.emit(
+        "check_range: push 330 write_mem 1 pop 1 push 331 write_mem 1 pop 1 call range_loop return",
+    );
+    a.emit("range_loop: push 331 read_mem 1 pop 1 dup 0 call check_u32 push 1 add push 331 write_mem 1 pop 1 push 330 read_mem 1 pop 1 push -1 add dup 0 push 330 write_mem 1 pop 1 push 0 eq skiz return recurse");
+    a.emit("nullifier_hash: push 400 write_mem 1 pop 1");
+    let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
+    nullifier.extend((0..4).map(Word::Memory));
+    nullifier.extend((210..215).map(Word::Memory));
+    nullifier.extend((0..13).map(|offset| Word::Pointer(400, offset)));
+    a.hash(nullifier);
+    a.emit("return");
+    a.emit("stamp_hash: push 400 write_mem 1 pop 1");
+    let mut stamp = vec![
+        Word::Literal(DOMAIN_STAMP),
+        Word::Memory(0),
+        Word::Memory(1),
+    ];
+    stamp.extend((0..5).map(|offset| Word::Pointer(400, offset)));
+    a.hash(stamp);
+    a.emit("return");
+    a.note_routine();
     a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
     Program::from_code(&a.0).expect("valid fixed stamp ownership program")
 }

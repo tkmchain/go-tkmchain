@@ -170,7 +170,7 @@ func relayPacket(tx *types.Transaction) (RelayPacket, error) {
 // BuildRelayed creates an unsigned relay transaction. The public packet contains
 // the relay key, never the payer's PQ key/address or spending/viewing secrets.
 func BuildRelayed(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, offer *RelayOffer) (*types.Transaction, error) {
-	return build(ctx, rpc, seed, identity, to, amount, false, offer)
+	return build(ctx, rpc, seed, identity, []Payment{{to, amount}}, false, offer)
 }
 func RelayPacketForTransaction(tx *types.Transaction) (RelayPacket, error) { return relayPacket(tx) }
 

@@ -16,6 +16,8 @@ on:
       - 'android/build.sh'
       - '.github/workflows/release.yml'
       - 'internal/shield3wallet/**'
+      - 'internal/shield3relay/**'
+      - 'cmd/shield3-relay/**'
       - 'internal/gui/**'
       - 'scripts/shield3-build.sh'
       - 'go.mod'
@@ -36,6 +38,8 @@ on:
       - 'android/build.sh'
       - '.github/workflows/release.yml'
       - 'internal/shield3wallet/**'
+      - 'internal/shield3relay/**'
+      - 'cmd/shield3-relay/**'
       - 'internal/gui/**'
       - 'scripts/shield3-build.sh'
       - 'go.mod'
@@ -52,6 +56,7 @@ jobs:
     timeout-minutes: 90
     env:
       TKM_SHIELD3_TESTDATA: ${{ runner.temp }}/shield3-vectors
+      TKM_SHIELD3_RELAY_TESTDATA: ${{ runner.temp }}/shield3-relay-vectors
       TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
       CARGO_BUILD_JOBS: '2'
       RAYON_NUM_THREADS: '2'
@@ -75,4 +80,5 @@ jobs:
         run: |
           go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui
           go test -tags shield3 ./core ./eth ./internal/ethapi ./cmd/shielded-payout-prover -run "Shielded|Shield3|Stamped"
-          go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui
+          go test -race -tags shield3 ./internal/shield3relay ./cmd/shield3-relay
+          go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay

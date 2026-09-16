@@ -39,7 +39,7 @@ Encrypted padding hides output values, but input count is observable.
 
 The public proof statement has 88 words; private openings have 137 words and
 256 five-word path digests. Native digests are full 40-byte Tip5/Goldilocks values,
-with owner/note/nullifier/stamp hash domains 3001/3002/3003/3004. No BN254
+with owner/note/nullifier/stamp/nullifier-key hash domains 3001/3002/3003/3004/3005. No BN254
 reduction or legacy commitment is accepted. The pinned Triton VM 8.0.0 verifier
 accepts only the locally fixed program and security settings. Maximum padded
 trace is 65,536 rows; proofs are capped at 8 MiB. Antartical's encoded block
@@ -158,10 +158,125 @@ a dedicated personal relay can be correlated with its user.
 
 This hides the payer account on-chain; it does not hide the operator account,
 fees, timestamps, input count, public deposit/withdrawal values or network
-traffic. The operator may correlate IP addresses and packet timing. Anyone who already has a note opening, including its original sender through
-outgoing history, can derive its nullifier and link its consumption. A relay
-does not remove that existing linkage. Network anonymity and automatic relay
-discovery are not implemented.
+traffic. The operator may correlate IP addresses and packet timing. Nullifiers
+now require the recipient's independent secret key: original senders and
+payment-only auditors cannot derive them from a note opening. Automatic
+submission is supported for a user-selected relay; automatic relay discovery
+and network anonymity are not implemented.
+
+## Recipient-secret nullifiers and scoped viewing
+
+For spending secret `sk`, derive `owner = Tip5(3001 || sk)` and
+`nk = Tip5(3005 || sk)`. A note commitment retains its original owner binding.
+Its nullifier is now `Tip5(3003 || chain/asset || nk || randomness || value)`.
+The fixed native relation computes `nk` from the same private `sk` used to open
+`owner`. It never accepts a separate prover-chosen key. Consequently one note
+has one nullifier, including across direct, sponsored, relayed and batch sends.
+Neither the payment address, outgoing note opening nor selected payment
+capsule contains the recipient's `nk`.
+
+Wallet key exports are version 2 and specify a permission explicitly:
+
+| Permission | Information exposed | Spending authority |
+| --- | --- | --- |
+| Incoming | Incoming receipts and total received; no later spend identifiers | None |
+| Full | Incoming/outgoing history and the wallet's later spends via `nk` | None |
+| Payment | One confirmed output recipient and amount | None |
+| Stamp | One self-declared name/country record | None |
+
+Receive-only scans return `spendStatusKnown: false`, `balanceWei: ""`, total
+`receivedWei`, and no spendable notes. A cumulative received total is not a
+balance. Full scans exclude spent/pending/reserved notes and expose a spendable
+balance. Incoming keys reject embedded outgoing/nullifier permissions; full
+keys require both. The Receive tab exports only the selected permission and
+can scan an imported incoming/full key or open a stamp disclosure without
+unlocking a spending wallet. Stamp-only exports carry the authenticated record
+and its 32-byte record key, never the master stamp KEM seed; this key cannot
+recognize or decrypt payment output stamps. Previously shared master stamp
+seeds cannot be revoked and may still recognize those records. Stamp labels
+are self-declared; signature verification is not an identity/country certification.
+Re-export old full viewing backups: their encryption seeds still derive the
+same keys, but an old viewing backup did not contain `nk`. Keep the encrypted
+spending backup to regenerate it. Full viewing keys remain sensitive.
+
+## Automatic shared relay
+
+Build the native relay executable with `make shield3-relay` and run:
+
+```sh
+./build/bin/shield3-relay \
+  --rpc http://127.0.0.1:8545 \
+  --keystore /path/to/encrypted-stamped-pq-keystore.json \
+  --password-file /path/to/operator-password \
+  --state-dir /path/to/private-relay-state
+```
+
+The operator stamp must already be confirmed. The executable unlocks only its
+operator key, never a payer key. Default listening address is `127.0.0.1:8790`;
+serve it through a TLS reverse proxy for remote users. Restrict access to the
+password and state directory. Operator endpoints accept wallet JSON POSTs,
+reject browser Origin headers, and do not enable CORS. Apply request limits at
+the proxy for a public deployment: one operator deliberately leases only one
+nonce while a payer proves, and an abandoned quote holds it until expiry.
+Use separate operator accounts to serve concurrent quotes.
+
+Choose **Shared relay** in the Send tab, enter its HTTPS URL, review the signed
+operator/fee/expiry estimate, then confirm. The wallet prepares and durably saves
+one authorized draft before contacting the operator. It downloads a recovery
+packet, submits automatically and checks confirmation against its own node.
+**Check / retry saved relay payment** works without retaining a wallet password
+and always submits the same saved draft. Quotes also use stable opaque request
+IDs; a retry returns the same signed offer. Changing payments requires resolving
+the saved operation first. A locally abandoned authorization cannot be revoked
+before consensus expiry.
+
+The service exposes `/offer` (`requestId`) and `/submit` (`requestId`, unsigned
+`transaction`). Quotes are publicly requestable and signed by the operator. Payments require
+the fixed spending proof and operator signature; opaque IDs are retry
+identifiers, not spending keys. It verifies stamp, nonce, expiry, roots, all input statuses,
+output reuse, the full native proof and intrinsic gas before signing. A process
+lock protects the operator state directory. Before broadcast it syncs the exact
+signed transaction to a nonce-specific record; a lost RPC reply or restart can
+only rebroadcast those bytes. A durable global request index also prevents one
+request ID from authorizing a second nonce after the daemon advances. Another
+packet at a reserved nonce or request ID is rejected. Wallets
+check the returned PQ signature and every authorized field; a server's claimed
+confirmation is ignored. Confirmation/pending/conflict/expiry comes from the
+wallet's own node, using all nullifiers and the exact transaction match.
+
+## Multiple-recipient payments and payouts
+
+A transaction pays one to three recipients in output slots 0–2; slot 3 always
+belongs to the payer and carries change. The Send tab adds/removes recipient
+rows and reviews each authenticated stamped address. Empty payment slots use
+fresh zero-valued notes for the payer; all four outputs still have independent
+incoming/outgoing/stamp encryption and native stamp-membership proofs.
+
+`BuildBatch` and `BuildRelayedBatch` accept `[]Payment`, and local `send` /
+`prepare-relay` operations accept `payments: [{recipient, amountWei}, ...]`.
+Amounts use exact integer wei. The **sum of payments**, rather than each row,
+cannot exceed 5,000,000 TKM; native consensus also enforces the combined limit.
+Fees/change are excluded. A wrong-chain or unstamped recipient, invalid amount,
+excess payment count or insufficient four-input total rejects the whole batch.
+Payment disclosures select one real output without decrypting the others.
+Payout integrations can chunk larger lists into batches of at most three,
+tracking a stable request ID and canonical hash for each batch independently.
+No external pool/exchange deployment is changed by this repository update.
+
+## Proof work and size
+
+The helper ABI remains bounded at 256 digests, with zero inactive paths. The
+prover supplies only active note paths plus four stamp paths to the VM; deposits
+supply no input paths. Shared note/nullifier/stamp hashing, fixed depth-32 Merkle
+loops and fixed range-check loops reduce the program's hashing table. All
+ownership, range, conservation, limit, membership and uniqueness checks remain;
+STARK security parameters and maximum proof/trace bounds are unchanged.
+The deterministic single-input regression now measures 32,768 padded rows
+(previously 65,536), with a Cascade table of 31,520 rows. These are fixture
+measurements, not universal latency or phone-memory guarantees. Resource tests
+measure table heights instead of assuming that fewer VM instructions
+automatically produce a smaller proof.
+
 
 ## Selective payment disclosure
 
@@ -181,10 +296,11 @@ selected recipient, amount, slot, transaction hash and confirmation block.
 An unconfirmed payment remains unverifiable until successfully included.
 
 This proves that the selected output paid the registered recipient. It does
-not reveal or attest the true hidden payer identity. The disclosed note opening
-includes randomness/value/owner, so an auditor can derive **that output's later
-nullifier** and link its spend. Protect and share disclosure files deliberately.
-Other outputs and wallet history remain encrypted.
+not reveal or attest the true hidden payer identity. It reveals the selected
+note's owner/randomness/value, but excludes the recipient's secret nullifier
+key, so those details do not identify its later spend. Protect disclosure files:
+they still expose that payment's recipient and amount. Other outputs and wallet
+history remain encrypted.
 
 Optional disclosure capsules encrypt this small bundle with the auditor's
 ML-KEM public key, purpose 4 and a fresh random 64-byte context. Public capsule
@@ -210,7 +326,8 @@ exclude pending, spent or reserved notes.
 
 Private `/shield3/` POST operations require a GUI token, loopback peer/host and
 same-origin request. Added operations are `relay-offer`, `review-relay-offer`,
-`prepare-relay`, `review-relay`, `submit-relay`, `relay-status`, `disclosure-key`,
+`prepare-relay`, `review-relay`, `submit-relay`, `relay-status`,
+`fetch-relay-offer`, `submit-relay-draft`, `view-stamp`, `disclosure-key`,
 `export-disclosure` and `verify-disclosure`. Proof packets have a bounded 20 MiB
 hex/JSON body; normal operations are bounded to 512 KiB. Responses disable
 caching. Spending/viewing seeds are cleared after use and never logged or saved
@@ -249,7 +366,8 @@ and proof generation have different resource costs.
 - The native wallet test executes deposits, stamps, sponsorship and private
   sends through consensus and the EVM, combines four notes through a different
   operator, checks hidden payer key/public nonce, atomic secondary-input failure,
-  all canonical nullifier hashes, scoped disclosure, encrypted auditor capsules
+  all canonical nullifier hashes, three-output batch sends, receive-only isolation,
+  scoped disclosure, encrypted auditor capsules
   and rejection of orphaned receipts.
 - Focused regressions cover selection/input limits, canonical nullifiers,
   relay expiry, loopback access, unchanged older request digests and durable

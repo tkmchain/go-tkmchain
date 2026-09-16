@@ -16,12 +16,14 @@ type ShieldedV3Status struct {
 	NativeVerifier bool            `json:"nativeVerifier"`
 	ActivationTime *hexutil.Uint64 `json:"activationTime"`
 	MaxSendWei     string          `json:"maxSendWei"`
+	MaxRecipients  uint64          `json:"maxRecipients"`
+	ViewKeyVersion uint64          `json:"viewKeyVersion"`
 	MaxInputs      uint64          `json:"maxInputs"`
 	MaxSendTKM     uint64          `json:"maxSendTKM"`
 }
 
 func (api *PrivacyAPI) ShieldedV3Status() ShieldedV3Status {
-	status := ShieldedV3Status{MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM}
+	status := ShieldedV3Status{MaxRecipients: shielded3.OutputSlots - 1, ViewKeyVersion: 2, MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM}
 	if api == nil || api.e == nil || api.e.blockchain == nil {
 		return status
 	}

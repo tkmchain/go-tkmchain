@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -353,8 +355,7 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Fatal("deposit reserve not transferred by execution")
 	}
 	viewA := a.ViewKey()
-	defer clear(viewA.Incoming)
-	defer clear(viewA.Outgoing)
+	defer viewA.Clear()
 	scan, err := Scan(ctx, rpc, viewA)
 	if err != nil || scan.BalanceWei != amount.String() || len(scan.Notes) != 1 {
 		t.Fatalf("view-key-only balance: %+v %v", scan, err)
@@ -414,8 +415,7 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Fatal("outgoing view key did not recover history")
 	}
 	viewB := b.ViewKey()
-	defer clear(viewB.Incoming)
-	defer clear(viewB.Outgoing)
+	defer viewB.Clear()
 	received, err := Scan(ctx, rpc, viewB)
 	if err != nil || received.BalanceWei != payment.String() {
 		t.Fatalf("recipient balance: %+v %v", received, err)
@@ -453,7 +453,6 @@ func TestShield3WalletConsensus(t *testing.T) {
 	// An unrelated public KEM key cannot read either direction.
 	wrongView := viewB
 	wrongView.Incoming = viewA.Incoming
-	wrongView.Outgoing = nil
 	other, err := Scan(ctx, rpc, wrongView)
 	if err != nil || other.BalanceWei != "0" {
 		t.Fatal("credited notes to a different owner")
@@ -476,13 +475,22 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Fatal("accepted modified signed quote")
 	}
 	relayAmount := big.NewInt(6_000_000_000_000_000_000)
-	relayUnsigned, err := BuildRelayed(ctx, rpc, seedB, b, pa, relayAmount, &offer)
+	batchAmount := new(big.Int).Div(new(big.Int).Set(relayAmount), big.NewInt(3))
+	relayUnsigned, err := BuildRelayedBatch(ctx, rpc, seedB, b, []Payment{{pa, batchAmount}, {pb, batchAmount}, {pa, batchAmount}}, &offer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	packet, err := RelayPacketForTransaction(relayUnsigned)
 	if err != nil || packet.InputCount != 4 {
 		t.Fatal("did not combine four notes", packet.InputCount, err)
+	}
+	if dir := os.Getenv("TKM_SHIELD3_RELAY_TESTDATA"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "draft.bin"), packet.Transaction, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	payerKey, _ := pqcrypto.NewMLDSA87FromSeed(seedB)
 	if bytes.Contains(packet.Transaction, pqcrypto.PublicKeyBytes(payerKey)) {
@@ -539,7 +547,7 @@ func TestShield3WalletConsensus(t *testing.T) {
 	}
 	defer clear(disclosure.RecordKey)
 	verified, err := VerifyPaymentDisclosure(ctx, rpc, disclosure)
-	if err != nil || verified.Recipient != a.Address || verified.AmountWei != relayAmount.String() {
+	if err != nil || verified.Recipient != a.Address || verified.AmountWei != batchAmount.String() {
 		t.Fatal("selective payment verification", err)
 	}
 	wrongDisclosure := disclosure
@@ -566,6 +574,31 @@ func TestShield3WalletConsensus(t *testing.T) {
 	clear(opened.RecordKey)
 	if _, err = OpenPaymentDisclosure(capsule, a.IncomingSeed); err == nil {
 		t.Fatal("unrelated viewing key opened disclosure")
+	}
+	incoming, err := a.ScopedViewKey("incoming")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer incoming.Clear()
+	receiveRPC := &receiptOnlyRPC{RPC: rpc}
+	receiveScan, err := Scan(ctx, receiveRPC, incoming)
+	if err != nil || receiveScan.SpendStatusKnown || receiveScan.BalanceWei != "" || len(receiveScan.Notes) != 0 || receiveRPC.spendCalls != 0 {
+		t.Fatal("receive-only scan exposed spend status", err)
+	}
+	fullView := a.ViewKey()
+	defer fullView.Clear()
+	fullScan, err := Scan(ctx, rpc, fullView)
+	if err != nil || !fullScan.SpendStatusKnown {
+		t.Fatal("full scan cannot track spends", err)
+	}
+	for _, received := range fullScan.Notes {
+		guessed, err := NoteNullifier(8979, received.Note, b.NullifierKey)
+		if err != nil || guessed == received.Nullifier {
+			t.Fatal("sender could derive recipient nullifier", err)
+		}
+	}
+	if _, err := ExportPaymentDisclosure(ctx, rpc, b, relayTx.Hash(), 1); err != nil {
+		t.Fatal("could not disclose second batch recipient", err)
 	}
 	rpc.reorg = true
 	if _, err = VerifyPaymentDisclosure(ctx, rpc, disclosure); err == nil {
