@@ -20,6 +20,7 @@ import (
 
 const AntarticalStampMagic = "TKMSTAMP1"
 const AntarticalStampVerifyGas uint64 = 1_000_000
+const AntarticalStampSponsorshipLifetime uint64 = 3600
 
 var ErrUnstampedAddress = errors.New("illegal transaction: address has no confirmed Antartical stamp")
 
@@ -28,6 +29,11 @@ type AntarticalStampRegistration struct {
 	Owner   shielded3.Digest
 	Stamp   pqcrypto.ShieldedV3StampRecord
 	Proof   []byte
+	// Optional fields preserve self-funded registration encoding. A sponsored
+	// registration has beneficiary authorization and a stamped outer fee payer.
+	BeneficiaryPublicKey []byte `rlp:"optional"`
+	ValidUntil           uint64 `rlp:"optional"`
+	Authorization        []byte `rlp:"optional"`
 }
 type AntarticalStampStatus struct {
 	Registered      bool             `json:"registered"`
@@ -65,6 +71,7 @@ func AntarticalStampIntent(tx *types.Transaction, e *AntarticalStampRegistration
 	}
 	clean := *e
 	clean.Proof = nil
+	clean.Authorization = nil
 	data, err := EncodeAntarticalStamp(&clean)
 	if err != nil {
 		return [64]byte{}, err
@@ -81,7 +88,7 @@ func ValidateAntarticalStampBasics(config *params.ChainConfig, number *big.Int, 
 	if config == nil || config.ChainID == nil || !config.IsAntartical(number, time) {
 		return errors.New("stamp registration is not active until Antartical")
 	}
-	if tx.Type() != types.PQTkmTxType || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value().Sign() != 0 || tx.ChainId().Cmp(config.ChainID) != 0 {
+	if tx == nil || tx.Type() != types.PQTkmTxType || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value().Sign() != 0 || tx.ChainId().Cmp(config.ChainID) != 0 {
 		return errors.New("stamp registration requires a zero-value PQ transaction to the reserved pool")
 	}
 	e, err := DecodeAntarticalStamp(tx.Data())
@@ -89,11 +96,62 @@ func ValidateAntarticalStampBasics(config *params.ChainConfig, number *big.Int, 
 		return err
 	}
 	algorithm, publicKey, _, _ := tx.PQTkmFields()
+	if len(e.BeneficiaryPublicKey) != 0 {
+		if e.ValidUntil <= time || e.ValidUntil-time > AntarticalStampSponsorshipLifetime {
+			return errors.New("stamp sponsorship authorization expired or exceeds one hour")
+		}
+		intent, err := AntarticalStampIntent(tx, e)
+		if err != nil || !pqcrypto.VerifyMLDSA87(e.BeneficiaryPublicKey, intent[:], e.Authorization) {
+			return errors.New("invalid beneficiary stamp sponsorship authorization")
+		}
+		publicKey = e.BeneficiaryPublicKey
+	} else if e.ValidUntil != 0 || len(e.Authorization) != 0 {
+		return errors.New("incomplete stamp sponsorship authorization")
+	}
 	if e.Version != 1 || !config.ChainID.IsUint64() || e.Stamp.ChainID != config.ChainID.Uint64() || algorithm != pqcrypto.AlgorithmMLDSA87 || !pqcrypto.VerifyShieldedV3Stamp(publicKey, &e.Stamp) || e.Owner == (shielded3.Digest{}) || !shielded3.ValidProofEncoding(e.Proof) {
 		return errors.New("invalid signed stamp or owner proof")
 	}
 	if _, err := shielded3.DigestFromBytes(e.Owner.Bytes()); err != nil {
 		return err
+	}
+	return nil
+}
+
+// AntarticalStampBeneficiary derives the registered address from the
+// beneficiary key, or uses the sender for a self-funded registration.
+func AntarticalStampBeneficiary(from common.Address, e *AntarticalStampRegistration) (common.Address, error) {
+	if e == nil {
+		return common.Address{}, ErrInvalidShieldedTx
+	}
+	if len(e.BeneficiaryPublicKey) == 0 {
+		return from, nil
+	}
+	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, e.BeneficiaryPublicKey)
+	if err == nil && address == from {
+		return common.Address{}, errors.New("stamp sponsor must differ from beneficiary")
+	}
+	return address, err
+}
+
+// ValidateAntarticalStampRegistrationState is shared by transaction admission
+// and canonical-head pruning. The sponsor's existing stamp remains valid.
+func ValidateAntarticalStampRegistrationState(st shieldedStateReader, from common.Address, data []byte, time uint64) error {
+	e, err := DecodeAntarticalStamp(data)
+	if err != nil {
+		return err
+	}
+	if len(e.BeneficiaryPublicKey) != 0 && (!IsAntarticalStamped(st, from) || e.ValidUntil == 0 || e.ValidUntil <= time || (time != 0 && e.ValidUntil-time > AntarticalStampSponsorshipLifetime)) {
+		return errors.New("stamp sponsorship requires a confirmed sponsor and unexpired authorization")
+	}
+	beneficiary, err := AntarticalStampBeneficiary(from, e)
+	if err != nil {
+		return err
+	}
+	if IsAntarticalStamped(st, beneficiary) {
+		return errors.New("address stamp is already registered")
+	}
+	if st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/owner-index", e.Owner.Bytes())) != (common.Hash{}) {
+		return errors.New("stamp owner is already registered")
 	}
 	return nil
 }
@@ -126,12 +184,20 @@ func AntarticalStampForAddress(st shieldedStateReader, address common.Address) (
 	return s, err
 }
 
-// Registration is the only transaction an unstamped address may submit. It
-// carries no transferred value. A wallet-file stamp alone never grants access.
+// Self-funded registration is the only transaction an unstamped sender may
+// submit. Sponsorship requires a stamped sender. Neither transfers value, and
+// a wallet-file stamp alone never grants access.
 func ValidateAntarticalStampState(st shieldedStateReader, from common.Address, to *common.Address, value *big.Int, data []byte) error {
 	if HasAntarticalStampPrefix(data) {
 		if to == nil || *to != params.ShieldedPoolAddress || value.Sign() != 0 {
 			return errors.New("illegal value transfer disguised as stamp registration")
+		}
+		e, err := DecodeAntarticalStamp(data)
+		if err != nil {
+			return err
+		}
+		if len(e.BeneficiaryPublicKey) != 0 && !IsAntarticalStamped(st, from) {
+			return fmt.Errorf("%w: stamp sponsor %s", ErrUnstampedAddress, from)
 		}
 		return nil
 	}
@@ -165,7 +231,18 @@ func ProcessAntarticalStamp(config *params.ChainConfig, number *big.Int, time ui
 	if err != nil {
 		return err
 	}
-	existing := st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", from.Bytes()))
+	e, err := DecodeAntarticalStamp(tx.Data())
+	if err != nil {
+		return err
+	}
+	beneficiary, err := AntarticalStampBeneficiary(from, e)
+	if err != nil {
+		return err
+	}
+	if len(e.BeneficiaryPublicKey) != 0 && !IsAntarticalStamped(st, from) {
+		return fmt.Errorf("%w: stamp sponsor %s", ErrUnstampedAddress, from)
+	}
+	existing := st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", beneficiary.Bytes()))
 	if existing == tx.Hash() {
 		return nil
 	} // same transaction's processing stage
@@ -174,10 +251,6 @@ func ProcessAntarticalStamp(config *params.ChainConfig, number *big.Int, time ui
 	}
 	if st.GetCodeSize(params.ShieldedPoolAddress) != 0 {
 		return errors.New("stamp registry must not contain executable code")
-	}
-	e, err := DecodeAntarticalStamp(tx.Data())
-	if err != nil {
-		return err
 	}
 	if st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/owner-index", e.Owner.Bytes())) != (common.Hash{}) {
 		return errors.New("stamp owner is already registered")
@@ -195,10 +268,10 @@ func ProcessAntarticalStamp(config *params.ChainConfig, number *big.Int, time ui
 	if st.GetNonce(params.ShieldedPoolAddress) == 0 {
 		st.SetNonce(params.ShieldedPoolAddress, 1, tracing.NonceChangeUnspecified)
 	}
-	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", from.Bytes()), tx.Hash())
-	v3WriteDigest(st, "stamp/address-owner", from.Bytes(), e.Owner)
-	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address-commitment/0", from.Bytes()), common.BytesToHash(e.Stamp.Commitment[:32]))
-	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address-commitment/1", from.Bytes()), common.BytesToHash(e.Stamp.Commitment[32:]))
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", beneficiary.Bytes()), tx.Hash())
+	v3WriteDigest(st, "stamp/address-owner", beneficiary.Bytes(), e.Owner)
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address-commitment/0", beneficiary.Bytes()), common.BytesToHash(e.Stamp.Commitment[:32]))
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address-commitment/1", beneficiary.Bytes()), common.BytesToHash(e.Stamp.Commitment[32:]))
 	return nil
 }
 

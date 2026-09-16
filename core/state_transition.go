@@ -217,6 +217,7 @@ func toWordSize(size uint64) uint64 {
 // processing.
 type Message struct {
 	antarticalStampTransactionHash common.Hash
+	antarticalStampBeneficiary     common.Address
 
 	To                    *common.Address
 	From                  common.Address
@@ -300,6 +301,14 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	}
 	if HasAntarticalStampPrefix(tx.Data()) {
 		msg.antarticalStampTransactionHash = tx.Hash()
+		e, err := DecodeAntarticalStamp(tx.Data())
+		if err != nil {
+			return nil, err
+		}
+		msg.antarticalStampBeneficiary, err = AntarticalStampBeneficiary(from, e)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
@@ -467,7 +476,7 @@ func (st *stateTransition) preCheck() error {
 	isAmsterdam := st.evm.ChainConfig().IsAmsterdam(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	if !msg.SkipTransactionChecks {
 		if st.evm.ChainConfig().IsAntartical(st.evm.Context.BlockNumber, st.evm.Context.Time) {
-			if HasAntarticalStampPrefix(msg.Data) && (msg.antarticalStampTransactionHash == (common.Hash{}) || st.state.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", msg.From.Bytes())) != msg.antarticalStampTransactionHash) {
+			if HasAntarticalStampPrefix(msg.Data) && (msg.antarticalStampTransactionHash == (common.Hash{}) || st.state.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", msg.antarticalStampBeneficiary.Bytes())) != msg.antarticalStampTransactionHash) {
 				return errors.New("illegal transaction: stamp registration was not consensus verified")
 			}
 			if err := ValidateAntarticalStampState(st.state, msg.From, msg.To, msg.Value.ToBig(), msg.Data); err != nil {

@@ -26,13 +26,14 @@ type shield3RequestRecord struct {
 	Submitted bool
 }
 type shield3Request struct {
-	Seed      hexutil.Bytes                   `json:"seed"`
-	Stamp     *pqcrypto.ShieldedV3StampRecord `json:"stamp"`
-	Account   common.Address                  `json:"account"`
-	Recipient string                          `json:"recipient"`
-	AmountWei string                          `json:"amountWei"`
-	RequestID string                          `json:"requestId"`
-	View      *shield3wallet.ViewKey          `json:"view"`
+	Sponsorship hexutil.Bytes                   `json:"sponsorship,omitempty"`
+	Seed        hexutil.Bytes                   `json:"seed"`
+	Stamp       *pqcrypto.ShieldedV3StampRecord `json:"stamp"`
+	Account     common.Address                  `json:"account"`
+	Recipient   string                          `json:"recipient"`
+	AmountWei   string                          `json:"amountWei"`
+	RequestID   string                          `json:"requestId"`
+	View        *shield3wallet.ViewKey          `json:"view"`
 }
 
 func shield3LocalRequest(r *http.Request) bool {
@@ -66,12 +67,16 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp":
+	case "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512<<10))
+	requestLimit := int64(512 << 10)
+	if operation == "authorize-stamp" || operation == "review-sponsorship" || operation == "sponsor-stamp" {
+		requestLimit = 20 << 20 // bounded hex-encoded native proof packet
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, requestLimit))
 	if err != nil {
 		fail(400, errors.New("invalid Shield3 request size"))
 		return
@@ -164,12 +169,30 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		reply(scan)
 		return
 	}
+	if operation == "stamp-offer" || operation == "authorize-stamp" || operation == "review-sponsorship" {
+		var packet shield3wallet.StampSponsorship
+		var err error
+		switch operation {
+		case "stamp-offer":
+			packet, err = shield3wallet.BuildStampSponsorshipOffer(r.Context(), g.client, req.Seed, identity, req.Recipient)
+		case "authorize-stamp":
+			packet, err = shield3wallet.AuthorizeStampSponsorship(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
+		case "review-sponsorship":
+			packet, err = shield3wallet.ReviewStampSponsorship(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
+		}
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(packet)
+		return
+	}
 	if len(req.RequestID) < 16 || len(req.RequestID) > 128 {
 		fail(400, errors.New("Shield3 send requires a stable request ID"))
 		return
 	}
 	amount, ok := new(big.Int).SetString(req.AmountWei, 10)
-	if operation == "register-stamp" {
+	if operation == "register-stamp" || operation == "sponsor-stamp" {
 		amount, ok = new(big.Int), true
 	}
 	if !ok {
@@ -177,7 +200,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recipientCode := req.Recipient
-	if operation == "shield" || operation == "register-stamp" {
+	if operation == "shield" || operation == "register-stamp" || operation == "sponsor-stamp" {
 		recipientCode = identity.Code
 	}
 	recipient, err := shield3wallet.DecodePaymentCode(recipientCode, identity.ChainID)
@@ -228,7 +251,9 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		}
 		var unsigned *types.Transaction
 		var err error
-		if operation == "register-stamp" {
+		if operation == "sponsor-stamp" {
+			unsigned, err = shield3wallet.BuildSponsoredStamp(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
+		} else if operation == "register-stamp" {
 			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
 		} else {
 			unsigned, err = shield3wallet.Build(r.Context(), g.client, req.Seed, identity, recipient, amount, operation == "shield")

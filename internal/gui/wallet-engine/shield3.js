@@ -50,3 +50,10 @@ export async function shield3RegisterStamp(options) {
  const release=acquireWalletOperation();
  try{return await privateOperation('register-stamp',options,{requestId:options.requestId})}finally{release()}
 }
+
+export async function shield3StampSponsorship(options) {
+ const operations={offer:'stamp-offer',authorize:'authorize-stamp',review:'review-sponsorship',submit:'sponsor-stamp'};
+ const operation=operations[options.stage];if(!operation)throw Error('Choose a stamp sponsorship step.');
+ const release=acquireWalletOperation();
+ try{return await privateOperation(operation,options,{recipient:options.recipient,sponsorship:options.sponsorship,requestId:options.requestId})}finally{release()}
+}

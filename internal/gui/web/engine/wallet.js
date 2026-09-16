@@ -13220,17 +13220,36 @@ async function Qg(e) {
 		t();
 	}
 }
+async function $g(e) {
+	let t = {
+		offer: "stamp-offer",
+		authorize: "authorize-stamp",
+		review: "review-sponsorship",
+		submit: "sponsor-stamp"
+	}[e.stage];
+	if (!t) throw Error("Choose a stamp sponsorship step.");
+	let n = Pg();
+	try {
+		return await Kg(t, e, {
+			recipient: e.recipient,
+			sponsorship: e.sponsorship,
+			requestId: e.requestId
+		});
+	} finally {
+		n();
+	}
+}
 //#endregion
 //#region phone.js
-var $g = H("TKMPHONE_PQ_V1");
-function e_(e, t) {
+var e_ = H("TKMPHONE_PQ_V1");
+function t_(e, t) {
 	let n = _(t);
 	if (n.length !== 32) throw Error("Phone signing hash must be 32 bytes.");
 	let r = Wm.keygen(e);
 	try {
-		let e = Wm.sign(_(C([$g, n])), r.secretKey);
+		let e = Wm.sign(_(C([e_, n])), r.secretKey);
 		return S(C([
-			$g,
+			e_,
 			r.publicKey,
 			e
 		]));
@@ -13238,15 +13257,15 @@ function e_(e, t) {
 		r.secretKey.fill(0);
 	}
 }
-async function t_(e, t, n) {
+async function n_(e, t, n) {
 	let r = await rh(qm(e), t);
 	try {
-		return e_(r, n);
+		return t_(r, n);
 	} finally {
 		r.fill(0);
 	}
 }
-async function n_(e, t) {
+async function r_(e, t) {
 	let n = qm(e), r = await rh(n, t);
 	try {
 		return "0x" + n.publicKey.replace(/^0x/, "");
@@ -13256,68 +13275,68 @@ async function n_(e, t) {
 }
 //#endregion
 //#region vendor/email-crypto.js
-var r_ = new TextEncoder(), i_ = new TextDecoder(), a_ = r_.encode("TKM_EMAILVM_X25519_SALT_V1"), o_ = r_.encode("TKM_EMAILVM_X25519_KEY_V1"), s_ = r_.encode("TKM_EMAILVM_XCHACHA20POLY1305_V1");
-function c_(...e) {
+var i_ = new TextEncoder(), a_ = new TextDecoder(), o_ = i_.encode("TKM_EMAILVM_X25519_SALT_V1"), s_ = i_.encode("TKM_EMAILVM_X25519_KEY_V1"), c_ = i_.encode("TKM_EMAILVM_XCHACHA20POLY1305_V1");
+function l_(...e) {
 	let t = e.reduce((e, t) => e + t.length, 0), n = new Uint8Array(t), r = 0;
 	for (let t of e) n.set(t, r), r += t.length;
 	return n;
 }
-function l_(e, t) {
-	return r_.encode(`${String(e).toLowerCase()}\n${String(t).toLowerCase()}`);
+function u_(e, t) {
+	return i_.encode(`${String(e).toLowerCase()}\n${String(t).toLowerCase()}`);
 }
-function u_(e) {
-	let t = Zh(Yt, e, a_, o_, 32);
+function d_(e) {
+	let t = Zh(Yt, e, o_, s_, 32);
 	return {
 		privateKey: t,
 		publicKey: Th.getPublicKey(t)
 	};
 }
-function d_(e) {
+function f_(e) {
 	if (!globalThis.crypto?.getRandomValues) throw Error("secure browser randomness is unavailable; use HTTPS");
 	return globalThis.crypto.getRandomValues(e);
 }
-function f_(e, t, n, r) {
+function p_(e, t, n, r) {
 	let i = Th.getSharedSecret(e, t);
 	try {
-		return Zh(Yt, i, l_(n, r), s_, 32);
+		return Zh(Yt, i, u_(n, r), c_, 32);
 	} finally {
 		i.fill(0);
 	}
 }
-function p_(e, t, n, r, i, a = d_) {
-	let o = a(/* @__PURE__ */ new Uint8Array(24)), s = c_(s_, l_(n, r)), c = f_(e, t, n, r);
+function m_(e, t, n, r, i, a = f_) {
+	let o = a(/* @__PURE__ */ new Uint8Array(24)), s = l_(c_, u_(n, r)), c = p_(e, t, n, r);
 	try {
 		return {
-			ciphertext: Kh(c, o, s).encrypt(r_.encode(i)),
+			ciphertext: Kh(c, o, s).encrypt(i_.encode(i)),
 			nonce: o
 		};
 	} finally {
 		c.fill(0);
 	}
 }
-function m_(e, t, n, r, i, a) {
-	let o = c_(s_, l_(n, r)), s = f_(e, t, n, r);
+function h_(e, t, n, r, i, a) {
+	let o = l_(c_, u_(n, r)), s = p_(e, t, n, r);
 	try {
-		return i_.decode(Kh(s, a, o).decrypt(i));
+		return a_.decode(Kh(s, a, o).decrypt(i));
 	} finally {
 		s.fill(0);
 	}
 }
-function h_(e) {
+function g_(e) {
 	e?.privateKey?.fill(0);
 }
 //#endregion
 //#region vendor/email-registry.js
-var g_ = "TKM_EMAILVM_REGISTRY_V1";
-function __(e, t) {
+var __ = "TKM_EMAILVM_REGISTRY_V1";
+function v_(e, t) {
 	if (e !== "domain" && e !== "mailbox") throw Error("invalid EmailVM registry kind");
 	if (!t || t !== t.toLowerCase()) throw Error("EmailVM registry names must be canonical lowercase values");
-	return W(H(`${g_}\0${e}\0${t}`));
+	return W(H(`${__}\0${e}\0${t}`));
 }
 //#endregion
 //#region mail.js
-var v_ = 3000000n, y_ = (1n << 64n) - 1n, b_ = (e) => String(e || "").toLowerCase(), x_ = (e) => String(e || "").trim().toLowerCase();
-function S_(e, t, n, r, i) {
+var y_ = 3000000n, b_ = (1n << 64n) - 1n, x_ = (e) => String(e || "").toLowerCase(), S_ = (e) => String(e || "").trim().toLowerCase();
+function C_(e, t, n, r, i) {
 	let a = BigInt(t), o = BigInt(r), s = 0;
 	for (let t of e) {
 		if (!a) break;
@@ -13328,7 +13347,7 @@ function S_(e, t, n, r, i) {
 		r <= 0n || (a -= a < r ? a : r, o -= n - e, s++);
 	}
 	for (; a > 0n;) {
-		let e = a < y_ ? a : y_;
+		let e = a < b_ ? a : b_;
 		if (o < e + 2n * n) throw Error("Insufficient total funds for the complete Mail payment and network gas.");
 		o -= e + 2n * n, a -= e, s += 2;
 	}
@@ -13337,20 +13356,20 @@ function S_(e, t, n, r, i) {
 		maxGas: BigInt(s) * n
 	};
 }
-function C_(e, t) {
+function w_(e, t) {
 	let n = _(e.applicationData), r = H("TKMEMAILVM1");
 	if (n.length > 12288 || S(n.slice(0, r.length)) !== S(r)) throw Error("Invalid mail action encoding.");
 	let i = JSON.parse(me(n.slice(r.length)));
 	if (i.v !== 3) throw Error("Unsupported mail action version.");
-	for (let [e, n] of Object.entries(t)) if (b_(i[e]) !== b_(n)) throw Error("Node changed the mail action: " + e);
+	for (let [e, n] of Object.entries(t)) if (x_(i[e]) !== x_(n)) throw Error("Node changed the mail action: " + e);
 	return i;
 }
-function w_(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipient: o, address: s, applicationData: c }) {
+function T_(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipient: o, address: s, applicationData: c }) {
 	let l = e.transaction;
 	if (Dg(l, {
 		chainId: 8979,
 		value: 0n
-	}), BigInt(l.nonce) !== BigInt(t) || BigInt(l.gas) !== v_ || BigInt(l.gasFeeCap) !== n || BigInt(l.gasTipCap) !== n || !Array.isArray(l.accessList) || l.accessList.length) throw Error("Proof builder changed mail transaction fees or nonce.");
+	}), BigInt(l.nonce) !== BigInt(t) || BigInt(l.gas) !== y_ || BigInt(l.gasFeeCap) !== n || BigInt(l.gasTipCap) !== n || !Array.isArray(l.accessList) || l.accessList.length) throw Error("Proof builder changed mail transaction fees or nonce.");
 	if (gg(l, e) !== a) throw Error("Proof builder changed mail gas sponsorship.");
 	let u = BigInt(r.noteValueWei) - i - a;
 	if (u < 0n) throw Error("Insufficient note value for mail payment and gas.");
@@ -13365,26 +13384,26 @@ function w_(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipien
 		}] : []
 	}), _g(l, c);
 	let d = Je(_(l.data).slice(10));
-	if (d[1].length !== 1 || b_(d[1][0][0]) !== b_(r.nullifier) || b_(e.spentNullifier) !== b_(r.nullifier)) throw Error("Proof builder changed the mail input note.");
+	if (d[1].length !== 1 || x_(d[1][0][0]) !== x_(r.nullifier) || x_(e.spentNullifier) !== x_(r.nullifier)) throw Error("Proof builder changed the mail input note.");
 	return l;
 }
-async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch: i, operation: a, params: o = {}, onReview: s, onProgress: c = () => {}, onSubmitted: l = () => {} }) {
+async function E_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch: i, operation: a, params: o = {}, onReview: s, onProgress: c = () => {}, onSubmitted: l = () => {} }) {
 	let u = Pg(), d, f, p, m = [];
 	try {
 		let u = qm(e);
 		d = await rh(u, t);
 		let h = K("0x" + u.address.replace(/^0x/, ""));
-		if (f = bg(d, h, 8979), p = u_(d), BigInt(await n("eth_chainId", [])) !== 8979n) throw Error("Mail requires TKM chain 8979.");
+		if (f = bg(d, h, 8979), p = d_(d), BigInt(await n("eth_chainId", [])) !== 8979n) throw Error("Mail requires TKM chain 8979.");
 		let g = new Mg({ send: n }), v = new Eg(r, "", i), y = {
 			lastScannedBlock: -1,
 			notes: []
 		}, b = S(p.publicKey), x = async (e) => {
 			let t = await n("tkmdomain_mailbox", [e]);
-			if (b_(t.owner) !== b_(h)) throw Error("Selected PQ account does not own " + e);
+			if (x_(t.owner) !== x_(h)) throw Error("Selected PQ account does not own " + e);
 			return t;
 		}, C = async (e) => {
 			let t = oh(e, d), r = W(t.rawTransaction);
-			if (m.push(r), await l(r), b_(await n("eth_sendRawTransaction", [t.rawTransaction])) !== b_(r)) throw Error("Node returned an unexpected transaction hash.");
+			if (m.push(r), await l(r), x_(await n("eth_sendRawTransaction", [t.rawTransaction])) !== x_(r)) throw Error("Node returned an unexpected transaction hash.");
 			for (let e = 0; e < 150; e++) {
 				c("Waiting for confirmation: " + r);
 				let e = await n("eth_getTransactionReceipt", [r]);
@@ -13403,9 +13422,9 @@ async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 			if (!await g.shieldedV2Active()) throw Error("Shield2 must be active.");
 			let a = await v.health();
 			if (!a.ok || !a.hasProvingKeyV2 || !a.withdrawalBuildReady) throw Error("Local Mail proof builder is not ready.");
-			let o = BigInt(await n("eth_gasPrice", [])), l = v_ * o;
+			let o = BigInt(await n("eth_gasPrice", [])), l = y_ * o;
 			await Ag(g, f, y, (e, t) => c(`Scanning notes: ${e} / ${t}`));
-			let u = S_(y.notes, r, l, BigInt(await n("eth_getBalance", [h, "latest"])), await g.shieldedGasSponsorActive());
+			let u = C_(y.notes, r, l, BigInt(await n("eth_getBalance", [h, "latest"])), await g.shieldedGasSponsorActive());
 			if (!s || !await s({
 				label: i,
 				recipient: t,
@@ -13421,7 +13440,7 @@ async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 				if (a && !await g.shieldedGasSponsorActive()) throw Error("Public balance cannot cover network gas.");
 				let s = y.notes.find((e) => e.status === "available" && Number(e.version) === 2 && BigInt(e.assetId) === 1n && BigInt(e.noteValueWei) > a);
 				if (!s) {
-					let e = d < y_ ? d : y_;
+					let e = d < b_ ? d : b_;
 					if (r < e + 2n * l) throw Error("Insufficient public balance for self-shielding and Mail gas.");
 					let t = await w();
 					c("Creating a private note for Mail…");
@@ -13464,7 +13483,7 @@ async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 				};
 				let _ = await w();
 				c("Building " + i + " proof…");
-				let b = w_(await v.buildWithdrawal({
+				let b = T_(await v.buildWithdrawal({
 					requestId: "mail-" + S($n(16)),
 					applicationData: e.applicationData,
 					from: h,
@@ -13490,38 +13509,38 @@ async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 			}
 		}, E = async (e) => {
 			let t = await x(e);
-			if (b_(t.encryptionKey) === b_(b)) return;
+			if (x_(t.encryptionKey) === x_(b)) return;
 			if (t.encryptionKey && t.encryptionKey !== "0x") throw Error("This mailbox uses a different mail key. Refusing to replace it and lose access to existing mail.");
 			let r = await n("emailvm_publishKey", [e, b]);
-			if (C_(r, {
+			if (w_(r, {
 				kind: "key",
 				mailbox: e,
 				key: b.slice(2)
-			}), await T(r, h, 1n, "Publish encryption key for " + e), b_((await n("emailvm_key", [e])).publicKey) !== b_(b)) throw Error("Encryption key is not yet indexed. Check publication before sending.");
+			}), await T(r, h, 1n, "Publish encryption key for " + e), x_((await n("emailvm_key", [e])).publicKey) !== x_(b)) throw Error("Encryption key is not yet indexed. Check publication before sending.");
 		};
 		if (a === "buy") {
-			let e = x_(o.username), t = x_(o.domain).replace(/^@/, ""), r = e + "@" + t, i = await n("tkmdomain_domain", [t]), a = K(i.payoutAddress && i.payoutAddress !== "0x0000000000000000000000000000000000000000" ? i.payoutAddress : i.operator), s = BigInt(await n("tkmdomain_subscriberUnitPrice", [])), c = await n("tkmdomain_buy", [e, t]), l = __("mailbox", r);
-			if (C_(c, {
+			let e = S_(o.username), t = S_(o.domain).replace(/^@/, ""), r = e + "@" + t, i = await n("tkmdomain_domain", [t]), a = K(i.payoutAddress && i.payoutAddress !== "0x0000000000000000000000000000000000000000" ? i.payoutAddress : i.operator), s = BigInt(await n("tkmdomain_subscriberUnitPrice", [])), c = await n("tkmdomain_buy", [e, t]), l = v_("mailbox", r);
+			if (w_(c, {
 				kind: "buy",
 				username: e,
 				domain: t,
 				registryHash: l
-			}), b_(c.registryHash) !== b_(l) || b_(c.withdrawalRecipient) !== b_(a) || BigInt(c.totalWithdrawalAmountWei) !== s) throw Error("Mailbox payment differs from the domain price or payout address.");
-			let u = (await n("tkmdomain_pending", []) || []).find((n) => n.kind === "buy" && n.domain === t && n.username === e && b_(n.payer) === b_(h) && b_(n.recipient) === b_(a) && BigInt(n.required) === s), d = s - BigInt(u?.paid || 0);
+			}), x_(c.registryHash) !== x_(l) || x_(c.withdrawalRecipient) !== x_(a) || BigInt(c.totalWithdrawalAmountWei) !== s) throw Error("Mailbox payment differs from the domain price or payout address.");
+			let u = (await n("tkmdomain_pending", []) || []).find((n) => n.kind === "buy" && n.domain === t && n.username === e && x_(n.payer) === x_(h) && x_(n.recipient) === x_(a) && BigInt(n.required) === s), d = s - BigInt(u?.paid || 0);
 			if (d <= 0n) throw Error("Mailbox payment is awaiting indexing. Check registration before retrying.");
 			await T(c, a, d, "Register " + r), await x(r), await E(r);
-		} else if (a === "publish") await E(x_(o.mailbox));
+		} else if (a === "publish") await E(S_(o.mailbox));
 		else if (a === "send") {
-			let e = x_(o.from), t = x_(o.to), r = String(o.subject || "").trim() + "\n\n" + String(o.body || "");
+			let e = S_(o.from), t = S_(o.to), r = String(o.subject || "").trim() + "\n\n" + String(o.body || "");
 			if (!r.trim() || H(r).length > 4e3) throw Error("Write a message of at most 4,000 UTF-8 bytes including subject.");
-			if (b_((await x(e)).encryptionKey) !== b_(b)) throw Error("Publish this wallet’s Mail encryption key before sending.");
-			let i = await n("emailvm_key", [t]), a = p_(p.privateKey, _(i.publicKey), e, t, r), s = S(a.ciphertext), c = S(a.nonce), l = await n("emailvm_send", [
+			if (x_((await x(e)).encryptionKey) !== x_(b)) throw Error("Publish this wallet’s Mail encryption key before sending.");
+			let i = await n("emailvm_key", [t]), a = m_(p.privateKey, _(i.publicKey), e, t, r), s = S(a.ciphertext), c = S(a.nonce), l = await n("emailvm_send", [
 				e,
 				t,
 				s,
 				c
 			]);
-			C_(l, {
+			w_(l, {
 				kind: "message",
 				from: e,
 				to: t,
@@ -13529,24 +13548,24 @@ async function T_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 				nonce: c.slice(2)
 			}), await T(l, h, 1n, "Send encrypted mail to " + t);
 		} else if (a === "decrypt") {
-			let e = x_(o.mailbox), t = o.message;
-			if (b_((await x(e)).encryptionKey) !== b_(b)) throw Error("This wallet does not hold the published Mail key.");
-			let r = x_(t.from), i = x_(t.to);
+			let e = S_(o.mailbox), t = o.message;
+			if (x_((await x(e)).encryptionKey) !== x_(b)) throw Error("This wallet does not hold the published Mail key.");
+			let r = S_(t.from), i = S_(t.to);
 			if (r !== e && i !== e) throw Error("Message does not belong to this mailbox.");
 			let a = await n("emailvm_key", [r === e ? i : r]);
-			return m_(p.privateKey, _(a.publicKey), r, i, _(t.ciphertext), _(t.nonce));
+			return h_(p.privateKey, _(a.publicKey), r, i, _(t.ciphertext), _(t.nonce));
 		} else throw Error("Unsupported Mail operation.");
 		return m;
 	} catch (e) {
 		throw m.length && (e.message += " Attempted transaction hashes: " + m.join(", ") + ". Check before retrying."), e;
 	} finally {
-		d?.fill(0), xg(f), h_(p), u();
+		d?.fill(0), xg(f), g_(p), u();
 	}
 }
 //#endregion
 //#region shield3-migrate.js
-var E_ = 3000000n;
-function D_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
+var D_ = 3000000n;
+function O_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
 	let a = e.transaction;
 	if (Dg(a, {
 		chainId: 8979,
@@ -13554,7 +13573,7 @@ function D_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
 	}), hg(a, e, {
 		recipient: t,
 		valueWei: BigInt(n.noteValueWei)
-	}), BigInt(a.nonce) !== BigInt(r) || BigInt(a.gas) !== E_ || BigInt(a.gasFeeCap) !== i || BigInt(a.gasTipCap) !== i || a.accessList?.length || gg(a, e) !== 0n) throw Error("Migration proof changed nonce, fees or gas sponsorship.");
+	}), BigInt(a.nonce) !== BigInt(r) || BigInt(a.gas) !== D_ || BigInt(a.gasFeeCap) !== i || BigInt(a.gasTipCap) !== i || a.accessList?.length || gg(a, e) !== 0n) throw Error("Migration proof changed nonce, fees or gas sponsorship.");
 	let o = Je(_(a.data).slice(10));
 	if (o[1]?.length !== 1 || S(o[1][0][0]).toLowerCase() !== n.nullifier.toLowerCase() || S(o[1][0][1]).toLowerCase() !== n.merkleRoot.toLowerCase() || o[8]?.length !== 4) throw Error("Migration proof changed the input or omitted empty-output openings.");
 	for (let e = 0; e < 4; e++) {
@@ -13570,7 +13589,7 @@ function D_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
 	}
 	return a;
 }
-async function O_(e) {
+async function k_(e) {
 	let t = Pg(), n, r, i;
 	try {
 		let t = qm(e.keystore);
@@ -13589,7 +13608,7 @@ async function O_(e) {
 		let u = await s.getTransactionCount(a, "latest");
 		if (BigInt(await s.getTransactionCount(a, "pending")) !== BigInt(u)) throw Error("Wait for your pending transaction to confirm.");
 		let d = BigInt(await i.send("eth_gasPrice", []));
-		if (BigInt(await i.send("eth_getBalance", [a, "latest"])) + BigInt(l.noteValueWei) < E_ * d) throw Error("This note and public balance cannot cover migration gas.");
+		if (BigInt(await i.send("eth_getBalance", [a, "latest"])) + BigInt(l.noteValueWei) < D_ * d) throw Error("This note and public balance cannot cover migration gas.");
 		if ((await s.privacyNullifierStatus(l.nullifier))?.spent) throw Error("Legacy note is already spent. Rescan.");
 		let f = await s.privacyCommitmentPath(l.commitment);
 		if (!f.found) throw Error("Legacy note is no longer confirmed.");
@@ -13606,7 +13625,7 @@ async function O_(e) {
 			}
 		}));
 		e.onProgress?.("Building the full-note migration proof…");
-		let h = oh(D_(await m.buildWithdrawal({
+		let h = oh(O_(await m.buildWithdrawal({
 			requestId: S($n(16)),
 			from: a,
 			to: a,
@@ -13634,20 +13653,20 @@ async function O_(e) {
 }
 //#endregion
 //#region engine.js
-async function k_(e) {
+async function A_(e) {
 	return (await Ug(e)).active ? Xg(e) : Bg(e);
 }
-function A_() {
+function j_() {
 	return cf.fromEntropy($n(32)).phrase;
 }
-function j_(e) {
+function M_(e) {
 	let t = String(e).normalize("NFKD").trim().toLowerCase().split(/\s+/).join(" ");
 	if (t.split(" ").length !== 24) throw Error("Enter all 24 recovery words.");
 	let n = cf.fromPhrase(t);
 	if (_(n.entropy).length !== 32) throw Error("Expected a 24-word TKM PQ recovery phrase.");
 	return n.entropy;
 }
-async function M_(e, t) {
+async function N_(e, t) {
 	let n = await rh(qm(e), t);
 	try {
 		return cf.fromEntropy(n).phrase;
@@ -13655,13 +13674,13 @@ async function M_(e, t) {
 		n.fill(0);
 	}
 }
-function N_(e) {
+function P_(e) {
 	return JSON.parse(me(e));
 }
-function P_(e) {
+function F_(e) {
 	return Cg(String(e).trim(), 8979);
 }
-async function F_({ keystore: e, password: t, rpcURL: n, rpcToken: r, onProgress: i }) {
+async function I_({ keystore: e, password: t, rpcURL: n, rpcToken: r, onProgress: i }) {
 	if ((await Ug({
 		rpcURL: n,
 		rpcToken: r
@@ -13685,4 +13704,4 @@ async function F_({ keystore: e, password: t, rpcURL: n, rpcToken: r, onProgress
 	}
 }
 //#endregion
-export { Cg as decodeShieldedPaymentCode, N_ as keyfileFromHex, O_ as migrateShield2Note, A_ as newRecoveryPhrase, n_ as phonePublicKey, M_ as recoveryPhraseForKeyfile, T_ as runMailOperation, F_ as scanWallet, j_ as seedFromPhrase, k_ as sendTKM, Zg as shield3Funds, qg as shield3Identity, Qg as shield3RegisterStamp, Yg as shield3Scan, Ug as shield3Status, Jg as shield3ViewKeys, t_ as signPhoneDigest, P_ as validateRecipient, Hg as validateShield3Amount, Wg as validateShield3Recipient };
+export { Cg as decodeShieldedPaymentCode, P_ as keyfileFromHex, k_ as migrateShield2Note, j_ as newRecoveryPhrase, r_ as phonePublicKey, N_ as recoveryPhraseForKeyfile, E_ as runMailOperation, I_ as scanWallet, M_ as seedFromPhrase, A_ as sendTKM, Zg as shield3Funds, qg as shield3Identity, Qg as shield3RegisterStamp, Yg as shield3Scan, $g as shield3StampSponsorship, Ug as shield3Status, Jg as shield3ViewKeys, n_ as signPhoneDigest, F_ as validateRecipient, Hg as validateShield3Amount, Wg as validateShield3Recipient };

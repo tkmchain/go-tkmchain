@@ -29,7 +29,11 @@ func TestAntarticalUnstampedTransactionsAreIllegal(t *testing.T) {
 	if err := ValidateAntarticalStampState(st, from, &params.ShieldedPoolAddress, big.NewInt(1), []byte(AntarticalStampMagic)); err == nil {
 		t.Fatal("value transfer disguised as registration accepted")
 	}
-	if err := ValidateAntarticalStampState(st, from, &params.ShieldedPoolAddress, new(big.Int), []byte(AntarticalStampMagic)); err != nil {
+	registration, err := EncodeAntarticalStamp(&AntarticalStampRegistration{Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAntarticalStampState(st, from, &params.ShieldedPoolAddress, new(big.Int), registration); err != nil {
 		t.Fatal("zero-value registration gate failed", err)
 	}
 	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", from.Bytes()), common.HexToHash("0x1"))

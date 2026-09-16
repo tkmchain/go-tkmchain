@@ -1,6 +1,8 @@
 package gui
 
 import (
+	"bytes"
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -76,5 +78,19 @@ func TestShield3SubmissionSurvivesRestart(t *testing.T) {
 	}
 	if _, err := g.loadShield3Submission(id); err == nil {
 		t.Fatal("accepted corrupt saved submission")
+	}
+}
+
+// Existing durable requests must keep their pre-sponsorship canonical digest,
+// otherwise an upgrade would prevent retrying the exact saved signed bytes.
+func TestShield3ExistingRequestDigestUnchanged(t *testing.T) {
+	request := shield3Request{Seed: []byte{1}, RequestID: "stable-request-id"}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []byte(`{"seed":"0x01","stamp":null,"account":"0x0000000000000000000000000000000000000000","recipient":"","amountWei":"","requestId":"stable-request-id","view":null}`)
+	if !bytes.Equal(encoded, expected) {
+		t.Fatalf("existing request digest changed: %s", encoded)
 	}
 }

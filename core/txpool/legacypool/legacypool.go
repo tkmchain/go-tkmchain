@@ -1323,8 +1323,8 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 			if err == nil {
 				err = core.ValidateAntarticalStampState(pool.currentState, from, tx.To(), tx.Value(), tx.Data())
 			}
-			if err == nil && core.HasAntarticalStampPrefix(tx.Data()) && core.IsAntarticalStamped(pool.currentState, from) {
-				err = errors.New("stamp registration already confirmed")
+			if err == nil && core.HasAntarticalStampPrefix(tx.Data()) {
+				err = core.ValidateAntarticalStampRegistrationState(pool.currentState, from, tx.Data(), head.Time)
 			}
 		}
 		if err == nil {

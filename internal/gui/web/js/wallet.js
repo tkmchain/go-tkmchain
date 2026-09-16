@@ -298,7 +298,50 @@
         state.textContent='Building stamp ownership proof…';const result=await unlocked.engine.shield3RegisterStamp({...unlocked.options,requestId});drafts[account].hash=result.transactionHash;localStorage.setItem('tkm-stamp-drafts-v1',JSON.stringify(drafts));recordTransfer(result.transactionHash,{account,stamping:true});state.textContent='Stamp unconfirmed: '+result.transactionHash+'. Check confirmation before sending.';
       }catch(e){state.textContent=e.message;}finally{password.value='';busy=false;register.disabled=false;[select,password,name,country].forEach(input=>input.disabled=false);}
     };
-    select.addEventListener('change',()=>{name.value=country.value='';update()});
+    const requestCode=el('textarea',{class:'txt',rows:'3',readonly:'readonly','aria-label':'My stamp sponsorship request'});
+    const getCode=el('button',{class:'btn secondary',text:'Create my stamp sponsorship request'});
+    const beneficiaryCode=el('textarea',{class:'txt',rows:'3',placeholder:'Paste the new wallet’s stamp request (tkmshield3.…)',spellcheck:'false','aria-label':'Beneficiary stamp request'});
+    const offerButton=el('button',{class:'btn secondary',text:'1. Sponsor: create fee offer'});
+    const packetInput=el('textarea',{class:'txt',rows:'3',placeholder:'Paste a fee offer or authorized packet, or load its JSON file',spellcheck:'false','aria-label':'Stamp sponsorship packet'});
+    const file=el('input',{type:'file',accept:'.json,application/json','aria-label':'Load stamp sponsorship packet'});
+    const authorize=el('button',{class:'btn secondary',text:'2. New wallet: authorize my stamp'});
+    const reviewSponsor=el('button',{class:'btn secondary',text:'3. Sponsor: review fee'});
+    const submitSponsor=el('button',{class:'btn gold',text:'Confirm sponsor fee & submit',disabled:'disabled'});
+    const download=el('button',{class:'btn secondary',text:'Download packet JSON',disabled:'disabled'});
+    const sponsorState=el('p',{class:'wallet-status',role:'status'});
+    const details=el('details',{class:'wallet-stamp-sponsorship'},[el('summary',{text:'Register with a sponsor · no TKM needed in the new wallet'}),el('p',{class:'dim',text:'The sponsor must already have a confirmed stamp and public TKM for gas. Exchange the request, fee offer and authorized packet. Offers expire after one hour and reserve the sponsor’s current nonce; changing its transactions requires a new offer. Packets contain encrypted labels and public authorization data, never private keys.'}),getCode,requestCode,beneficiaryCode,offerButton,packetInput,file,el('div',{class:'btn-row'},[authorize,reviewSponsor,submitSponsor,download]),sponsorState]);
+    section.appendChild(details);
+    let exportedPacket=null,reviewedPacket=null;
+    const sponsorshipButtons=[getCode,offerButton,authorize,reviewSponsor,submitSponsor];
+    const readPacket=()=>{const value=JSON.parse(packetInput.value);if(typeof value.transaction!=='string'||value.transaction.length>17_000_000||!/^0x(?:[0-9a-fA-F]{2})+$/.test(value.transaction))throw Error('Invalid sponsorship packet.');return value.transaction;};
+    const resetReview=()=>{reviewedPacket=null;submitSponsor.disabled=true;};
+    packetInput.addEventListener('input',resetReview);
+    file.onchange=async()=>{try{if(!file.files[0])return;if(file.files[0].size>20*1024*1024)throw Error('Sponsorship file is too large.');packetInput.value=await file.files[0].text();readPacket();resetReview();sponsorState.textContent='Packet loaded. Choose the matching wallet and the next step.';}catch(e){sponsorState.textContent=e.message;}};
+    download.onclick=()=>{if(!exportedPacket)return;const url=URL.createObjectURL(new Blob([JSON.stringify(exportedPacket)],{type:'application/json'}));const link=el('a',{href:url,download:'tkm-stamp-sponsorship.json'});link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    const sponsorshipAction=async(stage)=>{
+      const account=select.value,secret=password.value;busy=true;resetReview();sponsorshipButtons.forEach(button=>button.disabled=true);[select,password,name,country,packetInput,file,beneficiaryCode,register].forEach(input=>input.disabled=true);controls.forEach(button=>button.disabled=true);
+      try{
+        let unlocked=await shield3Unlock(account,secret);
+        if(stage==='request'&&!unlocked.options.keystore.shield3Stamp){if(!name.value.trim()||!country.value.trim())throw Error('Enter your private name and country first.');await rpc('tkm_stampPQAccountWithPassphrase',[account,secret,name.value.trim(),country.value.trim()]);unlocked=await shield3Unlock(account,secret);}
+        if(stage==='request'){const identity=await unlocked.engine.shield3Identity(unlocked.options);requestCode.value=identity.paymentCode;sponsorState.textContent='Share this stamp request with your sponsor. Payments remain disabled until your stamp confirms.';return;}
+        const sponsorship=stage==='offer'?undefined:readPacket();
+        let requestId;
+        if(stage==='submit'){
+          const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sponsorship)))).map(byte=>byte.toString(16).padStart(2,'0')).join('');
+          const key=account+':'+digest;let drafts={};try{drafts=JSON.parse(localStorage.getItem('tkm-stamp-sponsored-drafts-v1')||'{}')}catch(e){}
+          requestId=drafts[key]?.requestId||crypto.randomUUID();drafts[key]={...drafts[key],requestId};localStorage.setItem('tkm-stamp-sponsored-drafts-v1',JSON.stringify(drafts));
+        }
+        sponsorState.textContent=stage==='authorize'?'Building your stamp ownership proof…':'Checking stamp sponsorship…';
+        const result=await unlocked.engine.shield3StampSponsorship({...unlocked.options,stage,recipient:beneficiaryCode.value.trim(),sponsorship,requestId});
+        if(stage==='submit'){recordTransfer(result.transactionHash,{account,stamping:true});sponsorState.textContent='Sponsored stamp unconfirmed: '+result.transactionHash+'. The new wallet can check stamp confirmation using its address.';return;}
+        exportedPacket=result;download.disabled=false;
+        if(stage==='review'){reviewedPacket=result.transaction;submitSponsor.disabled=false;sponsorState.textContent='Verified sponsor: '+result.sponsor+' · beneficiary: '+result.beneficiary+' · maximum fee: '+fmtTKM(result.maxFeeWei,18)+' TKM · expires: '+new Date(Number(BigInt(result.validUntil))*1000).toLocaleString()+'. Confirm only if you approve this fee.';}
+        else {packetInput.value=JSON.stringify(result);sponsorState.textContent=stage==='offer'?'Download the fee offer and send it to the new wallet for authorization.':'Download the authorized packet and return it to the sponsor. Your balance and nonce are unchanged.';}
+      }catch(e){sponsorState.textContent=e.message;}finally{password.value='';busy=false;sponsorshipButtons.forEach(button=>button.disabled=false);[select,password,name,country,packetInput,file,beneficiaryCode,register].forEach(input=>input.disabled=false);submitSponsor.disabled=!reviewedPacket;await update();}
+    };
+    getCode.onclick=()=>sponsorshipAction('request');offerButton.onclick=()=>sponsorshipAction('offer');authorize.onclick=()=>sponsorshipAction('authorize');reviewSponsor.onclick=()=>sponsorshipAction('review');
+    submitSponsor.onclick=()=>{if(!reviewedPacket||readPacket()!==reviewedPacket){resetReview();sponsorState.textContent='Review the current packet before confirming.';return;}sponsorshipAction('submit');};
+    select.addEventListener('change',()=>{name.value=country.value='';requestCode.value='';resetReview();update()});
     return update;
   }
 

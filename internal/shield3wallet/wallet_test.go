@@ -166,16 +166,42 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if _, err := Build(ctx, rpc, seedA, a, pb, big.NewInt(1), true); err == nil {
 		t.Fatal("wallet accepted an unregistered stamp")
 	}
-	st.AddBalance(b.Address, uint256.NewInt(StampWalletGas+1), tracing.BalanceChangeUnspecified)
 	for _, entry := range []struct {
 		seed     []byte
 		identity *Identity
 	}{{seedA, a}, {seedB, b}} {
-		registration, err := BuildStamp(ctx, rpc, entry.seed, entry.identity)
+		var registration *types.Transaction
+		payerSeed := entry.seed
+		if entry.identity == a {
+			registration, err = BuildStamp(ctx, rpc, entry.seed, entry.identity)
+		} else {
+			if st.GetBalance(b.Address).Sign() != 0 || st.GetNonce(b.Address) != 0 {
+				t.Fatal("beneficiary must start without funds or transactions")
+			}
+			if _, err := BuildStamp(ctx, rpc, seedB, b); err == nil {
+				t.Fatal("unfunded self-registration accepted")
+			}
+			offer, offerErr := BuildStampSponsorshipOffer(ctx, rpc, seedA, a, b.Code)
+			if offerErr != nil {
+				t.Fatal(offerErr)
+			}
+			if _, err := AuthorizeStampSponsorship(ctx, rpc, seedA, a, offer.Transaction); err == nil {
+				t.Fatal("another beneficiary accepted fee offer")
+			}
+			authorized, authErr := AuthorizeStampSponsorship(ctx, rpc, seedB, b, offer.Transaction)
+			if authErr != nil {
+				t.Fatal(authErr)
+			}
+			if _, err := BuildSponsoredStamp(ctx, rpc, seedB, b, authorized.Transaction); err == nil {
+				t.Fatal("another fee payer accepted authorized packet")
+			}
+			registration, err = BuildSponsoredStamp(ctx, rpc, seedA, a, authorized.Transaction)
+			payerSeed = seedA
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		signed := sign(registration, entry.seed)
+		signed := sign(registration, payerSeed)
 		if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime-1, st, signed, nil); err == nil {
 			t.Fatal("accepted pre-fork registration")
 		}
@@ -192,14 +218,78 @@ func TestShield3WalletConsensus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		bad := sign(types.NewTx(&types.PQTkmTx{ChainID: big.NewInt(8979), Nonce: signed.Nonce(), To: &params.ShieldedPoolAddress, Gas: signed.Gas(), GasFeeCap: signed.GasFeeCap(), GasTipCap: signed.GasTipCap(), Value: new(big.Int), Data: forgedData}), entry.seed)
+		bad := sign(types.NewTx(&types.PQTkmTx{ChainID: big.NewInt(8979), Nonce: signed.Nonce(), To: &params.ShieldedPoolAddress, Gas: signed.Gas(), GasFeeCap: signed.GasFeeCap(), GasTipCap: signed.GasTipCap(), Value: new(big.Int), Data: forgedData}), payerSeed)
 		if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, head.Number, head.Time, st, bad, nil); err == nil {
 			t.Fatal("forged owner registered")
 		}
 		if core.IsAntarticalStamped(st, entry.identity.Address) {
 			t.Fatal("failed proof changed registry")
 		}
-		process(signed)
+		if entry.identity == b {
+			e, err := core.DecodeAntarticalStamp(signed.Data())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := core.ProcessAntarticalStamp(params.MainnetChainConfig, head.Number, e.ValidUntil+1, st, signed); err == nil {
+				t.Fatal("expired sponsorship accepted")
+			}
+			for _, mutation := range []string{"nonce", "fee", "gas", "expiry", "beneficiary", "stamp"} {
+				t.Run("sponsorship-binding-"+mutation, func(t *testing.T) {
+					changed, err := core.DecodeAntarticalStamp(signed.Data())
+					if err != nil {
+						t.Fatal(err)
+					}
+					nonce, gas := signed.Nonce(), signed.Gas()
+					fee := new(big.Int).Set(signed.GasFeeCap())
+					switch mutation {
+					case "nonce":
+						nonce++
+					case "fee":
+						fee.Add(fee, big.NewInt(1))
+					case "gas":
+						gas++
+					case "expiry":
+						changed.ValidUntil++
+					case "beneficiary":
+						changed.BeneficiaryPublicKey[0] ^= 1
+					case "stamp":
+						changed.Stamp.Commitment[0] ^= 1
+					}
+					data, err := core.EncodeAntarticalStamp(changed)
+					if err != nil {
+						t.Fatal(err)
+					}
+					bad := sign(types.NewTx(&types.PQTkmTx{ChainID: big.NewInt(8979), Nonce: nonce, To: &params.ShieldedPoolAddress, Gas: gas, GasFeeCap: fee, GasTipCap: signed.GasTipCap(), Value: new(big.Int), Data: data}), seedA)
+					if err := core.ProcessAntarticalStamp(params.MainnetChainConfig, head.Number, head.Time, st, bad); err == nil {
+						t.Fatal("modified authorization accepted")
+					}
+					if core.IsAntarticalStamped(st, b.Address) {
+						t.Fatal("invalid sponsorship wrote beneficiary stamp")
+					}
+				})
+			}
+			poolOpts := &txpool.ValidationOptionsWithState{Antartical: true, State: st, ExistingExpenditure: func(common.Address) *big.Int { return new(big.Int) }, ExistingCost: func(common.Address, uint64) *big.Int { return nil }}
+			if err := txpool.ValidateTransactionWithState(signed, types.NewQuantumSigner(big.NewInt(8979)), poolOpts); err != nil {
+				t.Fatal("stateful pool rejected stamped sponsor", err)
+			}
+			before := new(uint256.Int).Set(st.GetBalance(a.Address))
+			sponsorNonce := st.GetNonce(a.Address)
+			process(signed)
+			if st.GetBalance(a.Address).Cmp(before) >= 0 || st.GetNonce(a.Address) != sponsorNonce+1 {
+				t.Fatal("sponsor did not pay gas and advance its nonce")
+			}
+			if st.GetBalance(b.Address).Sign() != 0 || st.GetNonce(b.Address) != 0 {
+				t.Fatal("sponsorship changed beneficiary balance or nonce")
+			}
+			if err := txpool.ValidateTransactionWithState(signed, types.NewQuantumSigner(big.NewInt(8979)), poolOpts); err == nil {
+				t.Fatal("confirmed sponsorship re-entered pool")
+			}
+			if err := core.ProcessAntarticalStamp(params.MainnetChainConfig, head.Number, head.Time, st, signed); err != nil {
+				t.Fatal("same processing stage is not idempotent", err)
+			}
+		} else {
+			process(signed)
+		}
 		status, err := core.AntarticalStampForAddress(st, entry.identity.Address)
 		if err != nil || !status.Registered || status.Owner != entry.identity.Owner || status.Commitment != entry.identity.Stamp.Commitment {
 			t.Fatal("missing consensus stamp", err)

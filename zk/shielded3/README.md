@@ -91,11 +91,20 @@ binds a known registry root. Wallet-file stamps alone do not authorize sending.
 
 The sole unstamped-sender exception is `TKMSTAMP1`: a zero-value PQ registration
 to the reserved code-free pool. It authenticates the encrypted stamp under the
-sender's ML-DSA key and proves knowledge of the owner preimage with a fixed
+beneficiary's ML-DSA key and proves knowledge of the owner preimage with a fixed
 native STARK, bound to the complete registration intent. A copied proof cannot
 register another owner or account. Registrations cannot replace an existing
 address or owner. They count against block gas/byte limits and pay ordinary gas
-fees; the address needs a public TKM balance for registration gas. Protocol block
+fees, paid either by the registering address or by an already stamped sponsor.
+A sponsored envelope adds the beneficiary ML-DSA public key, expiry (at most
+one hour from block time), and beneficiary signature. Both that signature and
+the owner STARK bind the complete unsigned fee-paying transaction: chain,
+sponsor public key, sponsor nonce, fee caps, gas, target, zero value, original
+encrypted stamp and beneficiary key/expiry. The sponsor signs the completed
+PQ transaction. Only the sponsor balance and nonce change; no beneficiary
+balance or nonce is needed. Expired, substituted, reused-owner and already
+registered-beneficiary transactions are invalid. Self-funded encoding is
+unchanged because sponsorship fields are optional trailing RLP fields. Protocol block
 rewards and pre-execution system calls remain distinct from user transactions.
 
 Validators reject invalid registration proofs and unstamped transactions as
@@ -167,3 +176,25 @@ check viewing-only histories, pending/reorg handling, failed-proof atomicity,
 stamp backup authentication and private-endpoint access boundaries. Fixtures
 contain deterministic test secrets, never wallet secrets. The cryptography CI
 runs native tests, interoperability, race checks and lint with the build tag.
+
+### Sponsored stamp registration
+
+In desktop and Android Send/Receive, open **Register with a sponsor**. The new
+wallet creates its private stamp and shares **My stamp sponsorship request**.
+This is a signed public receiving code, usable for registration only until its
+stamp is confirmed. A stamped sponsor creates a one-hour fee offer for that
+request. The new wallet imports the offer and authorizes its original stamp
+with an owner STARK and ML-DSA signature; it returns the authorized JSON packet.
+The sponsor imports it, reviews the verified beneficiary and maximum fee, then
+explicitly confirms and submits. Packet metadata is derived from the verified
+transaction, not trusted from imported JSON fields. No step transfers funds to
+the beneficiary. Activity shows the hash; the beneficiary checks its canonical
+stamp status before sending or sharing a payment receiving code. Keep the
+original encrypted keyfile backup.
+
+The fee offer uses the sponsor's pending nonce. A competing sponsor transaction
+requires a new offer and fresh beneficiary authorization. Completed signed
+submissions use durable stable request IDs and preserve exact raw bytes on
+uncertain RPC responses. There is no automatic unlimited sponsor service or
+free gas; sponsors explicitly approve each registration. These rules activate
+at the existing Antartical timestamp, October 1, 2026 00:00 UTC.

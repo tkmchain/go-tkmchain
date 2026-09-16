@@ -315,8 +315,10 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		if err := core.ValidateAntarticalStampState(opts.State, from, tx.To(), tx.Value(), tx.Data()); err != nil {
 			return err
 		}
-		if core.HasAntarticalStampPrefix(tx.Data()) && core.IsAntarticalStamped(opts.State, from) {
-			return errors.New("address stamp is already registered")
+		if core.HasAntarticalStampPrefix(tx.Data()) {
+			if err := core.ValidateAntarticalStampRegistrationState(opts.State, from, tx.Data(), 0); err != nil {
+				return err
+			}
 		}
 	}
 	next := opts.State.GetNonce(from)

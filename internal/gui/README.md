@@ -54,10 +54,22 @@ No live funds or phone ownership were changed during validation. Tests use publi
 Android embeds the same wallet UI and local backend as the desktop GUI. Send
 and Receive show stamping first: enter private name/country labels or restore
 the original encrypted backup, register the stamp, and check confirmation.
-Registration transfers zero TKM and requires a public balance for normal gas
-fees. Sending, receiving-code sharing, funding and legacy migration remain
+Registration transfers zero TKM. Normal gas fees are paid by the registering
+wallet or an already stamped sponsor. Sending, payment receiving-code sharing,
+funding and legacy migration remain
 locked until the immutable on-chain stamp confirms. A wallet-file stamp alone
 is insufficient; block execution and both transaction pools enforce the gate.
 Private proofs require registered output owners without publishing the payment
 recipient or its registry index. Registration hashes appear in Activity, and
 stable request IDs preserve signed registration bytes across retries/restarts.
+
+Sponsored registration is available in the shared desktop/Android stamp step.
+The beneficiary creates its encrypted stamp and shares a signed stamp request;
+a stamped sponsor creates an expiring fee offer; the beneficiary authorizes
+that exact offer; the sponsor reviews the verified fee and beneficiary before
+submitting. JSON packets can be downloaded and loaded between wallets. They
+contain public keys, encrypted stamp data and authorization/proof bytes, never
+private keys or plaintext labels. Only sponsor gas and nonce are consumed.
+The recipient can register from a zero balance and nonce. Stamp requests do not
+unlock payments before canonical confirmation. See the Shield3 documentation
+for the consensus binding, expiry and replay rules.
