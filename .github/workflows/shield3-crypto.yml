@@ -1,0 +1,50 @@
+name: Shield3 cryptography
+
+on:
+  pull_request:
+    paths:
+      - 'crypto/pqcrypto/**'
+      - 'zk/shielded3/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield3-crypto.yml'
+  push:
+    paths:
+      - 'crypto/pqcrypto/**'
+      - 'zk/shielded3/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield3-crypto.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TKM_SHIELD3_TESTDATA: ${{ runner.temp }}/shield3-vectors
+      TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
+      - name: Check Rust formatting and lint
+        run: |
+          cargo +1.89.0 fmt --manifest-path zk/shielded3/stark/Cargo.toml -- --check
+          cargo +1.89.0 clippy --release --locked --manifest-path zk/shielded3/stark/Cargo.toml --all-targets -- -D warnings
+      - name: Generate and verify real STARK proofs
+        run: cargo +1.89.0 test --release --locked --manifest-path zk/shielded3/stark/Cargo.toml -- --test-threads=1
+      - name: Build native verifier
+        run: cargo +1.89.0 build --release --locked --manifest-path zk/shielded3/stark/Cargo.toml
+      - name: Verify Go and native interoperability
+        run: |
+          go test -race ./crypto/pqcrypto ./zk/shielded3
+          go vet ./crypto/pqcrypto ./zk/shielded3

@@ -1,0 +1,271 @@
+use super::*;
+
+fn hash(words: &[u64]) -> [u64; 5] {
+    Tip5::hash_varlen(
+        &words
+            .iter()
+            .copied()
+            .map(BFieldElement::new)
+            .collect::<Vec<_>>(),
+    )
+    .values()
+    .map(|v| v.value())
+}
+fn note(chain_asset: &[u64], owner: &[u64], random: &[u64], value: &[u64]) -> [u64; 5] {
+    let mut words = vec![DOMAIN_NOTE];
+    words.extend(chain_asset);
+    words.extend(owner);
+    words.extend(value);
+    words.extend(random);
+    hash(&words)
+}
+fn pair(left: [u64; 5], right: [u64; 5]) -> [u64; 5] {
+    Tip5::hash_pair(
+        Digest::new(left.map(BFieldElement::new)),
+        Digest::new(right.map(BFieldElement::new)),
+    )
+    .values()
+    .map(|v| v.value())
+}
+fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
+    let mut public = vec![0; PUBLIC_WORDS];
+    public[0] = 8979;
+    public[2] = 1;
+    public[4] = 9;
+    for (i, word) in public.iter_mut().enumerate().take(28).skip(12) {
+        *word = (i * 101) as u64;
+    }
+    let mut secret = vec![0; SECRET_WORDS];
+    secret[..10].copy_from_slice(&[11, 22, 33, 44, 55, 66, 77, 88, 99, 111]);
+    secret[10] = u32::MAX as u64 - 5;
+    secret[11] = 3;
+    secret[18] = 0x87654321;
+    let owner = hash(&[DOMAIN_OWNER, 11, 22, 33, 44, 55]);
+    let input = note(&public[..4], &owner, &secret[5..10], &secret[10..18]);
+    let mut nullifier = vec![DOMAIN_NULLIFIER];
+    nullifier.extend(&public[..4]);
+    nullifier.extend(&secret[..10]);
+    public[33..38].copy_from_slice(&hash(&nullifier));
+    let path = (0..MERKLE_DEPTH)
+        .map(|i| hash(&[9999, i as u64]))
+        .collect::<Vec<_>>();
+    let mut root = input;
+    let mut index = secret[18];
+    for sibling in &path {
+        root = if index & 1 == 0 {
+            pair(root, *sibling)
+        } else {
+            pair(*sibling, root)
+        };
+        index >>= 1;
+    }
+    public[28..33].copy_from_slice(&root);
+    // sum outputs + public value = (3<<32) + (u32::MAX-5), exercising carry.
+    let values = [
+        [u32::MAX as u64, 1],
+        [u32::MAX as u64 - 13, 1],
+        [0, 0],
+        [0, 0],
+    ];
+    for i in 0..4 {
+        let base = 19 + 18 * i;
+        for j in 0..10 {
+            secret[base + j] = (200 + i * 20 + j) as u64;
+        }
+        secret[base + 10..base + 12].copy_from_slice(&values[i]);
+        let commitment = note(
+            &public[..4],
+            &secret[base..base + 5],
+            &secret[base + 5..base + 10],
+            &secret[base + 10..base + 18],
+        );
+        public[38 + 5 * i..43 + 5 * i].copy_from_slice(&commitment);
+    }
+    (public, secret, path)
+}
+fn run(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
+    let tokens = canonical_words(secret, SECRET_WORDS).unwrap();
+    let digests = path
+        .iter()
+        .map(|p| Digest::new(p.map(BFieldElement::new)))
+        .collect::<Vec<_>>();
+    VM::run(
+        spend_program(),
+        PublicInput::new(canonical_words(public, PUBLIC_WORDS).unwrap()),
+        NonDeterminism::new(tokens).with_digests(digests),
+    )
+    .is_ok()
+}
+
+#[test]
+fn valid_spend_and_constraint_rejections() {
+    let (public, secret, path) = fixture();
+    assert!(
+        run(&public, &secret, &path),
+        "independently hashed valid witness rejected"
+    );
+    // All secret words have an algebraic role: ownership, commitment opening,
+    // balance or index. Changing any one must invalidate the witness.
+    for i in 0..SECRET_WORDS {
+        let mut changed = secret.clone();
+        changed[i] ^= 1;
+        assert!(
+            !run(&public, &changed, &path),
+            "unconstrained secret word {i}"
+        );
+    }
+    for i in 0..MERKLE_DEPTH {
+        for j in 0..5 {
+            let mut changed = path.clone();
+            changed[i][j] ^= 1;
+            assert!(
+                !run(&public, &secret, &changed),
+                "unconstrained path {i}/{j}"
+            );
+        }
+    }
+    for i in (0..12).chain(28..PUBLIC_WORDS) {
+        let mut changed = public.clone();
+        changed[i] ^= 1;
+        assert!(
+            !run(&changed, &secret, &path),
+            "unconstrained public word {i}"
+        );
+    }
+    let mut oversized = secret.clone();
+    oversized[10] = 1 << 32;
+    assert!(
+        !run(&public, &oversized, &path),
+        "out of range input limb accepted"
+    );
+}
+
+fn refresh_commitments(public: &mut [u64], secret: &[u64], path: &[[u64; 5]]) {
+    let mut owner = vec![DOMAIN_OWNER];
+    owner.extend(&secret[..5]);
+    let input = note(&public[..4], &hash(&owner), &secret[5..10], &secret[10..18]);
+    let mut root = input;
+    let mut index = secret[18];
+    for sibling in path {
+        root = if index & 1 == 0 {
+            pair(root, *sibling)
+        } else {
+            pair(*sibling, root)
+        };
+        index >>= 1;
+    }
+    public[28..33].copy_from_slice(&root);
+    for i in 0..4 {
+        let base = 19 + 18 * i;
+        let out = note(
+            &public[..4],
+            &secret[base..base + 5],
+            &secret[base + 5..base + 10],
+            &secret[base + 10..base + 18],
+        );
+        public[38 + 5 * i..43 + 5 * i].copy_from_slice(&out);
+    }
+}
+
+#[test]
+fn full_width_amounts_and_overflow_are_constrained() {
+    let (mut public, mut secret, path) = fixture();
+    public[4..12].fill(0);
+    for i in 0..4 {
+        secret[29 + 18 * i..37 + 18 * i].fill(0);
+    }
+    secret[10..18].fill(u32::MAX as u64);
+    secret[29..37].fill(u32::MAX as u64);
+    refresh_commitments(&mut public, &secret, &path);
+    assert!(
+        run(&public, &secret, &path),
+        "full 256-bit exact amount rejected"
+    );
+    // All commitments and the root are valid for these openings. Only the
+    // conservation check can reject 2^256+1 being wrapped to an input of 1.
+    secret[10..18].fill(0);
+    secret[10] = 1;
+    secret[47] = 2;
+    refresh_commitments(&mut public, &secret, &path);
+    assert!(
+        !run(&public, &secret, &path),
+        "256-bit overflow minted value"
+    );
+    secret[29] = 1 << 32;
+    refresh_commitments(&mut public, &secret, &path);
+    assert!(
+        !run(&public, &secret, &path),
+        "out-of-range output limb accepted"
+    );
+}
+
+#[test]
+fn canonical_encoding_and_limits() {
+    assert!(canonical_words(&[FIELD_MODULUS], 1).is_err());
+    assert!(canonical_words(&[0], 2).is_err());
+    assert!(verify_spend(&[0; PUBLIC_WORDS], &[0]).is_err());
+    let (public, _, _) = fixture();
+    for exponent in [15, 31, 32, 63, 64, u32::MAX] {
+        let mut stream = triton_vm::proof_stream::ProofStream::new();
+        stream.enqueue(triton_vm::proof_item::ProofItem::Log2PaddedHeight(exponent));
+        let proof = Proof::from(stream);
+        assert!(
+            verify_spend(
+                &public,
+                &proof.0.iter().map(|v| v.value()).collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+    }
+    for bad in [vec![], vec![0], vec![FIELD_MODULUS], vec![1; 128]] {
+        assert!(verify_spend(&public, &bad).is_err());
+    }
+    let mut oversized = public.clone();
+    oversized[12] = 1 << 32;
+    assert!(verify_spend(&oversized, &[1]).is_err());
+}
+
+#[test]
+fn real_stark_roundtrip_tampering_and_replay() {
+    let (public, secret, path) = fixture();
+    let proof = prove_spend(&public, &secret, &path).expect("real STARK proving");
+    verify_spend(&public, &proof).expect("real STARK verification");
+    eprintln!(
+        "real proof: {} bytes, {} words",
+        proof.len() * 8 + 4,
+        proof.len()
+    );
+    // Transaction intent is a public claim rather than private witness data.
+    // Reusing the proof for any different transaction must fail.
+    for i in 0..PUBLIC_WORDS {
+        let mut changed = public.clone();
+        changed[i] ^= 1;
+        assert!(
+            verify_spend(&changed, &proof).is_err(),
+            "proof replay word {i}"
+        );
+    }
+    for i in [0, 1, proof.len() / 4, proof.len() / 2, proof.len() - 1] {
+        let mut changed = proof.clone();
+        changed[i] ^= 1;
+        assert!(
+            verify_spend(&public, &changed).is_err(),
+            "tampered proof word {i}"
+        );
+    }
+    if let Ok(directory) = std::env::var("TKM_SHIELD3_TESTDATA") {
+        use std::io::Write;
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, data) in [
+            ("public", public),
+            ("secret", secret),
+            ("path", path.into_iter().flatten().collect()),
+            ("proof", proof),
+        ] {
+            let mut file = std::fs::File::create(format!("{directory}/{name}.bin")).unwrap();
+            for v in data {
+                file.write_all(&v.to_le_bytes()).unwrap();
+            }
+        }
+    }
+}
