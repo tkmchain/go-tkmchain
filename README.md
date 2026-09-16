@@ -23,6 +23,8 @@ Automated builds are available for stable releases and the unstable master branc
 
 ## Release Notes
 
+- [Antartical: Shield3, private stamps, sponsorship, shared relays and payment disclosures](docs/SHIELD3_ANTARTICAL.md)
+
 - [Kyoto Release Notes](docs/kyoto-release.md)
 - [Shielded Privacy Release Notes](docs/shielded-privacy-release.md)
 - [Shielded V2 Recipient Binding](docs/shielded-v2-recipient-binding-20260820.md)

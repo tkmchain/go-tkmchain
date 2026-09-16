@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -19,7 +20,11 @@ func (g *GUI) shield3SubmissionPath(id string) string {
 	return filepath.Join(g.opts.WalletStateDir, hex.EncodeToString(digest[:])+".json")
 }
 func (g *GUI) loadShield3Submission(id string) (*shield3RequestRecord, error) {
-	file, err := os.Open(g.shield3SubmissionPath(id))
+	return readShield3Submission(g.shield3SubmissionPath(id))
+}
+
+func readShield3Submission(path string) (*shield3RequestRecord, error) {
+	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -39,7 +44,16 @@ func (g *GUI) loadShield3Submission(id string) (*shield3RequestRecord, error) {
 	if err := tx.UnmarshalBinary(record.Raw); err != nil || tx.Hash() != record.Hash || tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasAntarticalStampPrefix(tx.Data())) {
 		return nil, errors.New("invalid saved wallet transaction")
 	}
-	if _, err := types.Sender(types.NewQuantumSigner(tx.ChainId()), &tx); err != nil {
+	if record.Unsigned {
+		_, _, sig, ok := tx.PQTkmFields()
+		e, decoded, err := core.DecodeShieldedV3Transaction(tx.Data())
+		if !ok || len(sig) != 0 || err != nil || !decoded || !e.Relayed || record.DraftAccount == (common.Address{}) {
+			return nil, errors.New("invalid saved unsigned relay draft")
+		}
+		if _, err := core.ShieldedV3Nullifiers(e); err != nil {
+			return nil, err
+		}
+	} else if _, err := types.Sender(types.NewQuantumSigner(tx.ChainId()), &tx); err != nil {
 		return nil, errors.New("saved wallet transaction has invalid PQ authentication")
 	}
 	return &record, nil

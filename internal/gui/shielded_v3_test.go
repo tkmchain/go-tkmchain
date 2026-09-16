@@ -2,6 +2,7 @@ package gui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math/big"
 	"net/http"
@@ -9,8 +10,12 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -93,4 +98,95 @@ func TestShield3ExistingRequestDigestUnchanged(t *testing.T) {
 	if !bytes.Equal(encoded, expected) {
 		t.Fatalf("existing request digest changed: %s", encoded)
 	}
+}
+
+func TestShield3UnsignedRelayDraftSurvivesRestart(t *testing.T) {
+	key, err := pqcrypto.NewMLDSA87FromSeed(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := &core.ShieldedV3Transaction{Version: 3, Nullifier: shielded3.Digest{1}, InputCount: 1, WithdrawalValue: new(big.Int), GasSponsorValue: big.NewInt(7000000), Relayed: true, ValidUntil: 200}
+	data, err := core.EncodeShieldedV3Transaction(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := types.NewTx(&types.PQTkmTx{ChainID: big.NewInt(8979), To: &params.ShieldedPoolAddress, Gas: 7000000, GasFeeCap: big.NewInt(1), GasTipCap: big.NewInt(1), Value: new(big.Int), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(key), Data: data})
+	raw, err := tx.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &GUI{opts: Options{WalletStateDir: t.TempDir()}}
+	record := &shield3RequestRecord{Digest: [64]byte{1}, Raw: raw, Hash: tx.Hash(), Unsigned: true, DraftAccount: common.HexToAddress("0x1")}
+	if err = g.saveShield3Submission("prepared-relay-request", record); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := g.loadShield3Submission("prepared-relay-request")
+	if err != nil || restored == nil || !restored.Unsigned || restored.DraftAccount != record.DraftAccount || !bytes.Equal(restored.Raw, raw) {
+		t.Fatal("lost relay authorization", err)
+	}
+	server := rpc.NewServer()
+	defer server.Stop()
+	eth := &relayTestEth{Time: 100}
+	privacy := &relayTestPrivacy{}
+	if err = server.RegisterName("eth", eth); err != nil {
+		t.Fatal(err)
+	}
+	if err = server.RegisterName("tkmprivacy", privacy); err != nil {
+		t.Fatal(err)
+	}
+	client := rpc.DialInProc(server)
+	defer client.Close()
+	restarted := &GUI{client: client, opts: g.opts}
+	reserved, err := restarted.shield3ReservedRPC(context.Background(), record.DraftAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		TransactionHash common.Hash `json:"transactionHash"`
+		Pending         bool        `json:"pending"`
+	}
+	if err = reserved.CallContext(context.Background(), &state, "tkmprivacy_shieldedV3NullifierStatus", envelope.Nullifier); err != nil || !state.Pending || state.TransactionHash != record.Hash {
+		t.Fatal("restart lost note reservation", err)
+	}
+	privacy.Hash = common.HexToHash("0xbeef")
+	privacy.Pending = true
+	if err = reserved.CallContext(context.Background(), &state, "tkmprivacy_shieldedV3NullifierStatus", envelope.Nullifier); err != nil || state.TransactionHash != privacy.Hash {
+		t.Fatal("draft masked actual transaction hash", err)
+	}
+	privacy.Hash = common.Hash{}
+	privacy.Pending = false
+	eth.Time = 200
+	released, err := restarted.shield3ReservedRPC(context.Background(), record.DraftAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = released.CallContext(context.Background(), &state, "tkmprivacy_shieldedV3NullifierStatus", envelope.Nullifier); err != nil || state.Pending {
+		t.Fatal("expired draft kept note reserved", err)
+	}
+	if !shield3DraftExpired(restored, 200) || shield3DraftExpired(restored, 199) {
+		t.Fatal("wrong draft expiry boundary")
+	}
+	record.Unsigned = false
+	encoded, _ := json.Marshal(record)
+	if err = os.WriteFile(g.shield3SubmissionPath("prepared-relay-request"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = g.loadShield3Submission("prepared-relay-request"); err == nil {
+		t.Fatal("accepted unsigned transaction as signed submission")
+	}
+}
+
+type relayTestEth struct{ Time uint64 }
+
+func (s *relayTestEth) GetBlockByNumber(string, bool) map[string]hexutil.Uint64 {
+	return map[string]hexutil.Uint64{"timestamp": hexutil.Uint64(s.Time)}
+}
+
+type relayTestPrivacy struct {
+	Hash    common.Hash
+	Pending bool
+}
+
+func (s *relayTestPrivacy) ShieldedV3NullifierStatus(shielded3.Digest) map[string]any {
+	return map[string]any{"transactionHash": s.Hash, "pending": s.Pending}
 }

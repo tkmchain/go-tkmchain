@@ -49,11 +49,12 @@ permissions:
 jobs:
   native-proof:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       TKM_SHIELD3_TESTDATA: ${{ runner.temp }}/shield3-vectors
       TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
       CARGO_BUILD_JOBS: '2'
+      RAYON_NUM_THREADS: '2'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -72,6 +73,6 @@ jobs:
         run: cargo +1.89.0 build --release --locked --manifest-path zk/shielded3/stark/Cargo.toml
       - name: Verify Go and native interoperability
         run: |
-          go test -race -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui
+          go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui
           go test -tags shield3 ./core ./eth ./internal/ethapi ./cmd/shielded-payout-prover -run "Shielded|Shield3|Stamped"
           go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui

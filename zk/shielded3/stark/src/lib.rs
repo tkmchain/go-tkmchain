@@ -5,14 +5,14 @@
 
 use triton_vm::prelude::*;
 
-pub const PUBLIC_WORDS: usize = 72;
-pub const SECRET_WORDS: usize = 95;
+pub const PUBLIC_WORDS: usize = 88;
+pub const SECRET_WORDS: usize = 137;
 pub const MERKLE_DEPTH: usize = 32;
-pub const PATH_DIGESTS: usize = MERKLE_DEPTH * 5;
+pub const PATH_DIGESTS: usize = MERKLE_DEPTH * 8;
 pub const OWNER_PUBLIC_WORDS: usize = 23;
 pub const DOMAIN_STAMP: u64 = 3004;
 pub const MAX_PROOF_WORDS: usize = 1 << 20;
-pub const MAX_PADDED_HEIGHT: usize = 1 << 15;
+pub const MAX_PADDED_HEIGHT: usize = 1 << 16;
 pub const FIELD_MODULUS: u64 = 0xffff_ffff_0000_0001;
 pub const DOMAIN_OWNER: u64 = 3001;
 pub const DOMAIN_NOTE: u64 = 3002;
@@ -103,7 +103,8 @@ impl Assembly {
 /// neither a prover-supplied program nor a prover-supplied claim is accepted.
 pub fn spend_program() -> Program {
     let mut a = Assembly(String::new());
-    for (length, base, instruction) in [(PUBLIC_WORDS, 0, "read_io"), (SECRET_WORDS, 100, "divine")]
+    for (length, base, instruction) in
+        [(PUBLIC_WORDS, 0, "read_io"), (SECRET_WORDS, 1000, "divine")]
     {
         for i in (0..length).step_by(5) {
             let count = (length - i).min(5);
@@ -124,12 +125,12 @@ pub fn spend_program() -> Program {
     for i in 0..28 {
         a.u32(i);
     }
-    for i in 110..119 {
+    for i in 1010..1019 {
         a.u32(i);
     }
     for i in 0..4 {
         for j in 0..8 {
-            a.u32(129 + 18 * i + j);
+            a.u32(1029 + 18 * i + j);
         }
     }
     // Chain ID is nonzero. Input value is a nonzero 256-bit integer.
@@ -137,7 +138,7 @@ pub fn spend_program() -> Program {
     a.load(1);
     a.emit("add push 0 eq push 0 eq assert");
     a.emit("push 1");
-    for i in 110..118 {
+    for i in 1010..1018 {
         a.load(i);
         a.emit("push 0 eq mul");
     }
@@ -145,20 +146,49 @@ pub fn spend_program() -> Program {
     // The final public word selects a spend (0) or a deposit (1).
     a.load(58);
     a.emit("dup 0 push 0 eq swap 1 push 1 eq add assert");
+    a.u32(87);
+    a.load(87);
+    a.emit("push 0 eq");
+    a.load(58);
+    a.emit("eq assert");
+    a.emit("push 0");
+    for count in 0..=4 {
+        a.load(87);
+        a.emit(&format!("push {count} eq add"));
+    }
+    a.emit("push 1 eq assert");
+    // Aggregate input value starts with the first note (or deposit amount).
+    for limb in 0..8 {
+        a.load(1010 + limb);
+        a.emit(&format!("push {} write_mem 1 pop 1", 500 + limb));
+    }
     let mut owner = vec![Word::Literal(DOMAIN_OWNER)];
-    owner.extend((100..105).map(Word::Memory));
+    owner.extend((1000..1005).map(Word::Memory));
     a.hash(owner);
     a.store_digest(200);
     a.load(58);
     a.emit("push 0 eq skiz call private_spend");
     a.load(58);
     a.emit("push 1 eq skiz call public_deposit");
+    // Three additional notes share the same hidden spending owner. The public
+    // input count determines which openings must prove membership and a unique
+    // nullifier; inactive slots are zero and consume constrained dummy paths.
+    for i in 0..3 {
+        a.emit("push 0");
+        for count in i + 2..=4 {
+            a.load(87);
+            a.emit(&format!("push {count} eq add"));
+        }
+        a.emit(&format!(
+            "dup 0 skiz call extra_spend_{i} push 0 eq skiz call inactive_input_{i}"
+        ));
+    }
     // Slot 3 is change. Its owner must be the input spending secret's owner.
     // A recipient cannot hide an over-limit payment in this reserved slot.
-    a.digest(173);
+    a.digest(1073);
     a.assert_digest(200);
     for i in 0..4 {
-        a.note(119 + 18 * i, 124 + 18 * i, 129 + 18 * i);
+        a.note(1019 + 18 * i, 1024 + 18 * i, 1029 + 18 * i);
         a.assert_digest(38 + 5 * i);
     }
 
@@ -166,16 +196,16 @@ pub fn spend_program() -> Program {
     // immutable, consensus-authenticated stamp registry. Membership witnesses
     // stay private; output owners and registration indices are not public.
     for i in 0..4 {
-        a.u32(191 + i);
+        a.u32(1091 + i);
         let mut stamp = vec![
             Word::Literal(DOMAIN_STAMP),
             Word::Memory(0),
             Word::Memory(1),
         ];
-        stamp.extend((119 + 18 * i..124 + 18 * i).map(Word::Memory));
+        stamp.extend((1019 + 18 * i..1024 + 18 * i).map(Word::Memory));
         a.hash(stamp);
         a.store_digest(310);
-        a.load(191 + i);
+        a.load(1091 + i);
         a.digest(310);
         for _ in 0..MERKLE_DEPTH {
             a.emit("merkle_step");
@@ -204,7 +234,7 @@ pub fn spend_program() -> Program {
         a.load(420 + limb);
         a.emit("add");
         for i in 0..3 {
-            a.load(129 + 18 * i + limb);
+            a.load(1029 + 18 * i + limb);
             a.emit("add");
         }
         a.emit("split");
@@ -247,11 +277,11 @@ pub fn spend_program() -> Program {
         a.load(4 + limb);
         a.emit("add");
         for i in 0..4 {
-            a.load(129 + 18 * i + limb);
+            a.load(1029 + 18 * i + limb);
             a.emit("add");
         }
         a.emit("split");
-        a.load(110 + limb);
+        a.load(500 + limb);
         a.emit("eq assert");
     }
     a.emit("push 0 eq assert halt");
@@ -262,9 +292,9 @@ pub fn spend_program() -> Program {
         a.emit("push 0 eq mul");
     }
     a.emit("push 0 eq assert");
-    a.note(200, 105, 110);
+    a.note(200, 1005, 1010);
     a.store_digest(205);
-    a.load(118);
+    a.load(1018);
     a.digest(205);
     for _ in 0..MERKLE_DEPTH {
         a.emit("merkle_step");
@@ -274,7 +304,7 @@ pub fn spend_program() -> Program {
     let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
     nullifier.extend((0..4).map(Word::Memory));
     nullifier.extend((200..205).map(Word::Memory));
-    nullifier.extend((105..118).map(Word::Memory));
+    nullifier.extend((1005..1018).map(Word::Memory));
     a.hash(nullifier);
     a.assert_digest(33);
     a.emit("return");
@@ -292,12 +322,82 @@ pub fn spend_program() -> Program {
     }
     for limb in 0..8 {
         a.load(4 + limb);
-        a.load(110 + limb);
+        a.load(1010 + limb);
         a.emit("eq assert");
         // Deposits use public value as the input, not as a public release.
         a.emit(&format!("push 0 push {} write_mem 1 pop 1", 4 + limb));
     }
     a.emit("return");
+    for i in 0..3 {
+        let base = 1095 + 14 * i;
+        let nullifier = 72 + 5 * i;
+        a.emit(&format!("extra_spend_{i}:"));
+        for j in 5..14 {
+            a.u32(base + j);
+        }
+        a.emit("push 1");
+        for j in 5..13 {
+            a.load(base + j);
+            a.emit("push 0 eq mul");
+        }
+        a.emit("push 0 eq assert");
+        a.note(200, base, base + 5);
+        a.store_digest(205);
+        a.load(base + 13);
+        a.digest(205);
+        for _ in 0..MERKLE_DEPTH {
+            a.emit("merkle_step");
+        }
+        a.assert_digest(28);
+        a.emit("push 0 eq assert");
+        let mut words = vec![Word::Literal(DOMAIN_NULLIFIER)];
+        words.extend((0..4).map(Word::Memory));
+        words.extend((200..205).map(Word::Memory));
+        words.extend((base..base + 13).map(Word::Memory));
+        a.hash(words);
+        a.assert_digest(nullifier);
+        // No repeated input, even when a malicious witness opens it twice.
+        for previous in std::iter::once(33).chain((0..i).map(|j| 72 + 5 * j)) {
+            a.emit("push 1");
+            for j in 0..5 {
+                a.load(previous + j);
+                a.load(nullifier + j);
+                a.emit("eq mul");
+            }
+            a.emit("push 0 eq assert");
+        }
+        a.emit("push 0");
+        for limb in 0..8 {
+            a.load(500 + limb);
+            a.emit("add");
+            a.load(base + 5 + limb);
+            a.emit("add split");
+            a.emit(&format!("push {} write_mem 1 pop 1", 500 + limb));
+        }
+        a.emit("push 0 eq assert return");
+        a.emit(&format!("inactive_input_{i}:"));
+        for j in 0..14 {
+            a.load(base + j);
+            a.emit("push 0 eq assert");
+        }
+        for j in 0..5 {
+            a.load(nullifier + j);
+            a.emit("push 0 eq assert");
+        }
+        a.emit("push 0 push 0 push 0 push 0 push 0 push 0");
+        for _ in 0..MERKLE_DEPTH {
+            a.emit("merkle_step");
+        }
+        let mut dummy = Digest::new([BFieldElement::new(0); 5]);
+        for _ in 0..MERKLE_DEPTH {
+            dummy = Tip5::hash_pair(dummy, Digest::new([BFieldElement::new(0); 5]));
+        }
+        // Canonical all-zero inactive paths have a fixed derived root.
+        for word in dummy.values().iter().rev() {
+            a.emit(&format!("push {}", word.value()));
+        }
+        a.emit("assert_vector pop 5 push 0 eq assert return");
+    }
     a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
     Program::from_code(&a.0).expect("valid, fixed Shield3 assembly")
 }
@@ -330,6 +430,23 @@ fn public_input(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
     }
     if words[58] == 0 && words[33..38].iter().all(|&v| v == 0) {
         return Err("zero nullifier".into());
+    }
+    let count = words[87] as usize;
+    if count > 4 || (words[58] == 1) != (count == 0) {
+        return Err("invalid input count".into());
+    }
+    let mut active = Vec::new();
+    for i in 0..4 {
+        let base = if i == 0 { 33 } else { 72 + 5 * (i - 1) };
+        let nullifier = &words[base..base + 5];
+        if i < count {
+            if nullifier.iter().all(|&v| v == 0) || active.contains(&nullifier) {
+                return Err("zero or duplicate nullifier".into());
+            }
+            active.push(nullifier);
+        } else if nullifier.iter().any(|&v| v != 0) {
+            return Err("inactive input nullifier".into());
+        }
     }
     Ok(result)
 }

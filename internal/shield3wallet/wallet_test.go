@@ -1,6 +1,7 @@
 package shield3wallet
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,15 +23,32 @@ import (
 )
 
 type walletRPC struct {
-	state   *state.StateDB
-	outputs []scanOutput
-	pending map[shielded3.Digest]common.Hash
-	reorg   bool
+	state        *state.StateDB
+	outputs      []scanOutput
+	pending      map[shielded3.Digest]common.Hash
+	transactions map[common.Hash]*types.Transaction
+	reorg        bool
 }
 
 func (r *walletRPC) CallContext(_ context.Context, dest any, method string, args ...any) error {
 	var result any
 	switch method {
+	case "eth_getRawTransactionByHash":
+		tx := r.transactions[args[0].(common.Hash)]
+		if tx == nil {
+			return fmt.Errorf("unknown transaction")
+		}
+		raw, err := tx.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		result = hexutil.Bytes(raw)
+	case "eth_getTransactionReceipt":
+		if r.transactions[args[0].(common.Hash)] == nil {
+			result = nil
+		} else {
+			result = map[string]any{"transactionHash": args[0], "blockHash": common.HexToHash("0x1234"), "blockNumber": "0x0", "status": "0x1"}
+		}
 	case "eth_chainId":
 		result = hexutil.EncodeUint64(8979)
 	case "eth_getBlockByNumber":
@@ -62,6 +80,18 @@ func (r *walletRPC) CallContext(_ context.Context, dest any, method string, args
 			return err
 		}
 		result = path
+	case "tkmprivacy_shieldedV3Paths":
+		paths := make([]core.ShieldedV3Path, len(args[0].([]shielded3.Digest)))
+		for i, c := range args[0].([]shielded3.Digest) {
+			p, err := core.ShieldedV3CommitmentPath(r.state, c)
+			if err != nil {
+				return err
+			}
+			paths[i] = p
+		}
+		result = paths
+	case "tkmprivacy_shieldedV3RootsKnown":
+		result = r.state.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("root", args[0].(shielded3.Digest).Bytes())) != (common.Hash{}) && r.state.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("stamp/root", args[1].(shielded3.Digest).Bytes())) != (common.Hash{})
 	case "tkmprivacy_shieldedV3Path":
 		path, err := core.ShieldedV3CommitmentPath(r.state, args[0].(shielded3.Digest))
 		if err != nil {
@@ -107,7 +137,7 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rpc := &walletRPC{state: st, pending: make(map[shielded3.Digest]common.Hash)}
+	rpc := &walletRPC{state: st, pending: make(map[shielded3.Digest]common.Hash), transactions: make(map[common.Hash]*types.Transaction)}
 	seedA, seedB := make([]byte, 32), make([]byte, 32)
 	seedB[0] = 1
 	a, b := testIdentity(t, seedA), testIdentity(t, seedB)
@@ -152,6 +182,8 @@ func TestShield3WalletConsensus(t *testing.T) {
 		if receipt.Status != types.ReceiptStatusSuccessful {
 			t.Fatal("wallet transaction reverted")
 		}
+		t.Logf("processed canonical transaction %s", tx.Hash())
+		rpc.transactions[tx.Hash()] = tx
 		if core.HasAntarticalStampPrefix(tx.Data()) {
 			return
 		}
@@ -426,4 +458,118 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if err != nil || other.BalanceWei != "0" {
 		t.Fatal("credited notes to a different owner")
 	}
+	// Four distinct notes require all four inputs for this amount plus relay gas.
+	for n := 0; n < 3; n++ {
+		unsigned, err := Build(ctx, rpc, seedA, a, pb, big.NewInt(1_000_000_000_000_000_000), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		process(sign(unsigned, seedA))
+	}
+	offer, err := BuildRelayOffer(ctx, rpc, seedA, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badOffer := offer
+	badOffer.ValidUntil--
+	if _, err = ReviewRelayOffer(ctx, rpc, &badOffer, 8979); err == nil {
+		t.Fatal("accepted modified signed quote")
+	}
+	relayAmount := big.NewInt(6_000_000_000_000_000_000)
+	relayUnsigned, err := BuildRelayed(ctx, rpc, seedB, b, pa, relayAmount, &offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := RelayPacketForTransaction(relayUnsigned)
+	if err != nil || packet.InputCount != 4 {
+		t.Fatal("did not combine four notes", packet.InputCount, err)
+	}
+	payerKey, _ := pqcrypto.NewMLDSA87FromSeed(seedB)
+	if bytes.Contains(packet.Transaction, pqcrypto.PublicKeyBytes(payerKey)) {
+		t.Fatal("relay packet exposes payer PQ key")
+	}
+	if _, err = BuildRelaySubmission(ctx, rpc, seedB, b, packet.Transaction); err == nil {
+		t.Fatal("wrong operator accepted packet")
+	}
+	reviewed, err := BuildRelaySubmission(ctx, rpc, seedA, a, packet.Transaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayTx := sign(reviewed, seedA)
+	sender, err := types.Sender(types.NewQuantumSigner(big.NewInt(8979)), relayTx)
+	if err != nil || sender != a.Address || sender == b.Address {
+		t.Fatal("outer payer identity not hidden", err)
+	}
+	e, _, _ := core.DecodeShieldedV3Transaction(relayTx.Data())
+	ns, err := core.ShieldedV3Nullifiers(e)
+	if err != nil || len(ns) != 4 {
+		t.Fatal(err)
+	}
+	// A spent secondary input must reject without consuming any other input.
+	snapshot := st.Snapshot()
+	slot := core.ShieldedV3StateSlot("nullifier", ns[3].Bytes())
+	st.SetState(params.ShieldedPoolAddress, slot, common.HexToHash("0xdead"))
+	beforeRoot, _ := core.ShieldedV3Root(st)
+	if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime, st, relayTx, make(map[common.Hash]struct{})); err == nil {
+		t.Fatal("accepted spent secondary input")
+	}
+	afterRoot, _ := core.ShieldedV3Root(st)
+	if afterRoot != beforeRoot {
+		t.Fatal("failed aggregate changed root")
+	}
+	for _, n := range ns[:3] {
+		if core.ShieldedV3NullifierTransaction(st, n) != (common.Hash{}) {
+			t.Fatal("failed aggregate consumed another input")
+		}
+	}
+	st.RevertToSnapshot(snapshot)
+	payerNonce := st.GetNonce(b.Address)
+	process(relayTx)
+	if st.GetNonce(b.Address) != payerNonce {
+		t.Fatal("relay advanced payer's public nonce")
+	}
+	for _, n := range ns {
+		if core.ShieldedV3NullifierTransaction(st, n) != relayTx.Hash() {
+			t.Fatal("input did not record canonical relay hash")
+		}
+	}
+	disclosure, err := ExportPaymentDisclosure(ctx, rpc, b, relayTx.Hash(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(disclosure.RecordKey)
+	verified, err := VerifyPaymentDisclosure(ctx, rpc, disclosure)
+	if err != nil || verified.Recipient != a.Address || verified.AmountWei != relayAmount.String() {
+		t.Fatal("selective payment verification", err)
+	}
+	wrongDisclosure := disclosure
+	wrongDisclosure.OutputIndex = 1
+	if _, err = VerifyPaymentDisclosure(ctx, rpc, wrongDisclosure); err == nil {
+		t.Fatal("single record key opened different output")
+	}
+	if _, err = ExportPaymentDisclosure(ctx, rpc, b, relayTx.Hash(), 3); err == nil {
+		t.Fatal("disclosed change")
+	}
+	auditSeed, auditPub, err := pqcrypto.GenerateShieldedV3ViewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(auditSeed)
+	capsule, err := SealPaymentDisclosure(disclosure, auditPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := OpenPaymentDisclosure(capsule, auditSeed)
+	if err != nil || !bytes.Equal(opened.RecordKey, disclosure.RecordKey) {
+		t.Fatal("PQ disclosure capsule", err)
+	}
+	clear(opened.RecordKey)
+	if _, err = OpenPaymentDisclosure(capsule, a.IncomingSeed); err == nil {
+		t.Fatal("unrelated viewing key opened disclosure")
+	}
+	rpc.reorg = true
+	if _, err = VerifyPaymentDisclosure(ctx, rpc, disclosure); err == nil {
+		t.Fatal("accepted orphaned payment receipt")
+	}
+	rpc.reorg = false
 }

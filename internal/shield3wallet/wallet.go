@@ -1,6 +1,7 @@
 package shield3wallet
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -255,9 +256,13 @@ const WalletGas uint64 = 7_000_000
 
 var buildSlot = make(chan struct{}, 1)
 
-// Build constructs and locally verifies a single bounded spend/deposit. It
+// Build constructs and locally verifies a bounded four-input spend/deposit. It
 // never submits a transaction; the caller signs and broadcasts once explicitly.
 func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, deposit bool) (*types.Transaction, error) {
+	return build(ctx, rpc, seed, identity, to, amount, deposit, nil)
+}
+
+func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
 	if amount == nil || amount.Sign() <= 0 || amount.Cmp(shielded3.MaxSendWei()) > 0 {
 		return nil, errors.New("Shield3 maximum send is 5000000 TKM")
 	}
@@ -285,24 +290,45 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		return nil, err
 	}
 	var nonce hexutil.Uint64
-	if err := rpc.CallContext(ctx, &nonce, "eth_getTransactionCount", identity.Address, "pending"); err != nil {
-		return nil, err
+	var gasPrice *big.Int
+	var signingPublicKey []byte
+	if relay != nil {
+		if deposit {
+			return nil, errors.New("public deposits cannot hide their funding account through a relay")
+		}
+		if err := validateRelayOffer(ctx, rpc, relay, identity.ChainID); err != nil {
+			return nil, err
+		}
+		nonce = hexutil.Uint64(relay.Nonce)
+		gasPrice = new(big.Int).Set((*big.Int)(relay.GasFeeCap))
+		signingPublicKey = common.CopyBytes(relay.PublicKey)
+	} else {
+		if err := rpc.CallContext(ctx, &nonce, "eth_getTransactionCount", identity.Address, "pending"); err != nil {
+			return nil, err
+		}
+		var price hexutil.Big
+		if err := rpc.CallContext(ctx, &price, "eth_gasPrice"); err != nil {
+			return nil, err
+		}
+		gasPrice = new(big.Int).Set((*big.Int)(&price))
+		key, err := pqcrypto.NewMLDSA87FromSeed(seed)
+		if err != nil {
+			return nil, err
+		}
+		signingPublicKey = pqcrypto.PublicKeyBytes(key)
 	}
-	var price hexutil.Big
-	if err := rpc.CallContext(ctx, &price, "eth_gasPrice"); err != nil {
-		return nil, err
-	}
-	gasPrice := new(big.Int).Set((*big.Int)(&price))
 	if gasPrice.Sign() <= 0 {
 		return nil, errors.New("gas price unavailable")
 	}
 	var balance hexutil.Big
-	if err := rpc.CallContext(ctx, &balance, "eth_getBalance", identity.Address, "latest"); err != nil {
-		return nil, err
+	if relay == nil {
+		if err := rpc.CallContext(ctx, &balance, "eth_getBalance", identity.Address, "latest"); err != nil {
+			return nil, err
+		}
 	}
 	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), gasPrice)
 	sponsor := new(big.Int)
-	if !deposit && (*big.Int)(&balance).Cmp(maxGas) < 0 {
+	if !deposit && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
 		sponsor.Set(maxGas)
 	}
 	required := new(big.Int).Add(amount, sponsor)
@@ -327,37 +353,50 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		if err != nil {
 			return nil, err
 		}
-		sort.Slice(scan.Notes, func(i, j int) bool {
-			a, _ := parseAmount(scan.Notes[i].ValueWei)
-			b, _ := parseAmount(scan.Notes[j].ValueWei)
-			return a.Cmp(b) < 0
-		})
-		var chosen *OwnedNote
-		for i := range scan.Notes {
-			value, _ := parseAmount(scan.Notes[i].ValueWei)
-			if value.Cmp(required) >= 0 {
-				chosen = &scan.Notes[i]
-				break
-			}
-		}
-		if chosen == nil {
-			return nil, errors.New("no single spendable Shield3 note covers this amount and fees; shield funds first or consolidate smaller payments")
-		}
-		var path core.ShieldedV3Path
-		if err = rpc.CallContext(ctx, &path, "tkmprivacy_shieldedV3Path", chosen.Commitment); err != nil {
+		chosen, err := selectNotes(scan.Notes, required)
+		if err != nil {
 			return nil, err
 		}
-		if !path.Found || path.Index >= uint64(1)<<32 {
-			return nil, errors.New("note is no longer canonical; rescan")
+		commitments := make([]shielded3.Digest, len(chosen))
+		for i, n := range chosen {
+			commitments[i] = n.Commitment
 		}
-		value, _ := parseAmount(chosen.ValueWei)
-		witness.Value, _ = shielded3.AmountFromBig(value)
-		witness.Randomness = chosen.Randomness
-		witness.LeafIndex = uint32(path.Index)
-		witness.MerklePath = path.Path
-		envelope.Anchor = path.Root
-		envelope.Nullifier = chosen.Nullifier
-		change.Sub(value, required)
+		var paths []core.ShieldedV3Path
+		if err := rpc.CallContext(ctx, &paths, "tkmprivacy_shieldedV3Paths", commitments); err != nil {
+			return nil, err
+		}
+		if len(paths) != len(chosen) {
+			return nil, errors.New("daemon returned incomplete input paths")
+		}
+		total := new(big.Int)
+		for i, n := range chosen {
+			path := paths[i]
+			if !path.Found || path.Index >= uint64(1)<<32 || path.Commitment != n.Commitment || path.Root != paths[0].Root {
+				return nil, errors.New("input notes no longer share a canonical root; rescan")
+			}
+			value, err := parseAmount(n.ValueWei)
+			if err != nil {
+				return nil, err
+			}
+			limbs, err := shielded3.AmountFromBig(value)
+			if err != nil {
+				return nil, err
+			}
+			total.Add(total, value)
+			if i == 0 {
+				witness.Value = limbs
+				witness.Randomness = n.Randomness
+				witness.LeafIndex = uint32(path.Index)
+				witness.MerklePath = path.Path
+				envelope.Nullifier = n.Nullifier
+			} else {
+				witness.AdditionalInputs[i-1] = shielded3.InputOpening{Randomness: n.Randomness, Value: limbs, LeafIndex: uint32(path.Index), MerklePath: path.Path}
+				envelope.AdditionalNullifiers[i-1] = n.Nullifier
+			}
+		}
+		envelope.InputCount = uint64(len(chosen))
+		envelope.Anchor = paths[0].Root
+		change.Sub(total, required)
 	}
 	var recipientStampPath, selfStampPath core.ShieldedV3Path
 	if err := rpc.CallContext(ctx, &recipientStampPath, "tkmprivacy_antarticalStampPath", to.Owner); err != nil {
@@ -417,9 +456,9 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 			return nil, err
 		}
 	}
-	key, err := pqcrypto.NewMLDSA87FromSeed(seed)
-	if err != nil {
-		return nil, err
+	if relay != nil {
+		envelope.Relayed = true
+		envelope.ValidUntil = relay.ValidUntil
 	}
 	pool := params.ShieldedPoolAddress
 	value := new(big.Int)
@@ -431,7 +470,11 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		if err != nil {
 			return nil, err
 		}
-		return types.NewTx(&types.PQTkmTx{ChainID: new(big.Int).SetUint64(identity.ChainID), Nonce: uint64(nonce), GasTipCap: gasPrice, GasFeeCap: gasPrice, Gas: WalletGas, To: &pool, Value: value, Data: data, Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(key)}), nil
+		tip := gasPrice
+		if relay != nil {
+			tip = (*big.Int)(relay.GasTipCap)
+		}
+		return types.NewTx(&types.PQTkmTx{ChainID: new(big.Int).SetUint64(identity.ChainID), Nonce: uint64(nonce), GasTipCap: tip, GasFeeCap: gasPrice, Gas: WalletGas, To: &pool, Value: value, Data: data, Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: signingPublicKey}), nil
 	}
 	unsigned, err := makeTx()
 	if err != nil {
@@ -460,4 +503,56 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		return nil, errors.New("Shield3 proof exceeds the wallet gas budget")
 	}
 	return unsigned, nil
+}
+
+// Prefer one covering note; otherwise the largest available notes minimize
+// input count. Selection never exceeds the fixed four-input consensus budget.
+func selectNotes(notes []OwnedNote, required *big.Int) ([]OwnedNote, error) {
+	if required == nil || required.Sign() <= 0 {
+		return nil, errors.New("invalid required amount")
+	}
+	eligible := make([]OwnedNote, 0, len(notes))
+	seen := map[shielded3.Digest]bool{}
+	for _, n := range notes {
+		value, err := parseAmount(n.ValueWei)
+		if err != nil {
+			return nil, err
+		}
+		if value.Sign() == 0 {
+			continue
+		}
+		if seen[n.Commitment] {
+			return nil, errors.New("duplicate spendable note")
+		}
+		seen[n.Commitment] = true
+		eligible = append(eligible, n)
+	}
+	sort.Slice(eligible, func(i, j int) bool {
+		a, _ := parseAmount(eligible[i].ValueWei)
+		b, _ := parseAmount(eligible[j].ValueWei)
+		if a.Cmp(b) == 0 {
+			return bytes.Compare(eligible[i].Commitment.Bytes(), eligible[j].Commitment.Bytes()) < 0
+		}
+		return a.Cmp(b) < 0
+	})
+	for _, n := range eligible {
+		v, _ := parseAmount(n.ValueWei)
+		if v.Cmp(required) >= 0 {
+			return []OwnedNote{n}, nil
+		}
+	}
+	chosen := make([]OwnedNote, 0, shielded3.InputSlots)
+	total := new(big.Int)
+	for i := len(eligible) - 1; i >= 0 && len(chosen) < shielded3.InputSlots; i-- {
+		chosen = append(chosen, eligible[i])
+		v, _ := parseAmount(eligible[i].ValueWei)
+		total.Add(total, v)
+		if total.Cmp(required) >= 0 {
+			if total.BitLen() > 256 {
+				return nil, errors.New("selected note total overflows uint256")
+			}
+			return chosen, nil
+		}
+	}
+	return nil, errors.New("up to four confirmed Shield3 notes cannot cover this amount and fees; consolidate smaller notes or wait for pending payments")
 }

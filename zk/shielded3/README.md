@@ -31,18 +31,22 @@ Append operations retain known roots; path queries construct witnesses against
 the current canonical tree. Nullifiers and commitments cannot be reused.
 Invalid proofs leave the tree, balances and nullifiers unchanged.
 
-The public claim has **72 words**: chain (2), asset (2), public value (8),
-SHA-512 transaction intent (16 u32 words), anchor (5), nullifier (5), four
-outputs (20), deposit mode (1), gas sponsorship (8 u32 words), and stamp-registry root (5). The 95 secret
-words contain spending secret (5), input randomness (5), input value (8), index
-(1), four owner/randomness/value openings (18 each), and four private stamp indices. The fixed path section adds 32
-five-word note digests and four depth-32 stamp membership paths. Hash domains are owner 3001, commitment 3002 and nullifier
-3003; stamped-owner leaves use 3004. The nullifier hashes chain, asset, owner digest, private randomness and
-value, so viewing-key holders can determine spent status without learning the
-spending-secret preimage.
+The public claim has **88 words**. The original 72-word prefix contains chain
+(2), asset (2), public value (8), SHA-512 transaction intent (16 u32 words),
+anchor (5), first nullifier (5), four output commitments (20), deposit mode (1),
+gas sponsorship (8), and stamp-registry root (5). Three additional nullifiers
+(15) and input count (1) follow. The **137 secret words** retain the 95-word
+prefix (spending secret, first note opening/index, four output openings and
+four stamp indices), followed by three 14-word input openings: randomness (5),
+value (8 u32 limbs), index (1). All active inputs belong to the same proved
+hidden owner. Four depth-32 input paths precede four depth-32 stamp paths,
+**256 five-word digests** total. Inactive additional openings/nullifiers/paths
+are canonical zeros. Hash domains are owner 3001, commitment 3002, nullifier
+3003 and stamped-owner leaf 3004. Full-width checked addition conserves the
+aggregate input value; duplicate inputs and aggregate overflow are invalid.
 
 Proof encoding is canonical and bounded to 8 MiB, with a maximum padded trace
-of 32,768 rows. The verifier bounds hostile trace exponents before any shift.
+of 65,536 rows. The verifier bounds hostile trace exponents before any shift.
 Activated gas pricing charges 3,000,000 verifier gas plus one gas per proof
 byte; other envelope data retains ordinary calldata pricing. Antartical enables
 the existing 8 MiB encoded block cap. The miner reserves 64 KiB for block
@@ -63,7 +67,7 @@ zero-value decoys and stamps are all padded to the same 5,785-byte ciphertext:
 role, chain ID and the full hiding commitment context. Decapsulation must be
 followed by successful AEAD authentication.
 
-Incoming, outgoing and stamp seeds are derived independently from the wallet
+Incoming, outgoing, stamp and selective-disclosure auditor seeds are derived independently from the wallet
 seed, scoped to chain and purpose. A receiving code authenticates its owner,
 ML-KEM public keys and encrypted stamp with ML-DSA-87. Public keys allow
 encapsulation, never note or stamp decryption. A viewing backup contains
@@ -74,8 +78,8 @@ prevent guessing stamps from hashes of short names or countries.
 
 Encryption hides private note values and recipient records. The existing PQ
 outer transaction still exposes its signer account, timing, gas and fees;
-public funding deposits and withdrawals expose their amounts. This integration
-does not establish sender anonymity. Triton VM defaults target 160 bits of
+public funding deposits and withdrawals expose their amounts. Direct sends expose the payer signer. Shared relays can instead expose an
+operator signer, as described below; this does not provide network anonymity. Triton VM defaults target 160 bits of
 conjectured classical IOP soundness; that figure is not a claim of 160-bit
 quantum security. No component guarantees permanent secrecy after private-key
 exposure or absolute resistance to future attacks.
@@ -135,13 +139,12 @@ paths and canonical/pending nullifier status. It does not receive spending
 secrets or viewing seeds. Viewing scans check the starting head's canonical hash
 before returning balances and exclude pending or already spent notes.
 
-The wallet builds one input per proof and selects a confirmed note covering the
-amount and fees. It reports when balances are split across smaller notes that
-cannot cover a single requested send. Funding creates a suitable note. Private
-sends, funding and legacy migrations display their transaction hash as
-unconfirmed until a canonical receipt appears. Shield3 signed transaction bytes
-and request digests are saved locally before broadcast; retrying a stable
-request ID retains the exact transaction after an RPC timeout or GUI restart.
+The wallet prefers the smallest sufficient confirmed note, otherwise combines
+up to four largest confirmed notes. All paths come from one canonical state
+snapshot. Pending, spent and locally reserved relay notes are excluded. It
+reports insufficient coverage when even four notes cannot pay the amount and
+fees. Funding and signed sends retain exact raw bytes and stable request IDs
+across uncertain RPC responses and wallet restarts.
 
 Legacy Shield2 funds remain accessible through a restricted bridge: one entire
 V2 note may be withdrawn to its own PQ signer with no sponsorship or private
@@ -198,3 +201,11 @@ submissions use durable stable request IDs and preserve exact raw bytes on
 uncertain RPC responses. There is no automatic unlimited sponsor service or
 free gas; sponsors explicitly approve each registration. These rules activate
 at the existing Antartical timestamp, October 1, 2026 00:00 UTC.
+
+## Shared relays and selective disclosure
+
+See [the complete Antartical implementation guide](../../docs/SHIELD3_ANTARTICAL.md)
+for the relay authorization protocol, durable draft reservations, scoped
+payment disclosures, wallet instructions, RPC surface and rollout requirements.
+These features activate at the existing Antartical time. There is no additional
+fork timestamp. Every validating node must embed the updated fixed relation.

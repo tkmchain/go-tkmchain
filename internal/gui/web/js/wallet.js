@@ -345,6 +345,55 @@
     return update;
   }
 
+
+  function shield3Extras(container,select,password,status,stampControls,updateStamp) {
+    const download=(value,name)=>{const url=URL.createObjectURL(new Blob([JSON.stringify(value)],{type:'application/json'}));el('a',{href:url,download:name}).click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    const row=(text,input)=>el('div',{class:'form-row'},[el('label',{text}),input]);
+    const relayInput=el('textarea',{class:'txt',rows:'5',placeholder:'Paste a signed fee offer or relay payment packet','aria-label':'Relay packet'});
+    const recipient=el('textarea',{class:'txt',rows:'3',placeholder:'tkmshield3.…','aria-label':'Relay receiving address'}),amount=el('input',{class:'txt',inputmode:'decimal','aria-label':'Relay amount'});
+    const file=el('input',{type:'file',accept:'.json,application/json','aria-label':'Load relay packet'});
+    const offer=el('button',{class:'btn secondary',text:'Create operator fee offer'}),prepare=el('button',{class:'btn gold',text:'Prepare payment through relay'}),review=el('button',{class:'btn secondary',text:'Review as operator'}),submit=el('button',{class:'btn gold',text:'Confirm operator submission'}),check=el('button',{class:'btn secondary',text:'Check prepared payment'});
+    submit.disabled=true;let reviewed=null;
+    const resetReview=()=>{reviewed=null;submit.disabled=true};relayInput.oninput=resetReview;select.addEventListener('change',resetReview);
+    file.onchange=async()=>{try{if(!file.files[0])return;if(file.files[0].size>20*1024*1024)throw Error('Relay packet exceeds 20 MB.');relayInput.value=await file.files[0].text();resetReview()}catch(e){status.textContent=e.message}};
+    const draftKey='tkm-shield3-relay-draft-v1';
+    const run=async stage=>{
+      const buttons=[offer,prepare,review,submit,check];buttons.forEach(b=>b.disabled=true);[select,password,relayInput,recipient,amount,file].forEach(input=>input.disabled=true);
+      try{
+        let packet={},requestId;
+        if(['prepare','review','submit'].includes(stage))packet=JSON.parse(relayInput.value);
+        if(stage==='prepare'){
+          const engine=await GUI.engine(),quote=await engine.shield3ReviewRelayOffer({relay:packet,rpcToken:GUI.rpcToken()});engine.validateShield3Amount(amount.value.trim());
+          if(!confirm('Send '+amount.value.trim()+' TKM through '+quote.relay+'? Your notes pay the full reserved gas budget of '+fmtTKM(quote.gasReserveWei,18)+' TKM. The operator keeps unused gas. Notes remain reserved until submission or '+new Date(quote.validUntil*1000).toLocaleString()+'.'))return;
+          const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({account:select.value,offer:packet,recipient:recipient.value.trim(),amount:amount.value.trim()}))))).map(b=>b.toString(16).padStart(2,'0')).join('');
+          let saved={};try{saved=JSON.parse(localStorage.getItem(draftKey)||'{}')}catch(e){}
+          if(saved.digest!==digest)saved={digest,account:select.value,requestId:crypto.randomUUID()};requestId=saved.requestId;localStorage.setItem(draftKey,JSON.stringify(saved));
+        }else if(stage==='status'){
+          let imported={};try{imported=JSON.parse(relayInput.value)}catch(e){}if(typeof imported.requestId==='string'&&imported.requestId.length>=16&&imported.requestId.length<=128){requestId=imported.requestId;}else{const saved=JSON.parse(localStorage.getItem(draftKey)||'{}');if(saved.account!==select.value||!saved.requestId)throw Error('Import your own prepared payment packet, or prepare a payment first.');requestId=saved.requestId;}
+        }else if(stage==='submit'){
+          if(!reviewed||packet.transaction!==reviewed.transaction)throw Error('Review this packet before submission.');
+          if(!confirm('Submit this verified packet? Reserved gas budget: '+fmtTKM(reviewed.gasReserveWei,18)+' TKM.'))return;
+          const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(packet.transaction)))).map(b=>b.toString(16).padStart(2,'0')).join('');requestId='relay-'+digest;
+        }
+        const {engine,options}=await shield3Unlock(select.value,password.value);
+        status.textContent=stage==='prepare'?'Building your private relay proof…':'Checking relay payment…';
+        const result=await engine.shield3Relay({...options,stage,relay:stage==='prepare'?packet:undefined,transaction:packet.transaction,recipient:recipient.value.trim(),amount:stage==='prepare'?amount.value.trim():undefined,requestId});
+        if(stage==='review'){reviewed=result;status.textContent='Verified operator: '+result.relay+' · '+result.inputCount+' inputs · reserved gas: '+fmtTKM(result.gasReserveWei,18)+' TKM · expires '+new Date(result.validUntil*1000).toLocaleString()+'. The recipient and amount stay encrypted.';}
+        else if(stage==='submit'||stage==='status'){status.textContent=result.status+(result.transactionHash?': '+result.transactionHash:'');if(result.transactionHash&&result.status!=='conflicting inputs')recordTransfer(result.transactionHash,{account:select.value,shield3:true});}
+        else {download(result,stage==='offer'?'tkm-relay-offer.json':'tkm-relay-payment.json');status.textContent=stage==='offer'?'Signed fee offer downloaded. Share it with payers. Using another transaction invalidates this nonce offer.':'Payment packet downloaded. Give it to the shared operator. This draft is not yet a transaction hash; check its status after submission.';}
+      }catch(e){status.textContent=e.message}finally{password.value='';[select,password,relayInput,recipient,amount,file].forEach(input=>input.disabled=false);buttons.forEach(b=>b.disabled=false);if(updateStamp)await updateStamp();submit.disabled=!reviewed||review.disabled;}
+    };
+    offer.onclick=()=>run('offer');prepare.onclick=()=>run('prepare');review.onclick=()=>run('review');submit.onclick=()=>run('submit');check.onclick=()=>run('status');
+    stampControls.push(offer,prepare,review);
+    container.body.append(el('details',{class:'wallet-stamp-sponsorship'},[el('summary',{text:'Shared relay · hide your payer account on-chain'}),el('p',{class:'dim',text:'Use a shared stamped operator. Your private notes fund the full fee reserve. The operator account and timing remain visible, and the operator may correlate your network connection. Combine up to four notes automatically.'}),row('Signed offer or payment packet',relayInput),file,row('Recipient for preparation',recipient),row('Amount (TKM)',amount),el('div',{class:'btn-row'},[offer,prepare,review,submit,check])]));
+    const tx=el('input',{class:'txt',placeholder:'0x…','aria-label':'Payment transaction hash'}),slot=el('select',{class:'txt','aria-label':'Payment output'});[0,1,2].forEach(n=>slot.append(el('option',{value:String(n),text:'Payment output '+(n+1)})));
+    const auditPub=el('textarea',{class:'txt',rows:'3',placeholder:'Optional auditor public key','aria-label':'Auditor public key'}),bundle=el('textarea',{class:'txt',rows:'5','aria-label':'Payment disclosure bundle'}),auditSeed=el('input',{class:'txt',type:'password',autocomplete:'off','aria-label':'Private auditor key'});
+    const exportButton=el('button',{class:'btn secondary',text:'Download selected payment disclosure'}),keyButton=el('button',{class:'btn secondary',text:'Download auditor keys'}),verifyButton=el('button',{class:'btn secondary',text:'Verify selected payment'});
+    const disclosure=async stage=>{[exportButton,keyButton,verifyButton].forEach(b=>b.disabled=true);try{let result;if(stage==='verify'){const value=JSON.parse(bundle.value),engine=await GUI.engine();result=await engine.shield3Disclosure({stage,rpcToken:GUI.rpcToken(),disclosure:value.recordKey?value:undefined,capsule:value.ciphertext?value:undefined,auditKey:auditSeed.value.trim()||undefined});status.textContent='Confirmed selected payment: '+fmtTKM(result.amountWei,18)+' TKM to '+result.recipient+' · '+result.transactionHash;}else{const {engine,options}=await shield3Unlock(select.value,password.value);if(stage==='export'&&!/^0x[0-9a-fA-F]{64}$/.test(tx.value.trim()))throw Error('Enter the confirmed payment transaction hash.');result=await engine.shield3Disclosure({...options,stage,transactionHash:stage==='export'?tx.value.trim():undefined,outputIndex:Number(slot.value),auditPublicKey:auditPub.value.trim()||undefined});download(result,stage==='key'?'tkm-private-auditor-keys.json':'tkm-selected-payment-disclosure.json');status.textContent=stage==='key'?'Private auditor key file downloaded. Share only its publicKey field.':'Selected payment disclosure downloaded. Protect it: it reveals this output and can link its later spend.';}}catch(e){status.textContent=e.message}finally{password.value='';auditSeed.value='';[exportButton,keyButton,verifyButton].forEach(b=>b.disabled=false)}};
+    exportButton.onclick=()=>disclosure('export');keyButton.onclick=()=>disclosure('key');verifyButton.onclick=()=>disclosure('verify');
+    container.body.append(el('details',{class:'wallet-stamp-sponsorship'},[el('summary',{text:'Disclose or verify one payment'}),el('p',{class:'dim',text:'Reveal one confirmed recipient and amount without giving access to other wallet notes. Change and empty outputs are excluded. This proves a payment output, not the hidden payer identity. The disclosed opening can link that output’s later spend.'}),row('Confirmed transaction hash',tx),row('Selected payment',slot),row('Encrypt for an auditor (optional)',auditPub),el('div',{class:'btn-row'},[exportButton,keyButton]),row('Disclosure JSON to verify',bundle),row('Private auditor key for encrypted disclosure',auditSeed),verifyButton]));
+    return ()=>{auditSeed.value='';bundle.value='';resetReview()};
+  }
   async function renderShield3Send(container) {
     container.body.innerHTML='';const accounts=await walletAccounts();
     const from=el('select',{class:'txt',id:'shield3-from'});accounts.forEach(address=>from.appendChild(el('option',{value:address,text:address})));
@@ -354,13 +403,14 @@
     const send=el('button',{class:'btn gold',text:'Review Shield3 transfer'}),confirm=el('button',{class:'btn gold',text:'Confirm & send'}),cancel=el('button',{class:'btn secondary',text:'Cancel'});
     const row=(text,input)=>el('div',{class:'form-row'},[el('label',{for:input.id,text}),input]);
     container.body.append(row('From · PQ wallet',from),row('Wallet password',pass));
-    const updateStamp=consensusStampGate(container,from,pass,[send,confirm]);
-    container.body.append(el('p',{class:'dim',text:'Private Shield3 send · maximum 5,000,000 TKM per send. Shield public funds in Receive first.'}),row('To · Shield3 receiving address',to),row('Amount (TKM)',amount),send,review,status);
+    const stampControls=[send,confirm];const updateStamp=consensusStampGate(container,from,pass,stampControls);
+    container.body.append(el('p',{class:'dim',text:'Private Shield3 send · maximum 5,000,000 TKM per send. Shield public funds in Receive first. Automatically combines up to four spendable notes.'}),row('To · Shield3 receiving address',to),row('Amount (TKM)',amount),send,review,status);
     await updateStamp();
     let prepared=null;const invalidate=()=>{prepared=null;review.hidden=true;};[from,to,amount,pass].forEach(input=>input.addEventListener('input',invalidate));cancel.onclick=invalidate;
     send.onclick=async()=>{try{const engine=await GUI.engine();engine.validateShield3Amount(amount.value.trim());if(!from.value||!pass.value)throw Error('Choose your wallet and enter its password.');const recipient=await engine.validateShield3Recipient(to.value.trim(),{rpcToken:GUI.rpcToken()});prepared={account:from.value,recipient_address:to.value.trim(),amount:amount.value.trim(),requestId:crypto.randomUUID()};review.replaceChildren(el('h3',{text:'Review private Shield3 transfer'}),el('p',{text:prepared.amount+' TKM · network fee additional'}),el('p',{class:'mono',text:'Recipient: '+recipient.address}),el('div',{class:'btn-row'},[confirm,cancel]));review.hidden=false;status.textContent='Confirm the receiving address and amount.';}catch(e){status.textContent=e.message;}};
     confirm.onclick=async()=>{if(!prepared)return;const intent={...prepared};const password=pass.value;[send,confirm,cancel,from,to,amount,pass].forEach(input=>input.disabled=true);try{status.textContent='Building the Shield3 proof…';const {engine,options}=await shield3Unlock(intent.account,password);const hashes=await engine.sendTKM({...options,intent,requestId:intent.requestId,onProgress:text=>status.textContent=text,onSubmitted:(_,hash)=>recordTransfer(hash,intent)});status.textContent='Unconfirmed: '+hashes.join(', ')+'. Check Activity before retrying.';invalidate();}catch(e){status.textContent=e.message;}finally{pass.value='';[send,confirm,cancel,from,to,amount,pass].forEach(input=>input.disabled=false);await updateStamp();}};
-    container.clearSecrets=()=>{pass.value='';invalidate();};
+    const clearExtras=shield3Extras(container,from,pass,status,stampControls,updateStamp);
+    await updateStamp();container.clearSecrets=()=>{pass.value='';invalidate();clearExtras();};
   }
   async function renderShield3Receive(container) {
     container.body.innerHTML='';const select=el('select',{class:'txt',id:'shield3-receive'});(await walletAccounts()).forEach(address=>select.appendChild(el('option',{value:address,text:address})));
@@ -385,7 +435,8 @@
     migrate.onclick=()=>{if(!confirm('Withdraw one entire Shield2 note to your own public account? Its value becomes public. After confirmation, use Shield public funds to move it into Shield3.'))return;run(async({engine,options})=>{migrate.disabled=true;try{const hash=await engine.migrateShield2Note({...options,onProgress:text=>status.textContent=text,onSubmitted:(hash,amount)=>recordTransfer(hash,{amount,account:select.value})});status.textContent='Migration unconfirmed: '+hash+'. Wait for confirmation before migrating another note or shielding funds.';}finally{migrate.disabled=false;}});};
     stampControls.push(migrate);
     container.body.append(el('hr'),el('h3',{text:'Move Shield2 funds into Shield3'}),el('p',{class:'dim',text:'Migrate each legacy note to your own public balance, wait for confirmation, then shield the confirmed balance. This migration reveals its amount.'}),migrate);
-    const clear=()=>{pass.value='';keys.value='';keys.hidden=true;};container.clearSecrets=clear;select.onchange=()=>{clear();code.value='';};await updateStamp();
+    const clearExtras=shield3Extras(container,select,pass,status,stampControls,updateStamp);
+    const clear=()=>{pass.value='';keys.value='';keys.hidden=true;clearExtras();};container.clearSecrets=clear;select.onchange=()=>{clear();code.value='';};await updateStamp();
   }
 
   async function renderActivity(container) {

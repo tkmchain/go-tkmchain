@@ -21,9 +21,10 @@ import (
 const (
 	MerkleDepth   = 32
 	OutputSlots   = 4
+	InputSlots    = 4
 	fieldModulus  = uint64(0xffffffff00000001)
-	publicWords   = 72
-	secretWords   = 95
+	publicWords   = 88
+	secretWords   = 137
 	maxProofWords = 1 << 20
 	MaxProofSize  = 4 + maxProofWords*8
 	protocolMagic = "TKMS3STK"
@@ -73,16 +74,18 @@ func (a Amount) Big() *big.Int {
 // must supply the canonical anchor and reject previously recorded nullifiers.
 // Neither sender identity nor private note values are public inputs here.
 type Statement struct {
-	Deposit     bool
-	ChainID     uint64
-	AssetID     uint64
-	PublicValue Amount
-	GasSponsor  Amount
-	Intent      [64]byte
-	Anchor      Digest
-	Nullifier   Digest
-	Outputs     [OutputSlots]Digest
-	StampRoot   Digest
+	Deposit              bool
+	ChainID              uint64
+	AssetID              uint64
+	PublicValue          Amount
+	GasSponsor           Amount
+	Intent               [64]byte
+	Anchor               Digest
+	Nullifier            Digest
+	Outputs              [OutputSlots]Digest
+	StampRoot            Digest
+	AdditionalNullifiers [InputSlots - 1]Digest
+	InputCount           uint32
 }
 
 // OutputOpening is private witness data for one fixed output slot. The owner
@@ -94,15 +97,23 @@ type OutputOpening struct {
 	Value      Amount
 }
 
+type InputOpening struct {
+	Randomness Digest
+	Value      Amount
+	LeafIndex  uint32
+	MerklePath [MerkleDepth]Digest
+}
+
 type SpendWitness struct {
-	SpendingSecret Digest
-	Randomness     Digest
-	Value          Amount
-	LeafIndex      uint32
-	Outputs        [OutputSlots]OutputOpening
-	MerklePath     [MerkleDepth]Digest
-	StampIndices   [OutputSlots]uint32
-	StampPaths     [OutputSlots][MerkleDepth]Digest
+	AdditionalInputs [InputSlots - 1]InputOpening
+	SpendingSecret   Digest
+	Randomness       Digest
+	Value            Amount
+	LeafIndex        uint32
+	Outputs          [OutputSlots]OutputOpening
+	MerklePath       [MerkleDepth]Digest
+	StampIndices     [OutputSlots]uint32
+	StampPaths       [OutputSlots][MerkleDepth]Digest
 }
 
 // STARKBackend calls the pinned native verifier through a bounded binary
@@ -152,6 +163,31 @@ func (s Statement) words() ([]uint64, error) {
 	if s.StampRoot == (Digest{}) || !canonical(words) {
 		return nil, ErrInvalidStatement
 	}
+	count := s.InputCount
+	if !s.Deposit && count == 0 {
+		count = 1
+	}
+	if count > InputSlots || s.Deposit != (count == 0) {
+		return nil, ErrInvalidStatement
+	}
+	seen := map[Digest]bool{}
+	for i, n := range append([]Digest{s.Nullifier}, s.AdditionalNullifiers[:]...) {
+		if uint32(i) < count {
+			if n == (Digest{}) || seen[n] {
+				return nil, ErrInvalidStatement
+			}
+			seen[n] = true
+		} else if n != (Digest{}) {
+			return nil, ErrInvalidStatement
+		}
+		if i > 0 {
+			words = append(words, n[:]...)
+		}
+	}
+	words = append(words, uint64(count))
+	if len(words) != publicWords || !canonical(words) {
+		return nil, ErrInvalidStatement
+	}
 	return words, nil
 }
 
@@ -174,6 +210,13 @@ func (w SpendWitness) words() ([]uint64, error) {
 	}
 	for _, index := range w.StampIndices {
 		words = append(words, uint64(index))
+	}
+	for _, input := range w.AdditionalInputs {
+		words = append(words, input.Randomness[:]...)
+		for _, limb := range input.Value {
+			words = append(words, uint64(limb))
+		}
+		words = append(words, uint64(input.LeafIndex))
 	}
 	if len(words) != secretWords || !canonical(words) {
 		return nil, ErrInvalidWitness
@@ -380,7 +423,10 @@ func (b *STARKBackend) run(ctx context.Context, operation string, input []byte, 
 }
 
 func (w SpendWitness) allPaths() []Digest {
-	paths := append(make([]Digest, 0, MerkleDepth*(1+OutputSlots)), w.MerklePath[:]...)
+	paths := append(make([]Digest, 0, MerkleDepth*(InputSlots+OutputSlots)), w.MerklePath[:]...)
+	for _, input := range w.AdditionalInputs {
+		paths = append(paths, input.MerklePath[:]...)
+	}
 	for _, path := range w.StampPaths {
 		paths = append(paths, path[:]...)
 	}

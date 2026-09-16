@@ -34,16 +34,62 @@ type ShieldedV3Output struct {
 	Stamp      []byte
 }
 type ShieldedV3Transaction struct {
-	Version             uint64
-	Deposit             bool
-	Anchor              shielded3.Digest
-	Nullifier           shielded3.Digest
-	StampRoot           shielded3.Digest
-	Outputs             [shielded3.OutputSlots]ShieldedV3Output
-	WithdrawalRecipient common.Address
-	WithdrawalValue     *big.Int
-	GasSponsorValue     *big.Int
-	Proof               []byte
+	Version              uint64
+	Deposit              bool
+	Anchor               shielded3.Digest
+	Nullifier            shielded3.Digest
+	StampRoot            shielded3.Digest
+	Outputs              [shielded3.OutputSlots]ShieldedV3Output
+	WithdrawalRecipient  common.Address
+	WithdrawalValue      *big.Int
+	GasSponsorValue      *big.Int
+	Proof                []byte
+	AdditionalNullifiers [shielded3.InputSlots - 1]shielded3.Digest `rlp:"optional"`
+	InputCount           uint64                                     `rlp:"optional"`
+	Relayed              bool                                       `rlp:"optional"`
+	ValidUntil           uint64                                     `rlp:"optional"`
+}
+
+// ShieldedV3Nullifiers returns exactly the active, distinct nullifiers. A zero
+// count preserves the old single-input envelope convention for private spends.
+func ShieldedV3Nullifiers(e *ShieldedV3Transaction) ([]shielded3.Digest, error) {
+	if e == nil {
+		return nil, ErrInvalidShieldedTx
+	}
+	count := e.InputCount
+	if !e.Deposit && count == 0 {
+		count = 1
+	}
+	if count > shielded3.InputSlots || e.Deposit != (count == 0) {
+		return nil, ErrInvalidShieldedTx
+	}
+	all := append([]shielded3.Digest{e.Nullifier}, e.AdditionalNullifiers[:]...)
+	seen := map[shielded3.Digest]bool{}
+	for i, n := range all {
+		if _, err := shielded3.DigestFromBytes(n.Bytes()); err != nil {
+			return nil, err
+		}
+		if uint64(i) < count {
+			if n == (shielded3.Digest{}) || seen[n] {
+				return nil, ErrInvalidShieldedTx
+			}
+			seen[n] = true
+		} else if n != (shielded3.Digest{}) {
+			return nil, ErrInvalidShieldedTx
+		}
+	}
+	return all[:count], nil
+}
+
+func ValidateShieldedV3Time(e *ShieldedV3Transaction, time uint64) error {
+	if e.Relayed {
+		if e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.ValidUntil <= time || e.ValidUntil-time > AntarticalStampSponsorshipLifetime {
+			return fmt.Errorf("%w: invalid or expired relay authorization", ErrInvalidShieldedTx)
+		}
+	} else if e.ValidUntil != 0 {
+		return fmt.Errorf("%w: expiry requires relay mode", ErrInvalidShieldedTx)
+	}
+	return nil
 }
 
 func HasShieldedV3Prefix(data []byte) bool { return bytes.HasPrefix(data, []byte(ShieldedV3Magic)) }
@@ -126,6 +172,15 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if e.WithdrawalValue == nil || e.GasSponsorValue == nil || e.WithdrawalValue.Sign() < 0 || e.GasSponsorValue.Sign() < 0 {
 		return fail("invalid Shield3 public values")
 	}
+	if err := ValidateShieldedV3Time(e, time); err != nil {
+		return nil, err
+	}
+	if _, err := ShieldedV3Nullifiers(e); err != nil {
+		return fail("invalid input count or nullifiers")
+	}
+	if e.Relayed && e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+		return fail("relay requires the exact authorized gas reserve")
+	}
 	release := new(big.Int).Add(e.WithdrawalValue, e.GasSponsorValue)
 	if e.WithdrawalValue.Cmp(shielded3.MaxSendWei()) > 0 {
 		return fail("Shield3 send exceeds 5000000 TKM")
@@ -195,6 +250,8 @@ func ShieldedV3Statement(tx *types.Transaction, e *ShieldedV3Transaction) (shiel
 		return shielded3.Statement{}, err
 	}
 	s := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shielded3.AssetTKM, PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit}
+	s.InputCount = uint32(e.InputCount)
+	s.AdditionalNullifiers = e.AdditionalNullifiers
 	for i := range e.Outputs {
 		s.Outputs[i] = e.Outputs[i].Commitment
 	}
@@ -229,9 +286,15 @@ func validateShieldedV3State(st *state.StateDB, tx *types.Transaction, e *Shield
 	if e.WithdrawalValue.Sign() > 0 && !IsAntarticalStamped(st, e.WithdrawalRecipient) {
 		return ErrUnstampedAddress
 	}
+	nullifiers, err := ShieldedV3Nullifiers(e)
+	if err != nil {
+		return err
+	}
 	if !e.Deposit {
-		if ShieldedV3NullifierTransaction(st, e.Nullifier) != (common.Hash{}) {
-			return fmt.Errorf("%w: Shield3 nullifier already spent", ErrInvalidShieldedTx)
+		for _, n := range nullifiers {
+			if ShieldedV3NullifierTransaction(st, n) != (common.Hash{}) {
+				return fmt.Errorf("%w: Shield3 nullifier already spent", ErrInvalidShieldedTx)
+			}
 		}
 		if st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("root", e.Anchor.Bytes())) == (common.Hash{}) {
 			return fmt.Errorf("%w: unknown Shield3 note root", ErrInvalidShieldedTx)
@@ -259,9 +322,12 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 	if err = validateShieldedV3State(st, tx, e); err != nil {
 		return err
 	}
-	blockKey := ShieldedV3StateSlot("block-nullifier", e.Nullifier.Bytes())
-	if !e.Deposit {
-		if _, ok := seen[blockKey]; ok {
+	nullifiers, err := ShieldedV3Nullifiers(e)
+	if err != nil {
+		return err
+	}
+	for _, n := range nullifiers {
+		if _, ok := seen[ShieldedV3StateSlot("block-nullifier", n.Bytes())]; ok {
 			return fmt.Errorf("%w: duplicate Shield3 nullifier in block", ErrInvalidShieldedTx)
 		}
 	}
@@ -285,9 +351,9 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 		}
 		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("commitment", out.Commitment.Bytes()), tx.Hash())
 	}
-	if !e.Deposit {
-		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("nullifier", e.Nullifier.Bytes()), tx.Hash())
-		seen[blockKey] = struct{}{}
+	for _, n := range nullifiers {
+		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("nullifier", n.Bytes()), tx.Hash())
+		seen[ShieldedV3StateSlot("block-nullifier", n.Bytes())] = struct{}{}
 	}
 	for _, release := range []struct {
 		to    common.Address

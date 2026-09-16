@@ -57,3 +57,15 @@ export async function shield3StampSponsorship(options) {
  const release=acquireWalletOperation();
  try{return await privateOperation(operation,options,{recipient:options.recipient,sponsorship:options.sponsorship,requestId:options.requestId})}finally{release()}
 }
+
+export async function shield3Relay(options) {
+ const operation={offer:'relay-offer',prepare:'prepare-relay',review:'review-relay',submit:'submit-relay',status:'relay-status'}[options.stage];
+ if(!operation)throw Error('Choose a relay step.');
+ const release=acquireWalletOperation();
+ try{return await privateOperation(operation,options,{relay:options.relay,relayTransaction:options.transaction,recipient:options.recipient,amountWei:options.amount?validateShield3Amount(options.amount).toString():undefined,requestId:options.requestId})}finally{release()}
+}
+export function shield3ReviewRelayOffer(options){return walletRequest('review-relay-offer',{relay:options.relay},options)}
+export async function shield3Disclosure(options){
+ if(options.stage==='verify')return walletRequest('verify-disclosure',{disclosure:options.disclosure,capsule:options.capsule,auditKey:options.auditKey},options);
+ return privateOperation(options.stage==='key'?'disclosure-key':'export-disclosure',options,{transactionHash:options.transactionHash,outputIndex:options.outputIndex,auditPublicKey:options.auditPublicKey});
+}

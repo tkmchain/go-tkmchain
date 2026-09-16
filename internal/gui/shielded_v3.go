@@ -20,20 +20,30 @@ import (
 )
 
 type shield3RequestRecord struct {
-	Digest    [64]byte
-	Raw       hexutil.Bytes
-	Hash      common.Hash
-	Submitted bool
+	Digest       [64]byte
+	Raw          hexutil.Bytes
+	Hash         common.Hash
+	Unsigned     bool           `json:"unsigned,omitempty"`
+	DraftAccount common.Address `json:"draftAccount,omitempty"`
+	Submitted    bool
 }
 type shield3Request struct {
-	Sponsorship hexutil.Bytes                   `json:"sponsorship,omitempty"`
-	Seed        hexutil.Bytes                   `json:"seed"`
-	Stamp       *pqcrypto.ShieldedV3StampRecord `json:"stamp"`
-	Account     common.Address                  `json:"account"`
-	Recipient   string                          `json:"recipient"`
-	AmountWei   string                          `json:"amountWei"`
-	RequestID   string                          `json:"requestId"`
-	View        *shield3wallet.ViewKey          `json:"view"`
+	Relay            *shield3wallet.RelayOffer        `json:"relay,omitempty"`
+	RelayTransaction hexutil.Bytes                    `json:"relayTransaction,omitempty"`
+	TransactionHash  *common.Hash                     `json:"transactionHash,omitempty"`
+	OutputIndex      uint64                           `json:"outputIndex,omitempty"`
+	Disclosure       *shield3wallet.PaymentDisclosure `json:"disclosure,omitempty"`
+	Capsule          *shield3wallet.DisclosureCapsule `json:"capsule,omitempty"`
+	AuditKey         hexutil.Bytes                    `json:"auditKey,omitempty"`
+	AuditPublicKey   hexutil.Bytes                    `json:"auditPublicKey,omitempty"`
+	Sponsorship      hexutil.Bytes                    `json:"sponsorship,omitempty"`
+	Seed             hexutil.Bytes                    `json:"seed"`
+	Stamp            *pqcrypto.ShieldedV3StampRecord  `json:"stamp"`
+	Account          common.Address                   `json:"account"`
+	Recipient        string                           `json:"recipient"`
+	AmountWei        string                           `json:"amountWei"`
+	RequestID        string                           `json:"requestId"`
+	View             *shield3wallet.ViewKey           `json:"view"`
 }
 
 func shield3LocalRequest(r *http.Request) bool {
@@ -67,13 +77,13 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
+	case "relay-status", "review-relay-offer", "relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
 	}
 	requestLimit := int64(512 << 10)
-	if operation == "authorize-stamp" || operation == "review-sponsorship" || operation == "sponsor-stamp" {
+	if operation == "prepare-relay" || operation == "review-relay" || operation == "submit-relay" || operation == "authorize-stamp" || operation == "review-sponsorship" || operation == "sponsor-stamp" {
 		requestLimit = 20 << 20 // bounded hex-encoded native proof packet
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, requestLimit))
@@ -137,6 +147,42 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		reply(scan)
 		return
 	}
+	if operation == "review-relay-offer" {
+		result, err := shield3wallet.ReviewRelayOffer(r.Context(), g.client, req.Relay, chainID.Uint64())
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(result)
+		return
+	}
+	defer clear(req.AuditKey)
+	if req.Disclosure != nil {
+		defer clear(req.Disclosure.RecordKey)
+	}
+	if operation == "verify-disclosure" {
+		disclosure := req.Disclosure
+		if req.Capsule != nil {
+			d, err := shield3wallet.OpenPaymentDisclosure(*req.Capsule, req.AuditKey)
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			defer clear(d.RecordKey)
+			disclosure = &d
+		}
+		if disclosure == nil || disclosure.ChainID != chainID.Uint64() {
+			fail(400, errors.New("invalid disclosure chain"))
+			return
+		}
+		result, err := shield3wallet.VerifyPaymentDisclosure(r.Context(), g.client, *disclosure)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(result)
+		return
+	}
 	identity, err := shield3wallet.NewIdentity(req.Seed, chainID.Uint64(), req.Stamp)
 	if err != nil {
 		fail(400, err)
@@ -145,6 +191,89 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	defer identity.Clear()
 	if req.Account != (common.Address{}) && req.Account != identity.Address {
 		fail(400, errors.New("wallet account does not match its private seed"))
+		return
+	}
+	if operation == "relay-status" {
+		if len(req.RequestID) < 16 || len(req.RequestID) > 128 {
+			fail(400, errors.New("invalid relay request ID"))
+			return
+		}
+		g.shield3Mu.Lock()
+		record := g.shield3Requests[req.RequestID]
+		if record == nil {
+			record, err = g.loadShield3Submission(req.RequestID)
+		}
+		g.shield3Mu.Unlock()
+		if err != nil {
+			fail(500, err)
+			return
+		}
+		if record == nil || !record.Unsigned || record.DraftAccount != identity.Address {
+			fail(400, errors.New("relay draft does not belong to this wallet"))
+			return
+		}
+		result, err := g.shield3RelayStatus(r.Context(), record)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(result)
+		return
+	}
+	if operation == "relay-offer" {
+		offer, err := shield3wallet.BuildRelayOffer(r.Context(), g.client, req.Seed, identity)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(offer)
+		return
+	}
+	if operation == "review-relay" {
+		packet, err := shield3wallet.ReviewRelaySubmission(r.Context(), g.client, req.Seed, identity, req.RelayTransaction)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(packet)
+		return
+	}
+	if operation == "disclosure-key" {
+		seed, err := pqcrypto.DeriveShieldedV3ViewKey(req.Seed, identity.ChainID, pqcrypto.ShieldedV3Disclosure)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		defer clear(seed)
+		pub, err := pqcrypto.ShieldedV3ViewPublicKey(seed)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(map[string]any{"chainId": identity.ChainID, "auditKey": hexutil.Bytes(seed), "publicKey": hexutil.Bytes(pub)})
+		return
+	}
+	if operation == "export-disclosure" {
+		if req.TransactionHash == nil {
+			fail(400, errors.New("transaction hash required"))
+			return
+		}
+		d, err := shield3wallet.ExportPaymentDisclosure(r.Context(), g.client, identity, *req.TransactionHash, req.OutputIndex)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		defer clear(d.RecordKey)
+		if len(req.AuditPublicKey) > 0 {
+			c, err := shield3wallet.SealPaymentDisclosure(d, req.AuditPublicKey)
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			reply(c)
+		} else {
+			reply(d)
+		}
 		return
 	}
 	switch operation {
@@ -161,7 +290,14 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		view := identity.ViewKey()
 		defer clear(view.Incoming)
 		defer clear(view.Outgoing)
-		scan, err := shield3wallet.Scan(r.Context(), g.client, view)
+		g.shield3Mu.Lock()
+		walletRPC, err := g.shield3ReservedRPC(r.Context(), identity.Address)
+		g.shield3Mu.Unlock()
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		scan, err := shield3wallet.Scan(r.Context(), walletRPC, view)
 		if err != nil {
 			fail(400, err)
 			return
@@ -192,7 +328,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	amount, ok := new(big.Int).SetString(req.AmountWei, 10)
-	if operation == "register-stamp" || operation == "sponsor-stamp" {
+	if operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" {
 		amount, ok = new(big.Int), true
 	}
 	if !ok {
@@ -200,7 +336,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recipientCode := req.Recipient
-	if operation == "shield" || operation == "register-stamp" || operation == "sponsor-stamp" {
+	if operation == "shield" || operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" {
 		recipientCode = identity.Code
 	}
 	recipient, err := shield3wallet.DecodePaymentCode(recipientCode, identity.ChainID)
@@ -238,8 +374,13 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	if record == nil {
 		if len(g.shield3Requests) >= 256 {
+			var head struct {
+				Timestamp hexutil.Uint64 `json:"timestamp"`
+			}
+			headErr := g.client.CallContext(r.Context(), &head, "eth_getBlockByNumber", "latest", false)
 			for id, cached := range g.shield3Requests {
-				if cached.Submitted && g.opts.WalletStateDir != "" {
+				expired := headErr == nil && shield3DraftExpired(cached, uint64(head.Timestamp))
+				if (cached.Submitted || expired) && g.opts.WalletStateDir != "" {
 					delete(g.shield3Requests, id)
 					break
 				}
@@ -251,38 +392,86 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		}
 		var unsigned *types.Transaction
 		var err error
-		if operation == "sponsor-stamp" {
+		walletRPC, reserveErr := g.shield3ReservedRPC(r.Context(), identity.Address)
+		if reserveErr != nil {
+			fail(500, reserveErr)
+			return
+		}
+		if operation == "submit-relay" {
+			unsigned, err = shield3wallet.BuildRelaySubmission(r.Context(), g.client, req.Seed, identity, req.RelayTransaction)
+		} else if operation == "prepare-relay" {
+			if req.Relay == nil {
+				fail(400, errors.New("signed relay offer required"))
+				return
+			}
+			unsigned, err = shield3wallet.BuildRelayed(r.Context(), walletRPC, req.Seed, identity, recipient, amount, req.Relay)
+		} else if operation == "sponsor-stamp" {
 			unsigned, err = shield3wallet.BuildSponsoredStamp(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
 		} else if operation == "register-stamp" {
 			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
 		} else {
-			unsigned, err = shield3wallet.Build(r.Context(), g.client, req.Seed, identity, recipient, amount, operation == "shield")
+			unsigned, err = shield3wallet.Build(r.Context(), walletRPC, req.Seed, identity, recipient, amount, operation == "shield")
 		}
 		if err != nil {
 			fail(400, err)
 			return
 		}
-		key, err := pqcrypto.NewMLDSA87FromSeed(req.Seed)
-		if err != nil {
-			fail(400, err)
-			return
+		if operation == "prepare-relay" {
+			raw, err := unsigned.MarshalBinary()
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			record = &shield3RequestRecord{Digest: digest, Raw: raw, Hash: unsigned.Hash(), Unsigned: true, DraftAccount: identity.Address}
+			if g.opts.WalletStateDir == "" {
+				fail(503, errors.New("relay drafts require persistent wallet state"))
+				return
+			}
+			if err = g.saveShield3Submission(req.RequestID, record); err != nil {
+				fail(500, err)
+				return
+			}
+			g.shield3Requests[req.RequestID] = record
+		} else {
+			key, err := pqcrypto.NewMLDSA87FromSeed(req.Seed)
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			signed, err := types.SignPQTkmTx(unsigned, types.NewQuantumSigner(chainID), key)
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			raw, err := signed.MarshalBinary()
+			if err != nil {
+				fail(400, err)
+				return
+			}
+			record = &shield3RequestRecord{Digest: digest, Raw: raw, Hash: signed.Hash()}
+			if err = g.saveShield3Submission(req.RequestID, record); err != nil {
+				fail(500, err)
+				return
+			}
+			g.shield3Requests[req.RequestID] = record
 		}
-		signed, err := types.SignPQTkmTx(unsigned, types.NewQuantumSigner(chainID), key)
-		if err != nil {
-			fail(400, err)
-			return
-		}
-		raw, err := signed.MarshalBinary()
-		if err != nil {
-			fail(400, err)
-			return
-		}
-		record = &shield3RequestRecord{Digest: digest, Raw: raw, Hash: signed.Hash()}
-		if err = g.saveShield3Submission(req.RequestID, record); err != nil {
+	}
+	if record.Unsigned {
+		var tx types.Transaction
+		if err = tx.UnmarshalBinary(record.Raw); err != nil {
 			fail(500, err)
 			return
 		}
-		g.shield3Requests[req.RequestID] = record
+		packet, err := shield3wallet.RelayPacketForTransaction(&tx)
+		if err != nil {
+			fail(500, err)
+			return
+		}
+		reply(struct {
+			shield3wallet.RelayPacket
+			RequestID string `json:"requestId"`
+		}{packet, req.RequestID})
+		return
 	}
 	if !record.Submitted {
 		var hash common.Hash

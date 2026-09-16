@@ -27,14 +27,15 @@ const (
 	shieldedV3Suite            = 1 // ML-KEM-1024 / HKDF-SHA-512 / XChaCha20-Poly1305
 )
 
-// ShieldedV3Purpose separates incoming notes, outgoing disclosures and stamps.
+// ShieldedV3Purpose separates notes, stamps and selected-payment auditor capsules.
 // Use separate keys for each purpose; a stamp key must not reveal note contents.
 type ShieldedV3Purpose byte
 
 const (
-	ShieldedV3Incoming ShieldedV3Purpose = 1
-	ShieldedV3Outgoing ShieldedV3Purpose = 2
-	ShieldedV3Stamp    ShieldedV3Purpose = 3
+	ShieldedV3Incoming   ShieldedV3Purpose = 1
+	ShieldedV3Outgoing   ShieldedV3Purpose = 2
+	ShieldedV3Stamp      ShieldedV3Purpose = 3
+	ShieldedV3Disclosure ShieldedV3Purpose = 4
 )
 
 var (
@@ -63,7 +64,7 @@ func GenerateShieldedV3ViewKey() (seed, publicKey []byte, err error) {
 	return key.Bytes(), key.EncapsulationKey().Bytes(), nil
 }
 
-// DeriveShieldedV3ViewKey derives independent incoming, outgoing or stamp seeds
+// DeriveShieldedV3ViewKey derives independent incoming, outgoing, stamp or auditor seeds
 // from wallet secret material. A full view key contains both incoming and
 // outgoing seeds; neither seed grants spending authority. Security remains
 // limited by the entropy of the wallet secret. Callers must protect and clear
@@ -155,6 +156,11 @@ func OpenShieldedV3(seed, envelope []byte, context ShieldedV3Context) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
+	return openShieldedV3Payload(aead, envelope)
+}
+
+func openShieldedV3Payload(aead cipher.AEAD, envelope []byte) ([]byte, error) {
+	kemEnd := shieldedV3HeaderSize + mlkem.CiphertextSize1024
 	payloadStart := kemEnd + chacha20poly1305.NonceSizeX
 	padded, err := aead.Open(nil, envelope[kemEnd:payloadStart], envelope[payloadStart:], envelope[:payloadStart])
 	if err != nil {
@@ -174,7 +180,7 @@ func OpenShieldedV3(seed, envelope []byte, context ShieldedV3Context) ([]byte, e
 }
 
 func validShieldedV3Purpose(purpose ShieldedV3Purpose) bool {
-	return purpose >= ShieldedV3Incoming && purpose <= ShieldedV3Stamp
+	return purpose >= ShieldedV3Incoming && purpose <= ShieldedV3Disclosure
 }
 
 func shieldedV3Header(context ShieldedV3Context) ([]byte, error) {
@@ -189,7 +195,7 @@ func shieldedV3Header(context ShieldedV3Context) ([]byte, error) {
 	return header, nil
 }
 
-func shieldedV3AEAD(shared, publicKey, header, kemCiphertext []byte) (cipher.AEAD, error) {
+func shieldedV3RecordKey(shared, publicKey, header, kemCiphertext []byte) ([]byte, error) {
 	// Bind the key derivation to the recipient key and complete KEM transcript,
 	// in addition to authenticating the public transcript as associated data.
 	h := sha512.New()
@@ -198,6 +204,14 @@ func shieldedV3AEAD(shared, publicKey, header, kemCiphertext []byte) (cipher.AEA
 	h.Write(header)
 	h.Write(kemCiphertext)
 	key, err := hkdf.Key(sha512.New, shared, h.Sum(nil), "TKM_SHIELD3_XCHACHA20POLY1305_KEY_V1", chacha20poly1305.KeySize)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func shieldedV3AEAD(shared, publicKey, header, kemCiphertext []byte) (cipher.AEAD, error) {
+	key, err := shieldedV3RecordKey(shared, publicKey, header, kemCiphertext)
 	if err != nil {
 		return nil, err
 	}
@@ -212,4 +226,45 @@ func ValidateShieldedV3CiphertextContext(data []byte, expected ShieldedV3Context
 		return ErrInvalidShieldedV3Ciphertext
 	}
 	return nil
+}
+
+// ShieldedV3RecordKey exports a key for one authenticated ciphertext only.
+// It never exports the wallet's reusable ML-KEM viewing seed.
+func ShieldedV3RecordKey(seed, envelope []byte, context ShieldedV3Context) ([]byte, error) {
+	if err := ValidateShieldedV3CiphertextContext(envelope, context); err != nil {
+		return nil, err
+	}
+	dk, err := mlkem.NewDecapsulationKey1024(seed)
+	if err != nil {
+		return nil, ErrInvalidPrivateKey
+	}
+	kem := envelope[shieldedV3HeaderSize : shieldedV3HeaderSize+mlkem.CiphertextSize1024]
+	shared, err := dk.Decapsulate(kem)
+	if err != nil {
+		return nil, ErrInvalidShieldedV3Ciphertext
+	}
+	defer clear(shared)
+	key, err := shieldedV3RecordKey(shared, dk.EncapsulationKey().Bytes(), envelope[:shieldedV3HeaderSize], kem)
+	if err != nil {
+		return nil, err
+	}
+	plaintext, err := OpenShieldedV3RecordKey(key, envelope, context)
+	clear(plaintext)
+	if err != nil {
+		clear(key)
+		return nil, err
+	}
+	return key, nil
+}
+
+// OpenShieldedV3RecordKey opens a selected record using its disclosure key.
+func OpenShieldedV3RecordKey(key, envelope []byte, context ShieldedV3Context) ([]byte, error) {
+	if err := ValidateShieldedV3CiphertextContext(envelope, context); err != nil {
+		return nil, err
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, ErrInvalidShieldedV3Ciphertext
+	}
+	return openShieldedV3Payload(aead, envelope)
 }

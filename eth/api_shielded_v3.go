@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
@@ -15,11 +16,12 @@ type ShieldedV3Status struct {
 	NativeVerifier bool            `json:"nativeVerifier"`
 	ActivationTime *hexutil.Uint64 `json:"activationTime"`
 	MaxSendWei     string          `json:"maxSendWei"`
+	MaxInputs      uint64          `json:"maxInputs"`
 	MaxSendTKM     uint64          `json:"maxSendTKM"`
 }
 
 func (api *PrivacyAPI) ShieldedV3Status() ShieldedV3Status {
-	status := ShieldedV3Status{NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM}
+	status := ShieldedV3Status{MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM}
 	if api == nil || api.e == nil || api.e.blockchain == nil {
 		return status
 	}
@@ -134,8 +136,15 @@ func (api *PrivacyAPI) ShieldedV3NullifierStatus(nullifier shielded3.Digest) (Sh
 						continue
 					}
 					e, _, err := core.DecodeShieldedV3Transaction(tx.Data())
-					if err == nil && !e.Deposit && e.Nullifier == nullifier {
-						return ShieldedV3NullifierStatus{TransactionHash: tx.Hash(), Pending: true}, nil
+					if err == nil {
+						nullifiers, err := core.ShieldedV3Nullifiers(e)
+						if err == nil {
+							for _, n := range nullifiers {
+								if n == nullifier {
+									return ShieldedV3NullifierStatus{TransactionHash: tx.Hash(), Pending: true}, nil
+								}
+							}
+						}
 					}
 				}
 			}
@@ -160,4 +169,39 @@ func (api *PrivacyAPI) AntarticalStampPath(owner shielded3.Digest) (core.Shielde
 		return core.ShieldedV3Path{}, err
 	}
 	return core.AntarticalStampPath(st, owner)
+}
+
+// ShieldedV3Paths constructs all selected note paths from one state snapshot.
+func (api *PrivacyAPI) ShieldedV3Paths(commitments []shielded3.Digest) ([]core.ShieldedV3Path, error) {
+	if len(commitments) == 0 || len(commitments) > shielded3.InputSlots {
+		return nil, fmt.Errorf("requires one to four note commitments")
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]core.ShieldedV3Path, len(commitments))
+	seen := map[shielded3.Digest]bool{}
+	for i, c := range commitments {
+		if seen[c] {
+			return nil, fmt.Errorf("duplicate note commitment")
+		}
+		seen[c] = true
+		if _, err := shielded3.DigestFromBytes(c.Bytes()); err != nil {
+			return nil, err
+		}
+		result[i], err = core.ShieldedV3CommitmentPath(st, c)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (api *PrivacyAPI) ShieldedV3RootsKnown(anchor, stampRoot shielded3.Digest) (bool, error) {
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return false, err
+	}
+	return st.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("root", anchor.Bytes())) != (common.Hash{}) && st.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("stamp/root", stampRoot.Bytes())) != (common.Hash{}), nil
 }

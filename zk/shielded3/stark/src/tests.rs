@@ -31,6 +31,7 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     let mut public = vec![0; PUBLIC_WORDS];
     public[0] = 8979;
     public[2] = 1;
+    public[87] = 1;
     public[4] = 9;
     for (i, word) in public.iter_mut().enumerate().take(28).skip(12) {
         *word = (i * 101) as u64;
@@ -85,6 +86,7 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
         );
         public[38 + 5 * i..43 + 5 * i].copy_from_slice(&commitment);
     }
+    path.extend(vec![[0; 5]; MERKLE_DEPTH * 3]);
     stamp_fixture(&mut public, &mut secret, &mut path);
     (public, secret, path)
 }
@@ -318,6 +320,7 @@ fn private_send_cap_and_change_owner() {
 fn deposits_require_exact_public_funding() {
     let (mut public, mut secret, path) = fixture();
     public[58] = 1;
+    public[87] = 0;
     public[28..38].fill(0);
     public[4..12].copy_from_slice(&secret[10..18]);
     // fixture's output total is input minus the old nine-unit public release.
@@ -368,7 +371,7 @@ fn stamp_fixture(public: &mut [u64], secret: &mut [u64], path: &mut Vec<[u64; 5]
         levels.push(next);
     }
     public[67..72].copy_from_slice(&levels[MERKLE_DEPTH][0]);
-    path.truncate(MERKLE_DEPTH);
+    path.truncate(MERKLE_DEPTH * 4);
     for i in 0..4 {
         secret[91 + i] = i as u64;
         for depth in 0..MERKLE_DEPTH {
@@ -409,4 +412,92 @@ fn unregistered_recipient_cannot_receive_even_with_valid_note_openings() {
     // only stamp membership is false.
     assert!(!run(&public, &secret, &path));
     assert!(prove_spend(&public, &secret, &path).is_err());
+}
+
+fn multi_fixture(count: usize) -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
+    let (mut public, mut secret, mut paths) = fixture();
+    public[87] = count as u64;
+    secret[10] -= (count - 1) as u64;
+    secret[18] = 0;
+    let owner = hash(&[DOMAIN_OWNER, 11, 22, 33, 44, 55]);
+    let mut leaves = vec![note(&public[..4], &owner, &secret[5..10], &secret[10..18])];
+    let mut n = vec![DOMAIN_NULLIFIER];
+    n.extend(&public[..4]);
+    n.extend(owner);
+    n.extend(&secret[5..18]);
+    public[33..38].copy_from_slice(&hash(&n));
+    for i in 1..count {
+        let base = 95 + (i - 1) * 14;
+        for j in 0..5 {
+            secret[base + j] = (800 + i * 10 + j) as u64;
+        }
+        secret[base + 5] = 1;
+        secret[base + 13] = i as u64;
+        leaves.push(note(
+            &public[..4],
+            &owner,
+            &secret[base..base + 5],
+            &secret[base + 5..base + 13],
+        ));
+        let mut n = vec![DOMAIN_NULLIFIER];
+        n.extend(&public[..4]);
+        n.extend(owner);
+        n.extend(&secret[base..base + 13]);
+        public[72 + (i - 1) * 5..77 + (i - 1) * 5].copy_from_slice(&hash(&n));
+    }
+    let mut zeroes = vec![[0; 5]];
+    for depth in 0..MERKLE_DEPTH {
+        zeroes.push(pair(zeroes[depth], zeroes[depth]));
+    }
+    let mut levels = vec![leaves];
+    for depth in 0..MERKLE_DEPTH {
+        levels.push(
+            levels[depth]
+                .chunks(2)
+                .map(|p| pair(p[0], *p.get(1).unwrap_or(&zeroes[depth])))
+                .collect(),
+        );
+    }
+    public[28..33].copy_from_slice(&levels[MERKLE_DEPTH][0]);
+    for i in 0..count {
+        for depth in 0..MERKLE_DEPTH {
+            paths[i * MERKLE_DEPTH + depth] = *levels[depth]
+                .get((i >> depth) ^ 1)
+                .unwrap_or(&zeroes[depth]);
+        }
+    }
+    (public, secret, paths)
+}
+#[test]
+fn multiple_inputs_bind_each_opening_path_and_nullifier() {
+    for count in 2..=4 {
+        let (public, secret, path) = multi_fixture(count);
+        assert!(run(&public, &secret, &path), "valid {count}-input spend");
+        for i in 1..count {
+            for offset in 0..14 {
+                let mut bad = secret.clone();
+                bad[95 + (i - 1) * 14 + offset] ^= 1;
+                assert!(!run(&public, &bad, &path));
+            }
+            let mut bad = public.clone();
+            let duplicate: Vec<_> = bad[33..38].to_vec();
+            bad[72 + (i - 1) * 5..77 + (i - 1) * 5].copy_from_slice(&duplicate);
+            assert!(!run(&bad, &secret, &path));
+            let mut bad = path.clone();
+            bad[i * MERKLE_DEPTH][0] ^= 1;
+            assert!(!run(&public, &secret, &bad));
+        }
+        let mut bad = public.clone();
+        bad[87] = 5;
+        assert!(!run(&bad, &secret, &path));
+    }
+}
+#[test]
+fn real_four_input_stark_roundtrip() {
+    let (public, secret, path) = multi_fixture(4);
+    let proof = prove_spend(&public, &secret, &path).expect("four-input STARK within trace bound");
+    verify_spend(&public, &proof).unwrap();
+    let mut bad = public.clone();
+    bad[72] ^= 1;
+    assert!(verify_spend(&bad, &proof).is_err());
 }

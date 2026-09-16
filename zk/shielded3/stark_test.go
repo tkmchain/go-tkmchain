@@ -80,7 +80,7 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 		}
 		return words
 	}
-	public, secret, path, proofWords := read("public", publicWords), read("secret", secretWords), read("path", MerkleDepth*5*(1+OutputSlots)), read("proof", 0)
+	public, secret, path, proofWords := read("public", publicWords), read("secret", secretWords), read("path", MerkleDepth*5*(InputSlots+OutputSlots)), read("proof", 0)
 	s := Statement{ChainID: public[0] | public[1]<<32, AssetID: public[2] | public[3]<<32}
 	for i := range s.PublicValue {
 		s.PublicValue[i] = uint32(public[4+i])
@@ -111,10 +111,26 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 		copy(w.MerklePath[i][:], path[i*5:i*5+5])
 	}
 	copy(s.StampRoot[:], public[67:72])
+	for i := range w.AdditionalInputs {
+		base := 95 + 14*i
+		copy(w.AdditionalInputs[i].Randomness[:], secret[base:base+5])
+		for j := range w.AdditionalInputs[i].Value {
+			w.AdditionalInputs[i].Value[j] = uint32(secret[base+5+j])
+		}
+		w.AdditionalInputs[i].LeafIndex = uint32(secret[base+13])
+		for j := range w.AdditionalInputs[i].MerklePath {
+			copy(w.AdditionalInputs[i].MerklePath[j][:], path[(MerkleDepth*(i+1)+j)*5:(MerkleDepth*(i+1)+j+1)*5])
+		}
+	}
+	s.InputCount = uint32(public[87])
+	for i := range s.AdditionalNullifiers {
+		copy(s.AdditionalNullifiers[i][:], public[72+5*i:77+5*i])
+	}
+
 	for i := range w.StampIndices {
 		w.StampIndices[i] = uint32(secret[91+i])
 		for j := range w.StampPaths[i] {
-			copy(w.StampPaths[i][j][:], path[(MerkleDepth*(i+1)+j)*5:(MerkleDepth*(i+1)+j+1)*5])
+			copy(w.StampPaths[i][j][:], path[(MerkleDepth*(i+InputSlots)+j)*5:(MerkleDepth*(i+InputSlots)+j+1)*5])
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -129,7 +129,7 @@ func TestShieldedV3SeparationAndBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clear(seed)
-	for _, ctx := range []ShieldedV3Context{{}, {ChainID: 8979, Purpose: 0, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: 4, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: ShieldedV3Incoming}} {
+	for _, ctx := range []ShieldedV3Context{{}, {ChainID: 8979, Purpose: 0, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: 5, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: ShieldedV3Incoming}} {
 		if _, err := SealShieldedV3(pub, nil, ctx); err != ErrInvalidShieldedV3Context {
 			t.Fatalf("invalid context: %v", err)
 		}
@@ -145,5 +145,49 @@ func TestShieldedV3SeparationAndBounds(t *testing.T) {
 	}
 	if _, err := ShieldedV3ViewPublicKey(make([]byte, 63)); err != ErrInvalidPrivateKey {
 		t.Fatalf("invalid seed: %v", err)
+	}
+}
+
+func TestShield3DisclosureKeyIsScopedAndAuthenticated(t *testing.T) {
+	seed, pub, err := GenerateShieldedV3ViewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(seed)
+	ctx := ShieldedV3Context{ChainID: 8979, Purpose: ShieldedV3Outgoing, Commitment: sha512.Sum512([]byte("selected output"))}
+	one, err := SealShieldedV3(pub, []byte("payment one"), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := SealShieldedV3(pub, []byte("payment two"), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ShieldedV3RecordKey(seed, one, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(key)
+	plain, err := OpenShieldedV3RecordKey(key, one, ctx)
+	if err != nil || string(plain) != "payment one" {
+		t.Fatal("selected payment", err)
+	}
+	clear(plain)
+	if _, err = OpenShieldedV3RecordKey(key, two, ctx); err == nil {
+		t.Fatal("disclosure opened another record")
+	}
+	bad := bytes.Clone(one)
+	bad[len(bad)-1] ^= 1
+	if _, err = ShieldedV3RecordKey(seed, bad, ctx); err == nil {
+		t.Fatal("exported unauthenticated record key")
+	}
+	wrong := bytes.Clone(seed)
+	wrong[0] ^= 1
+	if _, err = ShieldedV3RecordKey(wrong, one, ctx); err == nil {
+		t.Fatal("wrong wallet exported record key")
+	}
+	ctx.Purpose = ShieldedV3Incoming
+	if _, err = OpenShieldedV3RecordKey(key, one, ctx); err == nil {
+		t.Fatal("ignored disclosure role")
 	}
 }
