@@ -377,3 +377,6 @@ See [the native protocol reference](../zk/shielded3/README.md) for proof encodin
 and reproducible cryptographic test commands. Test vectors contain deterministic
 test secrets only. Existing unrelated repository test/lint failures must be
 reported separately from these feature checks.
+
+See [the mined-node test report](SHIELD3_LIVE_TEST.md) for actual RandomX
+mining, RPC transaction inclusion, balances, findings and reproduction commands.

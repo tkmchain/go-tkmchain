@@ -3,6 +3,7 @@
 package shield3relay
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha512"
 	"encoding/json"
@@ -206,6 +207,14 @@ func (s *Service) submit(ctx context.Context, requestID string, raw []byte) (shi
 	}
 
 	response := shield3wallet.RelayResponse{Transaction: saved.Transaction, TransactionHash: hash, Status: "unconfirmed"}
+	// The node serves raw transactions from its canonical chain or transaction
+	// pool. An exact match means this payment is already known: do not turn a
+	// successful retry into uncertainty by rebroadcasting a mined nonce. If a
+	// reorg removes it or lookup fails, retry only the same durable signed bytes.
+	var known hexutil.Bytes
+	if err := s.rpc.CallContext(ctx, &known, "eth_getRawTransactionByHash", hash); err == nil && bytes.Equal(known, saved.Transaction) {
+		return response, nil
+	}
 	var returned common.Hash
 	// Every retry uses the exact durable signed bytes, even after a lost reply or
 	// restart. Never re-sign a different payment at a reserved operator nonce.

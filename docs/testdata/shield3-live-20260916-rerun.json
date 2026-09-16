@@ -1,0 +1,80 @@
+{
+  "startedUTC": "2026-09-16T23:13:55Z",
+  "finishedUTC": "2026-09-16T23:18:56Z",
+  "finalHeight": 14,
+  "relayBroadcasts": 1,
+  "chainId": 8980,
+  "rpcEndpoint": "http://127.0.0.1:35971",
+  "initialFundingBlocks": 3,
+  "minedPublicBalanceWei": "300000000000000000000",
+  "transactions": [
+    {
+      "label": "sender-stamp",
+      "hash": "0x5f8aa96069d6c77cfe8ed519b7c75e36d498ee2f96599f3f2372d79ad0e3726b",
+      "block": 5,
+      "gasUsed": 1906172,
+      "status": 1
+    },
+    {
+      "label": "sponsored-stamp-1",
+      "hash": "0x54349c755d213001f4d61c5d46eb9017639b112c83fd6c7d9dbcd4430ca7b5b3",
+      "block": 7,
+      "gasUsed": 2030428,
+      "status": 1
+    },
+    {
+      "label": "sponsored-stamp-2",
+      "hash": "0xe96fe3b89ac8b10013218008d2f3887073c0561bb9192a1a3ffce4dbe902cf49",
+      "block": 9,
+      "gasUsed": 2031768,
+      "status": 1
+    },
+    {
+      "label": "shield-deposit-10",
+      "hash": "0x7ed3d60e265905bfb7c4648e00e648661c6500a99872ec70a19d6a0368b0b152",
+      "block": 10,
+      "gasUsed": 4956652,
+      "status": 1
+    },
+    {
+      "label": "direct-send-2",
+      "hash": "0x041dbb22c5afa34c55c8f48df7bc250c350876c541cae61e4c7998ff75dd5dca",
+      "block": 12,
+      "gasUsed": 4960020,
+      "status": 1
+    },
+    {
+      "label": "split-four-inputs",
+      "hash": "0x758876294e3bfe78fb7ab5a46c90ec95a69d7c6fbc0868b87bcd8a4a0e11f566",
+      "block": 13,
+      "gasUsed": 4957396,
+      "status": 1
+    },
+    {
+      "label": "relayed-batch-6",
+      "hash": "0x5f422d6de941492e860c40066a5c39e3463de296526e46aafa5124efc14676ca",
+      "block": 14,
+      "gasUsed": 4948592,
+      "status": 1
+    }
+  ],
+  "shieldedBalancesWei": {
+    "operator": "2000000000000000000",
+    "recipient": "3000000000000000000",
+    "sender": "4999999999986000000"
+  },
+  "checks": [
+    "Antartical active with native verifier",
+    "real RandomX blocks have nonzero verified mix digests; zero genesis allocation",
+    "aggregate 5 million TKM limit rejects excessive send",
+    "direct 2 TKM transfer confirmed with 8/2 TKM shielded balances",
+    "wallet refuses Shield3 deposits to unregistered stamps",
+    "after actual relay restart, confirmed retry returns identical hash/bytes with no new broadcast or uncertainty",
+    "zero-public-balance operator funds gas privately; payer public key omitted and payer nonce unchanged",
+    "selected payment disclosures verify all three mined outputs; separate stamp-only disclosure opens labels",
+    "receive-only scan reveals receipts but no spendable balance",
+    "four-input, three-recipient batch confirmed; all nullifiers reference actual signed hash",
+    "every final-chain block has a valid nonzero RandomX mix; mutated zero mix is rejected"
+  ],
+  "success": true
+}

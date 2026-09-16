@@ -23,11 +23,13 @@ import (
 )
 
 type operatorRPC struct {
-	identity *shield3wallet.Identity
-	nonce    uint64
-	head     uint64
-	lost     bool
-	sent     [][]byte
+	identity    *shield3wallet.Identity
+	nonce       uint64
+	head        uint64
+	lost        bool
+	sent        [][]byte
+	known       hexutil.Bytes
+	lookupError bool
 }
 
 func (r *operatorRPC) CallContext(_ context.Context, dest any, method string, args ...any) error {
@@ -54,6 +56,11 @@ func (r *operatorRPC) CallContext(_ context.Context, dest any, method string, ar
 		result = true
 	case "tkmprivacy_shieldedV3NullifierStatus":
 		result = map[string]any{"transactionHash": common.Hash{}, "pending": false}
+	case "eth_getRawTransactionByHash":
+		if r.lookupError {
+			return errors.New("simulated unavailable lookup")
+		}
+		result = r.known
 	case "eth_sendRawTransaction":
 		raw := []byte(args[0].(hexutil.Bytes))
 		r.sent = append(r.sent, common.CopyBytes(raw))
@@ -167,6 +174,43 @@ func TestDurableReplayLostReplyAndRestart(t *testing.T) {
 		t.Fatal("accepted changed payment at reserved nonce")
 	}
 }
+
+// Pending and canonical lookups use the same node RPC. After a reorg or
+// lookup outage the durable bytes remain the only authorized retransmission.
+func TestKnownTransactionRetrySkipsBroadcast(t *testing.T) {
+	service, rpc, _, _ := operator(t)
+	draft, raw, signedRaw := syntheticDraft(t, service)
+	requestID := "known-payment-request-1"
+	if err := service.persist(filepath.Join(service.dir, "nonce-0.json"), record{RequestID: requestID, DraftHash: draft.Hash(), Transaction: signedRaw}); err != nil {
+		t.Fatal(err)
+	}
+	rpc.known = signedRaw
+	rpc.lost = true // Any attempted rebroadcast would produce uncertainty.
+	rpc.nonce = 1
+	response, err := service.submit(context.Background(), requestID, raw)
+	if err != nil || response.SubmissionUncertain || len(rpc.sent) != 0 || !bytes.Equal(response.Transaction, signedRaw) {
+		t.Fatal("known transaction was rebroadcast or marked uncertain", err)
+	}
+	rpc.known = nil // Reorg or eviction: exact retransmission is required.
+	response, err = service.submit(context.Background(), requestID, raw)
+	if err != nil || !response.SubmissionUncertain || len(rpc.sent) != 1 || !bytes.Equal(rpc.sent[0], signedRaw) {
+		t.Fatal("unknown transaction did not retry durable bytes", err)
+	}
+	rpc.known = signedRaw
+	rpc.lookupError = true
+	rpc.lost = false
+	response, err = service.submit(context.Background(), requestID, raw)
+	if err != nil || response.SubmissionUncertain || len(rpc.sent) != 2 || !bytes.Equal(rpc.sent[1], signedRaw) {
+		t.Fatal("lookup outage changed retry authorization", err)
+	}
+	rpc.lookupError = false
+	rpc.known = hexutil.Bytes{1, 2, 3} // A nonmatching response is insufficient.
+	_, err = service.submit(context.Background(), requestID, raw)
+	if err != nil || len(rpc.sent) != 3 || !bytes.Equal(rpc.sent[2], signedRaw) {
+		t.Fatal("different node bytes suppressed durable broadcast", err)
+	}
+}
+
 func TestQuoteLeaseAndEndpointBoundary(t *testing.T) {
 	service, rpc, seed, dir := operator(t)
 	if duplicate, err := New(rpc, seed, rpc.identity, dir); err == nil {
