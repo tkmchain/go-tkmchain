@@ -31,13 +31,13 @@ Append operations retain known roots; path queries construct witnesses against
 the current canonical tree. Nullifiers and commitments cannot be reused.
 Invalid proofs leave the tree, balances and nullifiers unchanged.
 
-The public claim has **67 words**: chain (2), asset (2), public value (8),
+The public claim has **72 words**: chain (2), asset (2), public value (8),
 SHA-512 transaction intent (16 u32 words), anchor (5), nullifier (5), four
-outputs (20), deposit mode (1), and gas sponsorship (8 u32 words). The 91 secret
+outputs (20), deposit mode (1), gas sponsorship (8 u32 words), and stamp-registry root (5). The 95 secret
 words contain spending secret (5), input randomness (5), input value (8), index
-(1), and four owner/randomness/value openings (18 each). A private path adds 32
-five-word digests. Hash domains are owner 3001, commitment 3002 and nullifier
-3003. The nullifier hashes chain, asset, owner digest, private randomness and
+(1), four owner/randomness/value openings (18 each), and four private stamp indices. The fixed path section adds 32
+five-word note digests and four depth-32 stamp membership paths. Hash domains are owner 3001, commitment 3002 and nullifier
+3003; stamped-owner leaves use 3004. The nullifier hashes chain, asset, owner digest, private randomness and
 value, so viewing-key holders can determine spent status without learning the
 spending-secret preimage.
 
@@ -82,11 +82,42 @@ exposure or absolute resistance to future attacks.
 
 ## Wallet and migration
 
+At Antartical, **consensus requires a confirmed, immutable on-chain stamp for
+all user-transaction senders**, including zero-public-value private spends and
+legacy self-migrations. Public withdrawals require a stamped recipient. Every
+Shield3 output owner is proved to belong to a separate depth-32 stamp registry;
+indices and recipient ownership stay inside the private witness. The statement
+binds a known registry root. Wallet-file stamps alone do not authorize sending.
+
+The sole unstamped-sender exception is `TKMSTAMP1`: a zero-value PQ registration
+to the reserved code-free pool. It authenticates the encrypted stamp under the
+sender's ML-DSA key and proves knowledge of the owner preimage with a fixed
+native STARK, bound to the complete registration intent. A copied proof cannot
+register another owner or account. Registrations cannot replace an existing
+address or owner. They count against block gas/byte limits and pay ordinary gas
+fees; the address needs a public TKM balance for registration gas. Protocol block
+rewards and pre-execution system calls remain distinct from user transactions.
+
+Validators reject invalid registration proofs and unstamped transactions as
+consensus errors, making blocks containing them invalid. A node with removed
+checks follows incompatible rules; it cannot make enforcing nodes accept these
+blocks. Name and country are self-declared encrypted labels, not verified legal
+identity. Public stamp registrations reveal an address, owner digest and hiding
+commitment, but never the private label plaintext.
+
 The shared Android/Windows wallet requires name/country stamping before new
 PQ account creation at Antartical. Existing accounts can add their original
 stamp once. Keyfile export/import and password changes retain the authenticated,
 encrypted stamp; keep an encrypted backup because recovery words alone do not
 retain the original randomly blinded stamp record.
+
+Both Send and Receive begin with **First: stamp your address**. Create or reuse
+the original encrypted stamp, register it, then check the displayed transaction
+hash for confirmation. Sending, private receiving-code sharing, funding and
+migration controls remain disabled until the on-chain stamp is confirmed.
+Registration retries retain the same signed bytes and request ID after a timeout
+or GUI restart. Keep an encrypted backup before registering: a newly blinded
+stamp from recovery words does not replace the original registered commitment.
 
 Private identity, viewing-key scans, proof construction and submission run only
 through authenticated loopback `/shield3/` endpoints. Public `tkmprivacy` RPC

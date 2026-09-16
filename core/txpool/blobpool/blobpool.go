@@ -1284,7 +1284,8 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	// Ensure the transaction adheres to the stateful pool filters (nonce, balance)
 	stateOpts := &txpool.ValidationOptionsWithState{
-		State: p.state,
+		State:      p.state,
+		Antartical: p.chain.Config().IsAntartical(p.head.Load().Number, p.head.Load().Time),
 
 		FirstNonceGap: func(addr common.Address) uint64 {
 			// Nonce gaps are permitted in the blob pool, but only as part of the

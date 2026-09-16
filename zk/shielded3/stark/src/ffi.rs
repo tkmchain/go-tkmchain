@@ -54,13 +54,19 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
                 .map(|v| v.value()),
         ));
     }
-    let prefix = 8 + PUBLIC_WORDS * 8;
-    if data.len() < prefix || &data[..8] != b"TKMS3STK" {
+    let ownership = operation == 6 || operation == 7;
+    let public_count = if ownership {
+        OWNER_PUBLIC_WORDS
+    } else {
+        PUBLIC_WORDS
+    };
+    let prefix = 8 + public_count * 8;
+    if data.len() < prefix || &data[..8] != if ownership { b"TKMS3OWN" } else { b"TKMS3STK" } {
         return Err("invalid request".into());
     }
     let public = words(&data[8..prefix])?;
     let input = &data[prefix..];
-    if operation == 1 {
+    if operation == 1 || operation == 7 {
         if input.len() < 4 {
             return Err("truncated proof".into());
         }
@@ -68,10 +74,24 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
         if count == 0 || count > MAX_PROOF_WORDS || input.len() != 4 + count * 8 {
             return Err("invalid proof length".into());
         }
-        verify_spend(&public, &words(&input[4..])?)?;
+        if ownership {
+            verify_owner(&public, &words(&input[4..])?)?;
+        } else {
+            verify_spend(&public, &words(&input[4..])?)?;
+        }
         return Ok(b"OK\n".to_vec());
     }
-    if input.len() != (SECRET_WORDS + MERKLE_DEPTH * 5) * 8 {
+    if operation == 6 {
+        let mut secret = words(input)?;
+        let result = prove_owner(&public, &secret).map(|p| {
+            let mut out = (p.len() as u32).to_le_bytes().to_vec();
+            out.extend(bytes(&p));
+            out
+        });
+        secret.fill(0);
+        return result;
+    }
+    if input.len() != (SECRET_WORDS + PATH_DIGESTS * 5) * 8 {
         return Err("invalid witness length".into());
     }
     let mut secret = words(&input[..SECRET_WORDS * 8])?;

@@ -143,3 +143,21 @@ func (api *PrivacyAPI) ShieldedV3NullifierStatus(nullifier shielded3.Digest) (Sh
 	}
 	return ShieldedV3NullifierStatus{}, nil
 }
+
+func (api *PrivacyAPI) AntarticalStamp(address common.Address) (core.AntarticalStampStatus, error) {
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return core.AntarticalStampStatus{}, err
+	}
+	return core.AntarticalStampForAddress(st, address)
+}
+func (api *PrivacyAPI) AntarticalStampPath(owner shielded3.Digest) (core.ShieldedV3Path, error) {
+	if _, err := shielded3.DigestFromBytes(owner.Bytes()); err != nil {
+		return core.ShieldedV3Path{}, err
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return core.ShieldedV3Path{}, err
+	}
+	return core.AntarticalStampPath(st, owner)
+}

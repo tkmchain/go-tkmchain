@@ -34,7 +34,7 @@ func TestSTARKFailClosed(t *testing.T) {
 	if _, err := NewSTARKBackend(filepath.Join(t.TempDir(), "missing")); err != ErrBackendUnavailable {
 		t.Fatalf("missing backend: %v", err)
 	}
-	s := Statement{ChainID: 8979, Anchor: Digest{1}, Nullifier: Digest{2}}
+	s := Statement{ChainID: 8979, Anchor: Digest{1}, Nullifier: Digest{2}, StampRoot: Digest{3}}
 	var backend *STARKBackend
 	if err := backend.Verify(context.Background(), s, nil); err != ErrInvalidProof {
 		t.Fatalf("empty proof: %v", err)
@@ -80,7 +80,7 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 		}
 		return words
 	}
-	public, secret, path, proofWords := read("public", publicWords), read("secret", secretWords), read("path", MerkleDepth*5), read("proof", 0)
+	public, secret, path, proofWords := read("public", publicWords), read("secret", secretWords), read("path", MerkleDepth*5*(1+OutputSlots)), read("proof", 0)
 	s := Statement{ChainID: public[0] | public[1]<<32, AssetID: public[2] | public[3]<<32}
 	for i := range s.PublicValue {
 		s.PublicValue[i] = uint32(public[4+i])
@@ -109,6 +109,13 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 	}
 	for i := range w.MerklePath {
 		copy(w.MerklePath[i][:], path[i*5:i*5+5])
+	}
+	copy(s.StampRoot[:], public[67:72])
+	for i := range w.StampIndices {
+		w.StampIndices[i] = uint32(secret[91+i])
+		for j := range w.StampPaths[i] {
+			copy(w.StampPaths[i][j][:], path[(MerkleDepth*(i+1)+j)*5:(MerkleDepth*(i+1)+j+1)*5])
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

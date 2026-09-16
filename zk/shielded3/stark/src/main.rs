@@ -47,8 +47,8 @@ fn run() -> Result<(), String> {
             .map_err(|_| "output write failed")?;
     } else {
         let secret = words(&mut input, SECRET_WORDS)?;
-        let mut path = Vec::with_capacity(MERKLE_DEPTH);
-        for _ in 0..MERKLE_DEPTH {
+        let mut path = Vec::with_capacity(PATH_DIGESTS);
+        for _ in 0..PATH_DIGESTS {
             path.push(words(&mut input, 5)?.try_into().unwrap());
         }
         if !input.is_empty() {

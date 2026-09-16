@@ -277,6 +277,13 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 	if !active.Active || !active.NativeVerifier {
 		return nil, errors.New("Shield3 requires an Antartical node with the embedded verifier")
 	}
+	self := PaymentPayload{ChainID: identity.ChainID, Address: identity.Address, Owner: identity.Owner, Stamp: *identity.Stamp}
+	if err := RequireRegisteredStamp(ctx, rpc, self); err != nil {
+		return nil, err
+	}
+	if err := RequireRegisteredStamp(ctx, rpc, to); err != nil {
+		return nil, err
+	}
 	var nonce hexutil.Uint64
 	if err := rpc.CallContext(ctx, &nonce, "eth_getTransactionCount", identity.Address, "pending"); err != nil {
 		return nil, err
@@ -352,7 +359,24 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 		envelope.Nullifier = chosen.Nullifier
 		change.Sub(value, required)
 	}
+	var recipientStampPath, selfStampPath core.ShieldedV3Path
+	if err := rpc.CallContext(ctx, &recipientStampPath, "tkmprivacy_antarticalStampPath", to.Owner); err != nil {
+		return nil, err
+	}
+	if err := rpc.CallContext(ctx, &selfStampPath, "tkmprivacy_antarticalStampPath", identity.Owner); err != nil {
+		return nil, err
+	}
+	if !recipientStampPath.Found || !selfStampPath.Found || recipientStampPath.Root != selfStampPath.Root {
+		return nil, errors.New("stamp registry changed; retry against the canonical chain")
+	}
+	envelope.StampRoot = recipientStampPath.Root
 	for slot := 0; slot < 4; slot++ {
+		path := recipientStampPath
+		if slot == 3 {
+			path = selfStampPath
+		}
+		witness.StampIndices[slot] = uint32(path.Index)
+		witness.StampPaths[slot] = path.Path
 		recipient := to
 		value := new(big.Int)
 		if slot == 0 {

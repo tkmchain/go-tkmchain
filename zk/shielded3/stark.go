@@ -22,8 +22,8 @@ const (
 	MerkleDepth   = 32
 	OutputSlots   = 4
 	fieldModulus  = uint64(0xffffffff00000001)
-	publicWords   = 67
-	secretWords   = 91
+	publicWords   = 72
+	secretWords   = 95
 	maxProofWords = 1 << 20
 	MaxProofSize  = 4 + maxProofWords*8
 	protocolMagic = "TKMS3STK"
@@ -82,6 +82,7 @@ type Statement struct {
 	Anchor      Digest
 	Nullifier   Digest
 	Outputs     [OutputSlots]Digest
+	StampRoot   Digest
 }
 
 // OutputOpening is private witness data for one fixed output slot. The owner
@@ -100,6 +101,8 @@ type SpendWitness struct {
 	LeafIndex      uint32
 	Outputs        [OutputSlots]OutputOpening
 	MerklePath     [MerkleDepth]Digest
+	StampIndices   [OutputSlots]uint32
+	StampPaths     [OutputSlots][MerkleDepth]Digest
 }
 
 // STARKBackend calls the pinned native verifier through a bounded binary
@@ -145,7 +148,8 @@ func (s Statement) words() ([]uint64, error) {
 	for _, limb := range s.GasSponsor {
 		words = append(words, uint64(limb))
 	}
-	if !canonical(words) {
+	words = append(words, s.StampRoot[:]...)
+	if s.StampRoot == (Digest{}) || !canonical(words) {
 		return nil, ErrInvalidStatement
 	}
 	return words, nil
@@ -168,10 +172,13 @@ func (w SpendWitness) words() ([]uint64, error) {
 			words = append(words, uint64(limb))
 		}
 	}
+	for _, index := range w.StampIndices {
+		words = append(words, uint64(index))
+	}
 	if len(words) != secretWords || !canonical(words) {
 		return nil, ErrInvalidWitness
 	}
-	for _, digest := range w.MerklePath {
+	for _, digest := range w.allPaths() {
 		if !canonical(digest[:]) {
 			return nil, ErrInvalidWitness
 		}
@@ -259,7 +266,7 @@ func (b *STARKBackend) Describe(ctx context.Context, chainID, assetID uint64, wi
 	public[2], public[3] = uint64(uint32(assetID)), assetID>>32
 	request := appendWords(append(make([]byte, 0, len(protocolMagic)+(publicWords+secretWords+MerkleDepth*5)*8), protocolMagic...), public)
 	request = appendWords(request, secret)
-	for _, sibling := range witness.MerklePath {
+	for _, sibling := range witness.allPaths() {
 		request = appendWords(request, sibling[:])
 	}
 	defer clear(request)
@@ -316,7 +323,7 @@ func (b *STARKBackend) Prove(ctx context.Context, statement Statement, witness S
 	}
 	request := appendWords(append(make([]byte, 0, len(protocolMagic)+(publicWords+secretWords+MerkleDepth*5)*8), protocolMagic...), public)
 	request = appendWords(request, secret)
-	for _, sibling := range witness.MerklePath {
+	for _, sibling := range witness.allPaths() {
 		request = appendWords(request, sibling[:])
 	}
 	defer clear(request)
@@ -370,4 +377,16 @@ func (b *STARKBackend) run(ctx context.Context, operation string, input []byte, 
 	// Backend diagnostics and private witness data are never propagated to
 	// callers or logs. Only explicitly verified output constitutes success.
 	return output.buffer.Bytes(), nil
+}
+
+func (w SpendWitness) allPaths() []Digest {
+	paths := append(make([]Digest, 0, MerkleDepth*(1+OutputSlots)), w.MerklePath[:]...)
+	for _, path := range w.StampPaths {
+		paths = append(paths, path[:]...)
+	}
+	return paths
+}
+func StampLeaf(chainID uint64, owner Digest) (Digest, error) {
+	words := []uint64{3004, uint64(uint32(chainID)), chainID >> 32}
+	return HashWords(append(words, owner[:]...))
 }

@@ -36,7 +36,7 @@ func (g *GUI) loadShield3Submission(id string) (*shield3RequestRecord, error) {
 		return nil, errors.New("invalid saved wallet submission")
 	}
 	var tx types.Transaction
-	if err := tx.UnmarshalBinary(record.Raw); err != nil || tx.Hash() != record.Hash || tx.Type() != types.PQTkmTxType || !core.HasShieldedV3Prefix(tx.Data()) {
+	if err := tx.UnmarshalBinary(record.Raw); err != nil || tx.Hash() != record.Hash || tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasAntarticalStampPrefix(tx.Data())) {
 		return nil, errors.New("invalid saved wallet transaction")
 	}
 	if _, err := types.Sender(types.NewQuantumSigner(tx.ChainId()), &tx); err != nil {

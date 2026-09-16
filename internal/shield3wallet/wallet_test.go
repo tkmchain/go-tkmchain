@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
@@ -49,6 +50,18 @@ func (r *walletRPC) CallContext(_ context.Context, dest any, method string, args
 		result = hexutil.EncodeBig(r.state.GetBalance(args[0].(common.Address)).ToBig())
 	case "tkmprivacy_shieldedV3Outputs":
 		result = r.outputs
+	case "tkmprivacy_antarticalStamp":
+		stamp, err := core.AntarticalStampForAddress(r.state, args[0].(common.Address))
+		if err != nil {
+			return err
+		}
+		result = stamp
+	case "tkmprivacy_antarticalStampPath":
+		path, err := core.AntarticalStampPath(r.state, args[0].(shielded3.Digest))
+		if err != nil {
+			return err
+		}
+		result = path
 	case "tkmprivacy_shieldedV3Path":
 		path, err := core.ShieldedV3CommitmentPath(r.state, args[0].(shielded3.Digest))
 		if err != nil {
@@ -139,6 +152,9 @@ func TestShield3WalletConsensus(t *testing.T) {
 		if receipt.Status != types.ReceiptStatusSuccessful {
 			t.Fatal("wallet transaction reverted")
 		}
+		if core.HasAntarticalStampPrefix(tx.Data()) {
+			return
+		}
 		e, _, err := core.DecodeShieldedV3Transaction(tx.Data())
 		if err != nil {
 			t.Fatal(err)
@@ -147,6 +163,52 @@ func TestShield3WalletConsensus(t *testing.T) {
 			rpc.outputs = append(rpc.outputs, scanOutput{Commitment: out.Commitment, Incoming: out.Incoming, Outgoing: out.Outgoing, TransactionHash: tx.Hash()})
 		}
 	}
+	if _, err := Build(ctx, rpc, seedA, a, pb, big.NewInt(1), true); err == nil {
+		t.Fatal("wallet accepted an unregistered stamp")
+	}
+	st.AddBalance(b.Address, uint256.NewInt(StampWalletGas+1), tracing.BalanceChangeUnspecified)
+	for _, entry := range []struct {
+		seed     []byte
+		identity *Identity
+	}{{seedA, a}, {seedB, b}} {
+		registration, err := BuildStamp(ctx, rpc, entry.seed, entry.identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed := sign(registration, entry.seed)
+		if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime-1, st, signed, nil); err == nil {
+			t.Fatal("accepted pre-fork registration")
+		}
+		head := &types.Header{Number: big.NewInt(1), Time: params.MainnetAntarticalTime, GasLimit: 8000000, BaseFee: big.NewInt(1), Difficulty: big.NewInt(1)}
+		if err := txpool.ValidateTransaction(signed, head, types.NewQuantumSigner(big.NewInt(8979)), &txpool.ValidationOptions{Config: params.MainnetChainConfig, Accept: 1 << types.PQTkmTxType, MaxSize: 128 * 1024, MinTip: big.NewInt(1)}); err != nil {
+			t.Fatal("registration rejected by real txpool", err)
+		}
+		forged, err := core.DecodeAntarticalStamp(signed.Data())
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged.Owner[0] ^= 1
+		forgedData, err := core.EncodeAntarticalStamp(forged)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad := sign(types.NewTx(&types.PQTkmTx{ChainID: big.NewInt(8979), Nonce: signed.Nonce(), To: &params.ShieldedPoolAddress, Gas: signed.Gas(), GasFeeCap: signed.GasFeeCap(), GasTipCap: signed.GasTipCap(), Value: new(big.Int), Data: forgedData}), entry.seed)
+		if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, head.Number, head.Time, st, bad, nil); err == nil {
+			t.Fatal("forged owner registered")
+		}
+		if core.IsAntarticalStamped(st, entry.identity.Address) {
+			t.Fatal("failed proof changed registry")
+		}
+		process(signed)
+		status, err := core.AntarticalStampForAddress(st, entry.identity.Address)
+		if err != nil || !status.Registered || status.Owner != entry.identity.Owner || status.Commitment != entry.identity.Stamp.Commitment {
+			t.Fatal("missing consensus stamp", err)
+		}
+		if _, err := BuildStamp(ctx, rpc, entry.seed, entry.identity); err == nil {
+			t.Fatal("wallet allowed replacing a stamp")
+		}
+	}
+	st.SubBalance(b.Address, st.GetBalance(b.Address), tracing.BalanceChangeUnspecified)
 	amount := new(big.Int).Mul(big.NewInt(11), big.NewInt(1_000_000_000_000_000_000))
 	unsigned, err := Build(ctx, rpc, seedA, a, pa, amount, true)
 	if err != nil {

@@ -48,3 +48,16 @@ Mail and Phone (0.5.0): Mail registers mailboxes, publishes the seed-derived X25
 Phone now verifies domain-separated ML-DSA-87 owner and device signatures. Registration and sending use PQ locally. Move a number to PQ allows its existing ECDSA or PQ owner to sign a transfer to a local PQ account. Transfer removes previous device/recovery authority; register the new device afterward. ECDSA verification remains for existing records and migration, so legacy users are not silently locked out. This is a Phone service upgrade, not a new block-consensus fork. Upgrade participating Phone nodes together: older nodes cannot verify PQ actions, and new device/transfer propagation requires owner signatures.
 
 No live funds or phone ownership were changed during validation. Tests use public deterministic fixtures, fake RPC/prover responses, and local browser flows. Physical Android and native Windows runtime testing remains required before production release.
+
+### Consensus stamps at Antartical
+
+Android embeds the same wallet UI and local backend as the desktop GUI. Send
+and Receive show stamping first: enter private name/country labels or restore
+the original encrypted backup, register the stamp, and check confirmation.
+Registration transfers zero TKM and requires a public balance for normal gas
+fees. Sending, receiving-code sharing, funding and legacy migration remain
+locked until the immutable on-chain stamp confirms. A wallet-file stamp alone
+is insufficient; block execution and both transaction pools enforce the gate.
+Private proofs require registered output owners without publishing the payment
+recipient or its registry index. Registration hashes appear in Activity, and
+stable request IDs preserve signed registration bytes across retries/restarts.

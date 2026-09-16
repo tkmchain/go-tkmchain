@@ -45,3 +45,8 @@ export async function shield3Funds(options) {
  const release=acquireWalletOperation();
  try{return await privateOperation('shield',options,{amountWei:validateShield3Amount(options.amount).toString(),requestId:options.requestId||ethers.hexlify(ethers.randomBytes(16))})}finally{release()}
 }
+
+export async function shield3RegisterStamp(options) {
+ const release=acquireWalletOperation();
+ try{return await privateOperation('register-stamp',options,{requestId:options.requestId})}finally{release()}
+}

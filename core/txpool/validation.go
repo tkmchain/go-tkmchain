@@ -70,7 +70,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
 	maxSize := opts.MaxSize
-	if opts.Config.IsAntartical(head.Number, head.Time) && core.HasShieldedV3Prefix(tx.Data()) {
+	if opts.Config.IsAntartical(head.Number, head.Time) && (core.HasShieldedV3Prefix(tx.Data()) || core.HasAntarticalStampPrefix(tx.Data())) {
 		maxSize = core.ShieldedV3MaxTxSize
 	}
 	if tx.Size() > maxSize {
@@ -199,6 +199,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
+	if rules.IsAntartical && core.HasAntarticalStampPrefix(tx.Data()) {
+		return core.ValidateAntarticalStampProof(tx)
+	}
 	if rules.IsAntartical && core.HasShieldedV3Prefix(tx.Data()) {
 		return core.ValidateShieldedV3Proof(tx)
 	}
@@ -272,6 +275,8 @@ func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash
 // ValidationOptionsWithState define certain differences between stateful transaction
 // validation across the different pools without having to duplicate those checks.
 type ValidationOptionsWithState struct {
+	Antartical bool // derived from the pool's canonical head
+
 	State *state.StateDB // State database to check nonces and balances against
 
 	// FirstNonceGap is an optional callback to retrieve the first nonce gap in
@@ -305,6 +310,14 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if err != nil {
 		log.Error("Transaction sender recovery failed", "err", err)
 		return err
+	}
+	if opts.Antartical {
+		if err := core.ValidateAntarticalStampState(opts.State, from, tx.To(), tx.Value(), tx.Data()); err != nil {
+			return err
+		}
+		if core.HasAntarticalStampPrefix(tx.Data()) && core.IsAntarticalStamped(opts.State, from) {
+			return errors.New("address stamp is already registered")
+		}
 	}
 	next := opts.State.GetNonce(from)
 	if next > tx.Nonce() {

@@ -38,6 +38,7 @@ type ShieldedV3Transaction struct {
 	Deposit             bool
 	Anchor              shielded3.Digest
 	Nullifier           shielded3.Digest
+	StampRoot           shielded3.Digest
 	Outputs             [shielded3.OutputSlots]ShieldedV3Output
 	WithdrawalRecipient common.Address
 	WithdrawalValue     *big.Int
@@ -193,7 +194,7 @@ func ShieldedV3Statement(tx *types.Transaction, e *ShieldedV3Transaction) (shiel
 	if err != nil {
 		return shielded3.Statement{}, err
 	}
-	s := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shielded3.AssetTKM, PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, Deposit: e.Deposit}
+	s := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shielded3.AssetTKM, PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit}
 	for i := range e.Outputs {
 		s.Outputs[i] = e.Outputs[i].Commitment
 	}
@@ -221,6 +222,12 @@ func validateShieldedV3State(st *state.StateDB, tx *types.Transaction, e *Shield
 	// code-free so execution cannot revert a funded deposit after note creation.
 	if st.GetCodeSize(params.ShieldedPoolAddress) != 0 {
 		return fmt.Errorf("%w: Shield3 pool must not contain executable code", ErrInvalidShieldedTx)
+	}
+	if e.StampRoot == (shielded3.Digest{}) || st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/root", e.StampRoot.Bytes())) == (common.Hash{}) {
+		return fmt.Errorf("%w: unknown stamp registry root", ErrInvalidShieldedTx)
+	}
+	if e.WithdrawalValue.Sign() > 0 && !IsAntarticalStamped(st, e.WithdrawalRecipient) {
+		return ErrUnstampedAddress
 	}
 	if !e.Deposit {
 		if ShieldedV3NullifierTransaction(st, e.Nullifier) != (common.Hash{}) {
@@ -298,6 +305,19 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 // ShieldedV3GasData prices the bounded proof at one gas per byte plus a fixed
 // verifier charge. Other envelope bytes retain ordinary calldata pricing.
 func ShieldedV3GasData(data []byte) ([]byte, uint64, error) {
+	if HasAntarticalStampPrefix(data) {
+		e, err := DecodeAntarticalStamp(data)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(e.Proof) > shielded3.MaxProofSize {
+			return nil, 0, ErrInvalidShieldedTx
+		}
+		gas := AntarticalStampVerifyGas + uint64(len(e.Proof))
+		e.Proof = nil
+		encoded, err := EncodeAntarticalStamp(e)
+		return encoded, gas, err
+	}
 	e, ok, err := DecodeShieldedV3Transaction(data)
 	if err != nil {
 		return nil, 0, err

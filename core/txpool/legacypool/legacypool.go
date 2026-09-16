@@ -580,7 +580,8 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptionsWithState{
-		State: pool.currentState,
+		State:      pool.currentState,
+		Antartical: pool.chainconfig.IsAntartical(pool.currentHead.Load().Number, pool.currentHead.Load().Time),
 
 		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
 		UsedAndLeftSlots: nil, // Pool has own mechanism to limit the number of transactions
@@ -1311,9 +1312,25 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 // reorganisation can otherwise leave an unmineable shielded transaction at the
 // next account nonce and indefinitely block every later transaction.
 func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
+	head := pool.currentHead.Load()
+	antartical := pool.chainconfig.IsAntartical(head.Number, head.Time)
 	var invalid []common.Hash
 	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		if err := core.ValidateShieldedTransactionState(pool.currentState, tx); err != nil {
+		var err error
+		if antartical {
+			var from common.Address
+			from, err = types.Sender(pool.signer, tx)
+			if err == nil {
+				err = core.ValidateAntarticalStampState(pool.currentState, from, tx.To(), tx.Value(), tx.Data())
+			}
+			if err == nil && core.HasAntarticalStampPrefix(tx.Data()) && core.IsAntarticalStamped(pool.currentState, from) {
+				err = errors.New("stamp registration already confirmed")
+			}
+		}
+		if err == nil {
+			err = core.ValidateShieldedTransactionState(pool.currentState, tx)
+		}
+		if err != nil {
 			log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
 			invalid = append(invalid, hash)
 		}

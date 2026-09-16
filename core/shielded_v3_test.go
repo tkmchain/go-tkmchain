@@ -70,7 +70,7 @@ func TestShield3NeverFallsBackToLegacyVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope := &ShieldedV3Transaction{Version: 3, Deposit: true, WithdrawalValue: new(big.Int), GasSponsorValue: new(big.Int), Proof: binary.LittleEndian.AppendUint64(binary.LittleEndian.AppendUint32(nil, 1), 1)}
+	envelope := &ShieldedV3Transaction{Version: 3, Deposit: true, StampRoot: shielded3.Digest{99}, WithdrawalValue: new(big.Int), GasSponsorValue: new(big.Int), Proof: binary.LittleEndian.AppendUint64(binary.LittleEndian.AppendUint32(nil, 1), 1)}
 	// A canonical-looking proof is insufficient even when a legacy verifier
 	// has been configured to accept every legacy statement.
 	for i := range envelope.Outputs {
@@ -95,6 +95,20 @@ func TestShield3NeverFallsBackToLegacyVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	key, err := pqcrypto.NewMLDSA87FromSeed(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err = types.SignPQTkmTx(tx, types.NewQuantumSigner(big.NewInt(8979)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := types.Sender(types.NewQuantumSigner(big.NewInt(8979)), tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", from.Bytes()), common.HexToHash("0x1"))
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/root", envelope.StampRoot.Bytes()), common.HexToHash("0x1"))
 	err = ProcessShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime, st, tx, make(map[common.Hash]struct{}))
 	if !errors.Is(err, ErrInvalidShieldedTx) || ShieldedV3NextIndex(st) != 0 {
 		t.Fatalf("invalid native proof accepted or modified state: %v", err)

@@ -218,6 +218,19 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 // ProcessShieldedTransaction applies consensus shielded commitment state for tx.
 // The seen map should be shared across all transactions in the candidate block.
 func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
+	if config != nil && config.IsAntartical(blockNumber, blockTime) {
+		if HasAntarticalStampPrefix(tx.Data()) {
+			return ProcessAntarticalStamp(config, blockNumber, blockTime, statedb, tx)
+		}
+		from, err := types.Sender(types.MakeSigner(config, blockNumber, blockTime), tx)
+		if err != nil {
+			return err
+		}
+		if err := ValidateAntarticalStampState(statedb, from, tx.To(), tx.Value(), tx.Data()); err != nil {
+			return err
+		}
+	}
+
 	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
 		if seen == nil {
 			seen = make(map[common.Hash]struct{})
@@ -235,6 +248,10 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 // nullifier and commitment state checks so txpool validation can reject malformed
 // or transparent post-privacy transactions without needing a StateDB.
 func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if HasAntarticalStampPrefix(tx.Data()) {
+		return ValidateAntarticalStampBasics(config, blockNumber, blockTime, tx)
+	}
+
 	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
 		_, err := shieldedV3Basics(config, blockNumber, blockTime, tx)
 		return err

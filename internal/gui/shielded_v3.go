@@ -66,7 +66,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield":
+	case "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
@@ -107,6 +107,10 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	if operation == "validate" {
 		p, err := shield3wallet.DecodePaymentCode(req.Recipient, chainID.Uint64())
 		if err != nil {
+			fail(400, err)
+			return
+		}
+		if err := shield3wallet.RequireRegisteredStamp(r.Context(), g.client, p); err != nil {
 			fail(400, err)
 			return
 		}
@@ -165,12 +169,15 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	amount, ok := new(big.Int).SetString(req.AmountWei, 10)
+	if operation == "register-stamp" {
+		amount, ok = new(big.Int), true
+	}
 	if !ok {
 		fail(400, errors.New("invalid amount in smallest chain units"))
 		return
 	}
 	recipientCode := req.Recipient
-	if operation == "shield" {
+	if operation == "shield" || operation == "register-stamp" {
 		recipientCode = identity.Code
 	}
 	recipient, err := shield3wallet.DecodePaymentCode(recipientCode, identity.ChainID)
@@ -219,7 +226,13 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		unsigned, err := shield3wallet.Build(r.Context(), g.client, req.Seed, identity, recipient, amount, operation == "shield")
+		var unsigned *types.Transaction
+		var err error
+		if operation == "register-stamp" {
+			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
+		} else {
+			unsigned, err = shield3wallet.Build(r.Context(), g.client, req.Seed, identity, recipient, amount, operation == "shield")
+		}
 		if err != nil {
 			fail(400, err)
 			return

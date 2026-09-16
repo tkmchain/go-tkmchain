@@ -47,7 +47,7 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     nullifier.extend(owner);
     nullifier.extend(&secret[5..18]);
     public[33..38].copy_from_slice(&hash(&nullifier));
-    let path = (0..MERKLE_DEPTH)
+    let mut path = (0..MERKLE_DEPTH)
         .map(|i| hash(&[9999, i as u64]))
         .collect::<Vec<_>>();
     let mut root = input;
@@ -85,6 +85,7 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
         );
         public[38 + 5 * i..43 + 5 * i].copy_from_slice(&commitment);
     }
+    stamp_fixture(&mut public, &mut secret, &mut path);
     (public, secret, path)
 }
 fn run(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
@@ -118,7 +119,7 @@ fn valid_spend_and_constraint_rejections() {
             "unconstrained secret word {i}"
         );
     }
-    for i in 0..MERKLE_DEPTH {
+    for i in 0..PATH_DIGESTS {
         for j in 0..5 {
             let mut changed = path.clone();
             changed[i][j] ^= 1;
@@ -150,7 +151,7 @@ fn refresh_commitments(public: &mut [u64], secret: &[u64], path: &[[u64; 5]]) {
     let input = note(&public[..4], &hash(&owner), &secret[5..10], &secret[10..18]);
     let mut root = input;
     let mut index = secret[18];
-    for sibling in path {
+    for sibling in path.iter().take(MERKLE_DEPTH) {
         root = if index & 1 == 0 {
             pair(root, *sibling)
         } else {
@@ -343,4 +344,69 @@ fn fee_sponsorship_is_checked_and_excluded_from_send_cap() {
     assert!(!run(&public, &secret, &path));
     public[59] = 1 << 32;
     assert!(!run(&public, &secret, &path));
+}
+
+fn stamp_fixture(public: &mut [u64], secret: &mut [u64], path: &mut Vec<[u64; 5]>) {
+    let mut zeroes = vec![[0; 5]];
+    for i in 0..MERKLE_DEPTH {
+        zeroes.push(pair(zeroes[i], zeroes[i]));
+    }
+    let leaves = (0..4)
+        .map(|i| {
+            let mut words = vec![DOMAIN_STAMP, public[0], public[1]];
+            words.extend(&secret[19 + 18 * i..24 + 18 * i]);
+            hash(&words)
+        })
+        .collect::<Vec<_>>();
+    let mut levels = vec![leaves];
+    for depth in 0..MERKLE_DEPTH {
+        let previous = &levels[depth];
+        let next = previous
+            .chunks(2)
+            .map(|p| pair(p[0], *p.get(1).unwrap_or(&zeroes[depth])))
+            .collect::<Vec<_>>();
+        levels.push(next);
+    }
+    public[67..72].copy_from_slice(&levels[MERKLE_DEPTH][0]);
+    path.truncate(MERKLE_DEPTH);
+    for i in 0..4 {
+        secret[91 + i] = i as u64;
+        for depth in 0..MERKLE_DEPTH {
+            path.push(
+                *levels[depth]
+                    .get((i >> depth) ^ 1)
+                    .unwrap_or(&zeroes[depth]),
+            );
+        }
+    }
+}
+#[test]
+fn stamp_ownership_and_replay() {
+    let secret = [11, 22, 33, 44, 55];
+    let mut public = vec![0; OWNER_PUBLIC_WORDS];
+    public[0] = 8979;
+    public[2..7].copy_from_slice(&hash(&[DOMAIN_OWNER, 11, 22, 33, 44, 55]));
+    public[7] = 1234;
+    let proof = prove_owner(&public, &secret).expect("real stamp ownership proof");
+    verify_owner(&public, &proof).unwrap();
+    for index in [0, 2, 7, 22] {
+        let mut changed = public.clone();
+        changed[index] ^= 1;
+        assert!(
+            verify_owner(&changed, &proof).is_err(),
+            "stamp proof replay {index}"
+        );
+    }
+    assert!(prove_owner(&public, &[11, 22, 33, 44, 56]).is_err());
+}
+
+#[test]
+fn unregistered_recipient_cannot_receive_even_with_valid_note_openings() {
+    let (mut public, mut secret, path) = fixture();
+    secret[19..24].copy_from_slice(&hash(&[DOMAIN_OWNER, 999, 888, 777, 666, 555]));
+    refresh_commitments(&mut public, &secret, &path);
+    // Conservation, input path, nullifier and every output opening are valid;
+    // only stamp membership is false.
+    assert!(!run(&public, &secret, &path));
+    assert!(prove_spend(&public, &secret, &path).is_err());
 }
