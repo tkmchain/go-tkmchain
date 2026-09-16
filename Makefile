@@ -112,21 +112,21 @@ production: production-gtkm production-prover
 	@echo "✅ Production runtime built successfully!"
 	@ls -lh $(GOBIN)/gtkm $(GOBIN)/shielded-payout-prover
 
-production-gtkm: $(RANDOMX_LIB_HOST)
+production-gtkm: $(RANDOMX_LIB_HOST) shield3-host
 	@echo "Building stripped production gtkm (parallelism $(GO_BUILD_P))..."
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
-		go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
+		go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -tags "randomx,cgo,shield3" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
 
-production-prover:
+production-prover: shield3-host
 	@echo "Building stripped production shielded prover (parallelism $(GO_BUILD_P))..."
 	@mkdir -p $(GOBIN)
-	go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
+	go build -p $(GO_BUILD_P) $(PRODUCTION_LDFLAGS) -tags shield3 -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
 	@echo "✅ Built: $(GOBIN)/shielded-payout-prover"
 
 #? gtkm: Build gtkm with RandomX support.
-gtkm: $(RANDOMX_LIB_HOST)
+gtkm: $(RANDOMX_LIB_HOST) shield3-host
 	@echo "Building gtkm with RandomX..."
 	@if [ ! -f "$(RANDOMX_LIB_HOST)" ]; then \
 		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_HOST)"; \
@@ -135,11 +135,11 @@ gtkm: $(RANDOMX_LIB_HOST)
 	fi
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
-	go build $(LDFLAGS) -tags "randomx,cgo" -o $(GOBIN)/gtkm ./cmd/gtkm
+	go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
 
 #? gtkm-gui: Build gtkm with the native desktop GUI (requires libgtk-3-dev + libwebkit2gtk-4.1-dev).
-gtkm-gui: $(RANDOMX_LIB_HOST)
+gtkm-gui: $(RANDOMX_LIB_HOST) shield3-host
 	@echo "Building gtkm with desktop GUI (webkit2gtk)..."
 	@if [ ! -f "$(RANDOMX_LIB_HOST)" ]; then \
 		echo "ERROR: RandomX library not found at $(RANDOMX_LIB_HOST)"; \
@@ -148,11 +148,11 @@ gtkm-gui: $(RANDOMX_LIB_HOST)
 	fi
 	@mkdir -p $(GOBIN)
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
-	go build $(LDFLAGS) -tags "randomx,cgo,gtkmgui" -o $(GOBIN)/gtkm-gui ./cmd/gtkm
+	go build $(LDFLAGS) -tags "randomx,cgo,shield3,gtkmgui" -o $(GOBIN)/gtkm-gui ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm-gui"
 
 #? gtkm-gui-windows: Cross-compile the desktop GUI for Windows 64-bit (requires mingw-w64 + WebView2 runtime on the target).
-gtkm-gui-windows: $(RANDOMX_LIB_WINDOWS)
+gtkm-gui-windows: $(RANDOMX_LIB_WINDOWS) shield3-windows
 	@echo "Cross-compiling gtkm desktop GUI for Windows 64-bit..."
 	@if [ ! -f "$(RANDOMX_LIB_WINDOWS)" ]; then \
 		echo "ERROR: RandomX Windows library not found at $(RANDOMX_LIB_WINDOWS)"; \
@@ -168,7 +168,7 @@ gtkm-gui-windows: $(RANDOMX_LIB_WINDOWS)
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW64_CC) CXX=$(MINGW64_CXX) \
 		CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
 		CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_WINDOWS) -lrandomx -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic" \
-		go build $(WIN_GUI_LDFLAGS) -tags "randomx,cgo,gtkmgui" -o $(GOBIN)/gtkm-gui-windows-amd64$(CROSS_WINDOWS_EXT) ./cmd/gtkm
+		go build $(WIN_GUI_LDFLAGS) -tags "randomx,cgo,shield3,gtkmgui" -o $(GOBIN)/gtkm-gui-windows-amd64$(CROSS_WINDOWS_EXT) ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm-gui-windows-amd64$(CROSS_WINDOWS_EXT)"
 	@echo "Requires the Microsoft Edge WebView2 runtime on the target machine."
 
@@ -177,10 +177,10 @@ gtkm-android:
 	@./android/build.sh
 
 #? shielded-payout-prover: Build the shielded prover managed by gtkm.
-shielded-payout-prover:
+shielded-payout-prover: shield3-host
 	@echo "Building shielded payout prover..."
 	@mkdir -p $(GOBIN)
-	go build $(LDFLAGS) -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
+	go build $(LDFLAGS) -tags shield3 -o $(GOBIN)/shielded-payout-prover ./cmd/shielded-payout-prover
 
 #? clef: Build clef (transaction signing tool).
 clef: $(RANDOMX_LIB_HOST)
@@ -894,3 +894,9 @@ cross-build:
 	@echo "✅ Cross-platform builds complete (without RandomX)."
 	@echo "Note: These builds do NOT include RandomX support."
 	@echo "Output directory: $(CROSS_OUTPUT_DIR)"
+
+.PHONY: shield3-host shield3-windows
+shield3-host:
+	./scripts/shield3-build.sh
+shield3-windows:
+	GOOS=windows CC=$(MINGW64_CC) SHIELD3_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield3-build.sh

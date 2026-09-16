@@ -72,9 +72,10 @@ type ShieldedTransaction struct {
 	// WithdrawalRecipient and WithdrawalValue are optional trailing fields so
 	// previously encoded V1/V2 envelopes remain decodable. A non-zero pair asks
 	// consensus to release a proof-backed public value from the shielded pool.
-	WithdrawalRecipient common.Address `rlp:"optional"`
-	WithdrawalValue     *big.Int       `rlp:"optional"`
-	GasSponsorValue     *big.Int       `rlp:"optional"`
+	WithdrawalRecipient       common.Address `rlp:"optional"`
+	WithdrawalValue           *big.Int       `rlp:"optional"`
+	GasSponsorValue           *big.Int       `rlp:"optional"`
+	MigrationOutputRandomness []common.Hash  `rlp:"optional"`
 }
 
 // ShieldedProofContext is the exact public input passed into the ZK verifier.
@@ -217,6 +218,12 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 // ProcessShieldedTransaction applies consensus shielded commitment state for tx.
 // The seen map should be shared across all transactions in the candidate block.
 func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
+	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+		if seen == nil {
+			seen = make(map[common.Hash]struct{})
+		}
+		return processShieldedV3(config, blockNumber, blockTime, statedb, tx, seen)
+	}
 	if seen == nil {
 		seen = make(map[common.Hash]struct{})
 	}
@@ -228,6 +235,10 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 // nullifier and commitment state checks so txpool validation can reject malformed
 // or transparent post-privacy transactions without needing a StateDB.
 func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+		_, err := shieldedV3Basics(config, blockNumber, blockTime, tx)
+		return err
+	}
 	_, err := validateShieldedTransactionEnvelope(config, blockNumber, blockTime, tx)
 	return err
 }
@@ -282,14 +293,15 @@ func ShieldedTransactionIntentHash(tx *types.Transaction, envelope *ShieldedTran
 
 func stripShieldedProofs(tx *ShieldedTransaction) *ShieldedTransaction {
 	cpy := &ShieldedTransaction{
-		Version:             tx.Version,
-		Spends:              make([]ShieldedSpend, len(tx.Spends)),
-		Outputs:             make([]ShieldedOutput, len(tx.Outputs)),
-		BalanceCommitment:   tx.BalanceCommitment,
-		BindingSig:          make([]byte, common.HashLength),
-		WithdrawalRecipient: tx.WithdrawalRecipient,
-		WithdrawalValue:     copyBigInt(tx.WithdrawalValue),
-		GasSponsorValue:     copyBigInt(tx.GasSponsorValue),
+		Version:                   tx.Version,
+		Spends:                    make([]ShieldedSpend, len(tx.Spends)),
+		Outputs:                   make([]ShieldedOutput, len(tx.Outputs)),
+		BalanceCommitment:         tx.BalanceCommitment,
+		BindingSig:                make([]byte, common.HashLength),
+		WithdrawalRecipient:       tx.WithdrawalRecipient,
+		WithdrawalValue:           copyBigInt(tx.WithdrawalValue),
+		GasSponsorValue:           copyBigInt(tx.GasSponsorValue),
+		MigrationOutputRandomness: append([]common.Hash(nil), tx.MigrationOutputRandomness...),
 	}
 	for i, spend := range tx.Spends {
 		cpy.Spends[i] = ShieldedSpend{
@@ -480,6 +492,31 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	}
 	if tx.Value().Sign() == 0 && len(envelope.Spends) == 0 {
 		return nil, fmt.Errorf("%w: shielded tx must spend at least one private note", ErrInvalidShieldedTx)
+	}
+	if !config.IsAntartical(blockNumber, blockTime) && len(envelope.MigrationOutputRandomness) > 0 {
+		return nil, fmt.Errorf("%w: migration openings are not active", ErrInvalidShieldedTx)
+	}
+	if config.IsAntartical(blockNumber, blockTime) {
+		sender, err := types.Sender(types.MakeSigner(config, blockNumber, blockTime), tx)
+		if err != nil || envelope.Version != ShieldedTxVersionV2 || isDeposit || withdrawalValue.Sign() <= 0 || envelope.WithdrawalRecipient != sender || gasSponsorValue.Sign() != 0 || len(envelope.Spends) != 1 {
+			return nil, fmt.Errorf("%w: Antartical requires Shield3; V2 is restricted to migration withdrawals to the signer", ErrInvalidShieldedTx)
+		}
+		if len(envelope.MigrationOutputRandomness) != shieldedOutputSlots {
+			return nil, fmt.Errorf("%w: migration requires four zero-value output openings", ErrInvalidShieldedTx)
+		}
+		for i, random := range envelope.MigrationOutputRandomness {
+			if random == (common.Hash{}) || !isCanonicalShieldedFieldHash(random) {
+				return nil, fmt.Errorf("%w: invalid migration randomness", ErrInvalidShieldedTx)
+			}
+			recipient := fr.Element{}
+			if i == 0 {
+				recipient.SetBytes(sender.Bytes())
+			}
+			expected := hashFromShieldedField(shieldedFieldHash(2001, recipient, fieldElementFromUint64(1), fr.Element{}, fieldElementFromHash(random)))
+			if envelope.Outputs[i].Commitment != expected {
+				return nil, fmt.Errorf("%w: migration outputs must have zero value", ErrInvalidShieldedTx)
+			}
+		}
 	}
 	return envelope, nil
 }
@@ -784,11 +821,31 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 		return new(big.Int)
 	}
 	cost := tx.Cost()
+	if HasShieldedV3Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV3Transaction(tx.Data())
+		if err != nil || e.GasSponsorValue == nil {
+			return cost
+		}
+		sponsor := e.GasSponsorValue
+		if sponsor.Sign() > 0 {
+			cost.Sub(cost, sponsor)
+			if cost.Sign() < 0 {
+				return new(big.Int)
+			}
+		}
+		return cost
+	}
 	envelope, ok, err := DecodeShieldedTransaction(tx.Data())
 	if err != nil || !ok {
 		return cost
 	}
-	sponsor := shieldedGasSponsorValue(envelope)
+	sponsor := new(big.Int).Set(shieldedGasSponsorValue(envelope))
+	if len(envelope.MigrationOutputRandomness) == shieldedOutputSlots && envelope.WithdrawalValue != nil && envelope.WithdrawalValue.Sign() > 0 {
+		sender, err := types.Sender(types.NewQuantumSigner(tx.ChainId()), tx)
+		if err == nil && sender == envelope.WithdrawalRecipient {
+			sponsor.Add(sponsor, envelope.WithdrawalValue)
+		}
+	}
 	if sponsor.Sign() == 0 {
 		return cost
 	}
@@ -805,6 +862,13 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 func ValidateShieldedTransactionState(statedb *state.StateDB, tx *types.Transaction) error {
 	if statedb == nil || tx == nil {
 		return nil
+	}
+	if HasShieldedV3Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV3Transaction(tx.Data())
+		if err != nil {
+			return err
+		}
+		return validateShieldedV3State(statedb, tx, e)
 	}
 	envelope, ok, err := DecodeShieldedTransaction(tx.Data())
 	if err != nil {

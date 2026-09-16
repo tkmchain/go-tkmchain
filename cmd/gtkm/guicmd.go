@@ -109,13 +109,14 @@ func localGUI(ctx *cli.Context) error {
 	client := stack.Attach()
 
 	g, err := gui.New(client, gui.Options{
-		Title:        "TKM Wallet",
-		ProverConfig: proverConfig,
-		Width:        1280,
-		Height:       800,
-		Port:         ctx.Int(guiPortFlag.Name),
-		Host:         ctx.String(guiHostFlag.Name),
-		ForceBrowser: ctx.Bool(guiBrowserFlag.Name),
+		Title:          "TKM Wallet",
+		ProverConfig:   proverConfig,
+		WalletStateDir: stack.ResolvePath("shield3-submissions"),
+		Width:          1280,
+		Height:         800,
+		Port:           ctx.Int(guiPortFlag.Name),
+		Host:           ctx.String(guiHostFlag.Name),
+		ForceBrowser:   ctx.Bool(guiBrowserFlag.Name),
 	})
 	if err != nil {
 		return err

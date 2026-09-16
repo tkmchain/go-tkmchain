@@ -242,6 +242,11 @@ func ServiceGetBlockBodiesQuery(chain *core.BlockChain, query GetBlockBodiesRequ
 		if len(data) == 0 {
 			break // If we don't have this block's body, stop serving.
 		}
+		// A single proof-heavy body may exceed the soft response target.
+		// Keep the complete response below the peer's hard packet bound.
+		if bytes+len(data)+1024 > maxPacketSize {
+			break
+		}
 		bodies = append(bodies, data)
 		bytes += len(data)
 	}

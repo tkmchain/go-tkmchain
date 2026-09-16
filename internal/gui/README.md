@@ -8,9 +8,38 @@ Android: install TKM-Wallet-Android-arm64-debug.apk on an ARM64 Android 8+ devic
 
 Recovery: Add wallet generates or restores 24 words. Receive > Private balance & recovery can reveal an existing PQ account's phrase after password verification. TKM PQ recovery v1 represents the exact 32-byte ML-DSA seed using BIP39 entropy/checksum words. It is not an Ethereum HD wallet derivation and has no additional mnemonic passphrase. Preserve the words privately. Never share them with support.
 
-Transfers: use the full shield2 receiving code. The wallet validates recipients, builds proofs through its local prover, signs locally and records attempted transaction hashes. Shielded balance scanning requires the wallet password. Public and shielded balances are shown separately.
+Transfers before Antartical: use the full shield2 receiving code. The wallet validates recipients, builds proofs through its local prover, signs locally and records attempted transaction hashes. Shielded balance scanning requires the wallet password. Public and shielded balances are shown separately.
 
-Validation: Go GUI/proxy and cross-language identity tests; 16 JavaScript recovery/signing/Mail tests; Chromium Mail/Phone flows at widths 320, 390 and 1440, with earlier wallet checks also at 820; Windows cross-build; Android Gradle build and APK inspection. No real funds were transferred. Native Windows and physical Android runtime verification remains necessary before production release.
+
+## Shield3 at Antartical
+
+Mainnet activation is October 1, 2026 at 00:00 UTC. New wallets require a private
+name/country stamp before account creation; existing PQ wallets can add their
+original stamp once in Receive & backup. Save the encrypted keyfile to preserve
+that original stamp alongside the 24 recovery words.
+
+Use the full `tkmshield3.` receiving address for private sends. The maximum is
+5,000,000 TKM per transaction, plus network fees. The embedded native prover
+requires one confirmed note covering the requested amount and fees. Viewing
+keys reveal incoming and outgoing note history; the separate stamp key reveals
+name and country. Receiving public keys cannot decrypt either.
+
+Shield public funds creates a Shield3 note from the public balance and exposes
+that funding amount. To move old Shield2 notes, use Migrate one Shield2 note,
+wait for its confirmation, then shield the resulting public balance. This
+legacy migration also exposes its withdrawal amount. Private note amounts are
+encrypted; outer signer accounts, timing, gas and fees remain public.
+
+Submitted hashes appear in Activity as awaiting confirmation until their
+receipts arrive. Shield3 saves exact signed transaction bytes locally before
+broadcast so the same request can be retried after an RPC timeout or restart
+without creating another proof or spending another note.
+
+Builds require Rust 1.89 and CGO. Add the `x86_64-pc-windows-gnu` target for Windows
+and `aarch64-linux-android` for Android; release.yml installs both where needed.
+See [Shield3 implementation and testing](../../zk/shielded3/README.md).
+
+Validation: Go GUI/proxy and cross-language identity tests; 18 JavaScript recovery/signing/Mail/migration/boundary tests; Chromium Mail/Phone flows at widths 320, 390 and 1440, with earlier wallet checks also at 820; Windows cross-build; Android Gradle build and APK inspection. No real funds were transferred. Native Windows and physical Android runtime verification remains necessary before production release.
 
 Developer checks: `go test ./internal/gui`; in `wallet-engine`, run `npm ci`, `npm test`, and `npm run build` before native builds. Build Windows with `make gtkm-gui-windows` and its adjacent Windows prover; build Android with `./android/build.sh`. The embedded engine uses the same PQ identity and shield2 format as the Go node, covered by a public deterministic fixture.
 

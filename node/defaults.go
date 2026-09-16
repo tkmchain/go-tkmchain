@@ -62,6 +62,7 @@ var DefaultConfig = Config{
 	AuthVirtualHosts:     DefaultAuthVhosts,
 	HTTPModules:          []string{"net", "web3", "rk", "rotatingking", "randomx", "tvm", "tkminstitution", "tkmaccount", "tkmdomain", "emailvm"},
 	HTTPVirtualHosts:     []string{"localhost"},
+	HTTPBodyLimit:        20 * 1024 * 1024, // bounded hex-encoded native proof requests
 	HTTPTimeouts:         rpc.DefaultHTTPTimeouts,
 	WSPort:               DefaultWSPort,
 	WSModules:            []string{"net", "web3", "rk", "rotatingking", "randomx", "tvm", "tkminstitution", "tkmaccount", "tkmdomain", "emailvm"},

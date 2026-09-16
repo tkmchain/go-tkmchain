@@ -69,8 +69,12 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
-	if tx.Size() > opts.MaxSize {
-		return fmt.Errorf("%w: transaction size %v, limit %v", ErrOversizedData, tx.Size(), opts.MaxSize)
+	maxSize := opts.MaxSize
+	if opts.Config.IsAntartical(head.Number, head.Time) && core.HasShieldedV3Prefix(tx.Data()) {
+		maxSize = core.ShieldedV3MaxTxSize
+	}
+	if tx.Size() > maxSize {
+		return fmt.Errorf("%w: transaction size %v, limit %v", ErrOversizedData, tx.Size(), maxSize)
 	}
 	// Ensure only transactions that have been enabled are accepted
 	rules := opts.Config.Rules(head.Number, head.Difficulty.Sign() == 0, head.Time)
@@ -166,7 +170,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam)
+	intrGas, err := core.IntrinsicGasWithShield3(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam, rules.IsAntartical)
 	if err != nil {
 		return err
 	}
@@ -194,6 +198,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		if len(tx.SetCodeAuthorizations()) == 0 {
 			return errors.New("set code tx must have at least one authorization tuple")
 		}
+	}
+	if rules.IsAntartical && core.HasShieldedV3Prefix(tx.Data()) {
+		return core.ValidateShieldedV3Proof(tx)
 	}
 	return nil
 }

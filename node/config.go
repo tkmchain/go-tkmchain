@@ -130,6 +130,9 @@ type Config struct {
 	// exposed.
 	HTTPModules []string
 
+	// HTTPBodyLimit bounds HTTP and WebSocket requests, including hex-encoded Shield3 proofs.
+	HTTPBodyLimit int `toml:",omitempty"`
+
 	// HTTPTimeouts allows for customization of the timeout values used by the HTTP RPC
 	// interface.
 	HTTPTimeouts rpc.HTTPTimeouts

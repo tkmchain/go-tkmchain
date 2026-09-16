@@ -22,7 +22,7 @@ const (
 	MerkleDepth   = 32
 	OutputSlots   = 4
 	fieldModulus  = uint64(0xffffffff00000001)
-	publicWords   = 58
+	publicWords   = 67
 	secretWords   = 91
 	maxProofWords = 1 << 20
 	MaxProofSize  = 4 + maxProofWords*8
@@ -73,9 +73,11 @@ func (a Amount) Big() *big.Int {
 // must supply the canonical anchor and reject previously recorded nullifiers.
 // Neither sender identity nor private note values are public inputs here.
 type Statement struct {
+	Deposit     bool
 	ChainID     uint64
 	AssetID     uint64
 	PublicValue Amount
+	GasSponsor  Amount
 	Intent      [64]byte
 	Anchor      Digest
 	Nullifier   Digest
@@ -120,7 +122,7 @@ func NewSTARKBackend(executable string) (*STARKBackend, error) {
 }
 
 func (s Statement) words() ([]uint64, error) {
-	if s.ChainID == 0 || s.Anchor == (Digest{}) || s.Nullifier == (Digest{}) {
+	if s.ChainID == 0 || (!s.Deposit && (s.Anchor == (Digest{}) || s.Nullifier == (Digest{}))) || (s.Deposit && (s.Anchor != (Digest{}) || s.Nullifier != (Digest{}))) {
 		return nil, ErrInvalidStatement
 	}
 	words := []uint64{uint64(uint32(s.ChainID)), s.ChainID >> 32, uint64(uint32(s.AssetID)), s.AssetID >> 32}
@@ -134,6 +136,14 @@ func (s Statement) words() ([]uint64, error) {
 	words = append(words, s.Nullifier[:]...)
 	for _, output := range s.Outputs {
 		words = append(words, output[:]...)
+	}
+	if s.Deposit {
+		words = append(words, 1)
+	} else {
+		words = append(words, 0)
+	}
+	for _, limb := range s.GasSponsor {
+		words = append(words, uint64(limb))
 	}
 	if !canonical(words) {
 		return nil, ErrInvalidStatement

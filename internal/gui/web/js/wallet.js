@@ -92,6 +92,7 @@
   }
 
   async function renderSend(container) {
+    if((await rpc("tkmprivacy_shieldedV3Status",[]).catch(()=>({active:false}))).active)return renderShield3Send(container);
     container.body.innerHTML = '';
     const accounts = await walletAccounts();
     const from = el('select', {class:'txt', id:'shield-send-from'});
@@ -139,13 +140,16 @@
   function recordTransfer(hash,intent) {
     const key='tkm-wallet-transfers-v1';let rows=[];
     try{rows=JSON.parse(localStorage.getItem(key)||'[]');}catch(e){}
-    rows.unshift({hash,amount:intent.amount,account:intent.account,created:new Date().toISOString()});
+    const shield3=Boolean(intent.recipient_address?.startsWith('tkmshield3.'));
+    rows.unshift({hash,amount:shield3?null:intent.amount,shield3,requestId:intent.requestId,account:intent.account,created:new Date().toISOString()});
     localStorage.setItem(key,JSON.stringify(rows.slice(0,100)));
   }
 
   async function renderCreate(container) {
     container.body.innerHTML='';
     const row=(label,input)=>{input.id='wallet-field-'+(++fieldID);return el('div',{class:'form-row'},[el('label',{for:input.id,text:label}),input]);};
+    const shield3Active=(await rpc('tkmprivacy_shieldedV3Status',[]).catch(()=>({active:false}))).active;
+    const stampName=el('input',{class:'txt',maxlength:'120',autocomplete:'name'}),stampCountry=el('input',{class:'txt',maxlength:'80',autocomplete:'country-name'});
     const password=el('input',{class:'txt',type:'password',autocomplete:'new-password'});
     const repeat=el('input',{class:'txt',type:'password',autocomplete:'new-password'});
     const phrase=el('textarea',{class:'txt recovery-words',autocomplete:'off',autocapitalize:'none',spellcheck:'false',rows:'5',placeholder:'Enter your 24 TKM PQ recovery words'});
@@ -160,18 +164,22 @@
     let generated='';
     const clear=()=>{phrase.value='';generated='';challenge.value='';acknowledgement.checked=false;save.hidden=true;ackRow.hidden=true;challenge.hidden=true;};
     hide.onclick=clear;
-    container.body.append(el('p',{class:'dim',text:'A TKM PQ wallet uses 24 recovery words. These recover its post-quantum identity and shield2 receiving address. Keep them offline; anyone with the words can spend your funds.'}),row('New wallet password',password),row('Confirm password',repeat),el('div',{class:'btn-row'},[generate]),row('TKM PQ recovery phrase · 24 words',phrase),ackRow,challenge,el('div',{class:'btn-row'},[save,restore,hide]),status);
+    container.body.append(el('p',{class:'dim',text:'A TKM PQ wallet uses 24 recovery words. These recover its post-quantum identity and note keys. Keep an encrypted backup to preserve the original private stamp. Keep them offline; anyone with the words can spend your funds.'}),row('New wallet password',password),row('Confirm password',repeat),el('div',{class:'btn-row'},[generate]),row('TKM PQ recovery phrase · 24 words',phrase),ackRow,challenge,el('div',{class:'btn-row'},[save,restore,hide]),status);
+    if(shield3Active){container.body.prepend(el('p',{class:'dim',text:'Create your private name/country stamp before adding this Shield3 wallet. Only its stamp key can reveal these labels.'}),row('Private stamp · name',stampName),row('Private stamp · country',stampCountry));}
     generate.onclick=async()=>{try{generated=(await GUI.engine()).newRecoveryPhrase();phrase.value=generated;save.hidden=false;ackRow.hidden=false;challenge.hidden=false;acknowledgement.checked=false;status.textContent='Write down all 24 words in order, then confirm word 6.';}catch(e){status.textContent=e.message;}};
     const importPhrase=async creating=>{
       if(password.value.length<10 || password.value!==repeat.value){status.textContent='Use a password of at least 10 characters and confirm it.';return;}
       if(creating && (!acknowledgement.checked || phrase.value!==generated || challenge.value.trim().toLowerCase()!==generated.split(' ')[5])){status.textContent='Confirm your saved phrase and enter the correct sixth word.';return;}
       [generate,save,restore].forEach(x=>x.disabled=true);
-      try {const engine=await GUI.engine();let seed=engine.seedFromPhrase(phrase.value);const address=await rpc('tkm_importPQSeedWithPassphrase',[seed,password.value]);seed='';accountCache=null;clear();password.value='';repeat.value='';status.textContent='Wallet ready: '+address;await renderAccounts(document.querySelector('#wallet-panel-0'));await renderSend(document.querySelector('#wallet-panel-1'));await renderViewHelpers(document.querySelector('#wallet-panel-4'));}
+      try {const engine=await GUI.engine();let seed=engine.seedFromPhrase(phrase.value);const address=await rpc(shield3Active?'tkm_importStampedPQSeedWithPassphrase':'tkm_importPQSeedWithPassphrase',shield3Active?[seed,password.value,stampName.value.trim(),stampCountry.value.trim()]:[seed,password.value]);seed='';accountCache=null;clear();password.value='';repeat.value='';status.textContent='Wallet ready: '+address;await renderAccounts(document.querySelector('#wallet-panel-0'));await renderSend(document.querySelector('#wallet-panel-1'));await renderViewHelpers(document.querySelector('#wallet-panel-4'));}
       catch(e){status.textContent=e.message;}finally{[generate,save,restore].forEach(x=>x.disabled=false);}
     };
     save.onclick=()=>importPhrase(true);restore.onclick=()=>importPhrase(false);
+    const backupFile=el('input',{class:'txt',type:'file',accept:'.json,application/json'}),backupPassword=el('input',{class:'txt',type:'password',autocomplete:'current-password'}),importBackup=el('button',{class:'btn secondary',text:'Restore encrypted wallet backup'});
+    importBackup.onclick=async()=>{importBackup.disabled=true;try{const file=backupFile.files[0];if(!file||file.size>512*1024)throw Error('Choose an encrypted PQ keyfile up to 512 KiB.');if(password.value.length<10||password.value!==repeat.value)throw Error('Choose and confirm a new password of at least 10 characters.');const bytes=new TextEncoder().encode(await file.text());const hex='0x'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');const address=await rpc('tkm_importPQBackupWithPassphrase',[hex,backupPassword.value,password.value]);accountCache=null;clear();password.value='';repeat.value='';backupFile.value='';status.textContent='Original wallet and stamp restored: '+address;await renderAccounts(document.querySelector('#wallet-panel-0'));await renderSend(document.querySelector('#wallet-panel-1'));await renderViewHelpers(document.querySelector('#wallet-panel-4'));}catch(e){status.textContent=e.message;}finally{backupPassword.value='';importBackup.disabled=false;}};
+    container.body.append(el('hr'),el('h3',{text:'Restore encrypted backup'}),el('p',{class:'dim',text:'Restore the encrypted JSON keyfile to preserve your original private stamp. Enter the backup password and choose the new wallet password above.'}),row('Encrypted PQ backup',backupFile),row('Backup password',backupPassword),importBackup);
     // A phrase is never persisted. Clear sensitive input when this screen is hidden.
-    container.clearSecrets=()=>{clear();password.value='';repeat.value='';};
+    container.clearSecrets=()=>{clear();password.value='';repeat.value='';backupPassword.value='';backupFile.value='';};
   }
 
   async function renderMigration(container) {
@@ -214,6 +222,7 @@
   }
 
   async function renderViewHelpers(container) {
+    if((await rpc("tkmprivacy_shieldedV3Status",[]).catch(()=>({active:false}))).active)return renderShield3Receive(container);
     container.body.innerHTML = '';
     const accounts = await walletAccounts();
     if (!accounts.length) { container.body.appendChild(empty('Create or import a wallet to receive TKM.')); return; }
@@ -260,6 +269,49 @@
     scan.onclick=()=>unlock(async(engine,keyfile,password)=>{const balance=await engine.scanWallet({keystore:keyfile,password,rpcURL:location.origin+'/rpc',rpcToken:GUI.rpcToken(),onProgress:(block,latest)=>status.textContent=`Scanning shielded notes: ${block} / ${latest}`});status.textContent='Spendable shielded balance: '+balance+' TKM';});
   }
 
+  async function shield3Unlock(account,password) {
+    if(!account||!password)throw Error('Choose your wallet and enter its password.');
+    const engine=await GUI.engine();const encrypted=await rpc('tkm_exportPQAccount',[account,password,password]);
+    return {engine,options:{keystore:engine.keyfileFromHex(encrypted),password,rpcToken:GUI.rpcToken(),rpcURL:location.origin+'/rpc'}};
+  }
+  async function renderShield3Send(container) {
+    container.body.innerHTML='';const accounts=await walletAccounts();
+    const from=el('select',{class:'txt',id:'shield3-from'});accounts.forEach(address=>from.appendChild(el('option',{value:address,text:address})));
+    const to=el('textarea',{class:'txt',id:'shield3-to',rows:'4',placeholder:'tkmshield3.…',spellcheck:'false'});
+    const amount=el('input',{class:'txt',id:'shield3-amount',inputmode:'decimal',placeholder:'0.00'}),pass=el('input',{class:'txt',id:'shield3-pass',type:'password',autocomplete:'current-password'});
+    const status=el('p',{class:'wallet-status',role:'status'}),review=el('div',{class:'transfer-review'});review.hidden=true;
+    const send=el('button',{class:'btn gold',text:'Review Shield3 transfer'}),confirm=el('button',{class:'btn gold',text:'Confirm & send'}),cancel=el('button',{class:'btn secondary',text:'Cancel'});
+    const row=(text,input)=>el('div',{class:'form-row'},[el('label',{for:input.id,text}),input]);
+    container.body.append(el('p',{class:'dim',text:'Private Shield3 send · maximum 5,000,000 TKM per send. Shield public funds in Receive first.'}),row('From · PQ wallet',from),row('To · Shield3 receiving address',to),row('Amount (TKM)',amount),row('Wallet password',pass),send,review,status);
+    let prepared=null;const invalidate=()=>{prepared=null;review.hidden=true;};[from,to,amount,pass].forEach(input=>input.addEventListener('input',invalidate));cancel.onclick=invalidate;
+    send.onclick=async()=>{try{const engine=await GUI.engine();engine.validateShield3Amount(amount.value.trim());if(!from.value||!pass.value)throw Error('Choose your wallet and enter its password.');const recipient=await engine.validateShield3Recipient(to.value.trim(),{rpcToken:GUI.rpcToken()});prepared={account:from.value,recipient_address:to.value.trim(),amount:amount.value.trim(),requestId:crypto.randomUUID()};review.replaceChildren(el('h3',{text:'Review private Shield3 transfer'}),el('p',{text:prepared.amount+' TKM · network fee additional'}),el('p',{class:'mono',text:'Recipient: '+recipient.address}),el('div',{class:'btn-row'},[confirm,cancel]));review.hidden=false;status.textContent='Confirm the receiving address and amount.';}catch(e){status.textContent=e.message;}};
+    confirm.onclick=async()=>{if(!prepared)return;const intent={...prepared};const password=pass.value;[send,confirm,cancel,from,to,amount,pass].forEach(input=>input.disabled=true);try{status.textContent='Building the Shield3 proof…';const {engine,options}=await shield3Unlock(intent.account,password);const hashes=await engine.sendTKM({...options,intent,requestId:intent.requestId,onProgress:text=>status.textContent=text,onSubmitted:(_,hash)=>recordTransfer(hash,intent)});status.textContent='Unconfirmed: '+hashes.join(', ')+'. Check Activity before retrying.';invalidate();}catch(e){status.textContent=e.message;}finally{pass.value='';[send,confirm,cancel,from,to,amount,pass].forEach(input=>input.disabled=false);}};
+    container.clearSecrets=()=>{pass.value='';invalidate();};
+  }
+  async function renderShield3Receive(container) {
+    container.body.innerHTML='';const select=el('select',{class:'txt',id:'shield3-receive'});(await walletAccounts()).forEach(address=>select.appendChild(el('option',{value:address,text:address})));
+    const pass=el('input',{class:'txt',type:'password',id:'shield3-receive-pass',autocomplete:'current-password'}),code=el('textarea',{class:'txt receive-code',readonly:'readonly',rows:'5','aria-label':'Shield3 receiving address'}),status=el('p',{class:'wallet-status',role:'status'});
+    const row=(text,input)=>el('div',{class:'form-row'},[el('label',{for:input.id,text}),input]);
+    const address=el('button',{class:'btn gold',text:'Unlock receiving address'}),copy=el('button',{class:'btn secondary',text:'Copy address'}),scan=el('button',{class:'btn gold',text:'Scan Shield3 balance'}),backup=el('button',{class:'btn secondary',text:'Save encrypted wallet backup'}),view=el('button',{class:'btn secondary',text:'Reveal viewing and stamp keys'});
+    const keys=el('textarea',{class:'txt recovery-words',readonly:'readonly',rows:'6','aria-label':'Private viewing and stamp keys'});keys.hidden=true;
+    container.body.append(row('Wallet',select),row('Wallet password',pass),el('div',{class:'btn-row'},[address,copy,scan,backup,view]),code,keys,status);
+    const run=async action=>{[address,scan,backup,view].forEach(button=>button.disabled=true);try{const unlocked=await shield3Unlock(select.value,pass.value);await action(unlocked);}catch(e){status.textContent=e.message;}finally{pass.value='';[address,scan,backup,view].forEach(button=>button.disabled=false);}};
+    address.onclick=()=>run(async({engine,options})=>{code.value=(await engine.shield3Identity(options)).paymentCode;status.textContent='Share this Shield3 receiving address. Its public keys cannot decrypt notes or stamps.';});
+    copy.onclick=async()=>{if(!code.value)return;try{await navigator.clipboard.writeText(code.value);toast('Shield3 address copied.','ok');}catch(e){code.focus();code.select();}};
+    scan.onclick=()=>run(async({engine,options})=>{status.textContent='Scanning private notes…';const result=await engine.shield3Scan(options);status.textContent='Confirmed spendable Shield3: '+fmtTKM('0x'+BigInt(result.balanceWei).toString(16),8)+' TKM';});
+    backup.onclick=()=>run(async({options})=>{const blob=new Blob([JSON.stringify(options.keystore,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),link=el('a',{href:url,download:'TKM-Shield3-'+select.value+'.json'});link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);status.textContent='Encrypted backup saved. Keep it with your recovery words; it preserves the original private stamp.';});
+    view.onclick=()=>run(async({engine,options})=>{keys.value=JSON.stringify(await engine.shield3ViewKeys(options),null,2);keys.hidden=false;status.textContent='Viewing keys disclose note history; the separate stamp key discloses the stamp. These do not grant spending authority.';});
+    const name=el('input',{class:'txt',id:'shield3-stamp-name',autocomplete:'name',maxlength:'120'}),country=el('input',{class:'txt',id:'shield3-stamp-country',autocomplete:'country-name',maxlength:'80'}),stamp=el('button',{class:'btn gold',text:'Add private stamp to existing wallet'});
+    stamp.onclick=async()=>{stamp.disabled=true;try{await rpc('tkm_stampPQAccountWithPassphrase',[select.value,pass.value,name.value.trim(),country.value.trim()]);status.textContent='Private stamp saved. Back up this wallet before using Shield3.';}catch(e){status.textContent=e.message;}finally{pass.value='';stamp.disabled=false;}};
+    const amount=el('input',{class:'txt',id:'shield3-fund-amount',inputmode:'decimal',placeholder:'0.00'}),fund=el('button',{class:'btn gold',text:'Shield public funds'});
+    fund.onclick=async()=>{try{const text=amount.value.trim(),engine=await GUI.engine();const amountWei=engine.validateShield3Amount(text).toString(),account=select.value;let draft=null;try{draft=JSON.parse(localStorage.getItem('tkm-shield3-funding-draft-v1')||'null');}catch(e){}if(draft?.transactionHash&&await rpc('eth_getTransactionReceipt',[draft.transactionHash]))draft=null;if(!draft||draft.account!==account||draft.amountWei!==amountWei)draft={account,amountWei,requestId:crypto.randomUUID()};if(!confirm('Shield '+text+' TKM from your public balance? This deposit amount is public.'))return;localStorage.setItem('tkm-shield3-funding-draft-v1',JSON.stringify(draft));await run(async({engine,options})=>{status.textContent='Building the funding proof…';const result=await engine.shield3Funds({...options,amount:text,requestId:draft.requestId});draft.transactionHash=result.transactionHash;localStorage.setItem('tkm-shield3-funding-draft-v1',JSON.stringify(draft));recordTransfer(result.transactionHash,{amount:text,account,requestId:draft.requestId});status.textContent='Funding unconfirmed: '+result.transactionHash+'. Scan the balance after confirmation.';});}catch(e){status.textContent=e.message;}};
+    container.body.append(el('hr'),el('h3',{text:'Private stamp'}),el('p',{class:'dim',text:'For wallets created before Antartical, add a name/country stamp once. Only your stamp key reveals it.'}),row('Private name',name),row('Private country',country),stamp,el('hr'),el('h3',{text:'Shield public funds'}),el('p',{class:'dim',text:'Move public TKM into a Shield3 note. The deposit amount is public; later private sends hide their amounts. Maximum 5,000,000 TKM.'}),row('Amount to shield (TKM)',amount),fund);
+    const migrate=el('button',{class:'btn secondary',text:'Migrate one Shield2 note'});
+    migrate.onclick=()=>{if(!confirm('Withdraw one entire Shield2 note to your own public account? Its value becomes public. After confirmation, use Shield public funds to move it into Shield3.'))return;run(async({engine,options})=>{migrate.disabled=true;try{const hash=await engine.migrateShield2Note({...options,onProgress:text=>status.textContent=text,onSubmitted:(hash,amount)=>recordTransfer(hash,{amount,account:select.value})});status.textContent='Migration unconfirmed: '+hash+'. Wait for confirmation before migrating another note or shielding funds.';}finally{migrate.disabled=false;}});};
+    container.body.append(el('hr'),el('h3',{text:'Move Shield2 funds into Shield3'}),el('p',{class:'dim',text:'Migrate each legacy note to your own public balance, wait for confirmation, then shield the confirmed balance. This migration reveals its amount.'}),migrate);
+    const clear=()=>{pass.value='';keys.value='';keys.hidden=true;};container.clearSecrets=clear;select.onchange=()=>{clear();code.value='';};
+  }
+
   async function renderActivity(container) {
     if(!container)return;container.body.innerHTML='';
     let rows=[];try{rows=JSON.parse(localStorage.getItem('tkm-wallet-transfers-v1')||'[]');}catch(e){}
@@ -267,7 +319,7 @@
     if(!rows.length){container.body.appendChild(empty('No transfers submitted from this device yet.'));return;}
     const list=el('div');container.body.appendChild(list);
     await Promise.all(rows.slice(0,25).map(async row=>{
-      const item=el('div',{class:'stat'},[el('strong',{text:row.amount+' TKM'}),el('p',{class:'mono',text:row.hash}),el('small',{class:'dim',text:row.created})]);list.appendChild(item);
+      const item=el('div',{class:'stat'},[el('strong',{text:row.shield3?'Private Shield3 transfer':row.amount+' TKM'}),el('p',{class:'mono',text:row.hash}),el('small',{class:'dim',text:row.created})]);list.appendChild(item);
       let message='Awaiting confirmation';try{const receipt=await rpc('eth_getTransactionReceipt',[row.hash]);if(receipt)message=BigInt(receipt.status)===1n?'Confirmed':'Reverted';}catch(e){message='Confirmation unavailable';}
       item.appendChild(el('p',{text:message}));
     }));

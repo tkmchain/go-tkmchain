@@ -204,3 +204,12 @@ func shieldedV3AEAD(shared, publicKey, header, kemCiphertext []byte) (cipher.AEA
 	defer clear(key)
 	return chacha20poly1305.NewX(key)
 }
+
+// ValidateShieldedV3CiphertextContext performs public framing checks for
+// consensus. AEAD authentication still requires the recipient's private key.
+func ValidateShieldedV3CiphertextContext(data []byte, expected ShieldedV3Context) error {
+	if !validShieldedV3Purpose(expected.Purpose) || expected.ChainID == 0 || len(data) != ShieldedV3CiphertextSize || !bytes.Equal(data[:4], []byte("TKPQ")) || data[4] != ShieldedV3Version || data[5] != shieldedV3Suite || data[6] != byte(expected.Purpose) || binary.BigEndian.Uint64(data[7:15]) != expected.ChainID || !bytes.Equal(data[15:79], expected.Commitment[:]) {
+		return ErrInvalidShieldedV3Ciphertext
+	}
+	return nil
+}

@@ -21,22 +21,24 @@ const pqKeyVersion = 4
 // Seed contains the compact ML-DSA seed. The expanded private key is derived
 // only when signing and is not stored in the keystore file.
 type PQKey struct {
-	Id        uuid.UUID
-	Address   common.Address
-	Algorithm string
-	PublicKey []byte
-	Seed      []byte
+	Id           uuid.UUID
+	Address      common.Address
+	Algorithm    string
+	PublicKey    []byte
+	Seed         []byte
+	Shield3Stamp *pqcrypto.ShieldedV3StampRecord
 }
 
 type encryptedPQKeyJSONV4 struct {
-	Address               string     `json:"address"`
-	Algorithm             string     `json:"algorithm"`
-	PublicKey             string     `json:"publicKey"`
-	ShieldedViewPublicKey string     `json:"shieldedViewPublicKey,omitempty"`
-	ShieldedViewSignature string     `json:"shieldedViewSignature,omitempty"`
-	Crypto                CryptoJSON `json:"crypto"`
-	Id                    string     `json:"id"`
-	Version               int        `json:"version"`
+	Address               string                          `json:"address"`
+	Algorithm             string                          `json:"algorithm"`
+	PublicKey             string                          `json:"publicKey"`
+	ShieldedViewPublicKey string                          `json:"shieldedViewPublicKey,omitempty"`
+	ShieldedViewSignature string                          `json:"shieldedViewSignature,omitempty"`
+	Shield3Stamp          *pqcrypto.ShieldedV3StampRecord `json:"shield3Stamp,omitempty"`
+	Crypto                CryptoJSON                      `json:"crypto"`
+	Id                    string                          `json:"id"`
+	Version               int                             `json:"version"`
 }
 
 // NewPQKey creates a new ML-DSA-87 key.
@@ -95,7 +97,11 @@ func EncryptPQKey(key *PQKey, auth string, scryptN, scryptP int) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	if key.Shield3Stamp != nil && !pqcrypto.VerifyShieldedV3Stamp(key.PublicKey, key.Shield3Stamp) {
+		return nil, fmt.Errorf("invalid Shield3 address stamp")
+	}
 	encrypted := encryptedPQKeyJSONV4{
+		Shield3Stamp:          key.Shield3Stamp,
 		Address:               hex.EncodeToString(key.Address[:]),
 		Algorithm:             key.Algorithm,
 		PublicKey:             hex.EncodeToString(key.PublicKey),
@@ -127,6 +133,24 @@ func DecryptPQKey(keyjson []byte, auth string) (*PQKey, error) {
 	clear(seed)
 	if err != nil {
 		return nil, err
+	}
+	if encrypted.Shield3Stamp != nil {
+		if !pqcrypto.VerifyShieldedV3Stamp(key.PublicKey, encrypted.Shield3Stamp) {
+			zeroPQKey(key)
+			return nil, fmt.Errorf("invalid Shield3 address stamp")
+		}
+		stampSeed, err := pqcrypto.DeriveShieldedV3ViewKey(key.Seed, encrypted.Shield3Stamp.ChainID, pqcrypto.ShieldedV3Stamp)
+		if err != nil {
+			zeroPQKey(key)
+			return nil, err
+		}
+		_, err = pqcrypto.OpenShieldedV3Stamp(stampSeed, encrypted.Shield3Stamp)
+		clear(stampSeed)
+		if err != nil {
+			zeroPQKey(key)
+			return nil, err
+		}
+		key.Shield3Stamp = encrypted.Shield3Stamp
 	}
 	id, err := uuid.Parse(encrypted.Id)
 	if err != nil {

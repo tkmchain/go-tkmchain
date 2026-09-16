@@ -5,11 +5,14 @@ edition = "2024"
 rust-version = "1.89"
 publish = false
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 triton-vm = "=8.0.0"
 
 [profile.release]
-lto = "thin"
+lto = false
 
 [profile.test]
 opt-level = 2

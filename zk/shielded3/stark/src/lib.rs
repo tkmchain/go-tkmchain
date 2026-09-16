@@ -5,11 +5,11 @@
 
 use triton_vm::prelude::*;
 
-pub const PUBLIC_WORDS: usize = 58;
+pub const PUBLIC_WORDS: usize = 67;
 pub const SECRET_WORDS: usize = 91;
 pub const MERKLE_DEPTH: usize = 32;
 pub const MAX_PROOF_WORDS: usize = 1 << 20;
-pub const MAX_PADDED_HEIGHT: usize = 1 << 14;
+pub const MAX_PADDED_HEIGHT: usize = 1 << 15;
 pub const FIELD_MODULUS: u64 = 0xffff_ffff_0000_0001;
 pub const DOMAIN_OWNER: u64 = 3001;
 pub const DOMAIN_NOTE: u64 = 3002;
@@ -139,41 +139,80 @@ pub fn spend_program() -> Program {
         a.emit("push 0 eq mul");
     }
     a.emit("push 0 eq assert");
-    // Nullifier cannot be the all-zero digest. Avoid summing field words,
-    // because distinct nonzero words can sum to zero in the field.
-    a.emit("push 1");
-    for i in 33..38 {
-        a.load(i);
-        a.emit("push 0 eq mul");
-    }
-    a.emit("push 0 eq assert");
-
+    // The final public word selects a spend (0) or a deposit (1).
+    a.load(58);
+    a.emit("dup 0 push 0 eq swap 1 push 1 eq add assert");
     let mut owner = vec![Word::Literal(DOMAIN_OWNER)];
     owner.extend((100..105).map(Word::Memory));
     a.hash(owner);
     a.store_digest(200);
-    a.note(200, 105, 110);
-    a.store_digest(205);
-
-    // A depth-32 authentication path uses the private u32 leaf index. Each
-    // merkle_step constrains the sibling order and divides the index by two.
-    a.load(118);
-    a.digest(205);
-    for _ in 0..MERKLE_DEPTH {
-        a.emit("merkle_step");
-    }
-    a.assert_digest(28);
-    a.emit("push 0 eq assert"); // fully consumed index
-
-    let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
-    nullifier.extend((0..4).map(Word::Memory));
-    nullifier.extend((100..110).map(Word::Memory));
-    a.hash(nullifier);
-    a.assert_digest(33);
+    a.load(58);
+    a.emit("push 0 eq skiz call private_spend");
+    a.load(58);
+    a.emit("push 1 eq skiz call public_deposit");
+    // Slot 3 is change. Its owner must be the input spending secret's owner.
+    // A recipient cannot hide an over-limit payment in this reserved slot.
+    a.digest(173);
+    a.assert_digest(200);
     for i in 0..4 {
         a.note(119 + 18 * i, 124 + 18 * i, 129 + 18 * i);
         a.assert_digest(38 + 5 * i);
     }
+
+    // Public sponsorship pays fees and is excluded from the send amount.
+    // Checked subtraction forbids sponsorship exceeding the public release.
+    a.emit("push 0");
+    for limb in 0..8 {
+        a.u32(59 + limb);
+        a.emit("push -1 mul");
+        a.load(4 + limb);
+        a.emit("add");
+        a.load(59 + limb);
+        a.emit("push -1 mul add push 4294967296 add split");
+        a.emit(&format!("push {} write_mem 1 pop 1", 420 + limb));
+        a.emit("push -1 mul push 1 add");
+    }
+    a.emit("push 0 eq assert");
+    // Sum withdrawal and the three payment slots as a full 256-bit integer.
+    a.emit("push 0");
+    for limb in 0..8 {
+        a.load(420 + limb);
+        a.emit("add");
+        for i in 0..3 {
+            a.load(129 + 18 * i + limb);
+            a.emit("add");
+        }
+        a.emit("split");
+        a.emit(&format!("push {} write_mem 1 pop 1", 400 + limb));
+    }
+    a.emit("push 0 eq assert");
+    // cap - sum, with a checked borrow per limb. Final borrow must be zero.
+    a.emit("push 0");
+    a.emit("push -1 mul push 620756992 add");
+    a.load(400);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 2332688548 add");
+    a.load(401);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 271050 add");
+    a.load(402);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 0 add");
+    a.load(403);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 0 add");
+    a.load(404);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 0 add");
+    a.load(405);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 0 add");
+    a.load(406);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push -1 mul push 0 add");
+    a.load(407);
+    a.emit("push -1 mul add push 4294967296 add split pop 1 push -1 mul push 1 add");
+    a.emit("push 0 eq assert");
 
     // Exact 256-bit integer conservation. Every limb is range checked.
     // The sum of five u32 limbs and carry is < 2^35, so no field wrap is
@@ -191,6 +230,42 @@ pub fn spend_program() -> Program {
         a.emit("eq assert");
     }
     a.emit("push 0 eq assert halt");
+    a.emit("private_spend:");
+    a.emit("push 1");
+    for i in 33..38 {
+        a.load(i);
+        a.emit("push 0 eq mul");
+    }
+    a.emit("push 0 eq assert");
+    a.note(200, 105, 110);
+    a.store_digest(205);
+    a.load(118);
+    a.digest(205);
+    for _ in 0..MERKLE_DEPTH {
+        a.emit("merkle_step");
+    }
+    a.assert_digest(28);
+    a.emit("push 0 eq assert");
+    let mut nullifier = vec![Word::Literal(DOMAIN_NULLIFIER)];
+    nullifier.extend((0..4).map(Word::Memory));
+    nullifier.extend((200..205).map(Word::Memory));
+    nullifier.extend((105..118).map(Word::Memory));
+    a.hash(nullifier);
+    a.assert_digest(33);
+    a.emit("return");
+    a.emit("public_deposit:");
+    for i in 28..38 {
+        a.load(i);
+        a.emit("push 0 eq assert");
+    }
+    for limb in 0..8 {
+        a.load(4 + limb);
+        a.load(110 + limb);
+        a.emit("eq assert");
+        // Deposits use public value as the input, not as a public release.
+        a.emit(&format!("push 0 push {} write_mem 1 pop 1", 4 + limb));
+    }
+    a.emit("return");
     a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
     Program::from_code(&a.0).expect("valid, fixed Shield3 assembly")
 }
@@ -204,13 +279,21 @@ pub fn canonical_words(words: &[u64], size: usize) -> Result<Vec<BFieldElement>,
 
 fn public_input(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
     let result = canonical_words(words, PUBLIC_WORDS)?;
-    if words[..28].iter().any(|&v| v > u32::MAX as u64) || (words[0] == 0 && words[1] == 0) {
+    if (words[..28].iter().chain(words[59..67].iter())).any(|&v| v > u32::MAX as u64)
+        || (words[0] == 0 && words[1] == 0)
+    {
         return Err("invalid public input range".into());
     }
-    if words[28..33].iter().all(|&v| v == 0) {
+    if words[58] > 1 {
+        return Err("invalid proof kind".into());
+    }
+    if words[58] == 1 && words[28..38].iter().any(|&v| v != 0) {
+        return Err("deposit has private state references".into());
+    }
+    if words[58] == 0 && words[28..33].iter().all(|&v| v == 0) {
         return Err("zero anchor".into());
     }
-    if words[33..38].iter().all(|&v| v == 0) {
+    if words[58] == 0 && words[33..38].iter().all(|&v| v == 0) {
         return Err("zero nullifier".into());
     }
     Ok(result)
@@ -338,7 +421,8 @@ pub fn describe_spend(
     }
     let mut null_words = vec![DOMAIN_NULLIFIER];
     null_words.extend(&public[..4]);
-    null_words.extend(&secret[..10]);
+    null_words.extend(&owner_words);
+    null_words.extend(&secret[5..18]);
     let nullifier = hash(&null_words);
     let mut result = Vec::with_capacity(40);
     for digest in [owner, input, root, nullifier] {
@@ -361,3 +445,5 @@ pub fn describe_spend(
 
 #[cfg(test)]
 mod tests;
+
+mod ffi;

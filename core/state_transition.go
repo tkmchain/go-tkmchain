@@ -143,6 +143,14 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 
 // FloorDataGas computes the minimum gas required for a transaction based on its data tokens (EIP-7623).
 func FloorDataGas(rules params.Rules, data []byte, accessList types.AccessList) (uint64, error) {
+	var proofGas uint64
+	if rules.IsAntartical {
+		var err error
+		data, proofGas, err = ShieldedV3GasData(data)
+		if err != nil {
+			return 0, err
+		}
+	}
 	var (
 		tokens    uint64
 		tokenCost uint64
@@ -193,7 +201,7 @@ func FloorDataGas(rules params.Rules, data []byte, accessList types.AccessList) 
 		return 0, ErrGasUintOverflow
 	}
 	// Minimum gas required for a transaction based on its data tokens (EIP-7623).
-	return params.TxGas + tokens*tokenCost, nil
+	return params.TxGas + tokens*tokenCost + proofGas, nil
 }
 
 // toWordSize returns the ceiled word size required for init code payment calculation.
@@ -580,7 +588,7 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		floorDataGas     uint64
 	)
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
-	cost, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam)
+	cost, err := IntrinsicGasWithShield3(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam, rules.IsAntartical)
 	if err != nil {
 		return nil, err
 	}

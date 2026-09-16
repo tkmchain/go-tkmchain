@@ -388,9 +388,32 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 	}
 	sender := common.HexToAddress(req.From)
 	senderElement := fieldElementFromBig(sender.Big())
-	gasSponsor, err := p.shieldedGasSponsorValue(ctx, chainID, sender, gasPrice)
-	if err != nil {
-		return BuildShieldedResponse{}, err
+	var forkStatus struct {
+		Active bool `json:"active"`
+	}
+	if err := p.client.Client().CallContext(ctx, &forkStatus, "tkmprivacy_shieldedV3Status"); err != nil {
+		header, headerErr := p.client.HeaderByNumber(ctx, nil)
+		if headerErr != nil {
+			return BuildShieldedResponse{}, headerErr
+		}
+		if header != nil && header.Time >= params.MainnetAntarticalTime {
+			return BuildShieldedResponse{}, errors.New("cannot establish Shield3 migration activation")
+		}
+	}
+	gasSponsor := new(big.Int)
+	if !forkStatus.Active {
+		gasSponsor, err = p.shieldedGasSponsorValue(ctx, chainID, sender, gasPrice)
+		if err != nil {
+			return BuildShieldedResponse{}, err
+		}
+	}
+	if forkStatus.Active {
+		// Full self withdrawals fund their own gas before gas purchase. They
+		// must not create sponsored private change during the V2 migration.
+		gasSponsor.SetUint64(0)
+		if amountWei.Cmp(noteValue) != 0 || sender != common.HexToAddress(req.To) || assetID != "1" {
+			return BuildShieldedResponse{}, errors.New("Antartical requires full-note migration withdrawals to the sender")
+		}
 	}
 	legacyInput := req.Note.Version < core.ShieldedTxVersionV2
 	ownerSecret := "0"

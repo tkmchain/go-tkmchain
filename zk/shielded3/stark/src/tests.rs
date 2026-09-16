@@ -44,7 +44,8 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     let input = note(&public[..4], &owner, &secret[5..10], &secret[10..18]);
     let mut nullifier = vec![DOMAIN_NULLIFIER];
     nullifier.extend(&public[..4]);
-    nullifier.extend(&secret[..10]);
+    nullifier.extend(owner);
+    nullifier.extend(&secret[5..18]);
     public[33..38].copy_from_slice(&hash(&nullifier));
     let path = (0..MERKLE_DEPTH)
         .map(|i| hash(&[9999, i as u64]))
@@ -71,6 +72,9 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
         let base = 19 + 18 * i;
         for j in 0..10 {
             secret[base + j] = (200 + i * 20 + j) as u64;
+        }
+        if i == 3 {
+            secret[base..base + 5].copy_from_slice(&owner);
         }
         secret[base + 10..base + 12].copy_from_slice(&values[i]);
         let commitment = note(
@@ -124,7 +128,7 @@ fn valid_spend_and_constraint_rejections() {
             );
         }
     }
-    for i in (0..12).chain(28..PUBLIC_WORDS) {
+    for i in (0..12).chain(28..59) {
         let mut changed = public.clone();
         changed[i] ^= 1;
         assert!(
@@ -155,6 +159,11 @@ fn refresh_commitments(public: &mut [u64], secret: &[u64], path: &[[u64; 5]]) {
         index >>= 1;
     }
     public[28..33].copy_from_slice(&root);
+    let mut nullifier = vec![DOMAIN_NULLIFIER];
+    nullifier.extend(&public[..4]);
+    nullifier.extend(hash(&owner));
+    nullifier.extend(&secret[5..18]);
+    public[33..38].copy_from_slice(&hash(&nullifier));
     for i in 0..4 {
         let base = 19 + 18 * i;
         let out = note(
@@ -175,7 +184,7 @@ fn full_width_amounts_and_overflow_are_constrained() {
         secret[29 + 18 * i..37 + 18 * i].fill(0);
     }
     secret[10..18].fill(u32::MAX as u64);
-    secret[29..37].fill(u32::MAX as u64);
+    secret[83..91].fill(u32::MAX as u64);
     refresh_commitments(&mut public, &secret, &path);
     assert!(
         run(&public, &secret, &path),
@@ -205,7 +214,7 @@ fn canonical_encoding_and_limits() {
     assert!(canonical_words(&[0], 2).is_err());
     assert!(verify_spend(&[0; PUBLIC_WORDS], &[0]).is_err());
     let (public, _, _) = fixture();
-    for exponent in [15, 31, 32, 63, 64, u32::MAX] {
+    for exponent in [16, 31, 32, 63, 64, u32::MAX] {
         let mut stream = triton_vm::proof_stream::ProofStream::new();
         stream.enqueue(triton_vm::proof_item::ProofItem::Log2PaddedHeight(exponent));
         let proof = Proof::from(stream);
@@ -268,4 +277,70 @@ fn real_stark_roundtrip_tampering_and_replay() {
             }
         }
     }
+}
+
+#[test]
+fn private_send_cap_and_change_owner() {
+    let (mut public, mut secret, path) = fixture();
+    public[4..12].fill(0);
+    for i in 0..4 {
+        secret[29 + 18 * i..37 + 18 * i].fill(0);
+    }
+    let cap = 5_000_000u128 * 1_000_000_000_000_000_000u128;
+    for (value, expected) in [(cap - 1, true), (cap, true), (cap + 1, false)] {
+        secret[10..18].fill(0);
+        secret[29..37].fill(0);
+        for limb in 0..4 {
+            let v = ((value >> (32 * limb)) & 0xffffffff) as u64;
+            secret[10 + limb] = v;
+            secret[29 + limb] = v;
+        }
+        refresh_commitments(&mut public, &secret, &path);
+        assert_eq!(
+            run(&public, &secret, &path),
+            expected,
+            "cap boundary {value}"
+        );
+    }
+    // Large self-owned change remains valid, but changing its owner does not.
+    secret[29..37].fill(0);
+    secret[10..18].fill(u32::MAX as u64);
+    secret[83..91].fill(u32::MAX as u64);
+    refresh_commitments(&mut public, &secret, &path);
+    assert!(run(&public, &secret, &path));
+    secret[73] ^= 1;
+    refresh_commitments(&mut public, &secret, &path);
+    assert!(!run(&public, &secret, &path));
+}
+
+#[test]
+fn deposits_require_exact_public_funding() {
+    let (mut public, mut secret, path) = fixture();
+    public[58] = 1;
+    public[28..38].fill(0);
+    public[4..12].copy_from_slice(&secret[10..18]);
+    // fixture's output total is input minus the old nine-unit public release.
+    secret[29] += 9;
+    // propagate the resulting u32 carry.
+    secret[30] += secret[29] >> 32;
+    secret[29] &= 0xffffffff;
+    refresh_commitments(&mut public, &secret, &path);
+    public[28..38].fill(0);
+    assert!(run(&public, &secret, &path));
+    let proof = prove_spend(&public, &secret, &path).expect("real deposit STARK");
+    verify_spend(&public, &proof).unwrap();
+    public[4] += 1;
+    assert!(!run(&public, &secret, &path));
+    assert!(verify_spend(&public, &proof).is_err());
+}
+
+#[test]
+fn fee_sponsorship_is_checked_and_excluded_from_send_cap() {
+    let (mut public, secret, path) = fixture();
+    public[59] = 9;
+    assert!(run(&public, &secret, &path));
+    public[59] = 10;
+    assert!(!run(&public, &secret, &path));
+    public[59] = 1 << 32;
+    assert!(!run(&public, &secret, &path));
 }
