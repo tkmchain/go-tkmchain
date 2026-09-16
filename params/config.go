@@ -671,7 +671,7 @@ type Rules struct {
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
 	IsAmsterdam, IsUBT                                      bool
 	IsKyoto, IsPhone                                        bool
-	IsQuantumResistant                                      bool
+	IsQuantumResistant, IsAntartical                        bool
 	IsPQMigrationAllowed                                    bool
 	IsEIP2929, IsEIP4762                                    bool
 	IsMerge                                                 bool // Always false for RandomX
@@ -712,6 +712,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsKyoto:              c.IsKyoto(num, timestamp),
 		IsPhone:              c.IsPhone(num, timestamp),
 		IsQuantumResistant:   c.IsQuantumResistant(num, timestamp),
+		IsAntartical:         c.IsAntartical(num, timestamp),
 		IsPQMigrationAllowed: c.IsPQMigrationAllowed(num, timestamp),
 		IsEIP2929:            isEIP2929,
 		IsEIP4762:            isEIP4762,
