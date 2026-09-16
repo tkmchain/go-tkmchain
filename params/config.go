@@ -50,6 +50,8 @@ const (
 	MainnetPrivacyQuantumTime uint64 = 1786341600
 	// MainnetPQMigrationRecoveryTime is 2026-08-14 06:00:00 UTC.
 	MainnetPQMigrationRecoveryTime uint64 = 1786687200
+	// MainnetAntarticalTime is 2026-10-01 00:00:00 UTC.
+	MainnetAntarticalTime uint64 = 1790812800
 	// MainnetRandomXMoneroBlock activates canonical RandomX proof validation.
 	MainnetRandomXMoneroBlock uint64 = 20374
 )
@@ -100,6 +102,7 @@ var RandomXChainConfig = &ChainConfig{
 	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
+	AntarticalTime:               newUint64(MainnetAntarticalTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	RotatingKingRotationInterval: 100,
@@ -177,6 +180,7 @@ type ChainConfig struct {
 	PrivacyCommitmentTime   *uint64 `json:"privacyCommitmentTime,omitempty"`
 	QuantumResistantTime    *uint64 `json:"quantumResistantTime,omitempty"`
 	PQMigrationRecoveryTime *uint64 `json:"pqMigrationRecoveryTime,omitempty"`
+	AntarticalTime          *uint64 `json:"antarticalTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -306,6 +310,7 @@ var MainnetChainConfig = &ChainConfig{
 	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
+	AntarticalTime:               newUint64(MainnetAntarticalTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -620,6 +625,11 @@ func (c *ChainConfig) IsQuantumResistant(num *big.Int, time uint64) bool {
 // IsPQMigrationAllowed returns whether a legacy account may submit a strictly
 // marked one-way migration into an ML-DSA-87 account. Migration is available
 // before the PQ-only fork and reopens at the scheduled recovery fork.
+// IsAntartical reports whether the stamped address/account rules are active.
+func (c *ChainConfig) IsAntartical(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.AntarticalTime, time)
+}
+
 func (c *ChainConfig) IsPQMigrationAllowed(num *big.Int, time uint64) bool {
 	if !c.IsQuantumResistant(num, time) {
 		return true
@@ -775,6 +785,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
 		{"quantumResistantTime", c.QuantumResistantTime},
 		{"pqMigrationRecoveryTime", c.PQMigrationRecoveryTime},
+		{"antarticalTime", c.AntarticalTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -971,6 +982,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.PQMigrationRecoveryTime, newcfg.PQMigrationRecoveryTime, headTimestamp) {
 		return newTimestampCompatError("PQ migration recovery fork timestamp", c.PQMigrationRecoveryTime, newcfg.PQMigrationRecoveryTime)
+	}
+	if isForkTimestampIncompatible(c.AntarticalTime, newcfg.AntarticalTime, headTimestamp) {
+		return newTimestampCompatError("Antartical fork timestamp", c.AntarticalTime, newcfg.AntarticalTime)
 	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)

@@ -187,6 +187,7 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				"PrivacyCommitmentTime":   config.PrivacyCommitmentTime,
 				"QuantumResistantTime":    config.QuantumResistantTime,
 				"PQMigrationRecoveryTime": config.PQMigrationRecoveryTime,
+				"AntarticalTime":          config.AntarticalTime,
 			}
 			want := map[string]uint64{
 				"EDATime":                 0,
@@ -195,6 +196,7 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				"PrivacyCommitmentTime":   MainnetPrivacyQuantumTime,
 				"QuantumResistantTime":    MainnetPrivacyQuantumTime,
 				"PQMigrationRecoveryTime": MainnetPQMigrationRecoveryTime,
+				"AntarticalTime":          MainnetAntarticalTime,
 			}
 			for forkName, wantTime := range want {
 				forkTime := tkmForkTimes[forkName]
@@ -432,5 +434,20 @@ func TestDefaultRotatingKingConfigsHaveNoUsableRotatingKing(t *testing.T) {
 				t.Fatalf("default rotating king addresses = %v, want none", config.RotatingKingAddresses)
 			}
 		})
+	}
+}
+
+func TestAntarticalForkSchedule(t *testing.T) {
+	if MainnetChainConfig.AntarticalTime == nil || *MainnetChainConfig.AntarticalTime != MainnetAntarticalTime {
+		t.Fatalf("mainnet Antartical time = %v, want %d", MainnetChainConfig.AntarticalTime, MainnetAntarticalTime)
+	}
+	if MainnetChainConfig.IsAntartical(big.NewInt(0), MainnetAntarticalTime-1) {
+		t.Fatal("Antartical rules active before scheduled timestamp")
+	}
+	if !MainnetChainConfig.IsAntartical(big.NewInt(0), MainnetAntarticalTime) {
+		t.Fatal("Antartical rules inactive at scheduled timestamp")
+	}
+	if EgyptChainConfig.IsAntartical(big.NewInt(0), MainnetAntarticalTime) {
+		t.Fatal("Antartical rules enabled for a different chain")
 	}
 }
