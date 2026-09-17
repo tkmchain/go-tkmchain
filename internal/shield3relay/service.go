@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -90,8 +91,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		RequestID   string        `json:"requestId"`
 		Transaction hexutil.Bytes `json:"transaction,omitempty"`
+		Padding     string        `json:"padding,omitempty"`
 	}
-	limit := int64(1024)
+	limit := int64(256 << 10)
 	if r.URL.Path == "/submit" {
 		limit = 20 << 20
 	}
@@ -103,6 +105,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(request.RequestID) < 16 || len(request.RequestID) > 128 {
 		fail(400, "stable opaque request ID required")
+		return
+	}
+	if len(request.Padding) > 256<<10 {
+		fail(400, "relay padding exceeds limit")
 		return
 	}
 
@@ -119,7 +125,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(503, "operator busy or quote unavailable; retry later and check node activation and stamp")
 			return
 		}
-		json.NewEncoder(w).Encode(offer)
+		writePaddedJSON(w, offer)
 		return
 	}
 	response, err := s.submit(r.Context(), request.RequestID, request.Transaction)
@@ -127,8 +133,40 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(400, "relay payment rejected; check its expiry, operator nonce and canonical status")
 		return
 	}
-	json.NewEncoder(w).Encode(response)
+	writePaddedJSON(w, response)
 }
+func writePaddedJSON(w http.ResponseWriter, value any) {
+	body, err := json.Marshal(value)
+	if err != nil || len(body) < 2 || body[len(body)-1] != '}' || len(body) >= 32<<10 {
+		if err == nil {
+			_, _ = w.Write(append(body, '\n'))
+		}
+		return
+	}
+	for n := 0; n <= 32<<10; n++ {
+		padding, _ := json.Marshal(strings.Repeat("0", n))
+		out := make([]byte, 0, 32<<10)
+		out = append(out, body[:len(body)-1]...)
+		if len(body) > 2 {
+			out = append(out, ',')
+		}
+		out = append(out, []byte(`"padding":`)...)
+		out = append(out, padding...)
+		out = append(out, '}')
+		if len(out) == 32<<10 {
+			_, _ = w.Write(append(out, '\n'))
+			return
+		}
+		if len(out) > 32<<10 {
+			break
+		}
+		if n == 0 {
+			n = 32<<10 - len(out) - 1
+		}
+	}
+	_, _ = w.Write(append(body, '\n'))
+}
+
 func (s *Service) submit(ctx context.Context, requestID string, raw []byte) (shield3wallet.RelayResponse, error) {
 	if uint64(len(raw)) > core.ShieldedV3MaxTxSize {
 		return shield3wallet.RelayResponse{}, errors.New("relay packet exceeds limit")

@@ -170,6 +170,10 @@ type handler struct {
 	txsSub     event.Subscription
 	blockRange *blockRangeState
 
+	dandelionMu      sync.Mutex
+	dandelionPending map[common.Hash]*types.Transaction
+	dandelionTimer   *time.Timer
+
 	requiredBlocks      map[uint64]common.Hash
 	rotatingKingUpdate  func(common.Address, time.Time, string)
 	checkpointUpdate    func(uint64, common.Hash, []byte, string)
@@ -228,6 +232,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		quitSync:            make(chan struct{}),
 		handlerDoneCh:       make(chan struct{}),
 		handlerStartCh:      make(chan struct{}),
+		dandelionPending:    make(map[common.Hash]*types.Transaction),
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Sync, 0, config.Database, nil, downloaderBlockChain{h.chain}, nil, h.removePeer)
@@ -569,15 +574,24 @@ func (h *handler) Stop() {
 // - And, separately, as announcements to all peers which are not known to
 // already have the given transaction.
 func (h *handler) BroadcastTransactions(txs types.Transactions) {
+	h.broadcastTransactions(txs, false)
+}
+
+// broadcastTransactions implements a Dandelion-style stem/fluff path for
+// private Shield3 transactions after Antartical. A transaction is sent to one
+// deterministic stem peer first, then released to the normal fanout after a
+// bounded delay. The signed transaction bytes and consensus rules are
+// unchanged; this only changes network propagation.
+func (h *handler) broadcastTransactions(txs types.Transactions, fluff bool) {
 	var (
-		blobTxs  int // Number of blob transactions to announce only
-		largeTxs int // Number of large transactions to announce only
+		blobTxs  int
+		largeTxs int
 
-		directCount int // Number of transactions sent directly to peers (duplicates included)
-		annCount    int // Number of transactions announced across all peers (duplicates included)
+		directCount int
+		annCount    int
 
-		txset = make(map[*ethPeer][]common.Hash) // Set peer->hash to transfer directly
-		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
+		txset = make(map[*ethPeer][]common.Hash)
+		annos = make(map[*ethPeer][]common.Hash)
 
 		signer = types.LatestSigner(h.chain.Config())
 		choice = newBroadcastChoice(h.nodeID, h.txBroadcastKey)
@@ -585,15 +599,24 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	)
 
 	for _, tx := range txs {
+		private := !fluff && h.shield3DandelionActive(tx)
 		var directSet map[*ethPeer]struct{}
+		if private {
+			txSender, _ := types.Sender(signer, tx)
+			chosen := choice.choosePeers(peers, txSender)
+			if stem := firstBroadcastPeer(chosen); stem != nil {
+				txset[stem] = append(txset[stem], tx.Hash())
+				directCount++
+			}
+			h.scheduleDandelionFluff(tx)
+			continue
+		}
 		switch {
 		case tx.Type() == types.BlobTxType:
 			blobTxs++
 		case tx.Size() > txMaxBroadcastSize:
 			largeTxs++
 		default:
-			// Get transaction sender address. Here we can ignore any error
-			// since we're just interested in any value.
 			txSender, _ := types.Sender(signer, tx)
 			directSet = choice.choosePeers(peers, txSender)
 		}
@@ -603,25 +626,79 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 				continue
 			}
 			if _, ok := directSet[peer]; ok {
-				// Send direct.
 				txset[peer] = append(txset[peer], tx.Hash())
 			} else {
-				// Send announcement.
 				annos[peer] = append(annos[peer], tx.Hash())
 			}
 		}
 	}
 
 	for peer, hashes := range txset {
-		directCount += len(hashes)
 		peer.AsyncSendTransactions(hashes)
 	}
 	for peer, hashes := range annos {
-		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
+		annCount += len(hashes)
 	}
-	log.Trace("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
-		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
+	log.Trace("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs,
+		"blobtxs", blobTxs, "largetxs", largeTxs, "bcastpeers", len(txset),
+		"bcastcount", directCount, "annpeers", len(annos), "anncount", annCount, "fluff", fluff)
+}
+
+func firstBroadcastPeer(peers map[*ethPeer]struct{}) *ethPeer {
+	var selected *ethPeer
+	for peer := range peers {
+		if selected == nil || peer.ID() < selected.ID() {
+			selected = peer
+		}
+	}
+	return selected
+}
+
+func (h *handler) shield3DandelionActive(tx *types.Transaction) bool {
+	if tx == nil || h.chain == nil || h.chain.CurrentHeader() == nil || !h.chain.Config().IsAntartical(h.chain.CurrentHeader().Number, h.chain.CurrentHeader().Time) {
+		return false
+	}
+	envelope, found, err := core.DecodeShieldedV3Transaction(tx.Data())
+	return err == nil && found && envelope.Version >= 3
+}
+
+func (h *handler) scheduleDandelionFluff(tx *types.Transaction) {
+	if tx == nil {
+		return
+	}
+	hash := tx.Hash()
+	h.dandelionMu.Lock()
+	if _, exists := h.dandelionPending[hash]; exists {
+		h.dandelionMu.Unlock()
+		return
+	}
+	h.dandelionPending[hash] = tx
+	if h.dandelionTimer == nil {
+		h.dandelionTimer = time.AfterFunc(3*time.Second, h.flushDandelion)
+	}
+	h.dandelionMu.Unlock()
+}
+
+func (h *handler) flushDandelion() {
+	h.dandelionMu.Lock()
+	txs := make(types.Transactions, 0, len(h.dandelionPending))
+	for hash, tx := range h.dandelionPending {
+		txs = append(txs, tx)
+		delete(h.dandelionPending, hash)
+	}
+	h.dandelionTimer = nil
+	h.dandelionMu.Unlock()
+	select {
+	case <-h.quitSync:
+		return
+	default:
+	}
+	if len(txs) != 0 {
+		// A single delayed batch is released through the normal fanout. The
+		// peer broadcaster then caps its wire packet at maxTxPacketSize.
+		h.broadcastTransactions(txs, true)
+	}
 }
 
 // txBroadcastLoop announces new transactions to connected peers.

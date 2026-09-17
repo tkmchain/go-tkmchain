@@ -83,6 +83,31 @@ func TestBatchAggregateLimit(t *testing.T) {
 		t.Fatal("builder failed to enforce aggregate cap before RPC")
 	}
 }
+func TestRelayTransportPrivacyPolicy(t *testing.T) {
+	for _, proxyURL := range []string{"socks5://127.0.0.1:9050", "socks5://[::1]:9050"} {
+		if err := (RelayTransportConfig{SOCKS5Proxy: proxyURL}).validate(); err != nil {
+			t.Fatal(proxyURL, err)
+		}
+	}
+	for _, proxyURL := range []string{"http://127.0.0.1:9050", "socks5://user:pass@127.0.0.1:9050", "socks5://127.0.0.1", "socks5://127.0.0.1:70000"} {
+		if err := (RelayTransportConfig{SOCKS5Proxy: proxyURL}).validate(); err == nil {
+			t.Fatal("accepted unsafe SOCKS5 proxy", proxyURL)
+		}
+	}
+	body, err := paddedJSON(struct {
+		RequestID string `json:"requestId"`
+	}{"opaque-request-123456"}, DefaultRelayRequestBytes)
+	if err != nil || len(body) != DefaultRelayRequestBytes {
+		t.Fatalf("fixed-size padding failed: len=%d err=%v", len(body), err)
+	}
+	if !bytes.Contains(body, []byte(`"requestId":"opaque-request-123456"`)) || !bytes.Contains(body, []byte(`"padding":"`)) {
+		t.Fatal("fixed-size request lost fields or padding")
+	}
+	if err := relayHTTPWithConfig(context.Background(), "https://example.onion", "/offer", struct{}{}, &struct{}{}, RelayTransportConfig{}); err == nil {
+		t.Fatal("allowed onion relay without an explicit Tor proxy")
+	}
+}
+
 func TestRelayURLPolicy(t *testing.T) {
 	for _, endpoint := range []string{"https://relay.example", "https://relay.example/shield3", "http://127.0.0.1:8790", "http://[::1]:8790", "http://localhost:8790"} {
 		if err := ValidateRelayURL(endpoint); err != nil {

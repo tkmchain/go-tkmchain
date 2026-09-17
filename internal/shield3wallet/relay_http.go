@@ -3,12 +3,15 @@ package shield3wallet
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +20,42 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"golang.org/x/net/proxy"
 )
+
+// RelayTransportConfig controls the network path used to contact a relay.
+// A SOCKS5 proxy is opt-in and is normally a local Tor daemon. We deliberately
+// do not read HTTP_PROXY/HTTPS_PROXY: an ambient proxy can silently reveal the
+// wallet's network origin.
+type RelayTransportConfig struct {
+	SOCKS5Proxy       string
+	FixedRequestBytes int
+	RequestDelay      time.Duration
+}
+
+const DefaultRelayRequestBytes = 32 * 1024
+
+var DirectRelayTransport = RelayTransportConfig{FixedRequestBytes: DefaultRelayRequestBytes}
+
+func (c RelayTransportConfig) validate() error {
+	if c.FixedRequestBytes == 0 {
+		c.FixedRequestBytes = DefaultRelayRequestBytes
+	}
+	if c.FixedRequestBytes < 1024 || c.FixedRequestBytes > 256<<10 {
+		return errors.New("relay fixed request size is outside the safe range")
+	}
+	if c.SOCKS5Proxy == "" {
+		return nil
+	}
+	u, err := url.Parse(c.SOCKS5Proxy)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Scheme != "socks5" || u.Hostname() == "" {
+		return errors.New("relay SOCKS5 proxy must be a plain socks5://host:port URL")
+	}
+	if _, err := strconv.ParseUint(u.Port(), 10, 16); err != nil {
+		return errors.New("relay SOCKS5 proxy requires a valid port")
+	}
+	return nil
+}
 
 // Relay URLs are chosen explicitly by the user. Keys and note openings never
 // leave the local wallet. Remote services require TLS; HTTP is loopback-only.
@@ -35,13 +73,64 @@ func ValidateRelayURL(value string) error {
 	}
 	return nil
 }
+func paddedJSON(request any, target int) ([]byte, error) {
+	// Padding is an ignored top-level field inside the authenticated TLS request.
+	// Keep the actual request fields at the top level so the relay can validate
+	// them normally while observers see one fixed body size.
+	base, err := json.Marshal(request)
+	if err != nil || len(base) < 2 || base[0] != '{' || base[len(base)-1] != '}' {
+		return nil, errors.New("relay request must be a JSON object")
+	}
+	for n := 0; n <= target; n++ {
+		padding, _ := json.Marshal(strings.Repeat("0", n))
+		body := make([]byte, 0, len(base)+len(padding)+12)
+		body = append(body, base[:len(base)-1]...)
+		if len(base) > 2 {
+			body = append(body, ',')
+		}
+		body = append(body, []byte(`"padding":`)...)
+		body = append(body, padding...)
+		body = append(body, '}')
+		if len(body) == target {
+			return body, nil
+		}
+		if len(body) > target {
+			break
+		}
+		if n == 0 {
+			n = target - len(body) - 1
+		}
+	}
+	return nil, errors.New("unable to construct fixed-size relay request")
+}
+
 func relayHTTP(ctx context.Context, endpoint, path string, request, result any) error {
+	return relayHTTPWithConfig(ctx, endpoint, path, request, result, DirectRelayTransport)
+}
+
+func relayHTTPWithConfig(ctx context.Context, endpoint, path string, request, result any, config RelayTransportConfig) error {
 	if err := ValidateRelayURL(endpoint); err != nil {
 		return err
 	}
-	data, err := json.Marshal(request)
+	if err := config.validate(); err != nil {
+		return err
+	}
+	u, _ := url.Parse(endpoint)
+	if strings.HasSuffix(strings.ToLower(u.Hostname()), ".onion") && config.SOCKS5Proxy == "" {
+		return errors.New(".onion relays require an explicit SOCKS5 proxy")
+	}
+	data, err := paddedJSON(request, config.FixedRequestBytes)
 	if err != nil {
 		return err
+	}
+	if config.RequestDelay > 0 {
+		timer := time.NewTimer(config.RequestDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(endpoint, "/")+path, bytes.NewReader(data))
 	if err != nil {
@@ -51,6 +140,16 @@ func relayHTTP(ctx context.Context, endpoint, path string, request, result any) 
 	// Do not send an authorization to a redirected host or through proxy env vars.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	if config.SOCKS5Proxy != "" {
+		proxyURL, _ := url.Parse(config.SOCKS5Proxy)
+		dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, nil, proxy.Direct)
+		if err != nil {
+			return err
+		}
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialContext(ctx, dialer, network, address)
+		}
+	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
@@ -67,12 +166,64 @@ func relayHTTP(ctx context.Context, endpoint, path string, request, result any) 
 	}
 	return json.Unmarshal(body, result)
 }
+
+func dialContext(ctx context.Context, dialer proxy.Dialer, network, address string) (net.Conn, error) {
+	result := make(chan struct {
+		conn net.Conn
+		err  error
+	}, 1)
+	go func() {
+		conn, err := dialer.Dial(network, address)
+		result <- struct {
+			conn net.Conn
+			err  error
+		}{conn, err}
+	}()
+	select {
+	case r := <-result:
+		return r.conn, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 func FetchRelayOffer(ctx context.Context, endpoint, requestID string) (RelayOffer, error) {
+	return FetchRelayOfferWithConfig(ctx, endpoint, requestID, DirectRelayTransport)
+}
+
+func FetchRelayOfferWithConfig(ctx context.Context, endpoint, requestID string, config RelayTransportConfig) (RelayOffer, error) {
 	var offer RelayOffer
-	err := relayHTTP(ctx, endpoint, "/offer", struct {
+	err := relayHTTPWithConfig(ctx, endpoint, "/offer", struct {
 		RequestID string `json:"requestId"`
-	}{requestID}, &offer)
+	}{requestID}, &offer, config)
 	return offer, err
+}
+
+// FetchRelayOfferAny selects the first usable relay. Selection is intentionally
+// sequential: an offer reserves a relay nonce, so probing every relay in
+// parallel would create unnecessary leases and link the wallet to all of them.
+func FetchRelayOfferAny(ctx context.Context, endpoints []string, requestID string, config RelayTransportConfig) (RelayOffer, string, error) {
+	order := append([]string(nil), endpoints...)
+	for i := len(order) - 1; i > 0; i-- {
+		bound := big.NewInt(int64(i + 1))
+		choice, err := crand.Int(crand.Reader, bound)
+		if err != nil {
+			break
+		}
+		j := int(choice.Int64())
+		order[i], order[j] = order[j], order[i]
+	}
+	var last error
+	for _, endpoint := range order {
+		offer, err := FetchRelayOfferWithConfig(ctx, endpoint, requestID, config)
+		if err == nil {
+			return offer, endpoint, nil
+		}
+		last = err
+	}
+	if last == nil {
+		last = errors.New("no relay endpoints configured")
+	}
+	return RelayOffer{}, "", last
 }
 
 type RelayResponse struct {
@@ -83,11 +234,15 @@ type RelayResponse struct {
 }
 
 func SubmitRelayPacket(ctx context.Context, endpoint, requestID string, raw []byte) (RelayResponse, error) {
+	return SubmitRelayPacketWithConfig(ctx, endpoint, requestID, raw, DirectRelayTransport)
+}
+
+func SubmitRelayPacketWithConfig(ctx context.Context, endpoint, requestID string, raw []byte, config RelayTransportConfig) (RelayResponse, error) {
 	var response RelayResponse
-	err := relayHTTP(ctx, endpoint, "/submit", struct {
+	err := relayHTTPWithConfig(ctx, endpoint, "/submit", struct {
 		Transaction hexutil.Bytes `json:"transaction"`
 		RequestID   string        `json:"requestId"`
-	}{raw, requestID}, &response)
+	}{raw, requestID}, &response, config)
 	if err != nil {
 		return response, err
 	}

@@ -211,6 +211,18 @@ func TestKnownTransactionRetrySkipsBroadcast(t *testing.T) {
 	}
 }
 
+func TestFixedSizeRelayResponse(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writePaddedJSON(recorder, map[string]string{"status": "unconfirmed"})
+	if recorder.Code != http.StatusOK || recorder.Body.Len() != (32<<10)+1 {
+		t.Fatalf("response size=%d code=%d", recorder.Body.Len(), recorder.Code)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil || result["status"] != "unconfirmed" {
+		t.Fatal("padded response was not valid JSON", err)
+	}
+}
+
 func TestQuoteLeaseAndEndpointBoundary(t *testing.T) {
 	service, rpc, seed, dir := operator(t)
 	if duplicate, err := New(rpc, seed, rpc.identity, dir); err == nil {
