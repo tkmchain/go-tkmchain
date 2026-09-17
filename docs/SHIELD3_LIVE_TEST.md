@@ -179,6 +179,29 @@ public transaction `.bin` files and `report.json`. A failure produces a nonzero
 exit and records the error in the report when setup reached the output directory.
 The RPC port is temporary and is no longer serving after the runner exits.
 
+## Exposure audit
+
+The test separates public transaction metadata from private Shield3 payloads:
+
+| Item | Observed visibility |
+| --- | --- |
+| Shielded private-send and relay output amounts | Not present as plaintext in the transaction; they are inside fixed-size authenticated ciphertexts and commitments |
+| Deposit amount | Public by design: the deposit transaction's ordinary `Value` funds the pool. The test log showed 10 TKM |
+| Direct-send outer signer | Public sender PQ address, nonce, pool target, gas caps/limit, transaction hash, block and timestamp |
+| Relay outer signer | Public operator PQ address and the same transaction metadata; the payer PQ key/address is absent from the relay packet |
+| Output commitments, nullifiers and ciphertext lengths | Public consensus data; nullifiers do not reveal the recipient secret needed to derive them |
+| Gas and relay quote | Public gas usage; the relay quote reserves the operator fee amount |
+| Recipient labels and stamp text | Encrypted; only the appropriate viewing/stamp disclosure key opens them |
+| Local node logs and evidence JSON | Whoever can read them sees hashes, addresses, block/gas data, and the deliberately recorded test balances. They are mode 0600 in the test directory |
+
+The raw `.bin` files are signed public transactions and encrypted proofs, not
+wallet seeds. The first exploratory run briefly wrote random test seeds to a
+0600 temporary file; that file was removed after this audit. The corrected
+runner never writes spending seeds or viewing keys. The committed JSON evidence
+contains hashes and test balances so the run can be checked; it contains no
+private keys. Production logging and RPC access should still be permissioned if
+transaction metadata is sensitive.
+
 ## What this establishes
 
 This establishes real mining, transaction admission, canonical block inclusion,
