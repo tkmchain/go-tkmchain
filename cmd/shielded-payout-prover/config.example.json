@@ -14,5 +14,6 @@
   "submitSync": true,
   "receiptTimeoutMs": 20000,
   "torSocks5Proxy": "",
-  "privacyStrict": false
+  "privacyStrict": false,
+  "onionOnly": false
 }

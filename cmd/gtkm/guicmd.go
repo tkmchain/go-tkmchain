@@ -117,7 +117,7 @@ func localGUI(ctx *cli.Context) error {
 		Height:         800,
 		Port:           ctx.Int(guiPortFlag.Name),
 		Host:           ctx.String(guiHostFlag.Name),
-		RelayTransport: shield3wallet.RelayTransportConfig{SOCKS5Proxy: ctx.String("p2p.tor-socks5")},
+		RelayTransport: shield3wallet.RelayTransportConfig{SOCKS5Proxy: ctx.String("p2p.tor-socks5"), OnionOnly: ctx.Bool("privacy.onion-only")},
 		ForceBrowser:   ctx.Bool(guiBrowserFlag.Name),
 	})
 	if err != nil {

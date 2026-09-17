@@ -153,3 +153,10 @@ func TestStampOnlyDisclosureCannotRecognizeOutput(t *testing.T) {
 		t.Fatal("accepted altered signed stamp chain")
 	}
 }
+
+func TestOnionOnlyRelayPolicy(t *testing.T) {
+	cfg := RelayTransportConfig{OnionOnly: true, SOCKS5Proxy: "socks5://127.0.0.1:9050"}
+	if err := relayHTTPWithConfig(context.Background(), "https://relay.example", "/offer", struct{}{}, &struct{}{}, cfg); err == nil {
+		t.Fatal("onion-only relay policy accepted a clearnet endpoint")
+	}
+}

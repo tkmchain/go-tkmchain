@@ -31,6 +31,7 @@ type RelayTransportConfig struct {
 	SOCKS5Proxy       string
 	FixedRequestBytes int
 	RequestDelay      time.Duration
+	OnionOnly         bool
 }
 
 const DefaultRelayRequestBytes = 32 * 1024
@@ -43,6 +44,9 @@ func (c RelayTransportConfig) validate() error {
 	}
 	if c.FixedRequestBytes < 1024 || c.FixedRequestBytes > 256<<10 {
 		return errors.New("relay fixed request size is outside the safe range")
+	}
+	if c.OnionOnly && c.SOCKS5Proxy == "" {
+		return errors.New("onion-only relay mode requires an explicit SOCKS5 proxy")
 	}
 	if c.SOCKS5Proxy == "" {
 		return nil
@@ -119,8 +123,16 @@ func relayHTTPWithConfig(ctx context.Context, endpoint, path string, request, re
 		return err
 	}
 	u, _ := url.Parse(endpoint)
-	if strings.HasSuffix(strings.ToLower(u.Hostname()), ".onion") && config.SOCKS5Proxy == "" {
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u.Hostname()), "."))
+	loopback := host == "localhost"
+	if ip := net.ParseIP(host); ip != nil {
+		loopback = ip.IsLoopback()
+	}
+	if strings.HasSuffix(host, ".onion") && config.SOCKS5Proxy == "" {
 		return errors.New(".onion relays require an explicit SOCKS5 proxy")
+	}
+	if config.OnionOnly && !loopback && !strings.HasSuffix(host, ".onion") {
+		return errors.New("onion-only relay mode rejects non-onion relay")
 	}
 	data, err := paddedJSON(request, config.FixedRequestBytes)
 	if err != nil {

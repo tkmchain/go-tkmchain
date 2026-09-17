@@ -918,6 +918,11 @@ var (
 		Usage:    "Fail closed unless P2P uses Tor and RPC listeners are loopback-only",
 		Category: flags.NetworkingCategory,
 	}
+	PrivacyOnionOnlyFlag = &cli.BoolFlag{
+		Name:     "privacy.onion-only",
+		Usage:    "Use only Tor .onion peers and bind P2P locally for a Tor hidden service",
+		Category: flags.NetworkingCategory,
+	}
 	DiscoveryV4Flag = &cli.BoolFlag{
 		Name:     "discovery.v4",
 		Aliases:  []string{"discv4"},
@@ -1545,6 +1550,9 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	}
 	if ctx.IsSet(PrivacyStrictFlag.Name) {
 		cfg.PrivacyStrict = ctx.Bool(PrivacyStrictFlag.Name)
+	}
+	if ctx.IsSet(PrivacyOnionOnlyFlag.Name) {
+		cfg.OnionOnly = ctx.Bool(PrivacyOnionOnlyFlag.Name)
 	}
 	setIPC(ctx, cfg)
 	setHTTP(ctx, cfg)

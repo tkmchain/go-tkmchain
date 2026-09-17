@@ -71,6 +71,9 @@ type Config struct {
 	P2PSOCKS5Proxy string `toml:"p2pSocks5Proxy,omitempty"`
 	// PrivacyStrict disables discovery/NAT and rejects non-loopback RPC listeners.
 	PrivacyStrict bool `toml:"privacyStrict,omitempty"`
+	// OnionOnly additionally rejects all non-.onion peers and binds P2P locally
+	// for a Tor hidden service. It implies PrivacyStrict.
+	OnionOnly bool `toml:"onionOnly,omitempty"`
 
 	// KeyStoreDir is the file system folder that contains private keys. The directory can
 	// be specified as a relative path, in which case it is resolved relative to the

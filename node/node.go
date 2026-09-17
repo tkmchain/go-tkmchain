@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gofrs/flock"
 )
@@ -100,11 +101,17 @@ func New(conf *Config) (*Node, error) {
 	if conf.Logger == nil {
 		conf.Logger = log.New()
 	}
-	if conf.P2PSOCKS5Proxy != "" || conf.PrivacyStrict {
+	if conf.P2PSOCKS5Proxy != "" || conf.PrivacyStrict || conf.OnionOnly {
 		if conf.P2PSOCKS5Proxy == "" {
 			return nil, errors.New("strict privacy mode requires a P2P SOCKS5 proxy")
 		}
-		dialer, err := p2p.NewSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		var dialer p2p.NodeDialer
+		var err error
+		if conf.OnionOnly {
+			dialer, err = p2p.NewOnionSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		} else {
+			dialer, err = p2p.NewSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -113,6 +120,24 @@ func New(conf *Config) (*Node, error) {
 		conf.P2P.DiscoveryV4 = false
 		conf.P2P.DiscoveryV5 = false
 		conf.P2P.NAT = nil
+	}
+	if conf.OnionOnly {
+		conf.PrivacyStrict = true
+		for name, peers := range map[string][]*enode.Node{"bootstrap": conf.P2P.BootstrapNodes, "bootstrap-v5": conf.P2P.BootstrapNodesV5, "static": conf.P2P.StaticNodes, "trusted": conf.P2P.TrustedNodes} {
+			for _, peer := range peers {
+				if peer == nil || !strings.HasSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), ".")), ".onion") {
+					return nil, fmt.Errorf("onion-only mode requires every %s peer to use a .onion hostname", name)
+				}
+			}
+		}
+		conf.P2P.DiscAddr = ""
+		if conf.P2P.ListenAddr != "" {
+			if _, port, err := net.SplitHostPort(conf.P2P.ListenAddr); err == nil {
+				conf.P2P.ListenAddr = net.JoinHostPort("127.0.0.1", port)
+			} else {
+				return nil, fmt.Errorf("onion-only mode requires a valid P2P listen address: %w", err)
+			}
+		}
 	}
 	if conf.PrivacyStrict {
 		// Keep public RPC namespaces to wallet/mining essentials. Administrative,

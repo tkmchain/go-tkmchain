@@ -72,6 +72,7 @@ type Config struct {
 	ReceiptTimeoutMs     int64  `json:"receiptTimeoutMs"`
 	TorSOCKS5Proxy       string `json:"torSocks5Proxy"`
 	PrivacyStrict        bool   `json:"privacyStrict"`
+	OnionOnly            bool   `json:"onionOnly"`
 }
 
 type PayoutRequest struct {
@@ -288,8 +289,8 @@ func isLoopbackHost(host string) bool {
 
 func validatePrivacyConfig(cfg Config) error {
 	if cfg.TorSOCKS5Proxy == "" {
-		if cfg.PrivacyStrict {
-			return errors.New("privacyStrict requires torSocks5Proxy")
+		if cfg.PrivacyStrict || cfg.OnionOnly {
+			return errors.New("privacyStrict/onionOnly requires torSocks5Proxy")
 		}
 		return nil
 	}
@@ -297,12 +298,16 @@ func validatePrivacyConfig(cfg Config) error {
 	if err != nil || u.Scheme != "socks5" || u.Hostname() == "" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("torSocks5Proxy must be a plain socks5://host:port URL")
 	}
-	if cfg.PrivacyStrict {
+	if cfg.PrivacyStrict || cfg.OnionOnly {
 		rpcURL, err := url.Parse(cfg.NodeRPC)
 		if err != nil || rpcURL.Host == "" {
 			return errors.New("invalid nodeRPC endpoint")
 		}
-		if !isLoopbackHost(rpcURL.Hostname()) && rpcURL.Scheme != "https" && !strings.HasSuffix(strings.ToLower(rpcURL.Hostname()), ".onion") {
+		onion := strings.HasSuffix(strings.ToLower(strings.TrimSuffix(rpcURL.Hostname(), ".")), ".onion")
+		if cfg.OnionOnly && !isLoopbackHost(rpcURL.Hostname()) && !onion {
+			return errors.New("onionOnly requires a .onion nodeRPC endpoint")
+		}
+		if !cfg.OnionOnly && !isLoopbackHost(rpcURL.Hostname()) && rpcURL.Scheme != "https" && !onion {
 			return errors.New("privacyStrict requires HTTPS or .onion nodeRPC")
 		}
 		if host, _, err := net.SplitHostPort(cfg.Listen); err == nil && !isLoopbackHost(host) {
