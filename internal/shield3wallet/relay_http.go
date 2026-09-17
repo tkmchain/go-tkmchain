@@ -112,6 +112,9 @@ func relayHTTPWithConfig(ctx context.Context, endpoint, path string, request, re
 	if err := ValidateRelayURL(endpoint); err != nil {
 		return err
 	}
+	if config.FixedRequestBytes == 0 {
+		config.FixedRequestBytes = DefaultRelayRequestBytes
+	}
 	if err := config.validate(); err != nil {
 		return err
 	}
