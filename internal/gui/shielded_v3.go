@@ -166,7 +166,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if operation == "fetch-relay-offer" {
-		offer, err := shield3wallet.FetchRelayOffer(r.Context(), req.RelayURL, req.RequestID)
+		offer, err := shield3wallet.FetchRelayOfferWithConfig(r.Context(), req.RelayURL, req.RequestID, g.opts.RelayTransport)
 		if err == nil {
 			_, err = shield3wallet.ReviewRelayOffer(r.Context(), g.client, &offer, chainID.Uint64())
 		}

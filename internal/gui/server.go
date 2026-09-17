@@ -37,6 +37,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -46,8 +47,9 @@ var webAssets embed.FS
 
 // Options controls how the GUI is launched.
 type Options struct {
-	WalletStateDir string // local durable Shield3 submission records
-	ProverConfig   string // private local proof-only prover configuration
+	WalletStateDir string                             // local durable Shield3 submission records
+	ProverConfig   string                             // private local proof-only prover configuration
+	RelayTransport shield3wallet.RelayTransportConfig // explicit Tor/relay transport
 
 	Title         string // window title
 	Width, Height int    // initial desktop window size

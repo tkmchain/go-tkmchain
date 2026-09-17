@@ -67,6 +67,11 @@ type Config struct {
 	// Configuration of peer-to-peer networking.
 	P2P p2p.Config
 
+	// P2PSOCKS5Proxy routes outbound P2P connections through Tor.
+	P2PSOCKS5Proxy string `toml:"p2pSocks5Proxy,omitempty"`
+	// PrivacyStrict disables discovery/NAT and rejects non-loopback RPC listeners.
+	PrivacyStrict bool `toml:"privacyStrict,omitempty"`
+
 	// KeyStoreDir is the file system folder that contains private keys. The directory can
 	// be specified as a relative path, in which case it is resolved relative to the
 	// current directory.

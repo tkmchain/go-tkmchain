@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,6 +74,16 @@ const (
 	closedState
 )
 
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if parsed := net.ParseIP(host); parsed != nil {
+		return parsed.IsLoopback()
+	}
+	return false
+}
+
 // New creates a new P2P node, ready for protocol registration.
 func New(conf *Config) (*Node, error) {
 	// Copy config and resolve the datadir so future changes to the current
@@ -88,6 +99,32 @@ func New(conf *Config) (*Node, error) {
 	}
 	if conf.Logger == nil {
 		conf.Logger = log.New()
+	}
+	if conf.P2PSOCKS5Proxy != "" || conf.PrivacyStrict {
+		if conf.P2PSOCKS5Proxy == "" {
+			return nil, errors.New("strict privacy mode requires a P2P SOCKS5 proxy")
+		}
+		dialer, err := p2p.NewSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		if err != nil {
+			return nil, err
+		}
+		conf.P2P.Dialer = dialer
+		conf.P2P.NoDiscovery = true
+		conf.P2P.DiscoveryV4 = false
+		conf.P2P.DiscoveryV5 = false
+		conf.P2P.NAT = nil
+	}
+	if conf.PrivacyStrict {
+		// Keep public RPC namespaces to wallet/mining essentials. Administrative,
+		// debug, tracing, and account-management APIs remain IPC/auth-only.
+		conf.HTTPModules = []string{"eth", "net", "web3", "miner", "randomx", "tkmprivacy"}
+		conf.WSModules = append([]string(nil), conf.HTTPModules...)
+		conf.WSExposeAll = false
+		for name, host := range map[string]string{"HTTP": conf.HTTPHost, "WS": conf.WSHost, "auth": conf.AuthAddr} {
+			if host != "" && !isLoopbackHost(host) {
+				return nil, fmt.Errorf("strict privacy mode requires %s RPC listener to be loopback", name)
+			}
+		}
 	}
 
 	// Ensure that the instance name doesn't cause weird conflicts with

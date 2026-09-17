@@ -150,3 +150,19 @@ func TestNodeKeyPersistency(t *testing.T) {
 		t.Fatalf("ephemeral node key persisted to disk")
 	}
 }
+
+func TestPrivacyStrictConfiguration(t *testing.T) {
+	if _, err := New(&Config{PrivacyStrict: true, DataDir: t.TempDir()}); err == nil {
+		t.Fatal("strict privacy accepted without Tor")
+	}
+	if _, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "0.0.0.0", DataDir: t.TempDir()}); err == nil {
+		t.Fatal("strict privacy accepted a public HTTP listener")
+	}
+	node, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

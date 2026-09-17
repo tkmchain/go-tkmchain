@@ -908,6 +908,16 @@ var (
 		Usage:    "Disables the peer discovery mechanism (manual peer addition)",
 		Category: flags.NetworkingCategory,
 	}
+	P2PSOCKS5ProxyFlag = &cli.StringFlag{
+		Name:     "p2p.tor-socks5",
+		Usage:    "Route outbound P2P connections through an explicit Tor SOCKS5 proxy",
+		Category: flags.NetworkingCategory,
+	}
+	PrivacyStrictFlag = &cli.BoolFlag{
+		Name:     "privacy.strict",
+		Usage:    "Fail closed unless P2P uses Tor and RPC listeners are loopback-only",
+		Category: flags.NetworkingCategory,
+	}
 	DiscoveryV4Flag = &cli.BoolFlag{
 		Name:     "discovery.v4",
 		Aliases:  []string{"discv4"},
@@ -1530,6 +1540,12 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 // SetNodeConfig applies node-related command line flags to the config.
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	SetP2PConfig(ctx, &cfg.P2P)
+	if ctx.IsSet(P2PSOCKS5ProxyFlag.Name) {
+		cfg.P2PSOCKS5Proxy = strings.TrimSpace(ctx.String(P2PSOCKS5ProxyFlag.Name))
+	}
+	if ctx.IsSet(PrivacyStrictFlag.Name) {
+		cfg.PrivacyStrict = ctx.Bool(PrivacyStrictFlag.Name)
+	}
 	setIPC(ctx, cfg)
 	setHTTP(ctx, cfg)
 	setGraphQL(ctx, cfg)

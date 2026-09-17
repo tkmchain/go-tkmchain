@@ -12,5 +12,7 @@
   "requestsPath": "/home/mike/shielded-prover/requests.json",
   "gasLimit": 3000000,
   "submitSync": true,
-  "receiptTimeoutMs": 20000
+  "receiptTimeoutMs": 20000,
+  "torSocks5Proxy": "",
+  "privacyStrict": false
 }

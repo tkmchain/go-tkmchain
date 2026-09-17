@@ -21,7 +21,7 @@ func (g *GUI) shield3AutoRelay(ctx context.Context, record *shield3RequestRecord
 	if status["status"] != "prepared · notes reserved" {
 		return nil, errors.New("relay draft expired or its inputs conflict; check canonical status")
 	}
-	response, err := shield3wallet.SubmitRelayPacket(ctx, record.RelayURL, requestID, record.Raw)
+	response, err := shield3wallet.SubmitRelayPacketWithConfig(ctx, record.RelayURL, requestID, record.Raw, g.opts.RelayTransport)
 	if err != nil {
 		return nil, err
 	}
