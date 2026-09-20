@@ -53,6 +53,7 @@ For deployments that must never connect to a clearnet peer, enable the fail-clos
 gtkm \
   --privacy.onion-only \
   --p2p.tor-socks5 socks5://127.0.0.1:9050 \
+  --p2p.onion-hostname <this-node>.onion \
   --bootnodes 'enode://<peer-key>@<peer-id>.onion:3000'
 ```
 
@@ -71,6 +72,6 @@ HiddenServiceDir /var/lib/tor/tkmchain/
 HiddenServicePort 3000 127.0.0.1:3000
 ```
 
-Use the generated `.onion` hostname in every static or bootstrap `enode://` URL. Discovery is intentionally disabled, so onion peers must be configured explicitly. Tor itself uses IP links between relays; onion-only mode removes your node's public IP exposure and prevents your software from dialing clearnet addresses.
+Use the generated `.onion` hostname in `--p2p.onion-hostname` and in every static or bootstrap `enode://` URL. The node advertises that hostname through `admin_nodeInfo`/node status. Discovery is intentionally disabled, so onion peers must be configured explicitly. Tor itself uses IP links between relays; onion-only mode removes your node's public IP exposure and prevents your software from dialing clearnet addresses.
 
 The pool and payout prover expose the same `onionOnly` setting. Set `torSocks5Proxy` to `socks5://127.0.0.1:9050`, use a loopback `nodeRPC` for a local daemon or a `.onion` URL for a remote daemon, and publish a `.onion` `publicURL`/stratum address. Pool HTTP and stratum listeners are forced to `127.0.0.1`; expose them through Tor onion-service ports when miners or operators need remote access.
