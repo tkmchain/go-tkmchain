@@ -1270,6 +1270,19 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 	return nodes
 }
 
+func validateOnionPeers(peers []*enode.Node) error {
+	for _, peer := range peers {
+		if peer == nil {
+			return fmt.Errorf("onion-only mode rejects an empty peer")
+		}
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), "."))
+		if !strings.HasSuffix(host, ".onion") {
+			return fmt.Errorf("onion-only mode requires .onion peers; got %q", peer.String())
+		}
+	}
+	return nil
+}
+
 func seedStaticNodesFromBootnodes(cfg *p2p.Config) {
 	if len(cfg.StaticNodes) > 0 || len(cfg.BootstrapNodes) == 0 {
 		return
@@ -1501,6 +1514,21 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setBootstrapNodes(ctx, cfg)
 	seedStaticNodesFromBootnodes(cfg)
 	setBootstrapNodesV5(ctx, cfg)
+	if ctx.Bool(PrivacyOnionOnlyFlag.Name) {
+		cfg.NoDiscovery = true
+		cfg.DiscoveryV4 = false
+		cfg.DiscoveryV5 = false
+		cfg.BootstrapNodesV5 = nil
+		if err := validateOnionPeers(cfg.BootstrapNodes); err != nil {
+			Fatalf("onion-only bootstrap configuration: %v", err)
+		}
+		if err := validateOnionPeers(cfg.StaticNodes); err != nil {
+			Fatalf("onion-only static peer configuration: %v", err)
+		}
+		if err := validateOnionPeers(cfg.TrustedNodes); err != nil {
+			Fatalf("onion-only trusted peer configuration: %v", err)
+		}
+	}
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)
@@ -1997,7 +2025,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(RPCGlobalTxFeeCapFlag.Name) {
 		cfg.RPCTxFeeCap = ctx.Float64(RPCGlobalTxFeeCapFlag.Name)
 	}
-	if ctx.IsSet(NoDiscoverFlag.Name) {
+	if ctx.Bool(PrivacyOnionOnlyFlag.Name) || ctx.IsSet(NoDiscoverFlag.Name) {
 		cfg.EthDiscoveryURLs, cfg.SnapDiscoveryURLs = []string{}, []string{}
 	} else if ctx.IsSet(DNSDiscoveryFlag.Name) {
 		urls := ctx.String(DNSDiscoveryFlag.Name)
