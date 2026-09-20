@@ -123,6 +123,11 @@ func New(conf *Config) (*Node, error) {
 	}
 	if conf.OnionOnly {
 		conf.PrivacyStrict = true
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(conf.P2P.OnionHostname), "."))
+		if !strings.HasSuffix(host, ".onion") {
+			return nil, errors.New("onion-only mode requires p2p.onionHostname")
+		}
+		conf.P2P.OnionHostname = host
 		for name, peers := range map[string][]*enode.Node{"bootstrap": conf.P2P.BootstrapNodes, "bootstrap-v5": conf.P2P.BootstrapNodesV5, "static": conf.P2P.StaticNodes, "trusted": conf.P2P.TrustedNodes} {
 			for _, peer := range peers {
 				if peer == nil || !strings.HasSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), ".")), ".onion") {

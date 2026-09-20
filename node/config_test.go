@@ -182,7 +182,7 @@ func TestOnionOnlyConfiguration(t *testing.T) {
 	if err == nil {
 		t.Fatal("onion-only mode accepted an IP-only static peer")
 	}
-	node, err := New(&Config{OnionOnly: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", P2P: p2p.Config{ListenAddr: ":3000"}, HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
+	node, err := New(&Config{OnionOnly: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", P2P: p2p.Config{ListenAddr: ":3000", OnionHostname: "node.example.onion"}, HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

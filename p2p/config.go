@@ -93,6 +93,10 @@ type Config struct {
 	// each peer.
 	Protocols []Protocol `toml:"-" json:"-"`
 
+	// OnionHostname is the Tor hidden-service hostname advertised in the
+	// local enode URL. It is required by onion-only mode.
+	OnionHostname string `toml:"onionHostname,omitempty"`
+
 	// If ListenAddr is set to a non-nil address, the server
 	// will listen for incoming connections.
 	//

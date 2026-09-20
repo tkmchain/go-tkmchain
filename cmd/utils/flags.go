@@ -913,6 +913,11 @@ var (
 		Usage:    "Route outbound P2P connections through an explicit Tor SOCKS5 proxy",
 		Category: flags.NetworkingCategory,
 	}
+	P2POnionHostnameFlag = &cli.StringFlag{
+		Name:     "p2p.onion-hostname",
+		Usage:    "Advertise this node's Tor onion-service hostname in its enode URL",
+		Category: flags.NetworkingCategory,
+	}
 	PrivacyStrictFlag = &cli.BoolFlag{
 		Name:     "privacy.strict",
 		Usage:    "Fail closed unless P2P uses Tor and RPC listeners are loopback-only",
@@ -1575,6 +1580,9 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	SetP2PConfig(ctx, &cfg.P2P)
 	if ctx.IsSet(P2PSOCKS5ProxyFlag.Name) {
 		cfg.P2PSOCKS5Proxy = strings.TrimSpace(ctx.String(P2PSOCKS5ProxyFlag.Name))
+	}
+	if ctx.IsSet(P2POnionHostnameFlag.Name) {
+		cfg.P2P.OnionHostname = strings.TrimSpace(ctx.String(P2POnionHostnameFlag.Name))
 	}
 	if ctx.IsSet(PrivacyStrictFlag.Name) {
 		cfg.PrivacyStrict = ctx.Bool(PrivacyStrictFlag.Name)

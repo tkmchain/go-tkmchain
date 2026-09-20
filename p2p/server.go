@@ -348,7 +348,11 @@ func (srv *Server) Self() *enode.Node {
 	if ln == nil {
 		return enode.NewV4(&srv.PrivateKey.PublicKey, net.ParseIP("0.0.0.0"), 0, 0)
 	}
-	return ln.Node()
+	node := ln.Node()
+	if srv.OnionHostname != "" {
+		node = node.WithHostname(srv.OnionHostname)
+	}
+	return node
 }
 
 // DiscoveryV4 returns the discovery v4 instance, if configured.

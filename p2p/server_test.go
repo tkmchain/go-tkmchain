@@ -90,6 +90,28 @@ func startTestServer(t *testing.T, remoteKey *ecdsa.PublicKey, pf func(*Peer)) *
 	return server
 }
 
+func TestServerSelfOnionHostname(t *testing.T) {
+	srv := &Server{Config: Config{
+		PrivateKey:    newkey(),
+		ListenAddr:    "127.0.0.1:0",
+		NoDiscovery:   true,
+		NoDial:        true,
+		OnionHostname: "peer.example.onion",
+		Logger:        testlog.Logger(t, log.LvlTrace),
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	self := srv.Self()
+	if self.Hostname() != "peer.example.onion" {
+		t.Fatalf("hostname = %q, want peer.example.onion", self.Hostname())
+	}
+	if !strings.Contains(self.URLv4(), "@peer.example.onion:") {
+		t.Fatalf("self enode does not advertise onion hostname: %s", self.URLv4())
+	}
+}
+
 func TestServerListen(t *testing.T) {
 	// start the test server
 	connected := make(chan *Peer)

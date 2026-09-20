@@ -114,6 +114,7 @@ var (
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
 		utils.P2PSOCKS5ProxyFlag,
+		utils.P2POnionHostnameFlag,
 		utils.PrivacyStrictFlag,
 		utils.PrivacyOnionOnlyFlag,
 		// RandomX mining flags (restored, not deprecated)
