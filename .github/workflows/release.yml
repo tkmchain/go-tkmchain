@@ -81,7 +81,7 @@ jobs:
       - name: Build and package Linux or macOS binaries
         if: runner.os != 'Windows'
         run: |
-          make gtkm shielded-payout-prover
+          VERSION="$RELEASE_TAG" make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
@@ -100,8 +100,8 @@ jobs:
           # Link those MinGW runtimes statically so the release is portable to a
           # clean Windows installation.
           windows_randomx_ldflags="-Lbuild/_workspace/randomx/build-host -lrandomx -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm"
-          make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
-          CGO_LDFLAGS="-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" make shielded-payout-prover
+          VERSION="$RELEASE_TAG" make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
+          VERSION="$RELEASE_TAG" CGO_LDFLAGS="-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" make shielded-payout-prover
 
           archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
@@ -187,7 +187,7 @@ jobs:
 
       - name: Build and package Debian 13 binaries
         run: |
-          make gtkm shielded-payout-prover
+          VERSION="$RELEASE_TAG" make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-debian13-amd64"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
@@ -231,7 +231,7 @@ jobs:
           npm run build --prefix internal/gui/wallet-engine
           python3 build/wallet-signing/windows-metadata.py --publisher TKMChain --version "${RELEASE_TAG#v}"
           make randomx-windows
-          make gtkm-gui-windows
+          VERSION="$RELEASE_TAG" make gtkm-gui-windows
           GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc-posix CGO_LDFLAGS='-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic' go build -tags shield3 -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
           archive="TKM-Wallet-${RELEASE_TAG}-windows-x64"
           mkdir -p "release/$archive/licenses"
