@@ -26,7 +26,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          # Build on the oldest maintained Ubuntu runner so cgo binaries do not
+          # require glibc/libstdc++ symbols from the latest runner image.
+          - runner: ubuntu-22.04
             platform: linux
             artifact: release-linux
           - runner: macos-latest
