@@ -38,7 +38,7 @@ The ledger stores the document hash, metadata, previous disclosure hash, Main Ki
 Enable `tkmgov` on the desired transport, for example:
 
 ```bash
-./build/bin/gtkm --http --http.addr 0.0.0.0 --http.api eth,net,web3,tkmgov
+./build/bin/gtkm --privacy.onion-only --p2p.tor-socks5=socks5://127.0.0.1:9050 --http --http.addr 127.0.0.1 --http.api eth,net,web3,tkmgov
 ```
 
 Methods:
