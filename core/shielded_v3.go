@@ -32,6 +32,9 @@ type ShieldedV3Output struct {
 	Incoming   []byte
 	Outgoing   []byte
 	Stamp      []byte
+	// OneTimeKey is a fresh per-output key derived from the hidden note
+	// randomness. It is public metadata and is never reused across outputs.
+	OneTimeKey []byte `rlp:"optional"`
 }
 type ShieldedV3Transaction struct {
 	Version              uint64
@@ -207,11 +210,19 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 		return fail("Shield3 gas sponsorship exceeds transaction gas cost")
 	}
 	seen := make(map[shielded3.Digest]bool)
+	seenOneTime := make(map[string]bool)
 	for _, out := range e.Outputs {
 		if out.Commitment == (shielded3.Digest{}) || seen[out.Commitment] {
 			return fail("zero or duplicate Shield3 output commitment")
 		}
 		seen[out.Commitment] = true
+		if len(out.OneTimeKey) != 32 {
+			return fail("missing Shield3 one-time output key")
+		}
+		if bytes.Equal(out.OneTimeKey, make([]byte, 32)) || seenOneTime[string(out.OneTimeKey)] {
+			return fail("invalid or duplicate Shield3 one-time output key")
+		}
+		seenOneTime[string(out.OneTimeKey)] = true
 		if _, err := shielded3.DigestFromBytes(out.Commitment.Bytes()); err != nil {
 			return fail("noncanonical Shield3 output commitment")
 		}

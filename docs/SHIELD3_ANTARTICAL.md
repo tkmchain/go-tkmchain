@@ -72,6 +72,29 @@ soundness. ML-KEM and ML-DSA address known quantum attacks on older public-key
 systems. Neither these primitives nor this integration promises permanent
 unhackability, anonymity after secret exposure, or immunity to future research.
 
+## Carrot-inspired output privacy
+
+Antartical Shield3 keeps its existing PQ envelope and STARK relation while
+adding privacy ideas inspired by Carrot:
+
+- every output receives a fresh 32-byte one-time output key derived from the
+  hidden owner, note randomness and commitment; it is never reused;
+- every new note carries a random 32-byte payment tag inside the authenticated
+  incoming/outgoing ciphertexts; it is not exposed as a public payment ID;
+- change already receives fresh randomness and therefore gets a new output key
+  instead of reusing an input or recipient identifier;
+- wallets can export incoming-only, outgoing-only, or full viewing keys; the
+  outgoing tier can inspect outgoing records without receiving or spending funds;
+- the complete proof-free envelope remains bound by the Shield3 intent digest,
+  so output keys, ciphertexts, relay fields and payment metadata cannot be
+  swapped after proof creation;
+- existing multi-input spends, selective disclosure capsules and relay
+  propagation continue to operate over this format.
+
+These additions do not import Monero's FCMP++ or Ed25519 assumptions. They are
+metadata and key-hierarchy extensions tied to the existing Shield3 commitment
+and PQ proof system.
+
 ## Stamps and account creation
 
 At Antartical, creating a PQ account in the desktop/Android UI requires creating

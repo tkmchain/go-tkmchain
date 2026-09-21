@@ -76,6 +76,8 @@ func TestShield3NeverFallsBackToLegacyVerifier(t *testing.T) {
 	for i := range envelope.Outputs {
 		out := &envelope.Outputs[i]
 		out.Commitment = shielded3.Digest{uint64(i + 1)}
+		out.OneTimeKey = make([]byte, 32)
+		out.OneTimeKey[0] = byte(i + 1)
 		for _, record := range []struct {
 			role pqcrypto.ShieldedV3Purpose
 			data *[]byte

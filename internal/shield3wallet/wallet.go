@@ -3,6 +3,8 @@ package shield3wallet
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,8 @@ type Note struct {
 	Randomness shielded3.Digest `json:"randomness"`
 	ValueWei   string           `json:"valueWei"`
 	Recipient  common.Address   `json:"recipient"`
+	OneTimeKey []byte           `json:"oneTimeKey"`
+	PaymentTag []byte           `json:"paymentTag"`
 }
 type OwnedNote struct {
 	Note
@@ -69,13 +73,15 @@ func (i *Identity) ScopedViewKey(scope string) (ViewKey, error) {
 	switch scope {
 	case "incoming":
 		v.Incoming = common.CopyBytes(i.IncomingSeed)
+	case "outgoing":
+		v.Outgoing = common.CopyBytes(i.OutgoingSeed)
 	case "full":
 		v.Incoming = common.CopyBytes(i.IncomingSeed)
 		v.Outgoing = common.CopyBytes(i.OutgoingSeed)
 		key := i.NullifierKey
 		v.NullifierKey = &key
 	default:
-		return ViewKey{}, errors.New("choose incoming or full viewing scope")
+		return ViewKey{}, errors.New("choose incoming, outgoing, or full viewing scope")
 	}
 	return v, nil
 }
@@ -88,16 +94,23 @@ func (v *ViewKey) Clear() {
 	}
 }
 func (v ViewKey) validate() error {
-	if v.Version != 2 || v.ChainID == 0 || v.Owner == (shielded3.Digest{}) || len(v.Incoming) != pqcrypto.ShieldedV3ViewKeySize {
+	if v.Version != 2 || v.ChainID == 0 || v.Owner == (shielded3.Digest{}) {
 		return errors.New("invalid or obsolete Shield3 viewing key; re-export a scoped key")
 	}
 	switch v.Scope {
 	case "incoming":
+		if len(v.Incoming) != pqcrypto.ShieldedV3ViewKeySize {
+			return errors.New("incoming viewing keys must contain an incoming key")
+		}
 		if len(v.Outgoing) != 0 || v.NullifierKey != nil {
 			return errors.New("incoming viewing keys must not contain outgoing or nullifier keys")
 		}
+	case "outgoing":
+		if len(v.Incoming) != 0 || len(v.Outgoing) != pqcrypto.ShieldedV3ViewKeySize || v.NullifierKey != nil {
+			return errors.New("outgoing viewing keys must contain only the outgoing key")
+		}
 	case "full":
-		if len(v.Outgoing) != pqcrypto.ShieldedV3ViewKeySize || v.NullifierKey == nil || *v.NullifierKey == (shielded3.Digest{}) {
+		if len(v.Incoming) != pqcrypto.ShieldedV3ViewKeySize || len(v.Outgoing) != pqcrypto.ShieldedV3ViewKeySize || v.NullifierKey == nil || *v.NullifierKey == (shielded3.Digest{}) {
 			return errors.New("incomplete full viewing key")
 		}
 		if _, err := shielded3.DigestFromBytes(v.NullifierKey.Bytes()); err != nil {
@@ -167,6 +180,27 @@ func NoteNullifier(chainID uint64, n Note, key shielded3.Digest) (shielded3.Dige
 	}
 	copy(words[5:10], key[:])
 	return shielded3.HashWords(words)
+}
+
+// OneTimeOutputKey derives a unique output key from hidden note randomness.
+// The key is safe to publish because the randomness remains inside the
+// authenticated recipient ciphertext; reusing randomness would be rejected by
+// the commitment/proof checks.
+func OneTimeOutputKey(owner, randomness, commitment shielded3.Digest) []byte {
+	h := sha512.New()
+	h.Write([]byte("TKM_SHIELD3_CARROT_ONETIME_OUTPUT_V1"))
+	h.Write(owner.Bytes())
+	h.Write(randomness.Bytes())
+	h.Write(commitment.Bytes())
+	return append([]byte(nil), h.Sum(nil)[:32]...)
+}
+
+func newPaymentTag() ([]byte, error) {
+	tag := make([]byte, 32)
+	if _, err := rand.Read(tag); err != nil {
+		return nil, err
+	}
+	return tag, nil
 }
 
 // Scanning needs viewing keys only; note ownership still requires the separate
@@ -257,6 +291,9 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 					}
 				}
 			}
+			if view.Scope == "outgoing" {
+				continue
+			}
 			plain, err := pqcrypto.OpenShieldedV3(view.Incoming, out.Incoming, core.ShieldedV3OutputContext(view.ChainID, pqcrypto.ShieldedV3Incoming, out.Commitment))
 			if err != nil {
 				continue
@@ -268,7 +305,9 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 				continue
 			}
 			commitment, err := NoteCommitment(view.ChainID, note)
-			if err != nil || commitment != out.Commitment || seen[commitment] {
+			expectedKey := OneTimeOutputKey(note.Owner, note.Randomness, commitment)
+			newMetadataValid := len(note.OneTimeKey) == 0 && len(note.PaymentTag) == 0 || bytes.Equal(note.OneTimeKey, expectedKey) && len(note.PaymentTag) == 32
+			if err != nil || commitment != out.Commitment || seen[commitment] || !newMetadataValid {
 				continue
 			}
 			seen[commitment] = true
@@ -502,12 +541,18 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paymen
 			return nil, err
 		}
 		witness.Outputs[slot] = shielded3.OutputOpening{Owner: recipient.Owner, Randomness: random, Value: limbs}
-		note := Note{recipient.Owner, random, value.String(), recipient.Address}
-		commitment, err := NoteCommitment(identity.ChainID, note)
+		commitment, err := NoteCommitment(identity.ChainID, Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address})
 		if err != nil {
 			return nil, err
 		}
+		oneTimeKey := OneTimeOutputKey(recipient.Owner, random, commitment)
+		paymentTag, err := newPaymentTag()
+		if err != nil {
+			return nil, err
+		}
+		note := Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
 		envelope.Outputs[slot].Commitment = commitment
+		envelope.Outputs[slot].OneTimeKey = common.CopyBytes(oneTimeKey)
 		plain, err := json.Marshal(note)
 		if err != nil {
 			return nil, err
