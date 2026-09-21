@@ -36,7 +36,9 @@ GO_BUILD_P ?= 2
 # RandomX configuration
 RANDOMX_REPO ?= https://github.com/tevador/RandomX.git
 RANDOMX_VERSION ?= v2.0.1
-RANDOMX_ARCH ?= native
+# Portable by default: release binaries must run on CPUs without AVX2/AVX-512.
+# Operators can opt into a host-tuned build with RANDOMX_ARCH=native.
+RANDOMX_ARCH ?= default
 RANDOMX_DIR ?= build/_workspace/randomx
 RANDOMX_SRC_DIR ?= $(RANDOMX_DIR)/src
 

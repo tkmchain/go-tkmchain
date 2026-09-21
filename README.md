@@ -713,7 +713,7 @@ newDiff = currentDiff * ratio / 100
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.site/docs/getting-started/installing-gtkm).
 
-Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
+Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. RandomX is compiled with a portable instruction baseline by default; use `RANDOMX_ARCH=native` only for a binary that will run on the same CPU family. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
 
 ```shell
 make production
