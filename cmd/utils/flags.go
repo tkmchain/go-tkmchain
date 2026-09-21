@@ -1576,10 +1576,27 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 }
 
 // SetNodeConfig applies node-related command line flags to the config.
+func hasOnionPeer(cfg p2p.Config) bool {
+	for _, peers := range [][]*enode.Node{cfg.BootstrapNodes, cfg.BootstrapNodesV5, cfg.StaticNodes, cfg.TrustedNodes} {
+		for _, peer := range peers {
+			if peer != nil && strings.HasSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), ".")), ".onion") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	SetP2PConfig(ctx, &cfg.P2P)
 	if ctx.IsSet(P2PSOCKS5ProxyFlag.Name) {
 		cfg.P2PSOCKS5Proxy = strings.TrimSpace(ctx.String(P2PSOCKS5ProxyFlag.Name))
+	}
+	// Mainnet bootstrap nodes are onion services. Automatically route through
+	// the local Tor SOCKS5 listener when any configured peer is onion-based,
+	// while still allowing an explicit proxy override.
+	if cfg.P2PSOCKS5Proxy == "" && hasOnionPeer(cfg.P2P) {
+		cfg.P2PSOCKS5Proxy = "socks5://127.0.0.1:9050"
 	}
 	if ctx.IsSet(P2POnionHostnameFlag.Name) {
 		cfg.P2P.OnionHostname = strings.TrimSpace(ctx.String(P2POnionHostnameFlag.Name))
