@@ -1608,6 +1608,11 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if ctx.IsSet(PrivacyOnionOnlyFlag.Name) {
 		cfg.OnionOnly = ctx.Bool(PrivacyOnionOnlyFlag.Name)
 	}
+	// An onion bootstrap network must never advertise a loopback or clearnet
+	// endpoint. Require the local onion hostname and let node.New validate it.
+	if cfg.AutoTorProxy {
+		cfg.OnionOnly = true
+	}
 	setIPC(ctx, cfg)
 	setHTTP(ctx, cfg)
 	setGraphQL(ctx, cfg)
