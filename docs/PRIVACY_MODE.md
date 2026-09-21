@@ -96,3 +96,25 @@ HiddenServicePort 3000 127.0.0.1:3000
 Use the generated `.onion` hostname in `--p2p.onion-hostname` and in every static or bootstrap `enode://` URL. The node advertises that hostname through `admin_nodeInfo`/node status. Discovery is intentionally disabled, so onion peers must be configured explicitly. Tor itself uses IP links between relays; onion-only mode removes your node's public IP exposure and prevents your software from dialing clearnet addresses.
 
 The pool and payout prover expose the same `onionOnly` setting. Set `torSocks5Proxy` to `socks5://127.0.0.1:9050`, use a loopback `nodeRPC` for a local daemon or a `.onion` URL for a remote daemon, and publish a `.onion` `publicURL`/stratum address. Pool HTTP and stratum listeners are forced to `127.0.0.1`; expose them through Tor onion-service ports when miners or operators need remote access.
+
+## Automatic onion identity and startup checks
+
+`gtkm` automatically selects the local Tor SOCKS5 proxy when it detects onion
+bootstrap peers or a local onion hostname. It discovers the hostname from
+`TKM_ONION_HOSTNAME` or the standard Tor files:
+
+- `/var/lib/tor/tkmchain/hostname`
+- `/var/lib/tor/gtkm/hostname`
+- `/var/lib/tor/hidden_service/hostname`
+
+It then enables onion-only mode, bypasses system DNS for onion peers, and
+advertises the discovered hostname. If no hostname can be found, the node
+refuses to start instead of advertising `127.0.0.1`. If Tor is absent, it
+reports that the SOCKS5 listener at `127.0.0.1:9050` must be installed and
+started; it does not install packages automatically.
+
+Remove stale `static-nodes.json` and `trusted-nodes.json` files, or remove old
+`P2P.StaticNodes`/`P2P.TrustedNodes` entries from `config.toml`. Never place
+`127.0.0.1:9050` in a peer URL: port `9050` is the local Tor proxy, not a TKMChain
+P2P endpoint. Stale proxy or IP peers cause failed body downloads, retries, and
+challenge timeouts.

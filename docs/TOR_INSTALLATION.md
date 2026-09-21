@@ -146,3 +146,45 @@ Start a node with local RPC bindings and onion-only P2P:
 Keep HTTP and WebSocket RPC on loopback unless they are intentionally published
 through a separately configured onion service. Do not use `--nat=extip:<ip>` in
 onion-only mode.
+
+## Automatic onion startup
+
+Recent `gtkm` releases automatically select `socks5://127.0.0.1:9050` when an
+onion bootstrap peer or local onion hostname is detected. They skip system DNS
+for `.onion` peers and route those names through Tor. `gtkm` never installs Tor
+or changes packages automatically.
+
+The local onion hostname is discovered from the following sources, in order:
+
+1. `TKM_ONION_HOSTNAME`
+2. `/var/lib/tor/tkmchain/hostname`
+3. `/var/lib/tor/gtkm/hostname`
+4. `/var/lib/tor/hidden_service/hostname`
+
+For example:
+
+```sh
+export TKM_ONION_HOSTNAME=eaoerarabizbzwbbawjrlcyawnrnoobj3ndy3oh627hwl5rbmedukoqd.onion
+./build/bin/gtkm
+```
+
+When onion networking is detected, the node enables onion-only mode and refuses
+to start without a valid local `.onion` identity. It will not advertise
+`127.0.0.1`, a public IP, or a Tor SOCKS port as its peer address. If Tor is not
+available at `127.0.0.1:9050`, startup stops with an installation message.
+
+## Remove stale peer entries
+
+A previous clearnet or proxy configuration can keep the node from syncing.
+Remove old entries from the configured static and trusted peer lists, especially
+entries such as `127.0.0.1:9050`, public IP addresses, or non-onion hostnames:
+
+```sh
+rm -f ~/.tkmchain/static-nodes.json ~/.tkmchain/trusted-nodes.json
+```
+
+If peers are configured in `config.toml`, remove the corresponding `P2P.StaticNodes`
+or `P2P.TrustedNodes` entries there instead. Every bootstrap and static URL must
+use an `.onion` hostname and the P2P port (normally `3000`), never the SOCKS
+port `9050`. A stale `127.0.0.1:9050` entry can cause `block body download
+canceled`, synchronization retries, and challenge timeouts.
