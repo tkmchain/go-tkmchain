@@ -326,7 +326,7 @@ go test ./core/vm -run TVM
 For a live node, start GTKM with the TVM RPC namespace enabled:
 
 ```sh
-./build/bin/gtkm --http --http.addr 0.0.0.0 --http.api eth,net,web3,tvm
+./build/bin/gtkm --privacy.onion-only --p2p.tor-socks5=socks5://127.0.0.1:9050 --http --http.addr 127.0.0.1 --http.api eth,net,web3,tvm
 ```
 
 Then deploy the fixture from an unlocked funded account:

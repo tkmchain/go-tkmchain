@@ -908,6 +908,26 @@ var (
 		Usage:    "Disables the peer discovery mechanism (manual peer addition)",
 		Category: flags.NetworkingCategory,
 	}
+	P2PSOCKS5ProxyFlag = &cli.StringFlag{
+		Name:     "p2p.tor-socks5",
+		Usage:    "Route outbound P2P connections through an explicit Tor SOCKS5 proxy",
+		Category: flags.NetworkingCategory,
+	}
+	P2POnionHostnameFlag = &cli.StringFlag{
+		Name:     "p2p.onion-hostname",
+		Usage:    "Advertise this node's Tor onion-service hostname in its enode URL",
+		Category: flags.NetworkingCategory,
+	}
+	PrivacyStrictFlag = &cli.BoolFlag{
+		Name:     "privacy.strict",
+		Usage:    "Fail closed unless P2P uses Tor and RPC listeners are loopback-only",
+		Category: flags.NetworkingCategory,
+	}
+	PrivacyOnionOnlyFlag = &cli.BoolFlag{
+		Name:     "privacy.onion-only",
+		Usage:    "Use only Tor .onion peers and bind P2P locally for a Tor hidden service",
+		Category: flags.NetworkingCategory,
+	}
 	DiscoveryV4Flag = &cli.BoolFlag{
 		Name:     "discovery.v4",
 		Aliases:  []string{"discv4"},
@@ -1255,6 +1275,19 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 	return nodes
 }
 
+func validateOnionPeers(peers []*enode.Node) error {
+	for _, peer := range peers {
+		if peer == nil {
+			return fmt.Errorf("onion-only mode rejects an empty peer")
+		}
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), "."))
+		if !strings.HasSuffix(host, ".onion") {
+			return fmt.Errorf("onion-only mode requires .onion peers; got %q", peer.String())
+		}
+	}
+	return nil
+}
+
 func seedStaticNodesFromBootnodes(cfg *p2p.Config) {
 	if len(cfg.StaticNodes) > 0 || len(cfg.BootstrapNodes) == 0 {
 		return
@@ -1486,6 +1519,21 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setBootstrapNodes(ctx, cfg)
 	seedStaticNodesFromBootnodes(cfg)
 	setBootstrapNodesV5(ctx, cfg)
+	if ctx.Bool(PrivacyOnionOnlyFlag.Name) {
+		cfg.NoDiscovery = true
+		cfg.DiscoveryV4 = false
+		cfg.DiscoveryV5 = false
+		cfg.BootstrapNodesV5 = nil
+		if err := validateOnionPeers(cfg.BootstrapNodes); err != nil {
+			Fatalf("onion-only bootstrap configuration: %v", err)
+		}
+		if err := validateOnionPeers(cfg.StaticNodes); err != nil {
+			Fatalf("onion-only static peer configuration: %v", err)
+		}
+		if err := validateOnionPeers(cfg.TrustedNodes); err != nil {
+			Fatalf("onion-only trusted peer configuration: %v", err)
+		}
+	}
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)
@@ -1528,8 +1576,74 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 }
 
 // SetNodeConfig applies node-related command line flags to the config.
+func hasOnionPeer(cfg p2p.Config) bool {
+	for _, peers := range [][]*enode.Node{cfg.BootstrapNodes, cfg.BootstrapNodesV5, cfg.StaticNodes, cfg.TrustedNodes} {
+		for _, peer := range peers {
+			if peer != nil && strings.HasSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), ".")), ".onion") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func discoverOnionHostname() string {
+	candidates := []string{
+		os.Getenv("TKM_ONION_HOSTNAME"),
+		"/var/lib/tor/tkmchain/hostname",
+		"/var/lib/tor/gtkm/hostname",
+		"/var/lib/tor/hidden_service/hostname",
+	}
+	for _, candidate := range candidates {
+		value := strings.TrimSpace(candidate)
+		if strings.HasPrefix(value, "/") {
+			data, err := os.ReadFile(value)
+			if err != nil {
+				continue
+			}
+			value = strings.TrimSpace(string(data))
+		}
+		value = strings.ToLower(strings.TrimSuffix(value, "."))
+		if strings.HasSuffix(value, ".onion") {
+			return value
+		}
+	}
+	return ""
+}
+
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	SetP2PConfig(ctx, &cfg.P2P)
+	if ctx.IsSet(P2PSOCKS5ProxyFlag.Name) {
+		cfg.P2PSOCKS5Proxy = strings.TrimSpace(ctx.String(P2PSOCKS5ProxyFlag.Name))
+	}
+	// Mainnet bootstrap nodes are onion services. Automatically route through
+	// the local Tor SOCKS5 listener when any configured peer is onion-based,
+	// while still allowing an explicit proxy override.
+	if cfg.P2PSOCKS5Proxy == "" && hasOnionPeer(cfg.P2P) {
+		cfg.P2PSOCKS5Proxy = "socks5://127.0.0.1:9050"
+		cfg.AutoTorProxy = true
+	}
+	if ctx.IsSet(P2POnionHostnameFlag.Name) {
+		cfg.P2P.OnionHostname = strings.TrimSpace(ctx.String(P2POnionHostnameFlag.Name))
+	}
+	if cfg.P2P.OnionHostname == "" {
+		cfg.P2P.OnionHostname = discoverOnionHostname()
+	}
+	if cfg.P2PSOCKS5Proxy == "" && cfg.P2P.OnionHostname != "" {
+		cfg.P2PSOCKS5Proxy = "socks5://127.0.0.1:9050"
+		cfg.AutoTorProxy = true
+	}
+	if ctx.IsSet(PrivacyStrictFlag.Name) {
+		cfg.PrivacyStrict = ctx.Bool(PrivacyStrictFlag.Name)
+	}
+	if ctx.IsSet(PrivacyOnionOnlyFlag.Name) {
+		cfg.OnionOnly = ctx.Bool(PrivacyOnionOnlyFlag.Name)
+	}
+	// An onion bootstrap network must never advertise a loopback or clearnet
+	// endpoint. Require the local onion hostname and let node.New validate it.
+	if cfg.AutoTorProxy {
+		cfg.OnionOnly = true
+	}
 	setIPC(ctx, cfg)
 	setHTTP(ctx, cfg)
 	setGraphQL(ctx, cfg)
@@ -1973,7 +2087,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(RPCGlobalTxFeeCapFlag.Name) {
 		cfg.RPCTxFeeCap = ctx.Float64(RPCGlobalTxFeeCapFlag.Name)
 	}
-	if ctx.IsSet(NoDiscoverFlag.Name) {
+	if ctx.Bool(PrivacyOnionOnlyFlag.Name) || ctx.IsSet(NoDiscoverFlag.Name) {
 		cfg.EthDiscoveryURLs, cfg.SnapDiscoveryURLs = []string{}, []string{}
 	} else if ctx.IsSet(DNSDiscoveryFlag.Name) {
 		urls := ctx.String(DNSDiscoveryFlag.Name)

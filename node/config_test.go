@@ -18,6 +18,7 @@ package node
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
 // Tests that datadirs can be successfully created, be them manually configured
@@ -148,5 +150,43 @@ func TestNodeKeyPersistency(t *testing.T) {
 	config.NodeKey()
 	if _, err := os.Stat(filepath.Join(".", "unit-test", datadirPrivateKey)); err == nil {
 		t.Fatalf("ephemeral node key persisted to disk")
+	}
+}
+
+func TestPrivacyStrictConfiguration(t *testing.T) {
+	if _, err := New(&Config{PrivacyStrict: true, DataDir: t.TempDir()}); err == nil {
+		t.Fatal("strict privacy accepted without Tor")
+	}
+	if _, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "0.0.0.0", DataDir: t.TempDir()}); err == nil {
+		t.Fatal("strict privacy accepted a public HTTP listener")
+	}
+	node, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOnionOnlyConfiguration(t *testing.T) {
+	if _, err := New(&Config{OnionOnly: true, DataDir: t.TempDir()}); err == nil {
+		t.Fatal("onion-only mode accepted without Tor")
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearnet := enode.NewV4(&key.PublicKey, net.ParseIP("127.0.0.1"), 3000, 3000)
+	_, err = New(&Config{OnionOnly: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", P2P: p2p.Config{ListenAddr: ":3000", StaticNodes: []*enode.Node{clearnet}}, DataDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("onion-only mode accepted an IP-only static peer")
+	}
+	node, err := New(&Config{OnionOnly: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", P2P: p2p.Config{ListenAddr: ":3000", OnionHostname: "node.example.onion"}, HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

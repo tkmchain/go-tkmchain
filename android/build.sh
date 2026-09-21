@@ -5,6 +5,7 @@ set -euo pipefail
 # app/build/outputs/apk/debug/app-debug.apk, ready to sideload.
 #
 # Requirements:
+#   - Rust 1.89 with the aarch64-linux-android target
 #   - This repo's Go toolchain with CGO (CMake for RandomX is also needed)
 #   - Android SDK: cmdline-tools, platforms;android-34, build-tools;34.0.0
 #   - Android NDK r25+ (aarch64 clang toolchain)
@@ -59,13 +60,14 @@ export CC="$NDK_BIN/aarch64-linux-android${NDK_API}-clang"
 export CXX="$NDK_BIN/aarch64-linux-android${NDK_API}-clang++"
 export CGO_CFLAGS="-I$RX_SRC_DIR"
 export CGO_LDFLAGS="-L$RX_BUILD -lrandomx -static-libstdc++ -lm -ldl -llog"
-(cd "$ROOT" && go build -tags "randomx,urfave_cli_no_docs" -o "$APP/libgtkm.so" ./cmd/gtkm)
+SHIELD3_RUST_TARGET=aarch64-linux-android "$ROOT/scripts/shield3-build.sh"
+(cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$APP/libgtkm.so" ./cmd/gtkm)
 file --brief "$APP/libgtkm.so"
 
 echo "==> Building shielded-payout-prover for android-arm64"
-export CGO_ENABLED=0
-unset CC CXX CGO_CFLAGS CGO_LDFLAGS
-(cd "$ROOT" && go build -tags "urfave_cli_no_docs" -o "$APP/libtkmprover.so" ./cmd/shielded-payout-prover)
+unset CGO_CFLAGS
+export CGO_LDFLAGS="-lm -ldl -llog"
+(cd "$ROOT" && go build -tags "shield3,urfave_cli_no_docs" -o "$APP/libtkmprover.so" ./cmd/shielded-payout-prover)
 file --brief "$APP/libtkmprover.so"
 
 echo "==> Copying libc++ runtime"

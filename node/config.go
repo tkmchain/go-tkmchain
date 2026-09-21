@@ -67,6 +67,17 @@ type Config struct {
 	// Configuration of peer-to-peer networking.
 	P2P p2p.Config
 
+	// P2PSOCKS5Proxy routes outbound P2P connections through Tor.
+	P2PSOCKS5Proxy string `toml:"p2pSocks5Proxy,omitempty"`
+	// AutoTorProxy marks the proxy selected automatically for onion bootstrap peers.
+	// It is intentionally not serialized; startup checks the local Tor listener.
+	AutoTorProxy bool `toml:"-"`
+	// PrivacyStrict disables discovery/NAT and rejects non-loopback RPC listeners.
+	PrivacyStrict bool `toml:"privacyStrict,omitempty"`
+	// OnionOnly additionally rejects all non-.onion peers and binds P2P locally
+	// for a Tor hidden service. It implies PrivacyStrict.
+	OnionOnly bool `toml:"onionOnly,omitempty"`
+
 	// KeyStoreDir is the file system folder that contains private keys. The directory can
 	// be specified as a relative path, in which case it is resolved relative to the
 	// current directory.
@@ -129,6 +140,9 @@ type Config struct {
 	// If the module list is empty, all RPC API endpoints designated public will be
 	// exposed.
 	HTTPModules []string
+
+	// HTTPBodyLimit bounds HTTP and WebSocket requests, including hex-encoded Shield3 proofs.
+	HTTPBodyLimit int `toml:",omitempty"`
 
 	// HTTPTimeouts allows for customization of the timeout values used by the HTTP RPC
 	// interface.

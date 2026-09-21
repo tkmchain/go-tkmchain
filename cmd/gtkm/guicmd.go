@@ -23,6 +23,7 @@ import (
 	"slices"
 
 	"github.com/ethereum/go-ethereum/internal/gui"
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 )
@@ -109,13 +110,15 @@ func localGUI(ctx *cli.Context) error {
 	client := stack.Attach()
 
 	g, err := gui.New(client, gui.Options{
-		Title:        "TKM Wallet",
-		ProverConfig: proverConfig,
-		Width:        1280,
-		Height:       800,
-		Port:         ctx.Int(guiPortFlag.Name),
-		Host:         ctx.String(guiHostFlag.Name),
-		ForceBrowser: ctx.Bool(guiBrowserFlag.Name),
+		Title:          "TKM Wallet",
+		ProverConfig:   proverConfig,
+		WalletStateDir: stack.ResolvePath("shield3-submissions"),
+		Width:          1280,
+		Height:         800,
+		Port:           ctx.Int(guiPortFlag.Name),
+		Host:           ctx.String(guiHostFlag.Name),
+		RelayTransport: shield3wallet.RelayTransportConfig{SOCKS5Proxy: ctx.String("p2p.tor-socks5"), OnionOnly: ctx.Bool("privacy.onion-only")},
+		ForceBrowser:   ctx.Bool(guiBrowserFlag.Name),
 	})
 	if err != nil {
 		return err

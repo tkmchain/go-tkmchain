@@ -23,10 +23,45 @@ Automated builds are available for stable releases and the unstable master branc
 
 ## Release Notes
 
+- [Antartical: Shield3, private stamps, sponsorship, shared relays and payment disclosures](docs/SHIELD3_ANTARTICAL.md)
+
 - [Kyoto Release Notes](docs/kyoto-release.md)
 - [Shielded Privacy Release Notes](docs/shielded-privacy-release.md)
 - [Shielded V2 Recipient Binding](docs/shielded-v2-recipient-binding-20260820.md)
 - [Post-Quantum Wallet Integration](docs/pq-wallet-integration.md)
+
+---
+
+## Run `gtkm` on the Tor-only network
+
+The current network profile uses Tor onion addresses for P2P. Start Tor with
+SOCKS5 on `127.0.0.1:9050`, configure a hidden service that forwards port
+`3000` to the node, and run:
+
+```bash
+./build/bin/gtkm \
+  --port 3000 \
+  --privacy.onion-only \
+  --p2p.tor-socks5=socks5://127.0.0.1:9050 \
+  --p2p.onion-hostname=<this-node>.onion \
+  --bootnodes='enode://<peer-key>@<peer-id>.onion:3000?discport=0' \
+  --http --http.addr=127.0.0.1 --http.port=8545 \
+  --http.api=eth,net,web3,tvm,tkm,tkmaccount,tkmdomain,tkmgov,tkminstitution,tkmsupply,tkmprivacy,miner,randomx \
+  --http.vhosts=localhost --http.corsdomain=localhost \
+  --ws --ws.addr=127.0.0.1 --ws.port=8546 \
+  --ws.api=eth,net,web3,tvm,tkm \
+  --ws.origins=localhost
+```
+
+Replace `<this-node>.onion`, `<peer-key>`, and `<peer-id>.onion` with the
+Tor-generated values. Do not add `--nat=extip:<ip>`: onion-only mode disables
+NAT and UDP discovery. Do not bind RPC to `0.0.0.0` or use wildcard origins;
+HTTP and WebSocket are loopback-only and peer traffic is sent through the
+explicit Tor SOCKS5 proxy. Configure additional Tor hidden-service ports only
+when a remote RPC client is required.
+
+See [Tor-only deployment details](docs/PRIVACY_MODE.md#onion-only-networking). For installation by operating system, see [Tor installation](docs/TOR_INSTALLATION.md).
+for the hidden-service configuration and pool/prover settings.
 
 ---
 
@@ -487,9 +522,10 @@ Enable the phone RPC namespace on nodes that serve phone apps:
 
 ```shell
 ./build/bin/gtkm \
-  --http --http.addr 0.0.0.0 --http.port 8545 \
+  --privacy.onion-only --p2p.tor-socks5=socks5://127.0.0.1:9050 \
+  --http --http.addr 127.0.0.1 --http.port 8545 \
   --http.api eth,net,web3,tkm,tkmphone,mainking,miner \
-  --http.vhosts '*' --http.corsdomain '*'
+  --http.vhosts localhost --http.corsdomain localhost
 ```
 
 Do not expose password-capable RPC methods to untrusted networks.
@@ -677,7 +713,7 @@ newDiff = currentDiff * ratio / 100
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.site/docs/getting-started/installing-gtkm).
 
-Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
+Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. RandomX is compiled with a portable instruction baseline by default; use `RANDOMX_ARCH=native` only for a binary that will run on the same CPU family. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
 
 ```shell
 make production
@@ -826,7 +862,7 @@ docker run -d --name tkmchain-node -v /Users/alice/tkmchain:/root \
 
 This will start `gtkm` in snap-sync mode with a DB memory allowance of 1GB, as the above command does. It will also create a persistent volume in your home directory for saving your blockchain as well as map the default ports. There is also an `alpine` tag available for a slim version of the image.
 
-Do not forget `--http.addr 0.0.0.0`, if you want to access RPC from other containers and/or hosts. By default, `gtkm` binds to the local interface and RPC endpoints are not accessible from the outside.
+In the Tor-only profile, keep RPC on `127.0.0.1` and expose remote access only through an explicitly configured Tor onion-service port. Do not bind RPC to `0.0.0.0` or use wildcard origins.
 
 ### Programmatically Interfacing `gtkm` Nodes
 

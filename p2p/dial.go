@@ -25,6 +25,7 @@ import (
 	mrand "math/rand"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -575,8 +576,10 @@ func (t *dialTask) dest() *enode.Node {
 
 func (t *dialTask) run(d *dialScheduler) {
 	if t.isStatic() {
-		// Resolve DNS.
-		if n := t.dest(); n.Hostname() != "" {
+		// Tor resolves onion names inside the SOCKS5 proxy. Never send an
+		// onion hostname to the system resolver or replace it with a DHT IP.
+		onion := strings.HasSuffix(strings.ToLower(strings.TrimSuffix(t.dest().Hostname(), ".")), ".onion")
+		if n := t.dest(); n.Hostname() != "" && !onion {
 			resolved, err := d.dnsResolveHostname(n)
 			if err != nil {
 				d.log.Warn("DNS lookup of static node failed", "id", n.ID(), "name", n.Hostname(), "err", err)
@@ -584,8 +587,8 @@ func (t *dialTask) run(d *dialScheduler) {
 				t.destPtr.Store(resolved)
 			}
 		}
-		// Try resolving node ID through the DHT if there is no IP address.
-		if !t.dest().IPAddr().IsValid() {
+		// Resolve node IDs through the DHT only for ordinary DNS/IP peers.
+		if !onion && !t.dest().IPAddr().IsValid() {
 			if !t.resolve(d) {
 				return // DHT resolve failed, skip dial.
 			}

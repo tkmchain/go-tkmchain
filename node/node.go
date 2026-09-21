@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -37,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/gofrs/flock"
 )
@@ -73,6 +76,16 @@ const (
 	closedState
 )
 
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if parsed := net.ParseIP(host); parsed != nil {
+		return parsed.IsLoopback()
+	}
+	return false
+}
+
 // New creates a new P2P node, ready for protocol registration.
 func New(conf *Config) (*Node, error) {
 	// Copy config and resolve the datadir so future changes to the current
@@ -88,6 +101,72 @@ func New(conf *Config) (*Node, error) {
 	}
 	if conf.Logger == nil {
 		conf.Logger = log.New()
+	}
+	if conf.AutoTorProxy {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:9050", time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("Tor is required for onion bootstrap peers but SOCKS5 is unavailable at 127.0.0.1:9050; install Tor with 'sudo apt install tor' and start it with 'sudo systemctl enable --now tor': %w", err)
+		}
+		_ = conn.Close()
+	}
+	if conf.P2PSOCKS5Proxy != "" || conf.PrivacyStrict || conf.OnionOnly {
+		if conf.P2PSOCKS5Proxy == "" {
+			return nil, errors.New("strict privacy mode requires a P2P SOCKS5 proxy")
+		}
+		var dialer p2p.NodeDialer
+		var err error
+		if conf.OnionOnly {
+			dialer, err = p2p.NewOnionSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		} else {
+			dialer, err = p2p.NewSOCKS5Dialer(conf.P2PSOCKS5Proxy)
+		}
+		if err != nil {
+			return nil, err
+		}
+		conf.P2P.Dialer = dialer
+		conf.P2P.NoDiscovery = true
+		conf.P2P.DiscoveryV4 = false
+		conf.P2P.DiscoveryV5 = false
+		conf.P2P.NAT = nil
+	}
+	if conf.OnionOnly {
+		conf.PrivacyStrict = true
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(conf.P2P.OnionHostname), "."))
+		if !strings.HasSuffix(host, ".onion") {
+			return nil, errors.New("onion-only mode requires p2p.onionHostname")
+		}
+		conf.P2P.OnionHostname = host
+		for name, peers := range map[string][]*enode.Node{"bootstrap": conf.P2P.BootstrapNodes, "bootstrap-v5": conf.P2P.BootstrapNodesV5, "static": conf.P2P.StaticNodes, "trusted": conf.P2P.TrustedNodes} {
+			for _, peer := range peers {
+				if peer == nil || !strings.HasSuffix(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(peer.Hostname()), ".")), ".onion") {
+					return nil, fmt.Errorf("onion-only mode requires every %s peer to use a .onion hostname", name)
+				}
+			}
+		}
+		conf.P2P.DiscAddr = ""
+		if conf.P2P.ListenAddr != "" {
+			if _, port, err := net.SplitHostPort(conf.P2P.ListenAddr); err == nil {
+				conf.P2P.ListenAddr = net.JoinHostPort("127.0.0.1", port)
+			} else {
+				return nil, fmt.Errorf("onion-only mode requires a valid P2P listen address: %w", err)
+			}
+		}
+	}
+	if conf.PrivacyStrict {
+		// Keep public RPC namespaces to wallet/mining essentials. Administrative,
+		// debug, tracing, and account-management APIs remain IPC/auth-only.
+		conf.HTTPModules = []string{
+			"eth", "net", "web3", "miner", "randomx", "tvm", "tkm",
+			"tkmphone", "tkmdomain", "emailvm", "tkmgov", "tkmaccount",
+			"tkminstitution", "tkmsupply", "tkmprivacy", "mainking", "rk", "rotatingking",
+		}
+		conf.WSModules = append([]string(nil), conf.HTTPModules...)
+		conf.WSExposeAll = false
+		for name, host := range map[string]string{"HTTP": conf.HTTPHost, "WS": conf.WSHost, "auth": conf.AuthAddr} {
+			if host != "" && !isLoopbackHost(host) {
+				return nil, fmt.Errorf("strict privacy mode requires %s RPC listener to be loopback", name)
+			}
+		}
 	}
 
 	// Ensure that the instance name doesn't cause weird conflicts with
@@ -390,6 +469,7 @@ func (n *Node) startRPC() error {
 	)
 
 	rpcConfig := rpcEndpointConfig{
+		httpBodyLimit:          n.config.HTTPBodyLimit,
 		batchItemLimit:         n.config.BatchRequestLimit,
 		batchResponseSizeLimit: n.config.BatchResponseMaxSize,
 	}

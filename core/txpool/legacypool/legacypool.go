@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -580,7 +581,8 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptionsWithState{
-		State: pool.currentState,
+		State:      pool.currentState,
+		Antartical: pool.chainconfig.IsAntartical(pool.currentHead.Load().Number, pool.currentHead.Load().Time),
 
 		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
 		UsedAndLeftSlots: nil, // Pool has own mechanism to limit the number of transactions
@@ -1311,10 +1313,41 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 // reorganisation can otherwise leave an unmineable shielded transaction at the
 // next account nonce and indefinitely block every later transaction.
 func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
+	head := pool.currentHead.Load()
+	antartical := pool.chainconfig.IsAntartical(head.Number, head.Time)
 	var invalid []common.Hash
 	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		if err := core.ValidateShieldedTransactionState(pool.currentState, tx); err != nil {
-			log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+		var err error
+		if antartical {
+			var from common.Address
+			from, err = types.Sender(pool.signer, tx)
+			if err == nil {
+				err = core.ValidateAntarticalStampState(pool.currentState, from, tx.To(), tx.Value(), tx.Data())
+			}
+			if err == nil && core.HasAntarticalStampPrefix(tx.Data()) {
+				err = core.ValidateAntarticalStampRegistrationState(pool.currentState, from, tx.Data(), head.Time)
+			}
+		}
+		if err == nil && antartical && core.HasShieldedV3Prefix(tx.Data()) {
+			var e *core.ShieldedV3Transaction
+			e, _, err = core.DecodeShieldedV3Transaction(tx.Data())
+			if err == nil {
+				err = core.ValidateShieldedV3Time(e, head.Time)
+			}
+		}
+		if err == nil {
+			err = core.ValidateShieldedTransactionState(pool.currentState, tx)
+		}
+		if err != nil {
+			// A duplicate commitment is expected when a transaction whose output
+			// was already included is retried after a timeout or reorg. Keep the
+			// cleanup visible at debug level without flooding production logs;
+			// other invalid state transitions remain warnings.
+			if strings.Contains(err.Error(), "commitment already exists") {
+				log.Debug("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			} else {
+				log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			}
 			invalid = append(invalid, hash)
 		}
 		return true

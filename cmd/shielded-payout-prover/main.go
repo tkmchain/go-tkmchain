@@ -13,7 +13,10 @@ import (
 	"log"
 	"math"
 	"math/big"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +31,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/zk/shielded"
+	xproxy "golang.org/x/net/proxy"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -65,6 +70,9 @@ type Config struct {
 	GasLimit             uint64 `json:"gasLimit"`
 	SubmitSync           bool   `json:"submitSync"`
 	ReceiptTimeoutMs     int64  `json:"receiptTimeoutMs"`
+	TorSOCKS5Proxy       string `json:"torSocks5Proxy"`
+	PrivacyStrict        bool   `json:"privacyStrict"`
+	OnionOnly            bool   `json:"onionOnly"`
 }
 
 type PayoutRequest struct {
@@ -213,6 +221,7 @@ func loadConfig(path string) (Config, error) {
 		GasLimit:         defaultGasLimit,
 		SubmitSync:       false,
 		ReceiptTimeoutMs: int64(defaultReceiptTimeout / time.Millisecond),
+		TorSOCKS5Proxy:   "",
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -228,6 +237,7 @@ func loadConfig(path string) (Config, error) {
 	cfg.AllowedOrigin = strings.TrimSpace(cfg.AllowedOrigin)
 	cfg.BearerToken = strings.TrimSpace(cfg.BearerToken)
 	cfg.NodeRPC = strings.TrimSpace(cfg.NodeRPC)
+	cfg.TorSOCKS5Proxy = strings.TrimSpace(cfg.TorSOCKS5Proxy)
 	cfg.KeystoreDir = strings.TrimSpace(cfg.KeystoreDir)
 	cfg.SignerAddress = normalizeAddress(cfg.SignerAddress)
 	cfg.SignMode = strings.ToLower(strings.TrimSpace(cfg.SignMode))
@@ -257,6 +267,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.BearerToken == "" {
 		return cfg, errors.New("bearerToken is required")
 	}
+	if err := validatePrivacyConfig(cfg); err != nil {
+		return cfg, err
+	}
 	if cfg.NodeRPC == "" || cfg.ProvingKeyPath == "" || cfg.ProvingKeyV2Path == "" || cfg.NotesPath == "" || cfg.RequestsPath == "" {
 		return cfg, errors.New("nodeRPC, provingKeyPath, provingKeyV2Path, notesPath, and requestsPath are required")
 	}
@@ -266,9 +279,104 @@ func loadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
+}
+
+func validatePrivacyConfig(cfg Config) error {
+	if cfg.TorSOCKS5Proxy == "" {
+		if cfg.PrivacyStrict || cfg.OnionOnly {
+			return errors.New("privacyStrict/onionOnly requires torSocks5Proxy")
+		}
+		return nil
+	}
+	u, err := url.Parse(cfg.TorSOCKS5Proxy)
+	if err != nil || u.Scheme != "socks5" || u.Hostname() == "" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("torSocks5Proxy must be a plain socks5://host:port URL")
+	}
+	if cfg.PrivacyStrict || cfg.OnionOnly {
+		rpcURL, err := url.Parse(cfg.NodeRPC)
+		if err != nil || rpcURL.Host == "" {
+			return errors.New("invalid nodeRPC endpoint")
+		}
+		onion := strings.HasSuffix(strings.ToLower(strings.TrimSuffix(rpcURL.Hostname(), ".")), ".onion")
+		if cfg.OnionOnly && !isLoopbackHost(rpcURL.Hostname()) && !onion {
+			return errors.New("onionOnly requires a .onion nodeRPC endpoint")
+		}
+		if !cfg.OnionOnly && !isLoopbackHost(rpcURL.Hostname()) && rpcURL.Scheme != "https" && !onion {
+			return errors.New("privacyStrict requires HTTPS or .onion nodeRPC")
+		}
+		if host, _, err := net.SplitHostPort(cfg.Listen); err == nil && !isLoopbackHost(host) {
+			return errors.New("privacyStrict requires a loopback prover listener")
+		}
+	}
+	return nil
+}
+
+func newProverHTTPClient(cfg Config) (*http.Client, error) {
+	if err := validatePrivacyConfig(cfg); err != nil {
+		return nil, err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if cfg.TorSOCKS5Proxy != "" {
+		u, _ := url.Parse(cfg.TorSOCKS5Proxy)
+		dialer, err := xproxy.SOCKS5("tcp", u.Host, nil, xproxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			if isLoopbackHost(host) {
+				return (&net.Dialer{}).DialContext(ctx, network, address)
+			}
+			result := make(chan struct {
+				conn net.Conn
+				err  error
+			}, 1)
+			go func() {
+				conn, err := dialer.Dial(network, address)
+				result <- struct {
+					conn net.Conn
+					err  error
+				}{conn, err}
+			}()
+			select {
+			case r := <-result:
+				return r.conn, r.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+}
+
+func dialProverRPC(cfg Config) (*ethclient.Client, error) {
+	if cfg.TorSOCKS5Proxy == "" {
+		return ethclient.Dial(cfg.NodeRPC)
+	}
+	httpClient, err := newProverHTTPClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	rpcClient, err := rpc.DialOptions(context.Background(), cfg.NodeRPC, rpc.WithHTTPClient(httpClient))
+	if err != nil {
+		return nil, err
+	}
+	return ethclient.NewClient(rpcClient), nil
+}
+
 func NewProver(cfg Config) (*Prover, error) {
 	prover := &Prover{cfg: cfg, passphrase: cfg.SignerPassphrase, buildSlots: make(chan struct{}, 1)}
-	client, err := ethclient.Dial(cfg.NodeRPC)
+	client, err := dialProverRPC(cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -26,9 +26,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
-            platform: linux
-            artifact: release-linux
           - runner: macos-latest
             platform: macos
             artifact: release-macos
@@ -48,6 +45,15 @@ jobs:
         with:
           go-version: '1.26.5'
           check-latest: true
+
+      - name: Install Shield3 Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            rustup target add x86_64-pc-windows-gnu
+          fi
 
       - name: Set up Windows build tools
         if: runner.os == 'Windows'
@@ -72,7 +78,7 @@ jobs:
       - name: Build and package Linux or macOS binaries
         if: runner.os != 'Windows'
         run: |
-          make gtkm shielded-payout-prover
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
@@ -82,7 +88,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          export PATH="$(cygpath -u "$GO_BIN"):$PATH"
+          export PATH="$(cygpath -u "$GO_BIN"):$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"
+          export CC=gcc CXX=g++
           go version
 
           # RandomX is C++, so the ordinary host link flags would leave gtkm.exe
@@ -90,8 +97,8 @@ jobs:
           # Link those MinGW runtimes statically so the release is portable to a
           # clean Windows installation.
           windows_randomx_ldflags="-Lbuild/_workspace/randomx/build-host -lrandomx -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm"
-          make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
-          make shielded-payout-prover
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default CGO_LDFLAGS="-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" make shielded-payout-prover
 
           archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
@@ -122,21 +129,44 @@ jobs:
           retention-days: 1
 
   build-debian13:
-    name: Build Debian 13 binaries
+    name: Build portable Linux binaries
     runs-on: ubuntu-latest
     container:
-      image: debian:13-slim
+      # Debian 11 provides glibc 2.31, keeping the Linux archive usable on
+      # older Ubuntu/Debian hosts as well as newer distributions.
+      image: debian:11-slim
 
     steps:
-      - name: Install Debian 13 build tools
+      - name: Install Linux build tools
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
+          # Debian 11 is archived; use the archive mirror so package indexes
+          # and security packages remain available after mirror rotation.
+          sed -i \
+            -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
+            -e 's|deb.debian.org/debian|archive.debian.org/debian|g' \
+            /etc/apt/sources.list
+          # Bullseye security was retired from the archive; leaving that
+          # suite enabled causes a fatal missing-Release error.
+          sed -i -e '/debian-security/d' -e '/bullseye-updates/d' /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*.sources
+          rm -rf /var/lib/apt/lists/*
+          printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
+          apt-get -o Acquire::Check-Valid-Until=false update
+          # The slim image can contain newer point releases than the archived
+          # Bullseye index. Align the ABI packages before installing tools.
+          apt-get install -y --allow-downgrades \
+            libc6=2.31-13+deb11u11 \
+            libc6-dev=2.31-13+deb11u11 \
+            libc-bin=2.31-13+deb11u11 \
+            perl-base=5.32.1-4+deb11u3 \
+            perl=5.32.1-4+deb11u3
           apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
             cmake \
+            curl \
             git \
             gzip \
             pkg-config \
@@ -161,6 +191,12 @@ jobs:
           go-version: '1.26.5'
           check-latest: true
 
+      - name: Install Shield3 Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/tkm-rustup.sh
+          sh /tmp/tkm-rustup.sh -y --profile minimal --default-toolchain 1.89.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Verify environment
         run: |
           cat /etc/os-release
@@ -168,18 +204,18 @@ jobs:
           go version
           go env
 
-      - name: Build and package Debian 13 binaries
+      - name: Build and package portable Linux binaries
         run: |
-          make gtkm shielded-payout-prover
-          archive="gtkm-${RELEASE_TAG}-debian13-amd64"
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
+          archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
 
-      - name: Upload Debian 13 archive
+      - name: Upload portable Linux archive
         uses: actions/upload-artifact@v4
         with:
-          name: release-debian13
+          name: release-linux
           path: release/*.tar.gz
           if-no-files-found: error
           retention-days: 1
@@ -200,6 +236,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: internal/gui/wallet-engine/package-lock.json
+      - name: Install Shield3 Windows Rust toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustup target add x86_64-pc-windows-gnu
       - name: Install Windows cross compiler
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
       - name: Build wallet assets and Windows executables
@@ -209,8 +250,8 @@ jobs:
           npm run build --prefix internal/gui/wallet-engine
           python3 build/wallet-signing/windows-metadata.py --publisher TKMChain --version "${RELEASE_TAG#v}"
           make randomx-windows
-          make gtkm-gui-windows
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm-gui-windows
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc-posix CGO_LDFLAGS='-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic' go build -tags shield3 -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
           archive="TKM-Wallet-${RELEASE_TAG}-windows-x64"
           mkdir -p "release/$archive/licenses"
           cp build/bin/gtkm-gui-windows-amd64.exe "release/$archive/TKM-Wallet.exe"
@@ -283,6 +324,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Install Shield3 Android Rust toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustup target add aarch64-linux-android
       - name: Install Android SDK and NDK
         run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'ndk;27.2.12479018'
       - name: Build and verify signed APK

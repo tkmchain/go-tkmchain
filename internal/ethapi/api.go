@@ -1806,6 +1806,11 @@ func NewTKMPaymentAPI(b Backend, nonceLock *AddrLocker) *TKMPaymentAPI {
 
 // NewAccountWithPassphrase creates a new keystore account encrypted by passphrase.
 func (api *TKMPaymentAPI) NewAccountWithPassphrase(passphrase string) (common.Address, error) {
+	if active, err := api.antarticalAccountGate(context.Background()); err != nil {
+		return common.Address{}, err
+	} else if active {
+		return common.Address{}, errors.New("Antartical account creation requires a stamped PQ wallet")
+	}
 	backends := api.b.AccountManager().Backends(reflect.TypeOf(&keystore.KeyStore{}))
 	if len(backends) == 0 {
 		return common.Address{}, errors.New("keystore backend unavailable")
@@ -1823,6 +1828,11 @@ func (api *TKMPaymentAPI) NewAccountWithPassphrase(passphrase string) (common.Ad
 
 // NewPQAccountWithPassphrase creates a new ML-DSA-87 keystore account encrypted by passphrase.
 func (api *TKMPaymentAPI) NewPQAccountWithPassphrase(passphrase string) (common.Address, error) {
+	if active, err := api.antarticalAccountGate(context.Background()); err != nil {
+		return common.Address{}, err
+	} else if active {
+		return common.Address{}, errors.New("Antartical requires name/country stamping before account creation")
+	}
 	ks, err := api.keystore()
 	if err != nil {
 		return common.Address{}, err
@@ -1836,6 +1846,11 @@ func (api *TKMPaymentAPI) NewPQAccountWithPassphrase(passphrase string) (common.
 
 // ImportPQSeedWithPassphrase imports a raw 32-byte ML-DSA-87 seed.
 func (api *TKMPaymentAPI) ImportPQSeedWithPassphrase(seed hexutil.Bytes, passphrase string) (common.Address, error) {
+	if active, err := api.antarticalAccountGate(context.Background()); err != nil {
+		return common.Address{}, err
+	} else if active {
+		return common.Address{}, errors.New("Antartical requires stamped PQ seed import")
+	}
 	ks, err := api.keystore()
 	if err != nil {
 		return common.Address{}, err

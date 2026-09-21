@@ -1,0 +1,86 @@
+name: Shield3 cryptography
+
+on:
+  pull_request:
+    paths:
+      - 'crypto/pqcrypto/**'
+      - 'zk/shielded3/**'
+      - 'core/**'
+      - 'accounts/keystore/**'
+      - 'eth/**'
+      - 'node/**'
+      - 'miner/**'
+      - 'internal/ethapi/**'
+      - 'cmd/shielded-payout-prover/**'
+      - 'Makefile'
+      - 'android/build.sh'
+      - '.github/workflows/release.yml'
+      - 'internal/shield3wallet/**'
+      - 'internal/shield3relay/**'
+      - 'cmd/shield3-relay/**'
+      - 'internal/gui/**'
+      - 'scripts/shield3-build.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield3-crypto.yml'
+  push:
+    paths:
+      - 'crypto/pqcrypto/**'
+      - 'zk/shielded3/**'
+      - 'core/**'
+      - 'accounts/keystore/**'
+      - 'eth/**'
+      - 'node/**'
+      - 'miner/**'
+      - 'internal/ethapi/**'
+      - 'cmd/shielded-payout-prover/**'
+      - 'Makefile'
+      - 'android/build.sh'
+      - '.github/workflows/release.yml'
+      - 'internal/shield3wallet/**'
+      - 'internal/shield3relay/**'
+      - 'cmd/shield3-relay/**'
+      - 'internal/gui/**'
+      - 'scripts/shield3-build.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield3-crypto.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TKM_SHIELD3_TESTDATA: ${{ github.workspace }}/.tmp/shield3-vectors
+      TKM_SHIELD3_RELAY_TESTDATA: ${{ github.workspace }}/.tmp/shield3-relay-vectors
+      TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
+      CARGO_BUILD_JOBS: '2'
+      RAYON_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare test directories
+        run: mkdir -p "$TKM_SHIELD3_TESTDATA" "$TKM_SHIELD3_RELAY_TESTDATA"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
+      - name: Check Rust formatting and lint
+        run: |
+          cargo +1.89.0 fmt --manifest-path zk/shielded3/stark/Cargo.toml -- --check
+          cargo +1.89.0 clippy --release --locked --manifest-path zk/shielded3/stark/Cargo.toml --all-targets -- -D warnings
+      - name: Generate and verify real STARK proofs
+        run: cargo +1.89.0 test --release --locked --manifest-path zk/shielded3/stark/Cargo.toml -- --test-threads=1
+      - name: Build native verifier
+        run: cargo +1.89.0 build --release --locked --manifest-path zk/shielded3/stark/Cargo.toml
+      - name: Verify Go and native interoperability
+        run: |
+          go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui
+          go test -tags shield3 ./core ./eth ./internal/ethapi ./cmd/shielded-payout-prover -run "Shielded|Shield3|Stamped"
+          go test -race -tags shield3 ./internal/shield3relay ./cmd/shield3-relay
+          go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay

@@ -2861,3 +2861,40 @@ func BenchmarkMultiAccountBatchInsert(b *testing.B) {
 		pool.addRemotesSync([]*types.Transaction{tx})
 	}
 }
+
+func TestAntarticalPrunesUnstampedPaymentsAndUnblocksRegistration(t *testing.T) {
+	pool, key := setupPool()
+	defer pool.Close()
+	makeTx := func(nonce uint64) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.Address{}, new(big.Int), 100000, big.NewInt(1), nil), types.LatestSigner(params.TestChainConfig), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+	first, later := makeTx(0), makeTx(1)
+	from, err := types.Sender(pool.signer, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testAddBalance(pool, from, new(big.Int).SetUint64(params.Ether))
+	if errs := pool.addRemotesSync([]*types.Transaction{first, later}); errs[0] != nil || errs[1] != nil {
+		t.Fatal(errs)
+	}
+	if pool.Nonce(from) != 2 {
+		t.Fatal("missing pre-fork pending transactions")
+	}
+	pool.mu.Lock()
+	cfg := *pool.chainconfig
+	activation := uint64(0)
+	cfg.AntarticalTime = &activation
+	pool.chainconfig = &cfg
+	pool.pruneInvalidShieldedTransactions()
+	pool.mu.Unlock()
+	if pool.Has(first.Hash()) || pool.Has(later.Hash()) {
+		t.Fatal("unstamped payments remained after activation")
+	}
+	if pool.Nonce(from) != 0 {
+		t.Fatal("stale payments blocked first stamp registration nonce")
+	}
+}

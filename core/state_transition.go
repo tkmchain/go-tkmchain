@@ -143,6 +143,14 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 
 // FloorDataGas computes the minimum gas required for a transaction based on its data tokens (EIP-7623).
 func FloorDataGas(rules params.Rules, data []byte, accessList types.AccessList) (uint64, error) {
+	var proofGas uint64
+	if rules.IsAntartical {
+		var err error
+		data, proofGas, err = ShieldedV3GasData(data)
+		if err != nil {
+			return 0, err
+		}
+	}
 	var (
 		tokens    uint64
 		tokenCost uint64
@@ -193,7 +201,7 @@ func FloorDataGas(rules params.Rules, data []byte, accessList types.AccessList) 
 		return 0, ErrGasUintOverflow
 	}
 	// Minimum gas required for a transaction based on its data tokens (EIP-7623).
-	return params.TxGas + tokens*tokenCost, nil
+	return params.TxGas + tokens*tokenCost + proofGas, nil
 }
 
 // toWordSize returns the ceiled word size required for init code payment calculation.
@@ -208,6 +216,9 @@ func toWordSize(size uint64) uint64 {
 // A Message contains the data derived from a single transaction that is relevant to state
 // processing.
 type Message struct {
+	antarticalStampTransactionHash common.Hash
+	antarticalStampBeneficiary     common.Address
+
 	To                    *common.Address
 	From                  common.Address
 	Nonce                 uint64
@@ -287,6 +298,17 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		BlobHashes:            tx.BlobHashes(),
 		TxType:                tx.Type(),
 		BlobGasFeeCap:         blobGasFeeCap,
+	}
+	if HasAntarticalStampPrefix(tx.Data()) {
+		msg.antarticalStampTransactionHash = tx.Hash()
+		e, err := DecodeAntarticalStamp(tx.Data())
+		if err != nil {
+			return nil, err
+		}
+		msg.antarticalStampBeneficiary, err = AntarticalStampBeneficiary(from, e)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
@@ -453,6 +475,14 @@ func (st *stateTransition) preCheck() error {
 	isOsaka := st.evm.ChainConfig().IsOsaka(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	isAmsterdam := st.evm.ChainConfig().IsAmsterdam(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	if !msg.SkipTransactionChecks {
+		if st.evm.ChainConfig().IsAntartical(st.evm.Context.BlockNumber, st.evm.Context.Time) {
+			if HasAntarticalStampPrefix(msg.Data) && (msg.antarticalStampTransactionHash == (common.Hash{}) || st.state.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", msg.antarticalStampBeneficiary.Bytes())) != msg.antarticalStampTransactionHash) {
+				return errors.New("illegal transaction: stamp registration was not consensus verified")
+			}
+			if err := ValidateAntarticalStampState(st.state, msg.From, msg.To, msg.Value.ToBig(), msg.Data); err != nil {
+				return err
+			}
+		}
 		if msg.TxType == types.RandomXTxType {
 			if !st.evm.ChainConfig().IsRandomXTx(st.evm.Context.BlockNumber) {
 				return fmt.Errorf("%w: type %d rejected, block not yet at RandomX transaction fork", ErrTxTypeNotSupported, msg.TxType)
@@ -580,7 +610,7 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		floorDataGas     uint64
 	)
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
-	cost, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam)
+	cost, err := IntrinsicGasWithShield3(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam, rules.IsAntartical)
 	if err != nil {
 		return nil, err
 	}

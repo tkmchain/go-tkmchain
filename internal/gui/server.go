@@ -37,6 +37,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -46,7 +47,9 @@ var webAssets embed.FS
 
 // Options controls how the GUI is launched.
 type Options struct {
-	ProverConfig string // private local proof-only prover configuration
+	WalletStateDir string                             // local durable Shield3 submission records
+	ProverConfig   string                             // private local proof-only prover configuration
+	RelayTransport shield3wallet.RelayTransportConfig // explicit Tor/relay transport
 
 	Title         string // window title
 	Width, Height int    // initial desktop window size
@@ -64,8 +67,10 @@ type GUI struct {
 	listener net.Listener
 	token    string
 
-	closed chan struct{}
-	once   sync.Once
+	closed          chan struct{}
+	once            sync.Once
+	shield3Mu       sync.Mutex
+	shield3Requests map[string]*shield3RequestRecord
 }
 
 // New creates a GUI that proxies RPC to the given client. The dashboard is
@@ -181,6 +186,7 @@ func (g *GUI) listen() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rpc", g.handleRPC)
 	mux.HandleFunc("/prover/", g.handleProver)
+	mux.HandleFunc("/shield3/", g.handleShield3)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})

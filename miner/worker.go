@@ -871,11 +871,24 @@ func (w *worker) updateSnapshot() {
 }
 
 func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Address, seenShieldedNullifiers map[common.Hash]struct{}) ([]*types.Log, error) {
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) {
+		bytes := tx.Size()
+		for _, included := range w.current.txs {
+			bytes += included.Size()
+		}
+		if bytes > core.ShieldedV3MaxTxSize {
+			return nil, core.ErrBlockOversized
+		}
+	}
 	snap := w.current.state.Snapshot()
 
 	blockContext := core.NewEVMBlockContext(w.current.header, w.chain, &coinbase)
 	evm := vm.NewEVM(blockContext, w.current.state, w.config, *w.chain.GetVMConfig())
-	if err := core.ProcessShieldedTransaction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx, seenShieldedNullifiers); err != nil {
+	candidateNullifiers := make(map[common.Hash]struct{}, len(seenShieldedNullifiers))
+	for key := range seenShieldedNullifiers {
+		candidateNullifiers[key] = struct{}{}
+	}
+	if err := core.ProcessShieldedTransaction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx, candidateNullifiers); err != nil {
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
 	}
@@ -884,6 +897,9 @@ func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Addres
 	if err != nil {
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
+	}
+	for key := range candidateNullifiers {
+		seenShieldedNullifiers[key] = struct{}{}
 	}
 	w.current.header.GasUsed = w.current.gasPool.Used()
 	w.current.txs = append(w.current.txs, tx)
@@ -957,7 +973,7 @@ func (w *worker) commitTransactions(txs *transactionsByPriceAndNonce, coinbase c
 		// Start executing the transaction
 		logs, err := w.commitTransaction(tx, coinbase, seenShieldedNullifiers)
 		switch err {
-		case core.ErrGasLimitReached:
+		case core.ErrGasLimitReached, core.ErrBlockOversized:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
 			log.Trace("Gas limit exceeded for current block", "sender", from)
 			txs.Pop()

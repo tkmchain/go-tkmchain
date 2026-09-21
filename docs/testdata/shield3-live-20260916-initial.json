@@ -1,0 +1,65 @@
+{
+  "chainId": 8980,
+  "rpcEndpoint": "http://127.0.0.1:41481",
+  "minedBlocks": 3,
+  "minedPublicBalanceWei": "300000000000000000000",
+  "transactions": [
+    {
+      "label": "sender-stamp",
+      "hash": "0x953d3cd8a39e46e33c22ab3a908a15432dd1732c67635346d7a27848d9320707",
+      "block": 4,
+      "gasUsed": 1914808,
+      "status": 1
+    },
+    {
+      "label": "sponsored-stamp-1",
+      "hash": "0xc15a05d351e318af9c08bef8ffd04d1241d3965d3e85f4e5d9f3f7f796346148",
+      "block": 5,
+      "gasUsed": 2032072,
+      "status": 1
+    },
+    {
+      "label": "sponsored-stamp-2",
+      "hash": "0x449c0dd66fa320bf43120947e8fdf04a7f4cbaeed2b1e11005a6cc5102ff048f",
+      "block": 6,
+      "gasUsed": 2026140,
+      "status": 1
+    },
+    {
+      "label": "shield-deposit-10",
+      "hash": "0x977d5cafca81176616c80c3a5ca876816493a95cb71682b5fbd1ccd3f5ba7099",
+      "block": 8,
+      "gasUsed": 4948032,
+      "status": 1
+    },
+    {
+      "label": "direct-send-2",
+      "hash": "0xdb4138ba71b28ca97235028ca517e741722e6ca71929b41be9f6f6393495533b",
+      "block": 9,
+      "gasUsed": 4956452,
+      "status": 1
+    },
+    {
+      "label": "relayed-batch-6",
+      "hash": "0x87b929fe9433675b38151758e93b82905a4a2a785239849700cd370c043c7503",
+      "block": 11,
+      "gasUsed": 4953788,
+      "status": 1
+    }
+  ],
+  "shieldedBalancesWei": {
+    "operator": "2000000000000000000",
+    "recipient": "3000000000000000000",
+    "sender": "4999999999986000000"
+  },
+  "checks": [
+    "Antartical active with native verifier",
+    "real RandomX blocks have nonzero verified mix digests; zero genesis allocation",
+    "aggregate 5 million TKM limit rejects excessive send",
+    "direct 2 TKM transfer confirmed with 8/2 TKM shielded balances",
+    "HTTP automatic relay signs once and returns identical hash/bytes after confirmation",
+    "receive-only scan reveals receipts but no spendable balance",
+    "three-recipient batch atomically confirmed; nullifiers reference actual signed hash"
+  ],
+  "success": true
+}

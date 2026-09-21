@@ -32,9 +32,10 @@ Run a node with the `tkmphone` and `tkm` APIs enabled. The `tkm` namespace is ne
 
 ```sh
 ./build/bin/gtkm \
-  --http --http.addr 0.0.0.0 --http.port 8545 \
+  --privacy.onion-only --p2p.tor-socks5=socks5://127.0.0.1:9050 \
+  --http --http.addr 127.0.0.1 --http.port 8545 \
   --http.api eth,net,web3,tkm,tkmphone,mainking,miner \
-  --http.vhosts '*' --http.corsdomain '*'
+  --http.vhosts localhost --http.corsdomain localhost
 ```
 
 Do not expose password-capable RPC methods to untrusted networks.
