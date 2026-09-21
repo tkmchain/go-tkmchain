@@ -147,6 +147,10 @@ jobs:
             -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
             -e 's|deb.debian.org/debian|archive.debian.org/debian|g' \
             /etc/apt/sources.list
+          # Bullseye security was retired from the archive; leaving that
+          # suite enabled causes a fatal missing-Release error.
+          sed -i '/debian-security/d' /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*.sources
           printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
           apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
