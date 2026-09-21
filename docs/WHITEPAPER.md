@@ -1,221 +1,315 @@
-# Tkmchain whitepaper
+# TKMChain Whitepaper
 
-Status date: July 2026
+**Version:** 2.0 · **Status:** implementation-aligned draft · **Updated:** September 2026
 
 ## Abstract
 
-Tkmchain is an EVM-compatible execution network built around CPU-friendly RandomX proof-of-work, Rotating Kings governance, network-native phone infrastructure, and a secure native-contract roadmap called TVM. It preserves the Ethereum account model, transaction model, ABI, storage semantics, logs, and developer tooling while changing the consensus and reward layer to make mining accessible and governance participation explicit.
+TKMChain is an EVM-compatible, CPU-mineable blockchain for private value transfer,
+private communications, and deterministic applications. It combines RandomX
+proof-of-work, Rotating King operations, post-quantum account signatures, the
+Shield3 private transaction system, TKM Phone, EmailVM, and Tor-only network
+profiles.
 
-The protocol targets 120-second blocks, RandomX mining epochs of 2,048 blocks, and a block reward model that distributes value among miners and governance operators. Each block reward is split 10 percent to the Main King, 40 percent to the current Rotating King, and 50 percent to the miner. This creates a direct economic connection between network security, operational governance, and block production.
+The central design choice is that financial privacy is a normal protocol
+property. A payment should not publish the amount, recipient, sender account, or
+personal relationship to every observer merely because settlement uses a public
+ledger. Shield3 keeps the data required for consensus while encrypting the
+payment details and proving validity without revealing them. Authorized viewing
+keys can disclose selected information when the owner chooses.
 
-TKM Phone extends the network beyond balances and contracts by making phone-number identity, encrypted messaging, and call signaling part of the chain's RPC-backed service layer. TVM extends the roadmap beyond standard EVM bytecode by introducing a deterministic, metered, sandboxed native-contract path for audited C++ modules. TVM is designed as an execution backend for selected EVM accounts, not a second state model or a replacement for Solidity.
+TKMChain does not promise that a bank, exchange, wallet host, relay, browser, or
+operating system can never learn anything. A bank can see what happens inside
+its own account system, and an endpoint can observe requests it serves. TKMChain
+reduces the information published by the ledger and provides Tor transport to
+reduce network-origin exposure. Users still need a trusted wallet, secure
+endpoints, and sound operational practices.
 
-## 1. Motivation
+## 1. Why privacy is a protocol feature
 
-Modern EVM networks often concentrate block production around specialized hardware, staking concentration, or infrastructure-heavy validator operations. Tkmchain takes a different path: it keeps EVM compatibility while using RandomX proof-of-work to favor general-purpose CPUs and broad participation.
+Public ledgers are excellent for independent verification, but unrestricted
+transparency creates permanent financial surveillance. A public observer can
+link addresses, amounts, timestamps, counterparties, payroll, donations, and
+business relationships. The data can be copied forever and correlated later.
 
-The second design problem is governance. Many chains rely on off-chain social coordination without a protocol-visible operator role. Tkmchain introduces Rotating Kings: funded operators that rotate through a reward-bearing responsibility slot. The Main King anchors checkpoint and leadership duties, while Rotating Kings receive scheduled rewards and monitoring responsibility.
+TKMChain separates **settlement validity** from **public disclosure**:
 
-The third design problem is identity and communication. Wallet addresses are powerful but not human-friendly, and off-chain messaging/call systems introduce separate trust, billing, and identity layers. TKM Phone addresses this by issuing phone numbers from Main King generated buckets, binding number ownership to chain accounts, requiring device-key registration for use, and using RandomX-derived encryption/signaling primitives for messages and calls.
+- Every node verifies that a payment is authorized, balanced, non-replayed, and
+  correctly included in a block.
+- The chain stores commitments, nullifiers, encrypted envelopes, and proofs
+  rather than publishing the payment's plaintext amount and recipient.
+- The sender can disclose a payment to a bank, auditor, tax authority, or
+  counterparty using a scoped viewing or disclosure key.
+- A recipient can prove receipt without giving the world a complete account
+  history.
 
-The fourth design problem is native execution. Some contract workloads benefit from carefully audited native implementations, but direct host execution is not acceptable in consensus. TVM addresses this by requiring deterministic envelopes, resource limits, validation, metering, and a restricted host interface while remaining compatible with EVM accounts and calls.
+This is useful even when a payment touches a bank. A bank may know the fiat
+transfer or deposit it processed, but unrelated chain observers do not need to
+learn the customer's private TKM amount, recipient, or full wallet history.
+The bank receives only the disclosure required for its compliance or accounting
+obligation. The bank's own records and legal duties remain outside the chain's
+cryptographic privacy boundary.
 
-## 2. Design goals
+## 2. Network and execution model
 
-Tkmchain is designed around seven goals:
+`gtkm` is a Go Ethereum-derived execution client. It retains the EVM account,
+nonce, receipt, log, ABI, JSON-RPC, and storage model while adding TKMChain
+consensus and privacy services.
 
-- EVM compatibility: existing wallets, indexers, JSON-RPC clients, ABI tooling, contracts, and account semantics should continue to work.
-- Accessible mining: RandomX should allow CPU-oriented mining and reduce dependence on specialized hardware.
-- Predictable rewards: block rewards and fees should be distributed transparently among the Main King, current Rotating King, and miner.
-- Operational governance: Rotating Kings should create a visible set of funded operators with monitoring and checkpoint responsibilities.
-- Native communications: phone numbers, SIM device keys, encrypted messages, and call signaling should be network-visible while keeping private content encrypted.
-- Deterministic extensibility: TVM should allow native modules only when they are bounded, deterministic, metered, and sandboxed.
-- Conservative security: every consensus feature should be testable, auditable, and activated through explicit chain configuration.
+The network targets 120-second blocks. RandomX proof-of-work favors general
+purpose CPUs. Rotating Kings provide scheduled operational responsibility and
+receive a protocol-defined reward share. TKM Phone and EmailVM use daemon-owned
+state and authenticated RPC plans; private keys and plaintext content remain in
+wallets.
 
-## 3. System overview
-
-Tkmchain is implemented as a Go execution client named `gtkm`, derived from the Go Ethereum architecture. It retains Ethereum's world state, transactions, receipts, logs, RLP encoding, JSON-RPC interfaces, EVM execution model, and database architecture.
-
-The Tkmchain-specific layers are:
-
-- RandomX consensus for proof-of-work sealing and verification.
-- RandomX seed-hash and work APIs for internal and external miners.
-- A reward finalization path that pays Main King, Rotating King, and miner accounts.
-- Rotating King configuration, state, registration, status, rotation, and checkpoint RPCs.
-- TKM Phone buckets, operator approvals, phone-number ownership, SIM/device keys, encrypted message storage, call signaling, and phone state persistence.
-- TVM envelope, validation, RPC helpers, and an initial stateful TVM precompile.
-- Keeper, a stateless execution validation command intended for zkVM guest use cases.
-
-## 4. Consensus: RandomX proof-of-work
-
-RandomX is selected because it is optimized for general-purpose CPUs and designed to resist ASIC centralization. Tkmchain configures RandomX with a 2,048-block epoch, a default 256 MB cache, a 2 GB dataset, and a 4 GB minimum memory target. The protocol targets 120-second block intervals.
-
-Each block header is sealed with RandomX work derived from the block seal hash and the seed hash for the relevant block height. The node exposes work through `miner_getWork` and `randomx_getWork`, returning:
-
-```text
-[sealHash, seedHash, target, blockHeight]
-```
-
-External miners compute a RandomX digest using the provided seal hash and seed-selected cache, then submit solutions through `miner_submitWork`, `randomx_submitWork`, or raw hex submission helpers.
-
-The consensus engine verifies seals, manages RandomX caches, calculates seal hashes, exposes hashrate and share counters, and finalizes rewards. A no-cgo fallback exists for builds where the native RandomX library is unavailable, which is important for tests and development environments.
-
-## 5. Difficulty and block timing
-
-The target block time is 120 seconds. Difficulty adjustment is designed to respond to observed block intervals while avoiding extreme one-block swings. The implementation contains an early linear progression phase and dynamic adjustment after the initial ramp. It also includes emergency difficulty behavior for long no-block intervals.
-
-The roadmap requires this area to be treated as launch-critical. Difficulty rules must be specified once, tested across long simulations, and documented exactly as implemented. Stable difficulty behavior is essential for miner confidence, issuance predictability, and network liveness.
-
-## 6. Issuance and reward distribution
-
-Tkmchain starts with a 200 TKM block reward. At 120-second block targets, the halving interval is approximately four years. Reward calculation supports up to 64 halving periods and stops paying block subsidy once the reward falls below 1 TKM.
-
-For each finalized block, the total reward is calculated as:
+The mainnet chain ID is **8979**. The permanent finality checkpoint is block
+**41913**, whose canonical hash is:
 
 ```text
-totalReward = blockSubsidy + transactionFees
+0x5cea02aaa23fa5b91c836c75b994ccefb86dd40e7db59de9071c034b8242bc79
 ```
 
-The total reward is split:
+Nodes reject a competing chain that replaces this checkpoint. Administrative
+rewinds below it are also rejected once the checkpoint is present locally.
 
-| Recipient | Share | Purpose |
+## 3. RandomX proof-of-work and rewards
+
+RandomX seals each block using the height-selected seed hash. The node exposes
+work through `miner_getWork` and the TKM-specific RandomX methods. Mining pools
+must verify submitted work with the same seed, seal hash, nonce encoding, and
+network chain rules used by `gtkm`.
+
+The target block time is 120 seconds. Difficulty adjusts from observed block
+intervals with bounded changes and emergency handling for prolonged gaps. A
+network deployment must use one matching consensus implementation; a miner or
+pool cannot substitute a different RandomX calculation.
+
+The current reward model divides block subsidy and fees among:
+
+| Recipient | Share | Role |
 | --- | ---: | --- |
-| Main King | 10% | Leadership, checkpointing, and protocol stewardship |
-| Rotating King | 40% | Scheduled governance operator reward |
-| Miner | 50% | Proof-of-work security and block production |
+| Main King | 10% | protocol stewardship and checkpoint operations |
+| Rotating King | 40% | scheduled network operations |
+| Miner | 50% | proof-of-work security |
 
-If the Main King or Rotating King address is unavailable, reward fallback rules prevent funds from being assigned to an empty address. The intended behavior is to keep issuance deterministic and avoid accidental reward loss.
+Exact issuance, halving, fallback, and registration parameters are consensus
+configuration and must be kept identical across nodes.
 
-## 7. Rotating Kings
+## 4. Antartical activation
 
-Rotating Kings are funded governance operators. A candidate registers through RPC, locks stake, enters the active schedule at a rotation boundary, and receives the 40 percent Rotating King reward when selected.
+Antartical activates on **1 October 2026 at 00:00 UTC** (`1790812800`). It is a
+scheduled consensus transition, not a client-only feature flag. Upgraded nodes
+are required before activation because the Shield3 verifier, mandatory stamps,
+post-quantum account rules, sponsorship paths, and private communication
+permissions change together.
 
-The current implementation exposes a default rotation interval of 100 blocks. At 120-second blocks, this is approximately 3 hours and 20 minutes per slot. RPC methods expose current king, next king, registered kings, status, lock fields, rotation history, and aggregate stats.
+Historical blocks retain their historical rules. Nodes without the Antartical
+verifier reject new Shield3 envelopes instead of silently interpreting them as
+an older transaction format.
 
-The Rotating King system has four purposes:
+## 5. Shield3 private transactions
 
-- decentralize operational responsibility beyond a single privileged operator;
-- align governance operators with network uptime and monitoring;
-- make reward allocation auditable at the protocol level;
-- create a path for checkpoint and incident-response duties without changing EVM transaction semantics.
+Shield3 is a canonical `TKMSHIELD3` envelope carried by a chain-bound ML-DSA-87
+post-quantum transaction. The envelope contains encrypted note data and a
+proof-bound intent. The native verifier checks:
 
-Main King RPC methods expose the configured Main King address and checkpoint submission. Checkpoints are expected to be used as operational safety anchors, not as a substitute for full block verification.
+- the ML-DSA-87 transaction signature and chain binding;
+- stamped account and recipient authorization;
+- note and Merkle-root membership;
+- distinct, nonzero nullifiers;
+- output commitment correctness and value balance;
+- proof program, domain separation, version, and size limits;
+- replay, time, and activation rules.
 
-## 8. JSON-RPC surface
+A Shield3 send supports one to four private inputs owned by the same hidden
+owner. Multiple inputs allow a wallet to consolidate notes without exposing
+which historical notes were selected. Each output uses a fresh one-time
+recipient key and encrypted payload. The public chain sees only data required by
+consensus, including the transaction hash, block position, commitments,
+nullifiers, gas fields, and any public deposit or withdrawal value.
 
-Tkmchain keeps standard Ethereum-style JSON-RPC behavior and adds Tkmchain-specific namespaces:
+The combined value covered by a Shield3 operation is limited to **5,000,000
+TKM**. The proof and native relation also enforce bounded input count, bounded
+trace size, bounded envelope size, and fixed field encodings. These limits reduce
+resource-exhaustion risk and make consensus behavior reproducible.
 
-- `miner`: mining work, seed hash, and proof submission.
-- `randomx`: RandomX-specific work, seed, height, hashrate, and raw submission helpers.
-- `king`, `rk`, and `rotatingking`: registration, status, schedule, rotation history, and king stats.
-- `mainking`: Main King address and checkpoint submission.
-- `tvm`: TVM deployment validation and envelope construction.
-- `tkmphone`: phone buckets, pending operator approvals, registered numbers, device keys, encrypted messages, call signaling, contacts, blocking, recovery, notifications, and propagation.
+### 5.1 What is private
 
-Remote RPC exposure should be conservative. Mining and governance namespaces are operationally powerful and should be exposed only to trusted networks or protected infrastructure.
+For a normal Shield3 private send, the public ledger does not reveal the
+plaintext amount, recipient payment code, note owner, viewing key, or complete
+wallet history. A commitment hides the note contents while allowing a node to
+verify the proof. A nullifier prevents double spending without identifying the
+spent note to ordinary observers.
 
+Shield3 does not make every field disappear. Transaction hashes, block timing,
+gas, commitments, nullifiers, proof sizes, and relay behavior remain observable.
+Public deposits and transparent withdrawals necessarily reveal their public
+value and destination. A direct send can expose the payer's account; a shared
+relay can hide that account from the chain but introduces an operator that may
+observe timing or packets.
 
-## 9. TKM Phone infrastructure
+### 5.2 Viewing and disclosure keys
 
-TKM Phone is a network-native communications layer built into `gtkm`. It provides phone-number identity, a transaction-based number marketplace, SIM/device registration, encrypted messages, and WebRTC call signaling without making the website or marketplace the source of authority. The authoritative state is held by the daemon and exposed through the `tkmphone` namespace.
+Viewing permissions are explicit:
 
-The phone-number supply model is bucket based. Main King generates signed bucket batches. Each batch contains five buckets, and each bucket contains five phone numbers. A new batch can be generated only after the previous five buckets are bought. This prevents unbounded number issuance and makes number provenance auditable.
+| Key | Can disclose | Cannot do |
+| --- | --- | --- |
+| Incoming | incoming notes and received totals | spend or identify later spends |
+| Full viewing | incoming and authorized outgoing history | spend |
+| Payment disclosure | one selected payment and amount | scan the wallet or spend |
+| Stamp disclosure | the stamped name/country record | reveal payment notes or spend |
 
-The operator purchase flow is transaction based:
+A disclosure is a deliberate capability grant. Users should share the smallest
+scope that meets the recipient's need. A viewing key is sensitive information,
+even though it is not a spending key.
 
-1. An operator pays exactly `25,000 TKM` to Main King for one bucket.
-2. The payment transaction carries a `TKMPHONE_BUCKET_V1` data marker, the operator key hash, and the expiry timestamp.
-3. `gtkm` scans canonical Main King payments and derives pending operator approvals from chain data only.
-4. Main King approves from the daemon through `gtkm tkmphone approve-operator` or the `tkmphone_approveOperatorPayment` RPC.
-5. The operator wallet detects approval with `tkmphone_listOperators`, opens the assigned bucket, and reveals its five phone numbers.
+### 5.3 Stamps, registration, and sponsorship
 
-This design deliberately keeps Main King custody out of websites. Public websites and wallets can display payments, pending state, buckets, numbers, and market actions, but Main King approval remains a private daemon operation. The daemon can list pending approvals with `gtkm tkmphone pending-approvals`, showing operator address, key hash, payment transaction, expiry, and grant hash.
+After Antartical, a new private account begins by creating a stamp containing a
+user-selected name and country label. The stamp is cryptographically bound to
+the account and is visible only through the stamp permission. Shield3 sends and
+value recipients must satisfy the registered-stamp rule; attempts to bypass it
+are invalid consensus transactions.
 
-Operators can sell individual numbers for the default `10,000 TKM` sale price. A valid sale requires a canonical buyer-to-operator payment transaction and transfers on-chain ownership of the number to the buyer. Once sold and registered, a number is permanently controlled by its owner and should not return to the market unless ownership is explicitly transferred by the owner.
+A sponsored registration lets an authorized sponsor pay the registration cost
+without receiving the user's spending seed. The sponsor signs an offer and the
+user authorizes the exact action. Sponsorship changes who pays the fee; it does
+not grant the sponsor spending authority or viewing access.
 
-SIM registration separates account ownership from device use. A phone number owner registers one or more device keys through owner-signed actions. Messages, call signaling, contacts, blocking, and recovery actions require the number owner or an active registered device key. This allows a downloaded SIM file or wallet-integrated SIM slot to operate a number while retaining owner-level control.
+### 5.4 Relay and network privacy
 
-Messages are encrypted payload records stored through `tkmphone_sendEncryptedMessage` and related expiry-aware methods. Calls use browser WebRTC for audio transport and `gtkm` as encrypted signaling storage for offers, answers, and ICE candidates. The chain does not expose plaintext messages or audio; it stores encrypted metadata and verifies ownership/device signatures.
+Shield3 supports user-selected relays, Dandelion-style stem/fluff
+propagation, bounded delays, and fixed relay packet handling. Relays can hide
+the payer account from the on-chain transaction while preserving an exact,
+idempotent request so a timeout cannot create a second spend.
 
-`gtkm` also writes a readable phone-state mirror under the node phone directory, normally `~/.tkmchain/gtkm/phone/state.json`, for operational inspection and recovery. The canonical source remains the chain database and `tkmphone` service state.
+Tor onion-only mode routes configured peer traffic and remote relay HTTP through
+an explicit SOCKS5 proxy. It disables clearnet discovery, NAT advertising, and
+clearnet fallback. The node advertises its `.onion` hostname and refuses to
+start rather than advertising `127.0.0.1` when onion-only configuration is
+incomplete. Local loopback RPC and prover calls remain local by design.
 
-## 10. TVM: deterministic native contracts
+Tor reduces direct IP exposure; it does not erase timing, endpoint, relay, or
+operating-system metadata. Users who require network anonymity must run Tor,
+configure an onion service, use onion peers, and avoid clearnet RPC fallbacks.
+See `docs/TOR_INSTALLATION.md` and `docs/PRIVACY_MODE.md`.
 
-TVM is a proposed native-contract layer for deterministic C++ modules that coexist with EVM bytecode contracts. It is not a second account model, not a new token standard, and not arbitrary host binary execution.
+## 6. TKM Phone
 
-A TVM deployment is wrapped in an envelope containing:
+TKM Phone is a daemon-backed phone identity and communications service. Its
+canonical state includes:
 
-- magic bytes identifying TVM code;
-- version;
-- deterministic target, currently `cpp-evm-v1`;
-- code hash;
-- metadata hash;
-- memory page, stack slot, and call depth limits;
-- module bytes and metadata bytes.
+- Main King-issued number buckets and operator approvals;
+- ownership transfers and device-key registration;
+- encrypted messages with expiry and recovery controls;
+- encrypted WebRTC call signaling, contacts, blocking, and notifications;
+- ownership proofs and propagation records.
 
-The current envelope limits are intentionally bounded: 24 KB maximum module size, 8 KB maximum metadata size, 256 memory pages, 1,024 stack slots, and 1,024 call depth. These limits make validation and execution easier to reason about while the system matures.
+Phone numbers are issued in bounded batches. Operators purchase buckets through
+canonical payments, and Main King approval remains on a private daemon rather
+than a hosted website. Device keys authorize use without transferring account
+ownership. Messages and call signaling are encrypted payloads; the chain does
+not store message plaintext or audio. WebRTC media is an endpoint-to-endpoint
+concern and should use the application's authenticated signaling and privacy
+configuration.
 
-The initial TVM precompile is registered at:
+Phone privacy protects content and authorization. It cannot make a compromised
+phone, browser, notification service, or recipient device trustworthy.
 
-```text
-0x00000000000000000000000000000000000000f2
+## 7. EmailVM and private messages
+
+EmailVM provides canonical domain, mailbox, key publication, and encrypted mail
+actions through the `tkmdomain` and `emailvm` namespaces. Domain names and
+mailbox ownership are registered by deterministic hashes and canonical block
+order. Payment plans may be split into multiple Shield3 withdrawals when a
+single proof value limit would otherwise be exceeded.
+
+Mailbox encryption keys are published as X25519 public keys. Mail content is
+encrypted by the sender for the recipient key before it reaches the daemon.
+Wallets keep PQ seeds, passphrases, viewing keys, witnesses, and proofs locally.
+The daemon returns an action plan; the wallet builds, proves, signs, and submits
+the final transaction.
+
+The public chain can verify that a mailbox action was authorized and paid. It
+does not need the mail body, private key, or plaintext attachment. A mailbox
+provider or recipient endpoint can still observe local metadata such as login,
+connection time, or the fact that it received a message.
+
+## 8. EVM and TVM compatibility
+
+EVM accounts, contracts, storage, receipts, logs, ABI encoding, and JSON-RPC
+remain the compatibility layer. TVM is a bounded native execution path for
+carefully audited deterministic modules; it is not arbitrary host-code
+execution. TVM envelopes specify code and metadata hashes, memory and stack
+limits, call depth, and a restricted host interface. Filesystem, network,
+threads, wall-clock time, unmanaged syscalls, and nondeterministic behavior are
+forbidden in consensus execution.
+
+## 9. Security boundaries
+
+TKMChain's protections are layered:
+
+1. RandomX proof-of-work secures block production.
+2. ML-DSA-87 protects account authorization against currently known classical
+   and quantum attacks at the chosen security level.
+3. Shield3 commitments, nullifiers, authenticated encryption, and proofs hide
+   payment details while preserving double-spend prevention.
+4. Stamps and scoped disclosure keys reduce unauthorized account use and
+   over-sharing.
+5. Tor and onion-only operation reduce direct network-origin exposure.
+6. Daemon-owned Phone and EmailVM state prevents websites from becoming the
+   authority for ownership or approval.
+7. Checkpoint finality prevents rollback through block 41913.
+
+No cryptographic design can promise that nobody will ever compromise an
+endpoint, steal a key, correlate metadata, or discover a future cryptographic
+weakness. The correct security claim is narrower: without the relevant spending,
+viewing, or disclosure secret, a normal chain observer cannot derive the private
+Shield3 amount and recipient from the consensus data alone.
+
+## 10. Operating guidance
+
+For a private node, install and verify Tor before starting `gtkm`, configure a
+hidden service for the P2P listener, use onion bootnodes, and set:
+
+```sh
+./build/bin/gtkm \
+  --privacy.onion-only \
+  --p2p.tor-socks5=socks5://127.0.0.1:9050 \
+  --p2p.onion-hostname=<this-node>.onion \
+  --http --http.addr=127.0.0.1 --http.port=8545 \
+  --http.api=eth,net,web3,tkm,tkmprivacy,tkmphone,tkmdomain,emailvm
 ```
 
-The current runtime supports a small deterministic conformance instruction set: return input, return code hash, load storage, and store storage. Static execution rejects storage writes. Future TVM work should compile safe templates to this bounded target rather than executing arbitrary native binaries.
+Keep wallet, prover, relay, and node RPC on loopback or a protected onion
+endpoint. Do not expose password-capable APIs to the public internet. A desktop
+wallet uses its local node. The Android package keeps the node alive in the
+background, but a production Android build must bundle and start a Tor runtime
+before enforcing onion-only mode; an external Android Tor service is otherwise
+required.
 
-## 11. EVM compatibility
+## 11. Roadmap and verification
 
-Tkmchain's compatibility principle is simple: EVM users should not need to know whether a counterparty account uses EVM bytecode or a future TVM backend. Accounts, nonces, balances, value transfers, storage keys, logs, ABI encoding, return data, and revert data remain EVM-compatible.
+Before a production Antartical activation, operators must deploy matching
+binaries, proving keys, Tor configuration, and wallet versions. Verification
+includes RandomX vectors, Shield3 native and wallet vectors, stamp and
+sponsorship tests, relay idempotency and restart tests, Phone ownership and
+message tests, EmailVM registry tests, checkpoint tests, and cross-platform
+release builds.
 
-TVM token contracts must therefore expose standard selectors and emit standard events. An ERC-20, ERC-721, or ERC-1155 implemented through TVM should be indistinguishable to wallets and indexers from an equivalent Solidity contract when viewed through ABI and event interfaces.
+The project should publish implementation notes and incident reports when
+behavior changes. Privacy claims should always identify what is hidden, what is
+public for consensus, and what metadata remains outside the cryptographic
+boundary.
 
-## 12. Security model
+## Conclusion
 
-Tkmchain's security rests on five layers:
+TKMChain uses privacy to make ordinary digital money safer to use. Shield3
+prevents the ledger from becoming a permanent public history of every amount
+and relationship, while scoped disclosures preserve auditability when a user
+chooses it. TKM Phone and EmailVM extend the same principle to communications.
+Tor reduces network-origin exposure, RandomX keeps block production accessible,
+and checkpoint finality protects the history that users rely on.
 
-- Proof-of-work security from RandomX miners.
-- Economic accountability from Main King and Rotating King reward roles.
-- EVM compatibility and inherited testing depth from the Go Ethereum architecture.
-- Daemon-owned TKM Phone approval, number ownership, device-key verification, encrypted message storage, and call signaling controls.
-- Deterministic validation and sandboxing for TVM modules.
-
-The highest-risk areas are consensus seal verification, difficulty adjustment, reward finalization, registration and lock lifecycle, RPC exposure, TKM Phone approval/signature flows, phone state propagation, and TVM runtime expansion. These areas require focused tests, fuzzing, simulation, independent review, and conservative activation.
-
-TVM specifically must reject nondeterminism. A production TVM target must forbid unmanaged syscalls, threads, filesystem access, network access, wall-clock time, undefined memory behavior, unsupported floating point behavior, inline assembly, and any import that bypasses the metered host interface.
-
-## 13. Keeper and stateless validation
-
-Keeper is a specialized command for validating stateless execution of Ethereum-style blocks. It reads an RLP payload containing a block, witness data, and chain ID, executes the block without relying on local full state, and checks that computed state and receipt roots match the header.
-
-This creates a future path for zkVM guest execution, independent block verification, and stateless validation research. Keeper is not required for base chain operation, but it can become an important verification tool as Tkmchain matures.
-
-## 14. Economics
-
-The economic model connects three participants:
-
-- Miners provide work and receive 50 percent of block rewards.
-- The Main King receives 10 percent for leadership and checkpoint duties.
-- The current Rotating King receives 40 percent for scheduled operational governance.
-- Phone operators buy Main King generated buckets for `25,000 TKM` and may sell individual numbers at the default `10,000 TKM` sale price.
-
-This model intentionally pays both security providers and governance operators from the block reward. Its long-term health depends on broad miner participation, transparent Rotating King eligibility, predictable reward distribution, and clear operator responsibilities.
-
-Before mainnet, the project should publish final supply, premine, block reward, halving, registration fee, stake lock, unlock, reward fallback, and governance parameters in one canonical document.
-
-## 15. Roadmap
-
-The development path should proceed in six stages:
-
-1. Stabilization: reconcile parameters, expand consensus tests, harden RandomX and Rotating King edge cases, and complete operator documentation.
-2. Public testnet: launch with mining, Rotating King registration, dashboards, faucet, explorer, and published incident reports.
-3. Phone infrastructure: harden daemon-only approvals, bucket issuance, SIM/device keys, encrypted messages, WebRTC signaling, explorer views, and wallet automation.
-4. TVM preview: complete the specification, build compiler tooling, expand conformance tests, and audit template contracts.
-5. Mainnet release candidate: freeze genesis and binaries, complete audits, publish launch procedures, and run multi-week testnet validation.
-6. Post-mainnet expansion: grow miner tooling, Rotating King automation, phone marketplace tools, TVM templates, state management, and zkVM/stateless validation research.
-
-## 16. Conclusion
-
-Tkmchain combines the proven EVM execution model with a distinct consensus and governance design. RandomX makes block production CPU-oriented. Rotating Kings make governance operations visible and reward-bearing. TVM creates a path for deterministic native modules without abandoning EVM compatibility.
-
-The project should now focus on disciplined stabilization: parameter reconciliation, test coverage, public testnet operations, security review, and clear documentation. If those foundations are completed carefully, Tkmchain can offer a credible EVM-compatible network with accessible mining, transparent governance rewards, and a conservative path toward native contract execution.
-
+The result is not a promise of magic anonymity. It is a system where validity is
+public, private details are encrypted and proof-checked, disclosure is selective,
+and users can choose the trust and network exposure appropriate to each payment.
