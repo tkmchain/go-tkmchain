@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1338,7 +1339,15 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 			err = core.ValidateShieldedTransactionState(pool.currentState, tx)
 		}
 		if err != nil {
-			log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			// A duplicate commitment is expected when a transaction whose output
+			// was already included is retried after a timeout or reorg. Keep the
+			// cleanup visible at debug level without flooding production logs;
+			// other invalid state transitions remain warnings.
+			if strings.Contains(err.Error(), "commitment already exists") {
+				log.Debug("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			} else {
+				log.Warn("Dropping stale shielded transaction", "hash", hash, "nonce", tx.Nonce(), "err", err)
+			}
 			invalid = append(invalid, hash)
 		}
 		return true
