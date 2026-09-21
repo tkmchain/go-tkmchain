@@ -138,16 +138,19 @@ func (NativeBackend) Describe(ctx context.Context, chainID, assetID uint64, w Sp
 		return result, err
 	}
 	defer clear(request)
-	data, err := nativeCall(3, request, 320)
+	data, err := nativeCall(3, request, 480)
 	if err != nil {
 		return result, err
 	}
-	if len(data) != 320 {
+	if len(data) != 480 {
 		return result, ErrInvalidWitness
 	}
 	dest := []*Digest{&result.Owner, &result.InputCommitment, &result.Anchor, &result.Nullifier}
 	for i := range result.Outputs {
 		dest = append(dest, &result.Outputs[i])
+	}
+	for i := range result.OneTimeKeys {
+		dest = append(dest, &result.OneTimeKeys[i])
 	}
 	for i, d := range dest {
 		*d, err = DigestFromBytes(data[i*40 : (i+1)*40])

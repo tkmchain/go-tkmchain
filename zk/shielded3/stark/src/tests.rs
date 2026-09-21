@@ -19,6 +19,13 @@ fn note(chain_asset: &[u64], owner: &[u64], random: &[u64], value: &[u64]) -> [u
     words.extend(random);
     hash(&words)
 }
+fn one_time(owner: &[u64], random: &[u64], commitment: &[u64]) -> [u64; 5] {
+    let mut words = vec![DOMAIN_ONETIME_KEY];
+    words.extend(owner);
+    words.extend(random);
+    words.extend(commitment);
+    hash(&words)
+}
 fn pair(left: [u64; 5], right: [u64; 5]) -> [u64; 5] {
     Tip5::hash_pair(
         Digest::new(left.map(BFieldElement::new)),
@@ -85,6 +92,11 @@ fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
             &secret[base + 10..base + 18],
         );
         public[38 + 5 * i..43 + 5 * i].copy_from_slice(&commitment);
+        public[88 + 5 * i..93 + 5 * i].copy_from_slice(&one_time(
+            &secret[base..base + 5],
+            &secret[base + 5..base + 10],
+            &commitment,
+        ));
     }
     path.extend(vec![[0; 5]; MERKLE_DEPTH * 3]);
     stamp_fixture(&mut public, &mut secret, &mut path);
@@ -181,6 +193,11 @@ fn refresh_commitments(public: &mut [u64], secret: &[u64], path: &[[u64; 5]]) {
             &secret[base + 10..base + 18],
         );
         public[38 + 5 * i..43 + 5 * i].copy_from_slice(&out);
+        public[88 + 5 * i..93 + 5 * i].copy_from_slice(&one_time(
+            &secret[base..base + 5],
+            &secret[base + 5..base + 10],
+            &out,
+        ));
     }
 }
 
@@ -540,5 +557,5 @@ fn single_input_trace_omits_unused_paths() {
         aet.padded_height(),
         aet.height()
     );
-    assert!(aet.padded_height() <= 32768);
+    assert!(aet.padded_height() <= MAX_PADDED_HEIGHT);
 }

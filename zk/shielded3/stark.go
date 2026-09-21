@@ -23,7 +23,7 @@ const (
 	OutputSlots   = 4
 	InputSlots    = 4
 	fieldModulus  = uint64(0xffffffff00000001)
-	publicWords   = 88
+	publicWords   = 108
 	secretWords   = 137
 	maxProofWords = 1 << 20
 	MaxProofSize  = 4 + maxProofWords*8
@@ -83,6 +83,7 @@ type Statement struct {
 	Anchor               Digest
 	Nullifier            Digest
 	Outputs              [OutputSlots]Digest
+	OneTimeKeys          [OutputSlots]Digest
 	StampRoot            Digest
 	AdditionalNullifiers [InputSlots - 1]Digest
 	InputCount           uint32
@@ -150,6 +151,9 @@ func (s Statement) words() ([]uint64, error) {
 	words = append(words, s.Nullifier[:]...)
 	for _, output := range s.Outputs {
 		words = append(words, output[:]...)
+	}
+	for _, key := range s.OneTimeKeys {
+		words = append(words, key[:]...)
 	}
 	if s.Deposit {
 		words = append(words, 1)
@@ -288,6 +292,7 @@ type DerivedSpend struct {
 	Anchor          Digest
 	Nullifier       Digest
 	Outputs         [OutputSlots]Digest
+	OneTimeKeys     [OutputSlots]Digest
 }
 
 // Describe computes note commitments and a candidate witness root for wallets.
@@ -313,16 +318,19 @@ func (b *STARKBackend) Describe(ctx context.Context, chainID, assetID uint64, wi
 		request = appendWords(request, sibling[:])
 	}
 	defer clear(request)
-	data, err := b.run(ctx, "describe", request, 40*8)
+	data, err := b.run(ctx, "describe", request, 40*12)
 	if err != nil {
 		return result, err
 	}
-	if len(data) != 40*8 {
+	if len(data) != 40*12 {
 		return result, ErrInvalidWitness
 	}
 	destinations := []*Digest{&result.Owner, &result.InputCommitment, &result.Anchor, &result.Nullifier}
 	for i := range result.Outputs {
 		destinations = append(destinations, &result.Outputs[i])
+	}
+	for i := range result.OneTimeKeys {
+		destinations = append(destinations, &result.OneTimeKeys[i])
 	}
 	for i, digest := range destinations {
 		for j := range digest {

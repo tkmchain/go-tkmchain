@@ -5,7 +5,7 @@
 
 use triton_vm::prelude::*;
 
-pub const PUBLIC_WORDS: usize = 88;
+pub const PUBLIC_WORDS: usize = 108;
 pub const SECRET_WORDS: usize = 137;
 pub const MERKLE_DEPTH: usize = 32;
 pub const PATH_DIGESTS: usize = MERKLE_DEPTH * 8;
@@ -18,10 +18,12 @@ pub const DOMAIN_OWNER: u64 = 3001;
 pub const DOMAIN_NOTE: u64 = 3002;
 pub const DOMAIN_NULLIFIER: u64 = 3003;
 pub const DOMAIN_NULLIFIER_KEY: u64 = 3005;
+pub const DOMAIN_ONETIME_KEY: u64 = 3006;
 
 // Public word order: chain lo/hi, asset lo/hi, public value (eight u32 limbs),
 // transaction intent (sixteen u32 words), anchor (five field words),
-// nullifier (five field words), four output commitments (five words each).
+// nullifier (five field words), four output commitments (five words each),
+// four proved one-time output keys (five words each).
 // Secret words: spending secret (5), note randomness (5), input value (8),
 // leaf index (1), four outputs: owner digest (5), randomness (5), value (8).
 
@@ -213,8 +215,21 @@ pub fn spend_program() -> Program {
     a.digest(1073);
     a.assert_digest(200);
     for i in 0..4 {
-        a.note(1019 + 18 * i, 1024 + 18 * i, 1029 + 18 * i);
+        let base = 1019 + 18 * i;
+        a.note(base, base + 5, base + 10);
         a.assert_digest(38 + 5 * i);
+        // The public one-time key is a Tip5 derivation of the hidden output
+        // opening and the proved commitment. This prevents metadata
+        // substitution: the key cannot be changed without invalidating the
+        // STARK proof.
+        let mut one_time = vec![Word::Literal(DOMAIN_ONETIME_KEY)];
+        one_time.extend((0..5).map(|offset| Word::Memory(base + offset)));
+        one_time.extend((0..5).map(|offset| Word::Memory(base + 5 + offset)));
+        one_time.extend((0..5).map(|offset| Word::Memory(300 + offset)));
+        a.hash(one_time);
+        a.store_digest(320);
+        a.digest(320);
+        a.assert_digest(88 + 5 * i);
     }
 
     // Every output owner, including change and decoys, belongs to the
@@ -624,15 +639,18 @@ pub fn describe_spend(
     }
     for i in 0..4 {
         let base = 19 + 18 * i;
-        result.extend(
-            note(
-                &secret[base..base + 5],
-                &secret[base + 5..base + 10],
-                &secret[base + 10..base + 18],
-            )
-            .values()
-            .map(|v| v.value()),
+        let commitment = note(
+            &secret[base..base + 5],
+            &secret[base + 5..base + 10],
+            &secret[base + 10..base + 18],
         );
+        result.extend(commitment.values().map(|v| v.value()));
+        let mut key_words = vec![DOMAIN_ONETIME_KEY];
+        key_words.extend(&secret[base..base + 5]);
+        key_words.extend(&secret[base + 5..base + 10]);
+        key_words.extend(commitment.values().map(|v| v.value()));
+        let key = hash(&key_words);
+        result.extend(key.values().map(|v| v.value()));
     }
     Ok(result)
 }

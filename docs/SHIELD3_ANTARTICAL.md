@@ -37,7 +37,7 @@ and change are excluded from this limit. Public deposits also have the 5 million
 TKM limit, zero private inputs, and require the ordinary pool value transfer.
 Encrypted padding hides output values, but input count is observable.
 
-The public proof statement has 88 words; private openings have 137 words and
+The public proof statement has 108 words; private openings have 137 words and
 256 five-word path digests. Native digests are full 40-byte Tip5/Goldilocks values,
 with owner/note/nullifier/stamp/nullifier-key hash domains 3001/3002/3003/3004/3005. No BN254
 reduction or legacy commitment is accepted. The pinned Triton VM 8.0.0 verifier

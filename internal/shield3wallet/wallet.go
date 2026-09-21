@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,12 +186,13 @@ func NoteNullifier(chainID uint64, n Note, key shielded3.Digest) (shielded3.Dige
 // authenticated recipient ciphertext; reusing randomness would be rejected by
 // the commitment/proof checks.
 func OneTimeOutputKey(owner, randomness, commitment shielded3.Digest) []byte {
-	h := sha512.New()
-	h.Write([]byte("TKM_SHIELD3_CARROT_ONETIME_OUTPUT_V1"))
-	h.Write(owner.Bytes())
-	h.Write(randomness.Bytes())
-	h.Write(commitment.Bytes())
-	return append([]byte(nil), h.Sum(nil)[:32]...)
+	// Tip5/Goldilocks digest output is 40 bytes and is proved by the
+	// Shield3 circuit as part of the public statement.
+	digest, err := shielded3.HashWords([]uint64{3006, owner[0], owner[1], owner[2], owner[3], owner[4], randomness[0], randomness[1], randomness[2], randomness[3], randomness[4], commitment[0], commitment[1], commitment[2], commitment[3], commitment[4]})
+	if err != nil {
+		return nil
+	}
+	return digest.Bytes()
 }
 
 func newPaymentTag() ([]byte, error) {

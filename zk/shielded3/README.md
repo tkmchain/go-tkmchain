@@ -31,7 +31,7 @@ Append operations retain known roots; path queries construct witnesses against
 the current canonical tree. Nullifiers and commitments cannot be reused.
 Invalid proofs leave the tree, balances and nullifiers unchanged.
 
-The public claim has **88 words**. The original 72-word prefix contains chain
+The public claim has **108 words**. The original 72-word prefix contains chain
 (2), asset (2), public value (8), SHA-512 transaction intent (16 u32 words),
 anchor (5), first nullifier (5), four output commitments (20), deposit mode (1),
 gas sponsorship (8), and stamp-registry root (5). Three additional nullifiers

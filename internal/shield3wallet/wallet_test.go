@@ -608,6 +608,9 @@ func TestShield3WalletConsensus(t *testing.T) {
 }
 
 func TestCarrotInspiredOutputKeyAndOutgoingViewScope(t *testing.T) {
+	if !shielded3.NativeAvailable() {
+		t.Skip("requires native Shield3 Tip5 implementation")
+	}
 	owner := shielded3.Digest{1}
 	randomness := shielded3.Digest{2}
 	commitment := shielded3.Digest{3}

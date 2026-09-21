@@ -216,15 +216,18 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 			return fail("zero or duplicate Shield3 output commitment")
 		}
 		seen[out.Commitment] = true
-		if len(out.OneTimeKey) != 32 {
-			return fail("missing Shield3 one-time output key")
+		if len(out.OneTimeKey) != 40 {
+			return fail("missing or invalid Shield3 one-time output key")
 		}
-		if bytes.Equal(out.OneTimeKey, make([]byte, 32)) || seenOneTime[string(out.OneTimeKey)] {
+		if bytes.Equal(out.OneTimeKey, make([]byte, 40)) || seenOneTime[string(out.OneTimeKey)] {
 			return fail("invalid or duplicate Shield3 one-time output key")
 		}
 		seenOneTime[string(out.OneTimeKey)] = true
 		if _, err := shielded3.DigestFromBytes(out.Commitment.Bytes()); err != nil {
 			return fail("noncanonical Shield3 output commitment")
+		}
+		if _, err := shielded3.DigestFromBytes(out.OneTimeKey); err != nil {
+			return fail("noncanonical Shield3 one-time output key")
 		}
 		for _, record := range []struct {
 			data []byte
@@ -265,6 +268,11 @@ func ShieldedV3Statement(tx *types.Transaction, e *ShieldedV3Transaction) (shiel
 	s.AdditionalNullifiers = e.AdditionalNullifiers
 	for i := range e.Outputs {
 		s.Outputs[i] = e.Outputs[i].Commitment
+		key, err := shielded3.DigestFromBytes(e.Outputs[i].OneTimeKey)
+		if err != nil {
+			return shielded3.Statement{}, err
+		}
+		s.OneTimeKeys[i] = key
 	}
 	return s, nil
 }
