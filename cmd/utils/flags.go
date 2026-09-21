@@ -1587,6 +1587,30 @@ func hasOnionPeer(cfg p2p.Config) bool {
 	return false
 }
 
+func discoverOnionHostname() string {
+	candidates := []string{
+		os.Getenv("TKM_ONION_HOSTNAME"),
+		"/var/lib/tor/tkmchain/hostname",
+		"/var/lib/tor/gtkm/hostname",
+		"/var/lib/tor/hidden_service/hostname",
+	}
+	for _, candidate := range candidates {
+		value := strings.TrimSpace(candidate)
+		if strings.HasPrefix(value, "/") {
+			data, err := os.ReadFile(value)
+			if err != nil {
+				continue
+			}
+			value = strings.TrimSpace(string(data))
+		}
+		value = strings.ToLower(strings.TrimSuffix(value, "."))
+		if strings.HasSuffix(value, ".onion") {
+			return value
+		}
+	}
+	return ""
+}
+
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	SetP2PConfig(ctx, &cfg.P2P)
 	if ctx.IsSet(P2PSOCKS5ProxyFlag.Name) {
@@ -1601,6 +1625,13 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	}
 	if ctx.IsSet(P2POnionHostnameFlag.Name) {
 		cfg.P2P.OnionHostname = strings.TrimSpace(ctx.String(P2POnionHostnameFlag.Name))
+	}
+	if cfg.P2P.OnionHostname == "" {
+		cfg.P2P.OnionHostname = discoverOnionHostname()
+	}
+	if cfg.P2PSOCKS5Proxy == "" && cfg.P2P.OnionHostname != "" {
+		cfg.P2PSOCKS5Proxy = "socks5://127.0.0.1:9050"
+		cfg.AutoTorProxy = true
 	}
 	if ctx.IsSet(PrivacyStrictFlag.Name) {
 		cfg.PrivacyStrict = ctx.Bool(PrivacyStrictFlag.Name)
