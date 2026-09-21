@@ -60,7 +60,7 @@ HTTP and WebSocket are loopback-only and peer traffic is sent through the
 explicit Tor SOCKS5 proxy. Configure additional Tor hidden-service ports only
 when a remote RPC client is required.
 
-See [Tor-only deployment details](docs/PRIVACY_MODE.md#onion-only-networking)
+See [Tor-only deployment details](docs/PRIVACY_MODE.md#onion-only-networking). For installation by operating system, see [Tor installation](docs/TOR_INSTALLATION.md).
 for the hidden-service configuration and pool/prover settings.
 
 ---
