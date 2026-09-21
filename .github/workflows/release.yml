@@ -141,7 +141,14 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
+          # Debian 11 is archived; use the archive mirror so package indexes
+          # and security packages remain available after mirror rotation.
+          sed -i \
+            -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
+            -e 's|deb.debian.org/debian|archive.debian.org/debian|g' \
+            /etc/apt/sources.list
+          printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
+          apt-get -o Acquire::Check-Valid-Until=false update
           apt-get install -y --no-install-recommends \
             build-essential \
             ca-certificates \
