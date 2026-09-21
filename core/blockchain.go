@@ -761,6 +761,12 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 // was snap synced or full synced and in which state, the method will try to
 // delete minimal data from disk whilst retaining chain consistency.
 func (bc *BlockChain) SetHead(head uint64) error {
+	// Once the permanent mainnet checkpoint is present, never expose a local
+	// rollback path below it. Chain reorganisation already rejects replacing
+	// this checkpoint; this protects administrative rewind calls as well.
+	if checkpoint, ok := params.GetCheckpoint(41913); ok && head < 41913 && bc.GetHeaderByNumber(41913) != nil {
+		return fmt.Errorf("cannot rewind below permanent checkpoint 41913 (%s)", checkpoint)
+	}
 	if _, err := bc.setHeadBeyondRoot(head, 0, common.Hash{}, false); err != nil {
 		return err
 	}
@@ -772,6 +778,11 @@ func (bc *BlockChain) SetHead(head uint64) error {
 // synced and in which state, the method will try to delete minimal data from
 // disk whilst retaining chain consistency.
 func (bc *BlockChain) SetHeadWithTimestamp(timestamp uint64) error {
+	if _, ok := params.GetCheckpoint(41913); ok {
+		if checkpoint := bc.GetHeaderByNumber(41913); checkpoint != nil && timestamp < checkpoint.Time {
+			return fmt.Errorf("cannot rewind below permanent checkpoint 41913 (%s)", checkpoint.Hash())
+		}
+	}
 	if _, err := bc.setHeadBeyondRoot(0, timestamp, common.Hash{}, false); err != nil {
 		return err
 	}
@@ -1335,32 +1346,32 @@ func (bc *BlockChain) stopWithoutSaving() {
 // Stop stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt.
 func (bc *BlockChain) Stop() {
-    // Force save state before stopping
-    head := bc.CurrentBlock()
-    if head != nil && head.Number.Uint64() > 0 {
-        log.Info("Saving blockchain state before shutdown", "block", head.Number, "root", head.Root)
-        
-        // Force commit of current state
-        if err := bc.triedb.Commit(head.Root, true); err != nil {
-            log.Error("Failed to commit state", "err", err)
-        }
-        
-        // Force snapshot journal
-        if bc.snaps != nil {
-            if _, err := bc.snaps.Journal(head.Root); err != nil {
-                log.Error("Failed to journal snapshot", "err", err)
-            }
-        }
-    }
-    
+	// Force save state before stopping
+	head := bc.CurrentBlock()
+	if head != nil && head.Number.Uint64() > 0 {
+		log.Info("Saving blockchain state before shutdown", "block", head.Number, "root", head.Root)
+
+		// Force commit of current state
+		if err := bc.triedb.Commit(head.Root, true); err != nil {
+			log.Error("Failed to commit state", "err", err)
+		}
+
+		// Force snapshot journal
+		if bc.snaps != nil {
+			if _, err := bc.snaps.Journal(head.Root); err != nil {
+				log.Error("Failed to journal snapshot", "err", err)
+			}
+		}
+	}
+
 	bc.stopWithoutSaving()
 
-    // Ensure state is saved after stop
-    if head != nil && head.Number.Uint64() > 0 {
-        if err := bc.triedb.Commit(head.Root, true); err != nil {
-            log.Error("Failed final state commit", "err", err)
-        }
-    }
+	// Ensure state is saved after stop
+	if head != nil && head.Number.Uint64() > 0 {
+		if err := bc.triedb.Commit(head.Root, true); err != nil {
+			log.Error("Failed final state commit", "err", err)
+		}
+	}
 	// Ensure that the entirety of the state snapshot is journaled to disk.
 	var snapBase common.Hash
 	if bc.snaps != nil {
@@ -1720,16 +1731,16 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
-    if err := bc.triedb.Commit(root, true); err != nil {
-        // For path scheme, "disk layer" means the state is already durable – ignore it.
-        if !strings.Contains(err.Error(), "disk layer") {
-            return err
-        }
-        log.Debug("State already on disk (path scheme)", "root", root)
-    }
-    if bc.triedb.Scheme() == rawdb.PathScheme {
-        return nil
-    }
+	if err := bc.triedb.Commit(root, true); err != nil {
+		// For path scheme, "disk layer" means the state is already durable – ignore it.
+		if !strings.Contains(err.Error(), "disk layer") {
+			return err
+		}
+		log.Debug("State already on disk (path scheme)", "root", root)
+	}
+	if bc.triedb.Scheme() == rawdb.PathScheme {
+		return nil
+	}
 	// If we're running an archive node, always flush
 	if bc.cfg.ArchiveMode {
 		return bc.triedb.Commit(root, false)
