@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -100,6 +101,13 @@ func New(conf *Config) (*Node, error) {
 	}
 	if conf.Logger == nil {
 		conf.Logger = log.New()
+	}
+	if conf.AutoTorProxy {
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:9050", time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("Tor is required for onion bootstrap peers but SOCKS5 is unavailable at 127.0.0.1:9050; install Tor with 'sudo apt install tor' and start it with 'sudo systemctl enable --now tor': %w", err)
+		}
+		_ = conn.Close()
 	}
 	if conf.P2PSOCKS5Proxy != "" || conf.PrivacyStrict || conf.OnionOnly {
 		if conf.P2PSOCKS5Proxy == "" {

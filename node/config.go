@@ -69,6 +69,9 @@ type Config struct {
 
 	// P2PSOCKS5Proxy routes outbound P2P connections through Tor.
 	P2PSOCKS5Proxy string `toml:"p2pSocks5Proxy,omitempty"`
+	// AutoTorProxy marks the proxy selected automatically for onion bootstrap peers.
+	// It is intentionally not serialized; startup checks the local Tor listener.
+	AutoTorProxy bool `toml:"-"`
 	// PrivacyStrict disables discovery/NAT and rejects non-loopback RPC listeners.
 	PrivacyStrict bool `toml:"privacyStrict,omitempty"`
 	// OnionOnly additionally rejects all non-.onion peers and binds P2P locally

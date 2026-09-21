@@ -1597,6 +1597,7 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	// while still allowing an explicit proxy override.
 	if cfg.P2PSOCKS5Proxy == "" && hasOnionPeer(cfg.P2P) {
 		cfg.P2PSOCKS5Proxy = "socks5://127.0.0.1:9050"
+		cfg.AutoTorProxy = true
 	}
 	if ctx.IsSet(P2POnionHostnameFlag.Name) {
 		cfg.P2P.OnionHostname = strings.TrimSpace(ctx.String(P2POnionHostnameFlag.Name))
