@@ -55,13 +55,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      TKM_SHIELD3_TESTDATA: ${{ runner.temp }}/shield3-vectors
-      TKM_SHIELD3_RELAY_TESTDATA: ${{ runner.temp }}/shield3-relay-vectors
+      TKM_SHIELD3_TESTDATA: ${{ github.workspace }}/.tmp/shield3-vectors
+      TKM_SHIELD3_RELAY_TESTDATA: ${{ github.workspace }}/.tmp/shield3-relay-vectors
       TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
       CARGO_BUILD_JOBS: '2'
       RAYON_NUM_THREADS: '2'
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare test directories
+        run: mkdir -p "$TKM_SHIELD3_TESTDATA" "$TKM_SHIELD3_RELAY_TESTDATA"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
