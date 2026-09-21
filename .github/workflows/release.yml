@@ -26,11 +26,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Build on the oldest maintained Ubuntu runner so cgo binaries do not
-          # require glibc/libstdc++ symbols from the latest runner image.
-          - runner: ubuntu-22.04
-            platform: linux
-            artifact: release-linux
           - runner: macos-latest
             platform: macos
             artifact: release-macos
@@ -134,13 +129,15 @@ jobs:
           retention-days: 1
 
   build-debian13:
-    name: Build Debian 13 binaries
+    name: Build portable Linux binaries
     runs-on: ubuntu-latest
     container:
-      image: debian:13-slim
+      # Debian 11 provides glibc 2.31, keeping the Linux archive usable on
+      # older Ubuntu/Debian hosts as well as newer distributions.
+      image: debian:11-slim
 
     steps:
-      - name: Install Debian 13 build tools
+      - name: Install Linux build tools
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -187,18 +184,18 @@ jobs:
           go version
           go env
 
-      - name: Build and package Debian 13 binaries
+      - name: Build and package portable Linux binaries
         run: |
           VERSION="$RELEASE_TAG" make gtkm shielded-payout-prover
-          archive="gtkm-${RELEASE_TAG}-debian13-amd64"
+          archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
 
-      - name: Upload Debian 13 archive
+      - name: Upload portable Linux archive
         uses: actions/upload-artifact@v4
         with:
-          name: release-debian13
+          name: release-linux
           path: release/*.tar.gz
           if-no-files-found: error
           retention-days: 1
