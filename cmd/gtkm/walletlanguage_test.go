@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWalletLanguageCatalogPriority(t *testing.T) {
@@ -65,5 +68,17 @@ func TestWalletDaemonTranslations(t *testing.T) {
 	walletActiveLanguage = walletLanguageByCode("ko")
 	if got := walletText("daemon.language", "fallback"); got == "fallback" {
 		t.Fatal("daemon language message did not resolve")
+	}
+}
+
+func TestWalletLogTranslationHandler(t *testing.T) {
+	var output bytes.Buffer
+	handler := &walletLogTranslationHandler{next: slog.NewTextHandler(&output, nil), language: "zh"}
+	record := slog.NewRecord(time.Unix(0, 0), slog.LevelInfo, "Started P2P networking", 0)
+	if err := handler.Handle(nil, record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "点对点网络已启动") {
+		t.Fatalf("translated log output = %q", output.String())
 	}
 }

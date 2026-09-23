@@ -299,6 +299,9 @@ func init() {
 		}
 		flags.CheckEnvVars(ctx, app.Flags, "GETH")
 
+		language := configureDaemonWalletLanguage(ctx)
+		log.Info(walletText("daemon.language", "Daemon interface language selected"), "language", language.Name, "native", language.NativeName, "code", language.Code)
+
 		// Log RandomX mining configuration if enabled
 		if ctx.Bool(utils.MiningEnabledFlag.Name) || ctx.Bool(utils.PoolMiningFlag.Name) {
 			log.Info("RandomX mining enabled",
@@ -354,8 +357,6 @@ func geth(ctx *cli.Context) error {
 		return fmt.Errorf("invalid command: %q", args[0])
 	}
 
-	language := configureDaemonWalletLanguage(ctx)
-	log.Info(walletText("daemon.language", "Daemon interface language selected"), "language", language.Name, "native", language.NativeName, "code", language.Code)
 	prepare(ctx)
 	stack, ethBackend := makeFullNodeWithBackend(ctx)
 	defer stack.Close()

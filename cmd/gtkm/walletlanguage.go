@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +135,122 @@ func detectWalletLanguage() walletLanguage {
 		}
 	}
 	return walletLanguageByCode("en")
+}
+
+// walletLogCatalog translates the high-value daemon lifecycle messages that
+// operators see while a node starts, synchronizes, and shuts down. Structured
+// fields (hashes, heights, endpoints, and errors) are preserved verbatim.
+// Unknown diagnostic messages intentionally keep their canonical English text
+// so support tooling and peer reports remain searchable across locales.
+var walletLogCatalog = map[string]map[string]string{
+	"zh": {
+		"Starting peer-to-peer node":                          "正在启动点对点网络",
+		"New local node record":                               "已创建本地节点记录",
+		"Started P2P networking":                              "点对点网络已启动",
+		"IPC endpoint opened":                                 "IPC 端点已打开",
+		"HTTP server started":                                 "HTTP 服务器已启动",
+		"WebSocket enabled":                                   "WebSocket 已启用",
+		"Loaded local transaction journal":                    "已加载本地交易日志",
+		"Tkmchain backend started with RandomX consensus":     "TKMChain RandomX 共识后端已启动",
+		"Gtkm node is running; waiting for shutdown signal":   "Gtkm 节点正在运行，等待关闭信号",
+		"Looking for peers":                                   "正在查找节点",
+		"Synchronisation failed, retrying":                    "同步失败，正在重试",
+		"Received interrupt, saving state before shutdown...": "收到中断信号，正在保存状态后关闭…",
+		"Closing node after interrupt":                        "正在中断后关闭节点",
+		"Smartcard socket not found, disabling":               "未找到智能卡套接字，已禁用",
+		"RandomX mining enabled":                              "RandomX 挖矿已启用",
+		"King configuration loaded":                           "王配置已加载",
+		"TKM shielded prover started":                         "TKM 隐私证明器已启动",
+	},
+	"ru": {
+		"Starting peer-to-peer node":                          "Запуск однорангового узла",
+		"New local node record":                               "Создана запись локального узла",
+		"Started P2P networking":                              "P2P-сеть запущена",
+		"IPC endpoint opened":                                 "Конечная точка IPC открыта",
+		"HTTP server started":                                 "HTTP-сервер запущен",
+		"WebSocket enabled":                                   "WebSocket включён",
+		"Loaded local transaction journal":                    "Локальный журнал транзакций загружен",
+		"Tkmchain backend started with RandomX consensus":     "Бэкенд консенсуса TKMChain RandomX запущен",
+		"Gtkm node is running; waiting for shutdown signal":   "Узел Gtkm работает и ожидает сигнал завершения",
+		"Looking for peers":                                   "Поиск узлов",
+		"Synchronisation failed, retrying":                    "Синхронизация не удалась, повтор",
+		"Received interrupt, saving state before shutdown...": "Получено прерывание, сохранение состояния перед завершением…",
+		"Closing node after interrupt":                        "Остановка узла после прерывания",
+		"Smartcard socket not found, disabling":               "Сокет смарт-карты не найден, функция отключена",
+		"RandomX mining enabled":                              "Майнинг RandomX включён",
+		"King configuration loaded":                           "Конфигурация королей загружена",
+		"TKM shielded prover started":                         "Прoвер TKM Shielded запущен",
+	},
+	"ja": {
+		"Starting peer-to-peer node":                          "ピアツーピアノードを起動しています",
+		"New local node record":                               "ローカルノードレコードを作成しました",
+		"Started P2P networking":                              "P2P ネットワークを起動しました",
+		"IPC endpoint opened":                                 "IPC エンドポイントを開きました",
+		"HTTP server started":                                 "HTTP サーバーを起動しました",
+		"WebSocket enabled":                                   "WebSocket を有効にしました",
+		"Loaded local transaction journal":                    "ローカルトランザクションジャーナルを読み込みました",
+		"Tkmchain backend started with RandomX consensus":     "TKMChain RandomX コンセンサスバックエンドを起動しました",
+		"Gtkm node is running; waiting for shutdown signal":   "Gtkm ノードは実行中です。終了シグナルを待っています",
+		"Looking for peers":                                   "ピアを検索しています",
+		"Synchronisation failed, retrying":                    "同期に失敗しました。再試行します",
+		"Received interrupt, saving state before shutdown...": "割り込みを受信しました。終了前に状態を保存しています…",
+		"Closing node after interrupt":                        "割り込み後にノードを終了しています",
+		"Smartcard socket not found, disabling":               "スマートカードソケットが見つからないため無効にしました",
+		"RandomX mining enabled":                              "RandomX マイニングを有効にしました",
+		"King configuration loaded":                           "キング設定を読み込みました",
+		"TKM shielded prover started":                         "TKM シールドプルーバーを起動しました",
+	},
+	"ko": {
+		"Starting peer-to-peer node":                          "피어 투 피어 노드를 시작합니다",
+		"New local node record":                               "로컬 노드 레코드가 생성되었습니다",
+		"Started P2P networking":                              "P2P 네트워크가 시작되었습니다",
+		"IPC endpoint opened":                                 "IPC 엔드포인트가 열렸습니다",
+		"HTTP server started":                                 "HTTP 서버가 시작되었습니다",
+		"WebSocket enabled":                                   "WebSocket이 활성화되었습니다",
+		"Loaded local transaction journal":                    "로컬 트랜잭션 저널을 불러왔습니다",
+		"Tkmchain backend started with RandomX consensus":     "TKMChain RandomX 합의 백엔드가 시작되었습니다",
+		"Gtkm node is running; waiting for shutdown signal":   "Gtkm 노드가 실행 중이며 종료 신호를 기다립니다",
+		"Looking for peers":                                   "피어를 찾는 중입니다",
+		"Synchronisation failed, retrying":                    "동기화에 실패하여 다시 시도합니다",
+		"Received interrupt, saving state before shutdown...": "중단 신호를 받아 종료 전에 상태를 저장합니다…",
+		"Closing node after interrupt":                        "중단 후 노드를 종료합니다",
+		"Smartcard socket not found, disabling":               "스마트카드 소켓을 찾지 못해 비활성화했습니다",
+		"RandomX mining enabled":                              "RandomX 채굴이 활성화되었습니다",
+		"King configuration loaded":                           "킹 설정을 불러왔습니다",
+		"TKM shielded prover started":                         "TKM 실드 프로버가 시작되었습니다",
+	},
+}
+
+type walletLogTranslationHandler struct {
+	next     slog.Handler
+	language string
+}
+
+func (h *walletLogTranslationHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.next.Enabled(ctx, level)
+}
+
+func (h *walletLogTranslationHandler) Handle(ctx context.Context, record slog.Record) error {
+	if translated := walletLogCatalog[h.language][record.Message]; translated != "" {
+		record.Message = translated
+	}
+	return h.next.Handle(ctx, record)
+}
+
+func (h *walletLogTranslationHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &walletLogTranslationHandler{next: h.next.WithAttrs(attrs), language: h.language}
+}
+
+func (h *walletLogTranslationHandler) WithGroup(name string) slog.Handler {
+	return &walletLogTranslationHandler{next: h.next.WithGroup(name), language: h.language}
+}
+
+func installWalletLogTranslation(language walletLanguage) {
+	root := log.Root()
+	if _, alreadyWrapped := root.Handler().(*walletLogTranslationHandler); alreadyWrapped {
+		return
+	}
+	log.SetDefault(log.NewLogger(&walletLogTranslationHandler{next: root.Handler(), language: language.Code}))
 }
 
 func walletText(key, fallback string) string {
@@ -295,6 +413,7 @@ func configureDaemonWalletLanguage(ctx *cli.Context) walletLanguage {
 			language = detectWalletLanguage()
 		}
 		walletActiveLanguage = language
+		installWalletLogTranslation(language)
 		return language
 	}
 	dataDir := walletLanguageDataDir(ctx)
@@ -307,6 +426,7 @@ func configureDaemonWalletLanguage(ctx *cli.Context) walletLanguage {
 		}
 	}
 	walletActiveLanguage = language
+	installWalletLogTranslation(language)
 	return language
 }
 
