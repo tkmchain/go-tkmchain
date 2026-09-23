@@ -23,7 +23,9 @@ curl -fL -o "/tmp/tkmchain_${version#v}_amd64.deb" \
 sudo apt install "/tmp/tkmchain_${version#v}_amd64.deb"
 ```
 
-This installs both `gtkm` and the `tkmchain` command alias. See
+This installs both `gtkm` and the `tkmchain` command alias. ARM64 and ARMv7
+release packages are published as `tkmchain_*_arm64.deb` and
+`tkmchain_*_armhf.deb`; use the package matching the host architecture. See
 [Debian/Ubuntu installation](docs/INSTALL_APT.md) for upgrade and Tor-only
 startup instructions.
 
@@ -743,6 +745,13 @@ make all
 
 ### Cross-Platform Builds
 
+Install the Linux ARM64 and ARMv7 cross-compilers when building those targets locally:
+
+```shell
+sudo apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+  gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+```
+
 Install mingw for Windows cross-compilation:
 
 ```shell
@@ -771,7 +780,8 @@ build/dist/
 └── linux/
     ├── gtkm-linux-amd64
     ├── gtkm-linux-386
-    └── gtkm-linux-arm64
+    ├── gtkm-linux-arm64
+    └── gtkm-linux-arm
 ```
 
 ---

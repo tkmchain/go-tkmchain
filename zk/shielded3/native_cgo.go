@@ -5,10 +5,11 @@ package shielded3
 /*
 #include <stdint.h>
 #include <stddef.h>
-#cgo !windows,!android LDFLAGS: ${SRCDIR}/stark/target/release/libtkm_shield3_stark.a
+#cgo linux,amd64 LDFLAGS: ${SRCDIR}/stark/target/release/libtkm_shield3_stark.a -ldl -lpthread -lm
+#cgo linux,arm64 LDFLAGS: ${SRCDIR}/stark/target/aarch64-unknown-linux-gnu/release/libtkm_shield3_stark.a -ldl -lpthread -lm
+#cgo linux,arm LDFLAGS: ${SRCDIR}/stark/target/armv7-unknown-linux-gnueabihf/release/libtkm_shield3_stark.a -ldl -lpthread -lm
 #cgo windows,amd64 LDFLAGS: ${SRCDIR}/stark/target/x86_64-pc-windows-gnu/release/libtkm_shield3_stark.a
 #cgo android,arm64 LDFLAGS: ${SRCDIR}/stark/target/aarch64-linux-android/release/libtkm_shield3_stark.a
-#cgo linux,!android LDFLAGS: -ldl -lpthread -lm
 #cgo android LDFLAGS: -ldl -lm -llog
 #cgo darwin LDFLAGS: -framework Security -framework CoreFoundation -liconv -lm
 #cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll

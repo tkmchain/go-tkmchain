@@ -774,7 +774,7 @@ cross-linux-386: randomx
 	fi
 
 #? cross-linux-arm64: Build Linux ARM64 (aarch64) executables.
-cross-linux-arm64: randomx-linux
+cross-linux-arm64: randomx-linux shield3-linux-arm64
 	@echo "Building Linux ARM64 (aarch64) executables..."
 	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/arm64
 	@if [ "$(HAS_ARM64)" -eq 1 ]; then \
@@ -784,7 +784,7 @@ cross-linux-arm64: randomx-linux
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
 				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM64) -lrandomx -lstdc++ -lm" \
 				GOOS=linux GOARCH=arm64 CC=$(AARCH64_CC) CXX=$(AARCH64_CXX) \
-				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm64/$$cmd-linux-arm64 ./cmd/$$cmd; \
+				go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(CROSS_OUTPUT_DIR)/linux/arm64/$$cmd-linux-arm64 ./cmd/$$cmd; \
 		done; \
 		echo "✅ Linux ARM64 builds complete: $(CROSS_OUTPUT_DIR)/linux/arm64/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/linux/arm64/; \
@@ -794,7 +794,7 @@ cross-linux-arm64: randomx-linux
 	fi
 
 #? cross-linux-arm: Build Linux ARM (32-bit) executables.
-cross-linux-arm: randomx-linux-arm
+cross-linux-arm: randomx-linux-arm shield3-linux-arm
 	@echo "Building Linux ARM (32-bit) executables..."
 	@mkdir -p $(CROSS_OUTPUT_DIR)/linux/arm
 	@if [ -n "$(HAS_ARM)" ]; then \
@@ -803,8 +803,8 @@ cross-linux-arm: randomx-linux-arm
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
 				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM) -lrandomx -lstdc++ -lm" \
-				GOOS=linux GOARCH=arm CC=$(ARM_CC) CXX=$(ARM_CXX) \
-				go build $(LDFLAGS) -tags "randomx,cgo" -o $(CROSS_OUTPUT_DIR)/linux/arm/$$cmd-linux-arm ./cmd/$$cmd; \
+				GOOS=linux GOARCH=arm GOARM=7 CC=$(ARM_CC) CXX=$(ARM_CXX) \
+				go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(CROSS_OUTPUT_DIR)/linux/arm/$$cmd-linux-arm ./cmd/$$cmd; \
 		done; \
 		echo "✅ Linux ARM builds complete: $(CROSS_OUTPUT_DIR)/linux/arm/"; \
 		ls -la $(CROSS_OUTPUT_DIR)/linux/arm/; \
@@ -897,11 +897,17 @@ cross-build:
 	@echo "Note: These builds do NOT include RandomX support."
 	@echo "Output directory: $(CROSS_OUTPUT_DIR)"
 
-.PHONY: shield3-host shield3-windows
+.PHONY: shield3-host shield3-windows shield3-linux-arm64 shield3-linux-arm
 shield3-host:
 	./scripts/shield3-build.sh
 shield3-windows:
 	GOOS=windows CC=$(MINGW64_CC) SHIELD3_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield3-build.sh
+
+shield3-linux-arm64:
+	CC=$(AARCH64_CC) SHIELD3_RUST_TARGET=aarch64-unknown-linux-gnu ./scripts/shield3-build.sh
+
+shield3-linux-arm:
+	CC=$(ARM_CC) SHIELD3_RUST_TARGET=armv7-unknown-linux-gnueabihf ./scripts/shield3-build.sh
 
 #? shield3-relay: Build the shared Shield3 relay with its native verifier.
 .PHONY: shield3-relay

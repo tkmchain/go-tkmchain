@@ -223,6 +223,116 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-linux-arm:
+    name: Build Linux ${{ matrix.label }} binaries
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: arm64
+            goarch: arm64
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_cc: AARCH64_CC
+            make_cxx: AARCH64_CXX
+            cross_target: cross-linux-arm64
+            output_dir: arm64
+            binary_suffix: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+          - label: armv7
+            goarch: arm
+            goarm: 7
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_cc: ARM_CC
+            make_cxx: ARM_CXX
+            cross_target: cross-linux-arm
+            output_dir: arm
+            binary_suffix: arm
+            rust_target: armv7-unknown-linux-gnueabihf
+            deb_arch: armhf
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          check-latest: true
+
+      - name: Install Linux cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf
+
+      - name: Install Shield3 Rust toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustup target add '${{ matrix.rust_target }}'
+
+      - name: Build Linux ${{ matrix.label }} binaries
+        env:
+          ARM_CC: ${{ matrix.cc }}
+          ARM_CXX: ${{ matrix.cxx }}
+          ARM_GOARCH: ${{ matrix.goarch }}
+          ARM_GOARM: ${{ matrix.goarm }}
+          ARM_LABEL: ${{ matrix.label }}
+          ARM_OUTPUT_DIR: ${{ matrix.output_dir }}
+          ARM_BINARY_SUFFIX: ${{ matrix.binary_suffix }}
+          ARM_CROSS_TARGET: ${{ matrix.cross_target }}
+          ARM_MAKE_CC: ${{ matrix.make_cc }}
+          ARM_MAKE_CXX: ${{ matrix.make_cxx }}
+          ARM_DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default \
+            make "$ARM_MAKE_CC=$ARM_CC" "$ARM_MAKE_CXX=$ARM_CXX" "$ARM_CROSS_TARGET"
+
+          # The pool prover is a separate binary and must carry the same
+          # architecture-specific Shield3 verifier as gtkm.
+          mkdir -p "build/dist/linux/$ARM_OUTPUT_DIR"
+          CGO_ENABLED=1 GOOS=linux GOARCH="$ARM_GOARCH" GOARM="${ARM_GOARM:-}" CC="$ARM_CC" CXX="$ARM_CXX" \
+            go build -trimpath -ldflags="-s -w -X main.Version=$RELEASE_TAG" \
+            -tags shield3 \
+            -o "build/dist/linux/$ARM_OUTPUT_DIR/shielded-payout-prover-linux-$ARM_BINARY_SUFFIX" \
+            ./cmd/shielded-payout-prover
+
+          archive="gtkm-${RELEASE_TAG}-linux-${ARM_LABEL}"
+          mkdir -p "release/$archive"
+          cp "build/dist/linux/$ARM_OUTPUT_DIR/gtkm-linux-$ARM_BINARY_SUFFIX" "release/$archive/gtkm"
+          cp "build/dist/linux/$ARM_OUTPUT_DIR/shielded-payout-prover-linux-$ARM_BINARY_SUFFIX" \
+            "release/$archive/shielded-payout-prover"
+
+          # Build the native Debian package from the cross-compiled binaries.
+          mkdir -p build/bin
+          cp "release/$archive/gtkm" build/bin/gtkm
+          cp "release/$archive/shielded-payout-prover" build/bin/shielded-payout-prover
+          ./packaging/build-deb.sh "$RELEASE_TAG" release "$ARM_DEB_ARCH"
+          tar -C release -czf "release/$archive.tar.gz" "$archive"
+
+      - name: Upload Linux ${{ matrix.label }} archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.label }}
+          path: |
+            release/*.tar.gz
+            release/*.deb
+          if-no-files-found: error
+          retention-days: 1
+
   build-windows-gui:
     name: Build Windows GUI wallet
     runs-on: ubuntu-latest
@@ -370,6 +480,7 @@ jobs:
     needs:
       - build
       - build-debian13
+      - build-linux-arm
       - build-windows-gui
       - build-android
     runs-on: ubuntu-latest

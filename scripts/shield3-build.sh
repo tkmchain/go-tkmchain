@@ -11,6 +11,8 @@ if [[ -n "$target" ]]; then
   case "$target" in
     x86_64-pc-windows-gnu) export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${CC:-x86_64-w64-mingw32-gcc}";;
     aarch64-linux-android) export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${CC:?Android NDK compiler required}";;
+    aarch64-unknown-linux-gnu) export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CC:-aarch64-linux-gnu-gcc}";;
+    armv7-unknown-linux-gnueabihf) export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER="${CC:-arm-linux-gnueabihf-gcc}";;
   esac
 fi
 "${CARGO:-cargo}" "${args[@]}"
