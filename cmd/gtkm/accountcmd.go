@@ -38,7 +38,8 @@ import (
 var (
 	walletCommand = &cli.Command{
 		Name:      "wallet",
-		Usage:     "Manage Ethereum presale wallets",
+		Usage:     "Open the interactive wallet or manage imported wallets",
+		Action:    interactiveWallet,
 		ArgsUsage: "",
 		Description: `
     gtkm wallet import /path/to/my/presale.wallet
@@ -47,6 +48,16 @@ will prompt for your password and imports your ether presale account.
 It can be used non-interactively with the --password option taking a
 passwordfile as argument containing the wallet password in plaintext.`,
 		Subcommands: []*cli.Command{
+			{
+				Name:    "interactive",
+				Aliases: []string{"ui", "send"},
+				Usage:   "Open the guided terminal wallet",
+				Action:  interactiveWallet,
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.KeyStoreDirFlag,
+				},
+			},
 			{
 
 				Name:      "import",

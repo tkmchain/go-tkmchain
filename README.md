@@ -795,9 +795,19 @@ Going through all the possible command line flags is out of scope here (please c
 - High-performance SSD with at least 1TB of free space
 - 25+ MBit/sec download Internet service
 
+### Guided Terminal Wallet
+
+For a simple, reviewable send flow, start a node first and run the wallet from the same user account:
+
+```shell
+$ gtkm wallet interactive
+```
+
+The wallet opens a menu with portfolio, account, refresh, and send screens. It connects through the local IPC socket, keeps passwords and private keys local, validates the recipient and decimal amount, estimates the network fee, checks the available balance, and shows a final review before signing. Type `SEND` to authorize submission; any other response cancels without signing. `wallet ui` and `wallet send` are aliases. Use the existing shielded wallet/prover flow for shielded TKM transfers.
+
 ### Full Node on the Main Tkmchain Network
 
-By far the most common scenario is people wanting to simply interact with the Tkmchain network: create accounts; transfer funds; deploy and interact with contracts. For this particular use case, the user doesn't care about years-old historical data, so we can sync quickly to the current state of the network. To do so:
+By far the most common scenario is people wanting to simply interact with Tkmchain: create accounts; transfer funds; deploy and interact with contracts. For this particular use case, the user doesn't care about years-old historical data, so we can sync quickly to the current state of the network. To do so:
 
 ```shell
 $ gtkm console
