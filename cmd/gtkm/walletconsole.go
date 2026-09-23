@@ -66,6 +66,11 @@ func interactiveWallet(ctx *cli.Context) error {
 		return fmt.Errorf("read chain ID: %w", err)
 	}
 	reader := bufio.NewReader(os.Stdin)
+	languagePreference, language, err := configureWalletLanguage(reader, cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("choose wallet language: %w", err)
+	}
+	walletActiveLanguage = language
 	for {
 		clearWalletScreen()
 		printWalletHeader(chainID, endpoint)
@@ -75,15 +80,16 @@ func interactiveWallet(ctx *cli.Context) error {
 			fmt.Println("  Create one with: gtkm account new")
 			return nil
 		}
-		fmt.Println("\n  1) Portfolio      View balances and account details")
-		fmt.Println("  2) Send          Send native TKM or a native account transfer")
-		fmt.Println("  3) Accounts      List local accounts")
-		fmt.Println("  4) TKM Phone     Phone status, prices, and registered numbers")
-		fmt.Println("  5) Email         EmailVM status and encrypted mailbox views")
-		fmt.Println("  6) Kings         Rotating-king schedule and recent rotations")
-		fmt.Println("  7) Refresh       Reload node and account data")
-		fmt.Println("  0) Exit")
-		choice, err := readWalletLine(reader, "\n  Select an option")
+		fmt.Printf("\n  1) %s\n", walletText("menu.portfolio", "Portfolio"))
+		fmt.Printf("  2) %s\n", walletText("menu.send", "Send"))
+		fmt.Printf("  3) %s\n", walletText("menu.accounts", "Accounts"))
+		fmt.Printf("  4) %s\n", walletText("menu.phone", "TKM Phone"))
+		fmt.Printf("  5) %s\n", walletText("menu.email", "Email"))
+		fmt.Printf("  6) %s\n", walletText("menu.kings", "Kings"))
+		fmt.Printf("  7) %s\n", walletText("menu.refresh", "Refresh"))
+		fmt.Printf("  8) %s\n", walletText("menu.language", "Language"))
+		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
+		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
 			return err
 		}
@@ -104,11 +110,25 @@ func interactiveWallet(ctx *cli.Context) error {
 			showWalletKings(reader, rpcClient)
 		case "7":
 			continue
+		case "8":
+			preference, selected, selectErr := chooseWalletLanguage(reader)
+			if selectErr != nil {
+				showWalletError(reader, selectErr)
+				continue
+			}
+			languagePreference = preference
+			walletActiveLanguage = selected
+			if saveErr := saveWalletLanguage(cfg.DataDir, languagePreference); saveErr != nil {
+				showWalletError(reader, saveErr)
+				continue
+			}
+			fmt.Printf("\n  %s: %s — %s\n", walletText("language.saved", "Language saved"), selected.Name, selected.NativeName)
+			pauseWallet(reader)
 		case "0", "q", "Q":
-			fmt.Println("\n  Wallet closed.")
+			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, or 0.")
+			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -253,7 +273,7 @@ func showWalletPhoneInventory(ctx context.Context, client *rpc.Client) {
 
 func showWalletPhone(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) {
 	clearWalletScreen()
-	fmt.Println("TKM PHONE")
+	fmt.Println(walletText("section.phone", "TKM PHONE"))
 	fmt.Println("─────────")
 	ctx, cancel := walletRPCContext()
 	defer cancel()
@@ -730,7 +750,7 @@ func waitWalletReceipt(ctx context.Context, client *ethclient.Client, hash commo
 
 func showWalletEmail(reader *bufio.Reader, client *rpc.Client) {
 	clearWalletScreen()
-	fmt.Println("EMAILVM")
+	fmt.Println(walletText("section.email", "EMAILVM"))
 	fmt.Println("───────")
 	fmt.Println("Email data remains encrypted; this view never asks for a mail private key.")
 	ctx, cancel := walletRPCContext()
@@ -781,7 +801,7 @@ func showWalletEmail(reader *bufio.Reader, client *rpc.Client) {
 
 func showWalletKings(reader *bufio.Reader, client *rpc.Client) {
 	clearWalletScreen()
-	fmt.Println("ROTATING KINGS")
+	fmt.Println(walletText("section.kings", "ROTATING KINGS"))
 	fmt.Println("──────────────")
 	ctx, cancel := walletRPCContext()
 	defer cancel()
@@ -829,8 +849,8 @@ func showWalletKings(reader *bufio.Reader, client *rpc.Client) {
 
 func printWalletHeader(chainID *big.Int, endpoint string) {
 	fmt.Println("╭────────────────────────────────────────────────────────────╮")
-	fmt.Println("│                         TKM WALLET                          │")
-	fmt.Println("│              Secure local signing console                  │")
+	fmt.Printf("│ %-58s │\n", walletText("title", "TKM WALLET"))
+	fmt.Printf("│ %-58s │\n", walletText("subtitle", "Secure local signing console"))
 	fmt.Println("╰────────────────────────────────────────────────────────────╯")
 	fmt.Printf("  Network: chain %s    IPC: %s\n", chainID.String(), endpoint)
 	fmt.Println("  Keys stay local. Review every address, amount, and fee before signing.")
@@ -848,7 +868,7 @@ func readWalletLine(reader *bufio.Reader, label string) (string, error) {
 
 func showWalletAccounts(reader *bufio.Reader, ks *keystore.KeyStore, accounts []accounts.Account) {
 	clearWalletScreen()
-	fmt.Println("LOCAL ACCOUNTS")
+	fmt.Println(walletText("section.accounts", "LOCAL ACCOUNTS"))
 	fmt.Println("──────────────")
 	for i, account := range accounts {
 		algorithm, err := ks.AccountAlgorithm(account)
@@ -862,7 +882,7 @@ func showWalletAccounts(reader *bufio.Reader, ks *keystore.KeyStore, accounts []
 
 func showWalletPortfolio(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, accounts []accounts.Account) {
 	clearWalletScreen()
-	fmt.Println("PORTFOLIO")
+	fmt.Println(walletText("section.portfolio", "PORTFOLIO"))
 	fmt.Println("─────────")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -880,7 +900,7 @@ func showWalletPortfolio(reader *bufio.Reader, client *ethclient.Client, ks *key
 
 func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, accounts []accounts.Account, chainID *big.Int) error {
 	clearWalletScreen()
-	fmt.Println("SEND FUNDS")
+	fmt.Println(walletText("section.send", "SEND FUNDS"))
 	fmt.Println("──────────")
 	fmt.Println("This flow signs locally and submits one native transfer.")
 	fmt.Println("For shielded TKM, use the shielded wallet/prover flow instead.")
