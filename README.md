@@ -79,6 +79,23 @@ when a remote RPC client is required.
 See [Tor-only deployment details](docs/PRIVACY_MODE.md#onion-only-networking). For installation by operating system, see [Tor installation](docs/TOR_INSTALLATION.md).
 for the hidden-service configuration and pool/prover settings.
 
+## Fast chain bootstrap
+
+A synced node can export an RLP block archive. A new node can download that
+archive over Tor and import it in batches with consensus validation:
+
+```bash
+./build/bin/gtkm bootstrap \
+  --url 'https://bootstrap.example/tkm-mainnet.rlp.gz' \
+  --sha256 '<64-hex-character-sha256>' \
+  --datadir "$HOME/.tkmchain"
+```
+
+The archive is retained under `~/.tkmchain/gtkm/bootstrap/` on Linux and the
+corresponding `Tkmchain\gtkm\bootstrap` directory on Windows. See the
+[fast bootstrap guide](docs/BOOTSTRAP.md) for archive creation, retries, and
+custom data directories.
+
 ---
 
 ## Shielded Privacy Activation

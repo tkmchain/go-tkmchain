@@ -246,6 +246,8 @@ func init() {
 		dumpGenesisCommand,
 		pruneHistoryCommand,
 		downloadEraCommand,
+		// See bootstrapcmd.go:
+		bootstrapCommand,
 		// See accountcmd.go:
 		accountCommand,
 		walletCommand,

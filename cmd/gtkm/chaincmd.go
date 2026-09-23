@@ -362,6 +362,16 @@ func importChain(ctx *cli.Context) error {
 	if ctx.Args().Len() < 1 {
 		utils.Fatalf("This command requires an argument.")
 	}
+	return importChainFiles(ctx, ctx.Args().Slice(), !ctx.Bool(utils.NoCompactionFlag.Name))
+}
+
+// importChainFiles imports RLP-encoded blocks into the configured chain. The
+// compact flag is kept separate so bootstrap imports can start serving blocks
+// immediately instead of running a second full-database compaction pass.
+func importChainFiles(ctx *cli.Context, files []string, compact bool) error {
+	if len(files) == 0 {
+		return errors.New("no chain files supplied")
+	}
 	stack, cfg := makeConfigNode(ctx)
 	defer stack.Close()
 
@@ -390,14 +400,13 @@ func importChain(ctx *cli.Context) error {
 	start := time.Now()
 
 	var importErr error
-
-	if ctx.Args().Len() == 1 {
-		if err := utils.ImportChain(chain, ctx.Args().First()); err != nil {
+	if len(files) == 1 {
+		if err := utils.ImportChain(chain, files[0]); err != nil {
 			importErr = err
 			log.Error("Import error", "err", err)
 		}
 	} else {
-		for _, arg := range ctx.Args().Slice() {
+		for _, arg := range files {
 			if err := utils.ImportChain(chain, arg); err != nil {
 				importErr = err
 				log.Error("Import error", "file", arg, "err", err)
@@ -410,7 +419,7 @@ func importChain(ctx *cli.Context) error {
 	chain.Stop()
 	fmt.Printf("Import done in %v.\n\n", time.Since(start))
 
-	// Output pre-compaction stats mostly to see the import trashing
+	// Output pre-compaction stats mostly to measure import I/O
 	showDBStats(db)
 
 	// Print the memory statistics used by the importing
@@ -422,11 +431,11 @@ func importChain(ctx *cli.Context) error {
 	fmt.Printf("Allocations:   %.3f million\n", float64(mem.Mallocs)/1000000)
 	fmt.Printf("GC pause:      %v\n\n", time.Duration(mem.PauseTotalNs))
 
-	if ctx.Bool(utils.NoCompactionFlag.Name) {
-		return nil
+	if !compact {
+		return importErr
 	}
 
-	// Compact the entire database to more accurately measure disk io and print the stats
+	// Compact the entire database to more accurately measure disk I/O and print the stats
 	start = time.Now()
 	fmt.Println("Compacting entire database...")
 	if err := db.Compact(nil, nil); err != nil {
