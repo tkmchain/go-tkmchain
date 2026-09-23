@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,9 @@ The wallet connects to the node's local IPC endpoint, keeps private keys in the
 keystore, and signs locally. It never sends a password or private key over RPC.
 Use the Send flow for native TKM or other native account transfers. Shielded
 transfers continue to use the dedicated shielded wallet/prover flow.
+The TKM Phone panel can purchase numbers, register an ML-DSA-87 device, and
+send encrypted messages. Phone purchases require a PQ account and explicit
+confirmation; payment is confirmed before ownership is transferred.
 `
 
 func interactiveWallet(ctx *cli.Context) error {
@@ -92,7 +96,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		case "3":
 			showWalletAccounts(reader, ks, accounts)
 		case "4":
-			showWalletPhone(reader, rpcClient)
+			showWalletPhone(reader, rpcClient, client, ks, accounts, chainID)
 		case "5":
 			showWalletEmail(reader, rpcClient)
 		case "6":
@@ -169,7 +173,7 @@ func printWalletRPCJSON(raw json.RawMessage) {
 	fmt.Println(string(formatted))
 }
 
-func showWalletPhone(reader *bufio.Reader, client *rpc.Client) {
+func showWalletPhone(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) {
 	clearWalletScreen()
 	fmt.Println("TKM PHONE")
 	fmt.Println("─────────")
@@ -177,22 +181,26 @@ func showWalletPhone(reader *bufio.Reader, client *rpc.Client) {
 	defer cancel()
 
 	var status tkmPhoneStatusView
-	if err := client.CallContext(ctx, &status, "tkmphone_status"); err != nil {
+	if err := rpcClient.CallContext(ctx, &status, "tkmphone_status"); err != nil {
 		fmt.Printf("  Phone service unavailable: %v\n", err)
 	} else {
 		state := "inactive"
 		if status.Active {
 			state = "active"
 		}
+		dataSource := "local clock"
+		if status.UsingChainHead {
+			dataSource = "chain head"
+		}
 		fmt.Printf("  Status:       %s\n", state)
 		fmt.Printf("  Chain head:   #%d\n", uint64(status.HeadNumber))
-		fmt.Printf("  Data source:  %s\n", map[bool]string{true: "chain head", false: "local clock"}[status.UsingChainHead])
+		fmt.Printf("  Data source:  %s\n", dataSource)
 	}
 
 	var bucket, mainKing, sale hexutil.Big
-	if err := client.CallContext(ctx, &bucket, "tkmphone_bucketPrice"); err == nil &&
-		client.CallContext(ctx, &mainKing, "tkmphone_mainKingNumberPrice") == nil &&
-		client.CallContext(ctx, &sale, "tkmphone_numberSalePrice") == nil {
+	if err := rpcClient.CallContext(ctx, &bucket, "tkmphone_bucketPrice"); err == nil &&
+		rpcClient.CallContext(ctx, &mainKing, "tkmphone_mainKingNumberPrice") == nil &&
+		rpcClient.CallContext(ctx, &sale, "tkmphone_numberSalePrice") == nil {
 		fmt.Println("\n  Prices:")
 		fmt.Printf("    Bucket:       %s\n", formatTKM((*big.Int)(&bucket)))
 		fmt.Printf("    Main King no: %s\n", formatTKM((*big.Int)(&mainKing)))
@@ -202,26 +210,411 @@ func showWalletPhone(reader *bufio.Reader, client *rpc.Client) {
 	}
 
 	var numbers []json.RawMessage
-	if err := client.CallContext(ctx, &numbers, "tkmphone_registeredNumbers"); err == nil {
+	if err := rpcClient.CallContext(ctx, &numbers, "tkmphone_registeredNumbers"); err == nil {
 		fmt.Printf("\n  Registered numbers: %d\n", len(numbers))
 	} else {
 		fmt.Printf("\n  Registered numbers: unavailable (%v)\n", err)
 	}
-	fmt.Println("\n  Enter a phone number to inspect its encrypted-device metadata, or leave blank.")
+
+	fmt.Println("\n  Actions")
+	fmt.Println("    1) Buy a phone number       Pay the operator and complete ownership transfer")
+	fmt.Println("    2) Register this device     Bind your PQ wallet/device to an owned number")
+	fmt.Println("    3) Send encrypted message   Send a private number-to-number message")
+	fmt.Println("    4) Inspect a number          View ownership and device metadata")
+	fmt.Println("    0) Back")
+	action, err := readWalletLine(reader, "Select a phone action")
+	if err != nil {
+		return
+	}
+	switch strings.TrimSpace(action) {
+	case "1":
+		if err := buyWalletPhoneNumber(reader, rpcClient, client, ks, walletAccounts, chainID); err != nil {
+			showWalletError(reader, err)
+		}
+	case "2":
+		if err := registerWalletPhoneDevice(reader, rpcClient, ks, walletAccounts); err != nil {
+			showWalletError(reader, err)
+		}
+	case "3":
+		if err := sendWalletPhoneMessage(reader, rpcClient, ks, walletAccounts); err != nil {
+			showWalletError(reader, err)
+		}
+	case "4":
+		inspectWalletPhoneNumber(reader, rpcClient)
+	case "0", "":
+		return
+	default:
+		fmt.Println("\n  Choose 1, 2, 3, 4, or 0.")
+		pauseWallet(reader)
+	}
+}
+
+type walletPhoneNumberView struct {
+	Number    string         `json:"number"`
+	Owner     common.Address `json:"owner"`
+	Operator  common.Address `json:"operator"`
+	SalePrice *hexutil.Big   `json:"salePrice"`
+	Active    bool           `json:"active"`
+	SoldAt    hexutil.Uint64 `json:"soldAt"`
+	InUse     bool           `json:"inUse"`
+}
+
+type walletPhoneDeviceView struct {
+	Device    string        `json:"device"`
+	PublicKey hexutil.Bytes `json:"publicKey"`
+	Active    bool          `json:"active"`
+}
+
+type walletRegisteredPhoneView struct {
+	Number      walletPhoneNumberView   `json:"number"`
+	Registered  bool                    `json:"registered"`
+	DeviceCount hexutil.Uint64          `json:"deviceCount"`
+	Devices     []walletPhoneDeviceView `json:"devices"`
+}
+
+type walletPhoneCipherView struct {
+	Ciphertext hexutil.Bytes `json:"ciphertext"`
+	Nonce      hexutil.Bytes `json:"nonce"`
+}
+
+var walletPhonePQPrefix = []byte("TKMPHONE_PQ_V1")
+
+func chooseWalletAccount(reader *bufio.Reader, walletAccounts []accounts.Account) (accounts.Account, error) {
+	for i, account := range walletAccounts {
+		fmt.Printf("  %d) %s\n", i+1, account.Address.Hex())
+	}
+	choice, err := readWalletLine(reader, "Wallet account number")
+	if err != nil {
+		return accounts.Account{}, err
+	}
+	var index int
+	if _, err := fmt.Sscanf(choice, "%d", &index); err != nil || index < 1 || index > len(walletAccounts) {
+		return accounts.Account{}, errors.New("invalid account selection")
+	}
+	return walletAccounts[index-1], nil
+}
+
+func walletPhoneKey(ks *keystore.KeyStore, account accounts.Account, password string) (*keystore.PQKey, error) {
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return nil, err
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return nil, errors.New("TKM Phone actions require an ML-DSA-87 account; migrate a legacy account first")
+	}
+	if account.URL.Path == "" {
+		return nil, errors.New("PQ account keyfile path is unavailable")
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		return nil, fmt.Errorf("read PQ account key: %w", err)
+	}
+	key, err := keystore.DecryptPQKey(keyJSON, password)
+	if err != nil {
+		return nil, fmt.Errorf("unlock PQ account: %w", err)
+	}
+	if key.Address != account.Address {
+		clear(key.Seed)
+		return nil, errors.New("PQ key address does not match the selected account")
+	}
+	return key, nil
+}
+
+func walletPhonePublicKey(ks *keystore.KeyStore, account accounts.Account, password string) ([]byte, error) {
+	key, err := walletPhoneKey(ks, account, password)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key.Seed)
+	return common.CopyBytes(key.PublicKey), nil
+}
+
+func signWalletPhoneDigest(ks *keystore.KeyStore, account accounts.Account, password string, digest common.Hash) (hexutil.Bytes, error) {
+	key, err := walletPhoneKey(ks, account, password)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(key.Seed)
+	mldsaKey, err := pqcrypto.NewMLDSA87FromSeed(key.Seed)
+	if err != nil {
+		return nil, err
+	}
+	message := append(common.CopyBytes(walletPhonePQPrefix), digest.Bytes()...)
+	signature, err := pqcrypto.SignMLDSA87(mldsaKey, message)
+	if err != nil {
+		return nil, fmt.Errorf("sign phone action: %w", err)
+	}
+	envelope := append(common.CopyBytes(walletPhonePQPrefix), key.PublicKey...)
+	envelope = append(envelope, signature...)
+	return hexutil.Bytes(envelope), nil
+}
+
+func inspectWalletPhoneNumber(reader *bufio.Reader, client *rpc.Client) {
+	fmt.Println("\n  Enter a phone number to inspect its ownership and device metadata.")
 	number, err := readWalletLine(reader, "Phone number")
 	if err != nil {
 		return
 	}
-	if number != "" {
-		var record json.RawMessage
-		if err := client.CallContext(ctx, &record, "tkmphone_registeredNumber", number); err != nil {
-			fmt.Printf("\n  Lookup failed: %v\n", err)
-		} else {
-			fmt.Println("\n  Registered number")
-			printWalletRPCJSON(record)
-		}
+	if number == "" {
+		return
+	}
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var record json.RawMessage
+	if err := client.CallContext(ctx, &record, "tkmphone_registeredNumber", number); err != nil {
+		fmt.Printf("\n  Lookup failed: %v\n", err)
+	} else {
+		fmt.Println("\n  Registered number")
+		printWalletRPCJSON(record)
 	}
 	pauseWallet(reader)
+}
+
+func registerWalletPhoneDevice(reader *bufio.Reader, client *rpc.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account) error {
+	clearWalletScreen()
+	fmt.Println("REGISTER PHONE DEVICE")
+	fmt.Println("────────────────────")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	number, err := readWalletLine(reader, "Owned phone number")
+	if err != nil {
+		return err
+	}
+	device, err := readWalletLine(reader, "Device name")
+	if err != nil {
+		return err
+	}
+	if number == "" || device == "" {
+		return errors.New("phone number and device name are required")
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	publicKey, err := walletPhonePublicKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var record walletRegisteredPhoneView
+	if err := client.CallContext(ctx, &record, "tkmphone_registeredNumber", number); err != nil {
+		return fmt.Errorf("read phone ownership: %w", err)
+	}
+	if record.Number.Owner != account.Address {
+		return fmt.Errorf("selected account %s does not own %s", account.Address.Hex(), number)
+	}
+	var digest common.Hash
+	if err := client.CallContext(ctx, &digest, "tkmphone_deviceKeySigningHash", number, device, hexutil.Bytes(publicKey)); err != nil {
+		return fmt.Errorf("create device registration hash: %w", err)
+	}
+	signature, err := signWalletPhoneDigest(ks, account, password, digest)
+	if err != nil {
+		return err
+	}
+	var result json.RawMessage
+	if err := client.CallContext(ctx, &result, "tkmphone_registerDeviceKey", number, device, hexutil.Bytes(publicKey), signature); err != nil {
+		return fmt.Errorf("register phone device: %w", err)
+	}
+	fmt.Println("\n  Device registered successfully.")
+	printWalletRPCJSON(result)
+	pauseWallet(reader)
+	return nil
+}
+
+func sendWalletPhoneMessage(reader *bufio.Reader, client *rpc.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account) error {
+	clearWalletScreen()
+	fmt.Println("SEND ENCRYPTED PHONE MESSAGE")
+	fmt.Println("───────────────────────────")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	from, err := readWalletLine(reader, "Your phone number")
+	if err != nil {
+		return err
+	}
+	to, err := readWalletLine(reader, "Recipient phone number")
+	if err != nil {
+		return err
+	}
+	message, err := readWalletLine(reader, "Message")
+	if err != nil {
+		return err
+	}
+	if from == "" || to == "" || message == "" {
+		return errors.New("sender number, recipient number, and message are required")
+	}
+	if len([]byte(message)) > 64*1024 {
+		return errors.New("message exceeds the 64 KiB phone payload limit")
+	}
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var owner walletRegisteredPhoneView
+	if err := client.CallContext(ctx, &owner, "tkmphone_registeredNumber", from); err != nil {
+		return fmt.Errorf("read sender phone: %w", err)
+	}
+	if owner.Number.Owner != account.Address {
+		return fmt.Errorf("selected account %s does not own %s", account.Address.Hex(), from)
+	}
+	if !owner.Registered {
+		return errors.New("sender phone has no active device; register this device first")
+	}
+	nonce := make([]byte, 16)
+	if _, err := crand.Read(nonce); err != nil {
+		return fmt.Errorf("generate message nonce: %w", err)
+	}
+	var cipher walletPhoneCipherView
+	if err := client.CallContext(ctx, &cipher, "tkmphone_encryptPayload", from, to, hexutil.Bytes(nonce), hexutil.Bytes([]byte(message))); err != nil {
+		return fmt.Errorf("encrypt phone message: %w", err)
+	}
+	fmt.Println("\n  Review encrypted message")
+	fmt.Printf("    From: %s\n    To:   %s\n    Size: %d bytes\n", from, to, len([]byte(message)))
+	confirm, err := readWalletLine(reader, "Type SEND to confirm")
+	if err != nil {
+		return err
+	}
+	if confirm != "SEND" {
+		fmt.Println("  Cancelled. Nothing was signed or sent.")
+		pauseWallet(reader)
+		return nil
+	}
+	submitCtx, submitCancel := walletRPCContext()
+	defer submitCancel()
+	var digest common.Hash
+	if err := client.CallContext(submitCtx, &digest, "tkmphone_sendMessageSigningHash", from, to, hexutil.Bytes(nonce), cipher.Ciphertext); err != nil {
+		return fmt.Errorf("create message signing hash: %w", err)
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	signature, err := signWalletPhoneDigest(ks, account, password, digest)
+	if err != nil {
+		return err
+	}
+	var result json.RawMessage
+	if err := client.CallContext(submitCtx, &result, "tkmphone_sendEncryptedMessage", from, to, cipher.Ciphertext, hexutil.Bytes(nonce), signature); err != nil {
+		return fmt.Errorf("send encrypted phone message: %w", err)
+	}
+	fmt.Println("\n  Encrypted message sent successfully.")
+	printWalletRPCJSON(result)
+	pauseWallet(reader)
+	return nil
+}
+
+func buyWalletPhoneNumber(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	clearWalletScreen()
+	fmt.Println("BUY PHONE NUMBER")
+	fmt.Println("────────────────")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	if algorithm, err := ks.AccountAlgorithm(account); err != nil || algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("buying a phone number requires an ML-DSA-87 account so it can register a device")
+	}
+	number, err := readWalletLine(reader, "Phone number to buy")
+	if err != nil {
+		return err
+	}
+	if number == "" {
+		return errors.New("phone number is required")
+	}
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var record walletPhoneNumberView
+	if err := rpcClient.CallContext(ctx, &record, "tkmphone_number", number); err != nil {
+		return fmt.Errorf("look up phone number: %w", err)
+	}
+	if !record.Active || record.Operator == (common.Address{}) {
+		return errors.New("phone number is not available for sale")
+	}
+	if record.Owner != record.Operator || record.SoldAt != 0 || record.InUse {
+		return errors.New("phone number is already sold or in use")
+	}
+	price := new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
+	if record.SalePrice != nil && (*big.Int)(record.SalePrice).Sign() != 0 && (*big.Int)(record.SalePrice).Cmp(price) != 0 {
+		return errors.New("phone number price is not the canonical 10000 TKM sale price")
+	}
+	nonce, err := client.PendingNonceAt(ctx, account.Address)
+	if err != nil {
+		return fmt.Errorf("read pending nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return fmt.Errorf("read network fee: %w", err)
+	}
+	gas := uint64(params.TxGas)
+	if estimated, estimateErr := client.EstimateGas(ctx, ethereum.CallMsg{From: account.Address, To: &record.Operator, Value: price, GasPrice: gasPrice}); estimateErr == nil {
+		gas = estimated
+	}
+	fee := new(big.Int).Mul(new(big.Int).SetUint64(gas), gasPrice)
+	balance, err := client.BalanceAt(ctx, account.Address, nil)
+	if err != nil {
+		return fmt.Errorf("read balance: %w", err)
+	}
+	if balance.Cmp(new(big.Int).Add(price, fee)) < 0 {
+		return fmt.Errorf("insufficient balance: need %s including fee, have %s", formatTKM(new(big.Int).Add(price, fee)), formatTKM(balance))
+	}
+	fmt.Println("\nReview phone purchase")
+	fmt.Printf("  Buyer:    %s\n  Number:   %s\n  Operator: %s\n  Price:    %s\n  Fee:      %s (maximum estimate)\n", account.Address.Hex(), record.Number, record.Operator.Hex(), formatTKM(price), formatTKM(fee))
+	confirm, err := readWalletLine(reader, "Type BUY to confirm")
+	if err != nil {
+		return err
+	}
+	if confirm != "BUY" {
+		fmt.Println("  Cancelled. Nothing was signed.")
+		pauseWallet(reader)
+		return nil
+	}
+	password := utils.GetPassPhrase("Account password", false)
+	unsigned := walletTransferTransaction(chainID, nonce, record.Operator, price, gas, gasPrice, pqcrypto.AlgorithmMLDSA87)
+	tx, err := ks.SignTxWithPassphrase(account, password, unsigned, chainID)
+	clearWalletBytes([]byte(password))
+	if err != nil {
+		return fmt.Errorf("sign phone purchase: %w", err)
+	}
+	txCtx, txCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer txCancel()
+	if err := client.SendTransaction(txCtx, tx); err != nil {
+		return fmt.Errorf("submit phone purchase payment: %w", err)
+	}
+	fmt.Printf("\n  Payment submitted: %s\n  Waiting for canonical confirmation...\n", tx.Hash().Hex())
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer waitCancel()
+	receipt, err := waitWalletReceipt(waitCtx, client, tx.Hash())
+	if err != nil {
+		return fmt.Errorf("phone payment %s was submitted but confirmation failed: %w", tx.Hash().Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("phone payment %s was mined but failed", tx.Hash().Hex())
+	}
+	var result json.RawMessage
+	if err := rpcClient.CallContext(waitCtx, &result, "tkmphone_sellNumber", record.Operator, record.Number, account.Address, hexutil.Big(*price), tx.Hash()); err != nil {
+		return fmt.Errorf("payment confirmed, but ownership transfer needs operator finalization: %w (payment %s)", err, tx.Hash().Hex())
+	}
+	fmt.Println("  Phone number ownership transferred successfully.")
+	printWalletRPCJSON(result)
+	pauseWallet(reader)
+	return nil
+}
+
+func waitWalletReceipt(ctx context.Context, client *ethclient.Client, hash common.Hash) (*types.Receipt, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		receipt, err := client.TransactionReceipt(ctx, hash)
+		if err == nil {
+			return receipt, nil
+		}
+		if err != ethereum.NotFound {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func showWalletEmail(reader *bufio.Reader, client *rpc.Client) {
