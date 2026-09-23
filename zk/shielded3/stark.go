@@ -152,9 +152,7 @@ func (s Statement) words() ([]uint64, error) {
 	for _, output := range s.Outputs {
 		words = append(words, output[:]...)
 	}
-	for _, key := range s.OneTimeKeys {
-		words = append(words, key[:]...)
-	}
+	// Consensus serialization order must match the Rust circuit exactly.
 	if s.Deposit {
 		words = append(words, 1)
 	} else {
@@ -189,6 +187,9 @@ func (s Statement) words() ([]uint64, error) {
 		}
 	}
 	words = append(words, uint64(count))
+	for _, key := range s.OneTimeKeys {
+		words = append(words, key[:]...)
+	}
 	if len(words) != publicWords || !canonical(words) {
 		return nil, ErrInvalidStatement
 	}

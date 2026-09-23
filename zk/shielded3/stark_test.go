@@ -92,6 +92,11 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 	copy(s.Nullifier[:], public[33:38])
 	for i := range s.Outputs {
 		copy(s.Outputs[i][:], public[38+5*i:43+5*i])
+		copy(s.OneTimeKeys[i][:], public[88+5*i:93+5*i])
+	}
+	s.Deposit = public[58] == 1
+	for i := range s.GasSponsor {
+		s.GasSponsor[i] = uint32(public[59+i])
 	}
 	w := SpendWitness{LeafIndex: uint32(secret[18])}
 	copy(w.SpendingSecret[:], secret[:5])
