@@ -43,7 +43,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           check-latest: true
 
       - name: Install Shield3 Rust toolchain
@@ -188,7 +188,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           check-latest: true
 
       - name: Install Shield3 Rust toolchain
@@ -264,7 +264,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           check-latest: true
 
       - name: Install Linux cross-compilers
@@ -343,7 +343,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -417,7 +417,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
