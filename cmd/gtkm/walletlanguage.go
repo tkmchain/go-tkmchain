@@ -221,6 +221,29 @@ var walletLogCatalog = map[string]map[string]string{
 	},
 }
 
+var walletProtocolLogTranslations = map[string]map[string]string{
+	"zh": {"Phone hardfork difficulty adjustment": "TKM 电话硬分叉难度调整", "Egypt emergency difficulty adjustment applied": "已应用埃及紧急难度调整", "Emergency difficulty adjustment applied": "已应用紧急难度调整"},
+	"ru": {"Phone hardfork difficulty adjustment": "Корректировка сложности хардфорка Phone", "Egypt emergency difficulty adjustment applied": "Применена экстренная корректировка сложности Египта", "Emergency difficulty adjustment applied": "Применена экстренная корректировка сложности"},
+	"en": {"Phone hardfork difficulty adjustment": "Phone hardfork difficulty adjustment", "Egypt emergency difficulty adjustment applied": "Egypt emergency difficulty adjustment applied", "Emergency difficulty adjustment applied": "Emergency difficulty adjustment applied"},
+	"ja": {"Phone hardfork difficulty adjustment": "Phone ハードフォークの難易度調整", "Egypt emergency difficulty adjustment applied": "エジプト緊急難易度調整を適用しました", "Emergency difficulty adjustment applied": "緊急難易度調整を適用しました"},
+	"ko": {"Phone hardfork difficulty adjustment": "Phone 하드포크 난이도 조정", "Egypt emergency difficulty adjustment applied": "이집트 긴급 난이도 조정을 적용했습니다", "Emergency difficulty adjustment applied": "긴급 난이도 조정을 적용했습니다"},
+	"es": {"Phone hardfork difficulty adjustment": "Ajuste de dificultad del hard fork de Phone", "Egypt emergency difficulty adjustment applied": "Se aplicó el ajuste de dificultad de emergencia de Egypt", "Emergency difficulty adjustment applied": "Se aplicó el ajuste de dificultad de emergencia"},
+	"pt": {"Phone hardfork difficulty adjustment": "Ajuste de dificuldade do hard fork do Phone", "Egypt emergency difficulty adjustment applied": "Ajuste de dificuldade de emergência do Egypt aplicado", "Emergency difficulty adjustment applied": "Ajuste de dificuldade de emergência aplicado"},
+	"fr": {"Phone hardfork difficulty adjustment": "Ajustement de difficulté du hard fork Phone", "Egypt emergency difficulty adjustment applied": "Ajustement de difficulté d’urgence d’Egypt appliqué", "Emergency difficulty adjustment applied": "Ajustement de difficulté d’urgence appliqué"},
+	"de": {"Phone hardfork difficulty adjustment": "Schwierigkeitsanpassung des Phone-Hardforks", "Egypt emergency difficulty adjustment applied": "Notfallanpassung der Egypt-Schwierigkeit angewendet", "Emergency difficulty adjustment applied": "Notfallanpassung der Schwierigkeit angewendet"},
+	"ar": {"Phone hardfork difficulty adjustment": "ضبط صعوبة الانقسام الصلب للهاتف", "Egypt emergency difficulty adjustment applied": "تم تطبيق ضبط صعوبة الطوارئ في Egypt", "Emergency difficulty adjustment applied": "تم تطبيق ضبط صعوبة الطوارئ"},
+	"hi": {"Phone hardfork difficulty adjustment": "Phone हार्ड फोर्क कठिनाई समायोजन", "Egypt emergency difficulty adjustment applied": "Egypt आपातकालीन कठिनाई समायोजन लागू किया गया", "Emergency difficulty adjustment applied": "आपातकालीन कठिनाई समायोजन लागू किया गया"},
+	"id": {"Phone hardfork difficulty adjustment": "Penyesuaian tingkat kesulitan hard fork Phone", "Egypt emergency difficulty adjustment applied": "Penyesuaian tingkat kesulitan darurat Egypt diterapkan", "Emergency difficulty adjustment applied": "Penyesuaian tingkat kesulitan darurat diterapkan"},
+	"tr": {"Phone hardfork difficulty adjustment": "Phone hard fork zorluk ayarı", "Egypt emergency difficulty adjustment applied": "Egypt acil zorluk ayarı uygulandı", "Emergency difficulty adjustment applied": "Acil zorluk ayarı uygulandı"},
+	"vi": {"Phone hardfork difficulty adjustment": "Điều chỉnh độ khó hard fork Phone", "Egypt emergency difficulty adjustment applied": "Đã áp dụng điều chỉnh độ khó khẩn cấp của Egypt", "Emergency difficulty adjustment applied": "Đã áp dụng điều chỉnh độ khó khẩn cấp"},
+	"it": {"Phone hardfork difficulty adjustment": "Adeguamento della difficoltà dell’hard fork Phone", "Egypt emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà Egypt", "Emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà"},
+	"nl": {"Phone hardfork difficulty adjustment": "Moeilijkheidsaanpassing van de Phone-hard fork", "Egypt emergency difficulty adjustment applied": "Egypt-noodaanpassing van de moeilijkheid toegepast", "Emergency difficulty adjustment applied": "Noodaanpassing van de moeilijkheid toegepast"},
+	"pl": {"Phone hardfork difficulty adjustment": "Dostosowanie trudności hard forka Phone", "Egypt emergency difficulty adjustment applied": "Zastosowano awaryjne dostosowanie trudności Egypt", "Emergency difficulty adjustment applied": "Zastosowano awaryjne dostosowanie trudności"},
+	"uk": {"Phone hardfork difficulty adjustment": "Налаштування складності хардфорку Phone", "Egypt emergency difficulty adjustment applied": "Застосовано аварійне налаштування складності Egypt", "Emergency difficulty adjustment applied": "Застосовано аварійне налаштування складності"},
+	"th": {"Phone hardfork difficulty adjustment": "การปรับความยากของฮาร์ดฟอร์ก Phone", "Egypt emergency difficulty adjustment applied": "ใช้การปรับความยากฉุกเฉินของ Egypt แล้ว", "Emergency difficulty adjustment applied": "ใช้การปรับความยากฉุกเฉินแล้ว"},
+	"bn": {"Phone hardfork difficulty adjustment": "Phone হার্ড ফর্কের কঠিনতা সমন্বয়", "Egypt emergency difficulty adjustment applied": "Egypt জরুরি কঠিনতা সমন্বয় প্রয়োগ করা হয়েছে", "Emergency difficulty adjustment applied": "জরুরি কঠিনতা সমন্বয় প্রয়োগ করা হয়েছে"},
+}
+
 type walletLogTranslationHandler struct {
 	next     slog.Handler
 	language string
@@ -231,7 +254,11 @@ func (h *walletLogTranslationHandler) Enabled(ctx context.Context, level slog.Le
 }
 
 func (h *walletLogTranslationHandler) Handle(ctx context.Context, record slog.Record) error {
-	if translated := walletLogCatalog[h.language][record.Message]; translated != "" {
+	translated := walletLogCatalog[h.language][record.Message]
+	if translated == "" {
+		translated = walletProtocolLogTranslations[h.language][record.Message]
+	}
+	if translated != "" {
 		record.Message = translated
 	}
 	return h.next.Handle(ctx, record)

@@ -69,6 +69,15 @@ func TestWalletDaemonTranslations(t *testing.T) {
 	if got := walletText("daemon.language", "fallback"); got == "fallback" {
 		t.Fatal("daemon language message did not resolve")
 	}
+	var output bytes.Buffer
+	handler := &walletLogTranslationHandler{next: slog.NewTextHandler(&output, nil), language: "zh"}
+	record := slog.NewRecord(time.Unix(0, 0), slog.LevelInfo, "Phone hardfork difficulty adjustment", 0)
+	if err := handler.Handle(nil, record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "TKM 电话硬分叉难度调整") {
+		t.Fatalf("protocol log output = %q", output.String())
+	}
 }
 
 func TestWalletLogTranslationHandler(t *testing.T) {
