@@ -13,6 +13,20 @@ https://pkg.go.dev/badge/github.com/tkmchain/go-tkmchain
 
 Automated builds are available for stable releases and the unstable master branch. Binary archives are published at https://tkmchain.site/download.html.
 
+Debian and Ubuntu releases also include a `tkmchain` package. Install a release
+package with APT (replace the version when upgrading):
+
+```bash
+version=v1.21.24
+curl -fL -o "/tmp/tkmchain_${version#v}_amd64.deb" \
+  "https://github.com/tkmchain/go-tkmchain/releases/download/${version}/tkmchain_${version#v}_amd64.deb"
+sudo apt install "/tmp/tkmchain_${version#v}_amd64.deb"
+```
+
+This installs both `gtkm` and the `tkmchain` command alias. See
+[Debian/Ubuntu installation](docs/INSTALL_APT.md) for upgrade and Tor-only
+startup instructions.
+
 ---
 
 ## TKM Exchange

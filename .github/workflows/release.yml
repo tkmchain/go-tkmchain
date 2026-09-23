@@ -211,12 +211,15 @@ jobs:
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
+          ./packaging/build-deb.sh "$RELEASE_TAG" release amd64
 
-      - name: Upload portable Linux archive
+      - name: Upload portable Linux archive and Debian package
         uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: release/*.tar.gz
+          path: |
+            release/*.tar.gz
+            release/*.deb
           if-no-files-found: error
           retention-days: 1
 
@@ -385,7 +388,7 @@ jobs:
 
       - name: Generate release checksums
         working-directory: release-assets
-        run: sha256sum *.tar.gz *.zip *.apk > SHA256SUMS
+        run: sha256sum *.tar.gz *.zip *.apk *.deb > SHA256SUMS
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -397,4 +400,5 @@ jobs:
             release-assets/*.tar.gz
             release-assets/*.zip
             release-assets/*.apk
+            release-assets/*.deb
             release-assets/SHA256SUMS
