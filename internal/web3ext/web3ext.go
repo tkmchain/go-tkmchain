@@ -253,6 +253,16 @@ web3._extend({
 			params: 0
 		}),
 		new web3._extend.Method({
+			name: 'availableNumbers',
+			call: 'tkmphone_availableNumbers',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'numbersForOwner',
+			call: 'tkmphone_numbersForOwner',
+			params: 1
+		}),
+		new web3._extend.Method({
 			name: 'operatorGrantHash',
 			call: 'tkmphone_operatorGrantHash',
 			params: 4

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,6 +174,83 @@ func printWalletRPCJSON(raw json.RawMessage) {
 	fmt.Println(string(formatted))
 }
 
+func showWalletPhoneIdentities(ctx context.Context, client *rpc.Client, walletAccounts []accounts.Account) {
+	var mailboxes []walletMailboxView
+	mailboxErr := client.CallContext(ctx, &mailboxes, "tkmdomain_mailboxes", "")
+	fmt.Println("\n  Your phone and email identities")
+	for _, account := range walletAccounts {
+		fmt.Printf("    %s\n", account.Address.Hex())
+		var numbers []walletPhoneNumberView
+		if err := client.CallContext(ctx, &numbers, "tkmphone_numbersForOwner", account.Address); err != nil {
+			fmt.Printf("      Phone lookup unavailable: %v\n", err)
+		} else if len(numbers) == 0 {
+			fmt.Println("      Phone: none")
+		} else {
+			for _, number := range numbers {
+				state := "device not registered"
+				if number.InUse {
+					state = "device registered"
+				}
+				fmt.Printf("      Phone: %s (%s)\n", number.Number, state)
+			}
+		}
+		if mailboxErr != nil {
+			fmt.Printf("      Email lookup unavailable: %v\n", mailboxErr)
+			continue
+		}
+		found := false
+		for _, mailbox := range mailboxes {
+			if mailbox.Owner != account.Address {
+				continue
+			}
+			if !found {
+				found = true
+			}
+			fmt.Printf("      Email: %s\n", mailbox.Address)
+		}
+		if !found {
+			fmt.Println("      Email: none")
+		}
+	}
+}
+
+func showWalletPhoneInventory(ctx context.Context, client *rpc.Client) {
+	var available []walletPhoneNumberView
+	if err := client.CallContext(ctx, &available, "tkmphone_availableNumbers", hexutil.Uint64(100)); err != nil {
+		fmt.Printf("\n  Available phone inventory unavailable: %v\n", err)
+		return
+	}
+	if len(available) == 0 {
+		fmt.Println("\n  Available phone inventory: no numbers currently offered for sale")
+		return
+	}
+	var buckets []walletPhoneBucketView
+	bucketErr := client.CallContext(ctx, &buckets, "tkmphone_buckets")
+	counts := make(map[uint64]int)
+	for _, number := range available {
+		counts[uint64(number.BucketID)]++
+	}
+	fmt.Printf("\n  Available phone inventory (%d shown, 10000 TKM each)\n", len(available))
+	if bucketErr == nil {
+		for _, bucket := range buckets {
+			if count := counts[uint64(bucket.ID)]; count > 0 {
+				operator := bucket.Operator.Hex()
+				if bucket.Operator == (common.Address{}) {
+					operator = "unassigned"
+				}
+				fmt.Printf("    Bucket #%d: %d number(s), operator %s\n", uint64(bucket.ID), count, operator)
+			}
+		}
+	}
+	for index, number := range available {
+		operator := number.Operator.Hex()
+		if number.Operator == (common.Address{}) {
+			operator = "unassigned"
+		}
+		fmt.Printf("      %d) %s  bucket #%d  operator %s\n", index+1, number.Number, uint64(number.BucketID), operator)
+	}
+}
+
 func showWalletPhone(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) {
 	clearWalletScreen()
 	fmt.Println("TKM PHONE")
@@ -216,6 +294,13 @@ func showWalletPhone(reader *bufio.Reader, rpcClient *rpc.Client, client *ethcli
 		fmt.Printf("\n  Registered numbers: unavailable (%v)\n", err)
 	}
 
+	identityCtx, identityCancel := walletRPCContext()
+	showWalletPhoneIdentities(identityCtx, rpcClient, walletAccounts)
+	identityCancel()
+	inventoryCtx, inventoryCancel := walletRPCContext()
+	showWalletPhoneInventory(inventoryCtx, rpcClient)
+	inventoryCancel()
+
 	fmt.Println("\n  Actions")
 	fmt.Println("    1) Buy a phone number       Pay the operator and complete ownership transfer")
 	fmt.Println("    2) Register this device     Bind your PQ wallet/device to an owned number")
@@ -256,7 +341,22 @@ type walletPhoneNumberView struct {
 	SalePrice *hexutil.Big   `json:"salePrice"`
 	Active    bool           `json:"active"`
 	SoldAt    hexutil.Uint64 `json:"soldAt"`
+	BucketID  hexutil.Uint64 `json:"bucketId"`
 	InUse     bool           `json:"inUse"`
+}
+
+type walletPhoneBucketView struct {
+	ID         hexutil.Uint64 `json:"id"`
+	Hash       common.Hash    `json:"hash"`
+	Operator   common.Address `json:"operator"`
+	AssignedAt hexutil.Uint64 `json:"assignedAt"`
+}
+
+type walletMailboxView struct {
+	Address       string         `json:"address"`
+	Owner         common.Address `json:"owner"`
+	Domain        string         `json:"domain"`
+	EncryptionKey hexutil.Bytes  `json:"encryptionKey,omitempty"`
 }
 
 type walletPhoneDeviceView struct {
@@ -512,15 +612,26 @@ func buyWalletPhoneNumber(reader *bufio.Reader, rpcClient *rpc.Client, client *e
 	if algorithm, err := ks.AccountAlgorithm(account); err != nil || algorithm != pqcrypto.AlgorithmMLDSA87 {
 		return errors.New("buying a phone number requires an ML-DSA-87 account so it can register a device")
 	}
-	number, err := readWalletLine(reader, "Phone number to buy")
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var available []walletPhoneNumberView
+	if err := rpcClient.CallContext(ctx, &available, "tkmphone_availableNumbers", hexutil.Uint64(100)); err == nil && len(available) > 0 {
+		fmt.Println("\n  Available numbers (enter the list number or the exact number):")
+		for index, candidate := range available {
+			fmt.Printf("    %d) %s  bucket #%d\n", index+1, candidate.Number, uint64(candidate.BucketID))
+		}
+	}
+	selection, err := readWalletLine(reader, "Phone number to buy")
 	if err != nil {
 		return err
+	}
+	number := strings.TrimSpace(selection)
+	if index, parseErr := strconv.Atoi(number); parseErr == nil && index >= 1 && index <= len(available) {
+		number = available[index-1].Number
 	}
 	if number == "" {
 		return errors.New("phone number is required")
 	}
-	ctx, cancel := walletRPCContext()
-	defer cancel()
 	var record walletPhoneNumberView
 	if err := rpcClient.CallContext(ctx, &record, "tkmphone_number", number); err != nil {
 		return fmt.Errorf("look up phone number: %w", err)

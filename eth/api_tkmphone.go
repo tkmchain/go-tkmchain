@@ -458,6 +458,14 @@ func (api *TkmPhoneAPI) GenerateBuckets(seed common.Hash, creationTx common.Hash
 
 func (api *TkmPhoneAPI) Buckets() []PhoneNumberBucket { return api.service.Buckets() }
 
+func (api *TkmPhoneAPI) AvailableNumbers(limit hexutil.Uint64) []PhoneNumber {
+	return api.service.AvailableNumbers(uint64(limit))
+}
+
+func (api *TkmPhoneAPI) NumbersForOwner(owner common.Address) []PhoneNumber {
+	return api.service.NumbersForOwner(owner)
+}
+
 func (api *TkmPhoneAPI) OperatorGrantHash(operator common.Address, keyHash common.Hash, expiresAt hexutil.Uint64, paymentTx common.Hash) common.Hash {
 	return api.service.operatorGrantHash(operator, keyHash, uint64(expiresAt), paymentTx)
 }
@@ -920,6 +928,47 @@ func (svc *TkmPhoneService) Buckets() []PhoneNumberBucket {
 		out = append(out, bucket)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// AvailableNumbers returns unsold, active numbers assigned to an operator.
+// It is deliberately read-only so wallets can present the marketplace without
+// exposing operator signing keys or accepting a purchase implicitly.
+func (svc *TkmPhoneService) AvailableNumbers(limit uint64) []PhoneNumber {
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	out := make([]PhoneNumber, 0)
+	for _, number := range svc.numbers {
+		if !number.Active || number.Operator == (common.Address{}) || number.Owner != number.Operator || uint64(number.SoldAt) != 0 || number.InUse {
+			continue
+		}
+		svc.refreshNumberOwnershipHashesLocked(&number)
+		out = append(out, number)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	if limit > 0 && uint64(len(out)) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// NumbersForOwner returns every active phone number currently owned by an
+// address, including numbers that have not registered a device yet.
+func (svc *TkmPhoneService) NumbersForOwner(owner common.Address) []PhoneNumber {
+	if owner == (common.Address{}) {
+		return nil
+	}
+	svc.lock.RLock()
+	defer svc.lock.RUnlock()
+	out := make([]PhoneNumber, 0)
+	for _, number := range svc.numbers {
+		if !number.Active || number.Owner != owner {
+			continue
+		}
+		svc.refreshNumberOwnershipHashesLocked(&number)
+		out = append(out, number)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
 	return out
 }
 
