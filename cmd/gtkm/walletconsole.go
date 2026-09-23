@@ -66,9 +66,15 @@ func interactiveWallet(ctx *cli.Context) error {
 		return fmt.Errorf("read chain ID: %w", err)
 	}
 	reader := bufio.NewReader(os.Stdin)
-	languagePreference, language, err := configureWalletLanguage(reader, cfg.DataDir)
-	if err != nil {
-		return fmt.Errorf("choose wallet language: %w", err)
+	languagePreference, language, languageOverride, languageErr := walletLanguageFromFlag(ctx)
+	if languageErr != nil {
+		return languageErr
+	}
+	if !languageOverride {
+		languagePreference, language, languageErr = configureWalletLanguage(reader, cfg.DataDir)
+		if languageErr != nil {
+			return fmt.Errorf("choose wallet language: %w", languageErr)
+		}
 	}
 	walletActiveLanguage = language
 	for {

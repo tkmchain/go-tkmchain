@@ -54,3 +54,16 @@ func TestChooseWalletLanguageAutoDetect(t *testing.T) {
 		t.Fatalf("got preference %#v and language %q, want auto and ru", preference, language.Code)
 	}
 }
+
+func TestWalletDaemonTranslations(t *testing.T) {
+	previous := walletActiveLanguage
+	defer func() { walletActiveLanguage = previous }()
+	walletActiveLanguage = walletLanguageByCode("zh")
+	if got := walletText("daemon.starting", "fallback"); got != "正在启动 RandomX 主网…" {
+		t.Fatalf("daemon startup text = %q", got)
+	}
+	walletActiveLanguage = walletLanguageByCode("ko")
+	if got := walletText("daemon.language", "fallback"); got == "fallback" {
+		t.Fatal("daemon language message did not resolve")
+	}
+}

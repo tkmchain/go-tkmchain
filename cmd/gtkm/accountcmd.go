@@ -56,6 +56,7 @@ passwordfile as argument containing the wallet password in plaintext.`,
 				Flags: []cli.Flag{
 					utils.DataDirFlag,
 					utils.KeyStoreDirFlag,
+					walletLanguageFlag,
 				},
 			},
 			{

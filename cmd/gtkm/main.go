@@ -55,6 +55,7 @@ var (
 	// flags that configure the node
 	nodeFlags = slices.Concat([]cli.Flag{
 		utils.IdentityFlag,
+		walletLanguageFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
 		utils.BootnodesFlag,
@@ -341,7 +342,7 @@ func prepare(ctx *cli.Context) {
 		log.Info("Starting Geth on Egypt RandomX testnet...")
 
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Geth on RandomX mainnet...")
+		log.Info(walletText("daemon.starting", "Starting Geth on RandomX mainnet..."))
 	}
 }
 
@@ -353,6 +354,8 @@ func geth(ctx *cli.Context) error {
 		return fmt.Errorf("invalid command: %q", args[0])
 	}
 
+	language := configureDaemonWalletLanguage(ctx)
+	log.Info(walletText("daemon.language", "Daemon interface language selected"), "language", language.Name, "native", language.NativeName, "code", language.Code)
 	prepare(ctx)
 	stack, ethBackend := makeFullNodeWithBackend(ctx)
 	defer stack.Close()

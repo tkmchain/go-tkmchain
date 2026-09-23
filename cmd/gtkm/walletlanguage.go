@@ -8,6 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ethereum/go-ethereum/cmd/utils"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/urfave/cli/v2"
 )
 
 // walletLanguageTerms contains the navigation text translated by the
@@ -52,6 +56,13 @@ type walletLanguagePreference struct {
 	Language string `json:"language"`
 }
 
+var walletLanguageFlag = &cli.StringFlag{
+	Name:    "language",
+	Aliases: []string{"lang"},
+	Value:   "auto",
+	Usage:   "Wallet and daemon interface language (auto, zh, ru, en, ja, ko, es, pt, fr, de, ar, hi, id, tr, vi, it, nl, pl, uk, th, bn)",
+}
+
 var walletActiveLanguage = walletLanguageByCode("en")
 
 // The catalog order is intentional: the most requested languages are first.
@@ -79,6 +90,29 @@ var walletLanguageCatalog = []walletLanguage{
 	{Code: "bn", Name: "Bengali", NativeName: "বাংলা", Terms: walletLanguageTerms{Portfolio: "পোর্টফোলিও", Send: "পাঠান", Accounts: "অ্যাকাউন্ট", Phone: "TKM ফোন", Email: "ইমেল", Kings: "ঘূর্ণায়মান রাজা", Refresh: "রিফ্রেশ", Language: "ভাষা", Exit: "প্রস্থান", Select: "একটি বিকল্প বেছে নিন", Closed: "ওয়ালেট বন্ধ হয়েছে।", LanguageUI: "ভাষা", AutoDetect: "সিস্টেম থেকে স্বয়ংক্রিয় শনাক্ত", Current: "বর্তমান ভাষা", Saved: "ভাষা সংরক্ষিত", Change: "ভাষা পরিবর্তন", SectionPhone: "TKM ফোন", SectionEmail: "ইমেল", SectionKings: "ঘূর্ণায়মান রাজা", SectionAccounts: "স্থানীয় অ্যাকাউন্ট", SectionPortfolio: "পোর্টফোলিও", SectionSend: "অর্থ পাঠান"}},
 }
 
+var walletDaemonTranslations = map[string]map[string]string{
+	"zh": {"daemon.starting": "正在启动 RandomX 主网…", "daemon.language": "已选择守护进程界面语言"},
+	"ru": {"daemon.starting": "Запуск основной сети RandomX…", "daemon.language": "Выбран язык интерфейса узла"},
+	"en": {"daemon.starting": "Starting Geth on RandomX mainnet...", "daemon.language": "Daemon interface language selected"},
+	"ja": {"daemon.starting": "RandomX メインネットを起動しています…", "daemon.language": "デーモンのインターフェース言語を選択しました"},
+	"ko": {"daemon.starting": "RandomX 메인넷을 시작합니다…", "daemon.language": "데몬 인터페이스 언어가 선택되었습니다"},
+	"es": {"daemon.starting": "Iniciando la red principal de RandomX…", "daemon.language": "Idioma de interfaz del demonio seleccionado"},
+	"pt": {"daemon.starting": "Iniciando a rede principal RandomX…", "daemon.language": "Idioma da interface do daemon selecionado"},
+	"fr": {"daemon.starting": "Démarrage du réseau principal RandomX…", "daemon.language": "Langue de l’interface du démon sélectionnée"},
+	"de": {"daemon.starting": "RandomX-Mainnet wird gestartet…", "daemon.language": "Sprache der Daemon-Oberfläche ausgewählt"},
+	"ar": {"daemon.starting": "جارٍ تشغيل شبكة RandomX الرئيسية…", "daemon.language": "تم اختيار لغة واجهة الخدمة"},
+	"hi": {"daemon.starting": "RandomX मेननेट शुरू हो रहा है…", "daemon.language": "डेमन इंटरफ़ेस भाषा चुनी गई"},
+	"id": {"daemon.starting": "Memulai jaringan utama RandomX…", "daemon.language": "Bahasa antarmuka daemon dipilih"},
+	"tr": {"daemon.starting": "RandomX ana ağı başlatılıyor…", "daemon.language": "Daemon arayüz dili seçildi"},
+	"vi": {"daemon.starting": "Đang khởi động mạng chính RandomX…", "daemon.language": "Đã chọn ngôn ngữ giao diện daemon"},
+	"it": {"daemon.starting": "Avvio della mainnet RandomX…", "daemon.language": "Lingua dell’interfaccia del daemon selezionata"},
+	"nl": {"daemon.starting": "RandomX-mainnet wordt gestart…", "daemon.language": "Taal van de daemoninterface geselecteerd"},
+	"pl": {"daemon.starting": "Uruchamianie sieci głównej RandomX…", "daemon.language": "Wybrano język interfejsu demona"},
+	"uk": {"daemon.starting": "Запуск основної мережі RandomX…", "daemon.language": "Вибрано мову інтерфейсу вузла"},
+	"th": {"daemon.starting": "กำลังเริ่มเครือข่ายหลัก RandomX…", "daemon.language": "เลือกภาษาสำหรับอินเทอร์เฟซของเดมอนแล้ว"},
+	"bn": {"daemon.starting": "RandomX মেইননেট শুরু হচ্ছে…", "daemon.language": "ডেমন ইন্টারফেসের ভাষা নির্বাচিত হয়েছে"},
+}
+
 func walletLanguageByCode(code string) walletLanguage {
 	code = strings.ToLower(strings.TrimSpace(code))
 	for _, language := range walletLanguageCatalog {
@@ -102,6 +136,11 @@ func detectWalletLanguage() walletLanguage {
 }
 
 func walletText(key, fallback string) string {
+	if translations := walletDaemonTranslations[walletActiveLanguage.Code]; translations != nil {
+		if value := translations[key]; value != "" {
+			return value
+		}
+	}
 	terms := walletActiveLanguage.Terms
 	var value string
 	switch key {
@@ -226,6 +265,49 @@ func chooseWalletLanguage(reader *bufio.Reader) (walletLanguagePreference, walle
 	}
 	language := walletLanguageCatalog[index-1]
 	return walletLanguagePreference{Language: language.Code}, language, nil
+}
+
+func walletLanguageFromFlag(ctx *cli.Context) (walletLanguagePreference, walletLanguage, bool, error) {
+	if !ctx.IsSet(walletLanguageFlag.Name) {
+		return walletLanguagePreference{}, walletLanguage{}, false, nil
+	}
+	code := strings.ToLower(strings.TrimSpace(ctx.String(walletLanguageFlag.Name)))
+	if code == "" || code == "auto" {
+		return walletLanguagePreference{Language: "auto"}, detectWalletLanguage(), true, nil
+	}
+	language := walletLanguageByCode(code)
+	if language.Code != code {
+		return walletLanguagePreference{}, walletLanguage{}, true, fmt.Errorf("unsupported language %q", code)
+	}
+	return walletLanguagePreference{Language: language.Code}, language, true, nil
+}
+
+func walletLanguageDataDir(ctx *cli.Context) string {
+	cfg := defaultNodeConfig()
+	utils.SetDataDir(ctx, &cfg)
+	return cfg.DataDir
+}
+
+func configureDaemonWalletLanguage(ctx *cli.Context) walletLanguage {
+	if _, language, ok, err := walletLanguageFromFlag(ctx); ok {
+		if err != nil {
+			log.Warn("unsupported wallet language; using detected locale", "error", err)
+			language = detectWalletLanguage()
+		}
+		walletActiveLanguage = language
+		return language
+	}
+	dataDir := walletLanguageDataDir(ctx)
+	preference, saved := loadWalletLanguage(dataDir)
+	language := detectWalletLanguage()
+	if saved && preference.Language != "" && preference.Language != "auto" {
+		candidate := walletLanguageByCode(preference.Language)
+		if candidate.Code == preference.Language {
+			language = candidate
+		}
+	}
+	walletActiveLanguage = language
+	return language
 }
 
 func configureWalletLanguage(reader *bufio.Reader, dataDir string) (walletLanguagePreference, walletLanguage, error) {
