@@ -65,7 +65,7 @@ The mainnet chain ID is **8979**. The permanent finality checkpoint is block
 **41913**, whose canonical hash is:
 
 ```text
-0x5cea02aaa23fa5b91c836c75b994ccefb86dd40e7db59de9071c034b8242bc79
+0x0be22afecd78fcfb7a9b0b3a570bb5be9e9d0c13486ea5d187c7336b28edcd74
 ```
 
 Nodes reject a competing chain that replaces this checkpoint. Administrative

@@ -61,7 +61,7 @@ var (
 		20261: common.HexToHash("0xf8b43cc91baf5bd363466d827ee24e86a18a10f8c73811f8baf472faa9b4d1ef"),
 		20373: common.HexToHash("0x6386f2bea3d034883ce29af5777408caeb3ecc8e055f25af79c8098d8de3fcea"),
 		// Antartical finality boundary: blocks 1 through 41913 are permanent.
-		41913: common.HexToHash("0x5cea02aaa23fa5b91c836c75b994ccefb86dd40e7db59de9071c034b8242bc79"),
+		41913: common.HexToHash("0x0be22afecd78fcfb7a9b0b3a570bb5be9e9d0c13486ea5d187c7336b28edcd74"),
 	}
 	mandatoryEgyptCheckpoints = map[uint64]common.Hash{
 		0: EgyptGenesisHash,
