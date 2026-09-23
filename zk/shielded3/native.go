@@ -147,10 +147,9 @@ func (NativeBackend) Describe(ctx context.Context, chainID, assetID uint64, w Sp
 	}
 	dest := []*Digest{&result.Owner, &result.InputCommitment, &result.Anchor, &result.Nullifier}
 	for i := range result.Outputs {
-		dest = append(dest, &result.Outputs[i])
-	}
-	for i := range result.OneTimeKeys {
-		dest = append(dest, &result.OneTimeKeys[i])
+		// Rust describe_spend returns each commitment followed by its
+		// one-time key. Preserve that wire order while decoding.
+		dest = append(dest, &result.Outputs[i], &result.OneTimeKeys[i])
 	}
 	for i, d := range dest {
 		*d, err = DigestFromBytes(data[i*40 : (i+1)*40])

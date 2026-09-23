@@ -571,7 +571,8 @@ fn verify_program(
 /// Compute wallet note openings using the same specified Tip5 domains. The
 /// returned root is only a witness-derived candidate: consensus must compare
 /// it to its own canonical tree. Nothing is verified by this helper.
-/// Output: input owner, input commitment, root, nullifier, four outputs (5 each).
+/// Output: input owner, input commitment, root, nullifier, then each output
+/// commitment followed by its one-time key (five words each).
 pub fn describe_spend(
     public: &[u64],
     secret: &[u64],

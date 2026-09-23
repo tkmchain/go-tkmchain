@@ -328,10 +328,9 @@ func (b *STARKBackend) Describe(ctx context.Context, chainID, assetID uint64, wi
 	}
 	destinations := []*Digest{&result.Owner, &result.InputCommitment, &result.Anchor, &result.Nullifier}
 	for i := range result.Outputs {
-		destinations = append(destinations, &result.Outputs[i])
-	}
-	for i := range result.OneTimeKeys {
-		destinations = append(destinations, &result.OneTimeKeys[i])
+		// Rust describe_spend returns each commitment followed by its
+		// one-time key. Preserve that wire order while decoding.
+		destinations = append(destinations, &result.Outputs[i], &result.OneTimeKeys[i])
 	}
 	for i, digest := range destinations {
 		for j := range digest {

@@ -138,10 +138,20 @@ func TestNativeSTARKInteroperability(t *testing.T) {
 			copy(w.StampPaths[i][j][:], path[(MerkleDepth*(i+InputSlots)+j)*5:(MerkleDepth*(i+InputSlots)+j+1)*5])
 		}
 	}
+	serialized, serializeErr := w.words()
+	if serializeErr != nil {
+		t.Fatalf("wallet witness serialization: %v", serializeErr)
+	}
+	for i := range serialized {
+		if serialized[i] != secret[i] {
+			t.Fatalf("wallet witness word %d mismatch serialized=%d fixture=%d", i, serialized[i], secret[i])
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	derived, err := backend.Describe(ctx, s.ChainID, s.AssetID, w)
-	if err != nil || derived.Anchor != s.Anchor || derived.Nullifier != s.Nullifier || derived.Outputs != s.Outputs {
+	if err != nil || derived.Anchor != s.Anchor || derived.Nullifier != s.Nullifier || derived.Outputs != s.Outputs || derived.OneTimeKeys != s.OneTimeKeys {
 		t.Fatalf("wallet commitment interoperability: %v", err)
 	}
 	proof := appendWords(binary.LittleEndian.AppendUint32(nil, uint32(len(proofWords))), proofWords)
