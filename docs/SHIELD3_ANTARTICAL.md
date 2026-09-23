@@ -77,7 +77,7 @@ unhackability, anonymity after secret exposure, or immunity to future research.
 Antartical Shield3 keeps its existing PQ envelope and STARK relation while
 adding privacy ideas inspired by Carrot:
 
-- every output receives a fresh 32-byte one-time output key derived from the
+- every output receives a fresh 40-byte one-time output key (the canonical five-word Tip5 digest) derived from the
   hidden owner, note randomness and commitment; it is never reused;
 - every new note carries a random 32-byte payment tag inside the authenticated
   incoming/outgoing ciphertexts; it is not exposed as a public payment ID;

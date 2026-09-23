@@ -616,7 +616,7 @@ func TestCarrotInspiredOutputKeyAndOutgoingViewScope(t *testing.T) {
 	commitment := shielded3.Digest{3}
 	first := OneTimeOutputKey(owner, randomness, commitment)
 	second := OneTimeOutputKey(owner, randomness, commitment)
-	if len(first) != 32 || !bytes.Equal(first, second) {
+	if len(first) != 40 || !bytes.Equal(first, second) {
 		t.Fatalf("one-time output key is not deterministic and fixed-size")
 	}
 	if bytes.Equal(first, OneTimeOutputKey(owner, shielded3.Digest{4}, commitment)) {
