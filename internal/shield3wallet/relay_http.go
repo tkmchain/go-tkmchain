@@ -34,7 +34,10 @@ type RelayTransportConfig struct {
 	OnionOnly         bool
 }
 
-const DefaultRelayRequestBytes = 32 * 1024
+const (
+	DefaultRelayRequestBytes = 32 * 1024
+	MaxRelayRequestBytes     = 20 << 20
+)
 
 var DirectRelayTransport = RelayTransportConfig{FixedRequestBytes: DefaultRelayRequestBytes}
 
@@ -42,7 +45,7 @@ func (c RelayTransportConfig) validate() error {
 	if c.FixedRequestBytes == 0 {
 		c.FixedRequestBytes = DefaultRelayRequestBytes
 	}
-	if c.FixedRequestBytes < 1024 || c.FixedRequestBytes > 256<<10 {
+	if c.FixedRequestBytes < 1024 || c.FixedRequestBytes > MaxRelayRequestBytes {
 		return errors.New("relay fixed request size is outside the safe range")
 	}
 	if c.OnionOnly && c.SOCKS5Proxy == "" {
@@ -85,27 +88,58 @@ func paddedJSON(request any, target int) ([]byte, error) {
 	if err != nil || len(base) < 2 || base[0] != '{' || base[len(base)-1] != '}' {
 		return nil, errors.New("relay request must be a JSON object")
 	}
-	for n := 0; n <= target; n++ {
-		padding, _ := json.Marshal(strings.Repeat("0", n))
-		body := make([]byte, 0, len(base)+len(padding)+12)
-		body = append(body, base[:len(base)-1]...)
-		if len(base) > 2 {
-			body = append(body, ',')
-		}
-		body = append(body, []byte(`"padding":`)...)
-		body = append(body, padding...)
-		body = append(body, '}')
-		if len(body) == target {
-			return body, nil
-		}
-		if len(body) > target {
+	prefix := make([]byte, 0, len(base)+12)
+	prefix = append(prefix, base[:len(base)-1]...)
+	if len(base) > 2 {
+		prefix = append(prefix, ',')
+	}
+	prefix = append(prefix, []byte(`"padding":`)...)
+	// A JSON string contributes two quote bytes in addition to its contents.
+	paddingLen := target - len(prefix) - 3
+	if paddingLen < 0 {
+		return nil, errors.New("relay request exceeds fixed-size request class")
+	}
+	body := make([]byte, 0, target)
+	body = append(body, prefix...)
+	body = append(body, '"')
+	body = append(body, strings.Repeat("0", paddingLen)...)
+	body = append(body, '"', '}')
+	if len(body) != target {
+		return nil, errors.New("unable to construct fixed-size relay request")
+	}
+	return body, nil
+}
+
+// relayRequestSize returns the smallest bounded request class that can carry
+// request. Small offers stay at the default 32 KiB class, while larger batch
+// transactions move to the next class instead of failing before reaching the
+// relay. Classes double through 16 MiB, with a final 20 MiB ceiling matching
+// the relay HTTP body limit. Every request is still padded to an exact class.
+func relayRequestSize(request any, minimum int) (int, error) {
+	base, err := json.Marshal(request)
+	if err != nil || len(base) < 2 || base[0] != '{' || base[len(base)-1] != '}' {
+		return 0, errors.New("relay request must be a JSON object")
+	}
+	// The padding field with an empty JSON string is the minimum overhead.
+	required := len(base) + len(`,"padding":""`)
+	if len(base) == 2 {
+		required = len(base) + len(`"padding":""`)
+	}
+	if minimum < 1024 || minimum > MaxRelayRequestBytes {
+		return 0, errors.New("relay fixed request size is outside the safe range")
+	}
+	target := minimum
+	for target < required {
+		if target > MaxRelayRequestBytes/2 {
+			target = MaxRelayRequestBytes
 			break
 		}
-		if n == 0 {
-			n = target - len(body) - 1
-		}
+		target <<= 1
 	}
-	return nil, errors.New("unable to construct fixed-size relay request")
+	if target < required {
+		return 0, errors.New("relay request exceeds the maximum fixed-size request class")
+	}
+	return target, nil
 }
 
 func relayHTTP(ctx context.Context, endpoint, path string, request, result any) error {
@@ -134,7 +168,11 @@ func relayHTTPWithConfig(ctx context.Context, endpoint, path string, request, re
 	if config.OnionOnly && !loopback && !strings.HasSuffix(host, ".onion") {
 		return errors.New("onion-only relay mode rejects non-onion relay")
 	}
-	data, err := paddedJSON(request, config.FixedRequestBytes)
+	target, err := relayRequestSize(request, config.FixedRequestBytes)
+	if err != nil {
+		return err
+	}
+	data, err := paddedJSON(request, target)
 	if err != nil {
 		return err
 	}

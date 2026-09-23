@@ -3,7 +3,9 @@ package shield3wallet
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -102,6 +104,24 @@ func TestRelayTransportPrivacyPolicy(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"requestId":"opaque-request-123456"`)) || !bytes.Contains(body, []byte(`"padding":"`)) {
 		t.Fatal("fixed-size request lost fields or padding")
+	}
+	largeRequest := struct {
+		Transaction string `json:"transaction"`
+	}{strings.Repeat("x", 40<<10)}
+	target, err := relayRequestSize(largeRequest, DefaultRelayRequestBytes)
+	if err != nil || target != 64<<10 {
+		t.Fatalf("large relay request did not select the next fixed class: target=%d err=%v", target, err)
+	}
+	largeBody, err := paddedJSON(largeRequest, target)
+	if err != nil || len(largeBody) != target {
+		t.Fatalf("large relay request padding failed: len=%d target=%d err=%v", len(largeBody), target, err)
+	}
+	var decoded struct {
+		Transaction string `json:"transaction"`
+		Padding     string `json:"padding"`
+	}
+	if err := json.Unmarshal(largeBody, &decoded); err != nil || decoded.Transaction != largeRequest.Transaction || len(decoded.Padding) == 0 {
+		t.Fatal("large relay request lost fields or padding", err)
 	}
 	if err := relayHTTPWithConfig(context.Background(), "https://example.onion", "/offer", struct{}{}, &struct{}{}, RelayTransportConfig{}); err == nil {
 		t.Fatal("allowed onion relay without an explicit Tor proxy")

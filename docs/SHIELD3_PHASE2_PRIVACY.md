@@ -15,7 +15,7 @@ cfg := shield3wallet.RelayTransportConfig{
 offer, endpoint, err := shield3wallet.FetchRelayOfferAny(ctx, endpoints, requestID, cfg)
 ```
 
-The transport disables ambient `HTTP_PROXY` and `HTTPS_PROXY` settings. `.onion` relay URLs are rejected unless an explicit SOCKS5 proxy is configured. Remote relays still require HTTPS. Relay request and success response bodies are padded to a fixed 32 KiB by default. Padding is bounded and ignored by the protocol.
+The transport disables ambient `HTTP_PROXY` and `HTTPS_PROXY` settings. `.onion` relay URLs are rejected unless an explicit SOCKS5 proxy is configured. Remote relays still require HTTPS. Relay requests use exact bounded size classes. Small requests use 32 KiB by default; larger batch transactions move through bounded 64 KiB to 16 MiB classes, with a final 20 MiB ceiling so the largest valid Shield3 relay envelope still fits its JSON encoding. Responses remain padded to 32 KiB. Padding is bounded and ignored by the protocol.
 
 `FetchRelayOfferAny` tries relay endpoints one at a time. This matters because an offer reserves an operator nonce; probing all relays concurrently would create unnecessary leases. Once a wallet has built a payment for one offer, it must submit it to that same endpoint. The wallet must never submit the same payer draft to another operator after a submission may have succeeded.
 

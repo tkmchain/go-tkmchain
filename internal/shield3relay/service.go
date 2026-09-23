@@ -143,25 +143,22 @@ func writePaddedJSON(w http.ResponseWriter, value any) {
 		}
 		return
 	}
-	for n := 0; n <= 32<<10; n++ {
-		padding, _ := json.Marshal(strings.Repeat("0", n))
+	prefix := make([]byte, 0, len(body)+12)
+	prefix = append(prefix, body[:len(body)-1]...)
+	if len(body) > 2 {
+		prefix = append(prefix, ',')
+	}
+	prefix = append(prefix, []byte(`"padding":`)...)
+	paddingLen := (32 << 10) - len(prefix) - 3
+	if paddingLen >= 0 {
 		out := make([]byte, 0, 32<<10)
-		out = append(out, body[:len(body)-1]...)
-		if len(body) > 2 {
-			out = append(out, ',')
-		}
-		out = append(out, []byte(`"padding":`)...)
-		out = append(out, padding...)
-		out = append(out, '}')
+		out = append(out, prefix...)
+		out = append(out, '"')
+		out = append(out, strings.Repeat("0", paddingLen)...)
+		out = append(out, '"', '}')
 		if len(out) == 32<<10 {
 			_, _ = w.Write(append(out, '\n'))
 			return
-		}
-		if len(out) > 32<<10 {
-			break
-		}
-		if n == 0 {
-			n = 32<<10 - len(out) - 1
 		}
 	}
 	_, _ = w.Write(append(body, '\n'))
