@@ -15,3 +15,12 @@ test('PQ Phone signatures bind the public identity, action and phone domain',asy
  await assert.rejects(signPhoneDigest(keyfile,'wrong',digest),/password/);
  assert.throws(()=>signPhoneDigestWithSeed(seed,'0x01'),/32 bytes/);
 });
+import {derivePhoneEncryptionSeed, encryptPhoneV2, decryptPhoneV2, phoneEncryptionPublicKey} from './phone-crypto.js';
+test('Antartical phone envelope round-trips with fixed-size recipient binding', () => {
+ const seed = new Uint8Array(32).fill(9), kemSeed = derivePhoneEncryptionSeed(seed), pub = phoneEncryptionPublicKey(kemSeed);
+ const from = '+8979000000001', to = '+8979000000002', nonce = '0x' + '22'.repeat(12);
+ const envelope = encryptPhoneV2(pub, 8979, from, to, nonce, 'desktop hello');
+ assert.equal((envelope.length - 2) / 2, 5785);
+ assert.equal(new TextDecoder().decode(decryptPhoneV2(kemSeed, envelope, 8979, from, to, nonce)), 'desktop hello');
+ assert.throws(() => decryptPhoneV2(kemSeed, envelope, 8979, to, from, nonce));
+});

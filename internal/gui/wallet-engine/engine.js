@@ -39,7 +39,7 @@ export async function scanWallet({keystore,password,rpcURL,rpcToken,onProgress})
         return ethers.formatEther(shieldedBalance(state.notes));
     } finally {seed.fill(0);clearShieldedIdentity(identity);provider?.destroy();}
 }
-export {signPhoneDigest, phonePublicKey} from './phone.js';
+export {signPhoneDigest, phonePublicKey, phoneEncryptionPublicKey, phoneEncryptV2, phoneDecryptV2} from './phone.js';
 export {runMailOperation} from './mail.js';
 
 export {migrateShield2Note} from './shield3-migrate.js';

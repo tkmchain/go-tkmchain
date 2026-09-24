@@ -525,8 +525,14 @@ export class TkmChainAPI {
     async phoneDeviceKeySigningHash(number, device, publicKey) {
         return this.phoneRpc('deviceKeySigningHash', [number, device, publicKey]);
     }
+    async phoneDeviceKeySigningHashV2(number, device, publicKey, encryptionPublicKey) {
+        return this.phoneRpc('deviceKeySigningHashV2', [number, device, publicKey, encryptionPublicKey]);
+    }
     async phoneRegisterDeviceKey(number, device, publicKey, signature) {
         return this.phoneRpc('registerDeviceKey', [number, device, publicKey, signature]);
+    }
+    async phoneRegisterDeviceKeyV2(number, device, publicKey, encryptionPublicKey, signature) {
+        return this.phoneRpc('registerDeviceKeyV2', [number, device, publicKey, encryptionPublicKey, signature]);
     }
     async phoneEncryptPayload(from, to, nonce, plaintext) {
         return this.phoneRpc('encryptPayload', [from, to, nonce, plaintext]);

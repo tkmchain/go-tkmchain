@@ -109,17 +109,27 @@
       if (!from || !to || !text) { toast('Fill number from, number to, and message.', 'err'); return; }
       if (!/^0x[0-9a-fA-F]{40}$/.test(owner) || !pass) { toast('Owner address and passphrase are required to sign.', 'err'); return; }
       runAction(btn, async () => {
-        const nonce = '0x' + randomBytesHex(16);
+        const nonce = '0x' + randomBytesHex(12);
         const plain = toHex(text);
-        const cipher = await rpc('tkmphone_encryptPayload', [from, to, nonce, plain]);
-        const sigHash = await rpc('tkmphone_sendMessageSigningHash', [from, to, nonce, cipher.ciphertext]);
+        const status = await rpc('tkmphone_status', []);
+        const engine = await GUI.engine();
+        let ciphertext;
+        if (status.antarticalActive) {
+          const devices = await rpc('tkmphone_deviceKeys', [to]);
+          const device = (devices || []).find((item) => item.active !== false && item.encryptionPublicKey);
+          if (!device) throw Error('Recipient has no registered Antartical ML-KEM device key.');
+          ciphertext = await engine.phoneEncryptV2(device.encryptionPublicKey, 8979, from, to, nonce, plain);
+        } else {
+          ciphertext = (await rpc('tkmphone_encryptPayload', [from, to, nonce, plain])).ciphertext;
+        }
+        const sigHash = await rpc('tkmphone_sendMessageSigningHash', [from, to, nonce, ciphertext]);
         const sig = await signPhone(owner, pass, sigHash);
-        const msg = await rpc('tkmphone_sendEncryptedMessage', [from, to, cipher.ciphertext, nonce, sig]);
+        const msg = await rpc('tkmphone_sendEncryptedMessage', [from, to, ciphertext, nonce, sig]);
         toast('Message stored with id ' + (msg.id != null ? fmtHexNum(msg.id) : 'unknown'), 'ok');
       }).catch(() => {}).finally(() => { passInput.value = ''; });
     };
 
-    container.body.appendChild(el('div', { class: 'dim', text: 'Both numbers must have active device keys; the message is encrypted on-chain and only decryptable by the recipient.' }));
+    container.body.appendChild(el('div', { class: 'dim', text: 'Both numbers must have active device keys; after Antartical, messages use fixed-size ML-KEM envelopes and decrypt only with the recipient device key.' }));
     container.body.appendChild(mkRow('From number', fromInput));
     container.body.appendChild(mkRow('To number', toInput));
     container.body.appendChild(mkRow('Message', msgInput));
@@ -164,11 +174,20 @@
         const current = await rpc('tkmphone_registeredNumber', [n]);
         if (current.number.owner.toLowerCase() !== account.toLowerCase()) throw Error('This account does not own the number.');
         if ((current.devices || []).some(x => x.device === d && x.active && x.publicKey.toLowerCase() === key.toLowerCase())) throw Error('This device is already registered.');
-        const hash = await rpc('tkmphone_deviceKeySigningHash', [n, d, key]);
         const supported = await rpc('tkmphone_signatureAlgorithms', []);
         if (!supported.includes('ML-DSA-87')) throw Error('Update the Phone node to enable PQ signatures.');
-        const signature = await engine.signPhoneDigest(keyfile, password.value, hash);
-        const result = await rpc('tkmphone_registerDeviceKey', [n, d, key, signature]);
+        const status = await rpc('tkmphone_status', []);
+        let result;
+        if (status.antarticalActive) {
+          const encryptionPublicKey = await engine.phoneEncryptionPublicKey(keyfile, password.value);
+          const hash = await rpc('tkmphone_deviceKeySigningHashV2', [n, d, key, encryptionPublicKey]);
+          const signature = await engine.signPhoneDigest(keyfile, password.value, hash);
+          result = await rpc('tkmphone_registerDeviceKeyV2', [n, d, key, encryptionPublicKey, signature]);
+        } else {
+          const hash = await rpc('tkmphone_deviceKeySigningHash', [n, d, key]);
+          const signature = await engine.signPhoneDigest(keyfile, password.value, hash);
+          result = await rpc('tkmphone_registerDeviceKey', [n, d, key, signature]);
+        }
         out.innerHTML = ''; out.appendChild(jsonView(result));
         toast('Device registered successfully.', 'ok');
       } finally { password.value = ''; }

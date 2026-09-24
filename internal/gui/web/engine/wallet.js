@@ -11012,34 +11012,34 @@ var Jp = class e {
 		let { blockLen: n, suffix: r, outputLen: i, rounds: a, enableXOF: o } = this;
 		return t ||= new e(n, r, i, o, a), t.blockLen = n, t.state32.set(this.state32), t.pos = this.pos, t.posOut = this.posOut, t.finished = this.finished, t.rounds = a, t.suffix = r, t.outputLen = i, t.enableXOF = o, t.canXOF = this.canXOF, t.destroyed = this.destroyed, t;
 	}
-}, Yp = (e, t, n, r = {}) => _p((r = {}) => (r = gp({}, r), new Jp(t, e, r.dkLen === void 0 ? n : r.dkLen, !0)), r), Xp = /* @__PURE__ */ Yp(31, 168, 16, /* @__PURE__ */ yp(11)), Zp = /* @__PURE__ */ Yp(31, 136, 32, /* @__PURE__ */ yp(12));
+}, Yp = (e, t, n, r = {}) => _p(() => new Jp(t, e, n), r), Xp = /* @__PURE__ */ Yp(6, 136, 32, /* @__PURE__ */ yp(8)), Zp = /* @__PURE__ */ Yp(6, 72, 64, /* @__PURE__ */ yp(10)), Qp = (e, t, n, r = {}) => _p((r = {}) => (r = gp({}, r), new Jp(t, e, r.dkLen === void 0 ? n : r.dkLen, !0)), r), $p = /* @__PURE__ */ Qp(31, 168, 16, /* @__PURE__ */ yp(11)), em = /* @__PURE__ */ Qp(31, 136, 32, /* @__PURE__ */ yp(12));
 //#endregion
 //#region node_modules/@noble/post-quantum/node_modules/@noble/curves/abstract/fft.js
-function Qp(e, t = "n") {
+function tm(e, t = "n") {
 	if (typeof e != "number") throw TypeError(`wrong u32 integer "${t}": expected number, got type=${typeof e}`);
 	if (!Number.isSafeInteger(e) || e < 0 || e > 4294967295) throw RangeError(`wrong u32 integer "${t}": expected 0..4294967295, got ${e}`);
 	return e;
 }
-function $p(e) {
-	return Qp(e, "x"), !(e & e - 1) && e !== 0;
+function nm(e) {
+	return tm(e, "x"), !(e & e - 1) && e !== 0;
 }
-function em(e, t) {
-	if (Qp(e), typeof t != "number") throw TypeError("\"bits\" expected number, got type=" + typeof t);
+function rm(e, t) {
+	if (tm(e), typeof t != "number") throw TypeError("\"bits\" expected number, got type=" + typeof t);
 	if (!Number.isSafeInteger(t) || t < 0 || t > 32) throw Error(`expected integer 0 <= bits <= 32, got ${t}`);
 	let n = 0;
 	for (let r = 0; r < t; r++, e >>>= 1) n = n << 1 | e & 1;
 	return n >>> 0;
 }
-function tm(e) {
-	return Qp(e), 31 - Math.clz32(e);
+function im(e) {
+	return tm(e), 31 - Math.clz32(e);
 }
-function nm(e) {
+function am(e) {
 	if (!e || typeof e != "object" || typeof e.length != "number") throw TypeError("\"values\" expected array-like, got type=" + typeof e);
 	let t = e.length;
-	if (!$p(t)) throw Error("expected positive power-of-two length, got " + t);
-	let n = tm(t);
+	if (!nm(t)) throw Error("expected positive power-of-two length, got " + t);
+	let n = im(t);
 	for (let r = 0; r < t; r++) {
-		let t = em(r, n);
+		let t = rm(r, n);
 		if (r < t) {
 			let n = e[r];
 			e[r] = e[t], e[t] = n;
@@ -11047,7 +11047,7 @@ function nm(e) {
 	}
 	return e;
 }
-var rm = (e, t) => {
+var om = (e, t) => {
 	Cp(t, {
 		N: "number",
 		roots: "object",
@@ -11058,17 +11058,17 @@ var rm = (e, t) => {
 		brp: "boolean"
 	}, "coreOpts");
 	let { N: n, roots: r, dit: i, invertButterflies: a = !1, skipStages: o = 0, brp: s = !0 } = t;
-	Qp(n, "coreOpts.N");
-	let c = tm(n);
-	if (!$p(n)) throw Error("FFT: Polynomial size should be power of two");
-	Qp(o, "coreOpts.skipStages");
+	tm(n, "coreOpts.N");
+	let c = im(n);
+	if (!nm(n)) throw Error("FFT: Polynomial size should be power of two");
+	tm(o, "coreOpts.skipStages");
 	let l = c === 0 ? 0 : c - 1;
 	if (o > l) throw Error(`FFT: wrong skipStages: expected 0 <= skipStages <= ${l}`);
 	if (r.length !== n) throw Error(`FFT: wrong roots length: expected ${n}, got ${r.length}`);
 	let u = i !== a;
 	return (t) => {
 		if (t.length !== n) throw Error("FFT: wrong Polynomial length");
-		i && s && nm(t);
+		i && s && am(t);
 		for (let s = 0, l = 1; s < c - o; s++) {
 			let d = i ? s + 1 + o : c - s, f = 1 << d, p = f >> 1, m = n >> d;
 			for (let o = 0; o < n; o += f) for (let s = 0, c = l++; s < p; s++) {
@@ -11079,35 +11079,38 @@ var rm = (e, t) => {
 				} else a ? (t[d] = e.add(g, _), t[f] = e.mul(e.sub(g, _), h)) : (t[d] = e.add(_, g), t[f] = e.mul(e.sub(_, g), h));
 			}
 		}
-		return !i && s && nm(t), t;
+		return !i && s && am(t), t;
 	};
-}, im = ip, am = vp;
-function om(e, t, n = () => {}) {
+}, sm = ip, cm = vp;
+function lm(e, t, n = () => {}) {
 	if (!Array.isArray(e)) throw TypeError(`"${t}" expected array, got type=${typeof e}`);
 	for (let r = 0; r < e.length; r++) n(e[r], `${t}[${r}]`);
 	return e;
 }
-function sm(e, t = "object") {
+function um(e, t = "object") {
 	if (typeof e != "object" || !e || Array.isArray(e)) throw TypeError(t === "object" ? "expected valid options object" : `"${t}" expected object, got type=${typeof e}`);
 	return e;
 }
-function cm(e, t) {
+function dm(e, t) {
 	if (e = ip(e), t = ip(t), e.length !== t.length) return !1;
 	let n = 0;
 	for (let r = 0; r < e.length; r++) n |= e[r] ^ t[r];
 	return n === 0;
 }
-function lm(e) {
+function fm(e) {
+	return Uint8Array.from(ip(e));
+}
+function pm(e) {
 	if (ep(e)) throw TypeError("\"opts\" expected object, got Uint8Array");
-	sm(e, "opts");
+	um(e, "opts");
 }
-function um(e) {
-	lm(e), e.context !== void 0 && ip(e.context, void 0, "opts.context");
+function mm(e) {
+	pm(e), e.context !== void 0 && ip(e.context, void 0, "opts.context");
 }
-function dm(e) {
-	um(e), e.extraEntropy !== !1 && e.extraEntropy !== void 0 && ip(e.extraEntropy, void 0, "opts.extraEntropy");
+function hm(e) {
+	mm(e), e.extraEntropy !== !1 && e.extraEntropy !== void 0 && ip(e.extraEntropy, void 0, "opts.extraEntropy");
 }
-function fm(e, ...t) {
+function gm(e, ...t) {
 	let n = (e) => typeof e == "number" ? e : e.bytesLen, r = t.reduce((e, t) => e + n(t), 0);
 	return {
 		bytesLen: r,
@@ -11130,12 +11133,12 @@ function fm(e, ...t) {
 		}
 	};
 }
-function pm(e, t) {
+function _m(e, t) {
 	let n = e, r = t * n.bytesLen;
 	return {
 		bytesLen: r,
 		encode: (e) => {
-			let i = om(e, "u");
+			let i = lm(e, "u");
 			if (i.length !== t) throw RangeError(`vecCoder.encode: wrong length=${i.length}. Expected: ${t}`);
 			let a = new Uint8Array(r);
 			for (let e = 0, t = 0; e < i.length; e++) {
@@ -11152,20 +11155,20 @@ function pm(e, t) {
 		}
 	};
 }
-function mm(...e) {
+function vm(...e) {
 	for (let t of e) if (Array.isArray(t)) for (let e of t) e.fill(0);
 	else t.fill(0);
 }
-function hm(e) {
+function ym(e) {
 	if (np(e, "bits"), e > 32) throw RangeError("\"bits\" expected <= 32, got " + e);
 	return e === 32 ? 4294967295 : ~(-1 << e) >>> 0;
 }
-var gm = /* @__PURE__ */ Uint8Array.of();
-function _m(e, t = gm) {
+var bm = /* @__PURE__ */ Uint8Array.of();
+function xm(e, t = bm) {
 	if (ip(e, void 0, "msg"), ip(t, void 0, "ctx"), t.length > 255) throw RangeError("context should be 255 bytes or less");
 	return hp(new Uint8Array([0, t.length]), t, e);
 }
-var vm = /* @__PURE__ */ Uint8Array.from([
+var Sm = /* @__PURE__ */ Uint8Array.from([
 	6,
 	9,
 	96,
@@ -11177,22 +11180,22 @@ var vm = /* @__PURE__ */ Uint8Array.from([
 	4,
 	2
 ]);
-function ym(e, t = 0) {
+function Cm(e, t = 0) {
 	if (typeof e != "function" || typeof e.create != "function") throw TypeError("\"hash\" expected hash function, got type=" + typeof e);
 	ap(e), np(t, "requiredStrength");
 	let n = e.oid;
-	if (ip(n, void 0, "hash.oid"), !cm(n.subarray(0, 10), vm)) throw Error("\"hash.oid\" is invalid: expected NIST hash");
+	if (ip(n, void 0, "hash.oid"), !dm(n.subarray(0, 10), Sm)) throw Error("\"hash.oid\" is invalid: expected NIST hash");
 	let r = e.outputLen * 8 / 2;
 	if (t > r) throw Error("Pre-hash security strength too low: " + r + ", required: " + t);
 }
-function bm(e, t, n = gm) {
-	if (ym(e), ip(t, void 0, "msg"), ip(n, void 0, "ctx"), n.length > 255) throw RangeError("context should be 255 bytes or less");
+function wm(e, t, n = bm) {
+	if (Cm(e), ip(t, void 0, "msg"), ip(n, void 0, "ctx"), n.length > 255) throw RangeError("context should be 255 bytes or less");
 	let r = e(t);
 	return hp(new Uint8Array([1, n.length]), n, e.oid, r);
 }
 //#endregion
 //#region node_modules/@noble/post-quantum/_crystals.js
-var xm = (e) => {
+var Tm = (e) => {
 	let { newPoly: t, N: n, Q: r, F: i, ROOT_OF_UNITY: a, brvBits: o, isKyber: s } = e, c = (e, t = r) => {
 		let n = e % t | 0;
 		return (n >= 0 ? n | 0 : t + n | 0) | 0;
@@ -11203,7 +11206,7 @@ var xm = (e) => {
 	function u() {
 		let e = t(n);
 		for (let t = 0; t < n; t++) {
-			let n = em(t, o), i = BigInt(a) ** BigInt(n) % BigInt(r);
+			let n = rm(t, o), i = BigInt(a) ** BigInt(n) % BigInt(r);
 			e[t] = Number(i) | 0;
 		}
 		return e;
@@ -11232,10 +11235,10 @@ var xm = (e) => {
 		invertButterflies: !0,
 		skipStages: +!!s,
 		brp: !1
-	}, h = rm(p, {
+	}, h = om(p, {
 		dit: !1,
 		...m
-	}), g = rm(p, {
+	}), g = om(p, {
 		dit: !0,
 		...m
 	}), _ = {
@@ -11255,8 +11258,8 @@ var xm = (e) => {
 			decode: (e) => _.decode(e)
 		},
 		bitsCoder: (e, r) => {
-			for (let t = 0, r = 0; t < n; t++) r += e, r > 32 && hm(r), r %= 8;
-			let i = hm(e), a = n / 8 * e;
+			for (let t = 0, r = 0; t < n; t++) r += e, r > 32 && ym(r), r %= 8;
+			let i = ym(e), a = n / 8 * e;
 			return {
 				bytesLen: a,
 				encode: (t) => {
@@ -11272,7 +11275,7 @@ var xm = (e) => {
 			};
 		}
 	};
-}, Sm = (e) => (t, n) => {
+}, Em = (e) => (t, n) => {
 	n ||= e.blockLen;
 	let r = new Uint8Array(t.length + 2);
 	r.set(t);
@@ -11284,22 +11287,22 @@ var xm = (e) => {
 		}),
 		get: (t, n) => (r[i + 0] = t, r[i + 1] = n, o.destroy(), o = e.create({}).update(r), s++, () => (c++, o.xofInto(a))),
 		clean: () => {
-			o.destroy(), mm(a, r);
+			o.destroy(), vm(a, r);
 		}
 	};
-}, Cm = /* @__PURE__ */ Sm(Xp), wm = /* @__PURE__ */ Sm(Zp);
+}, Dm = /* @__PURE__ */ Em($p), Om = /* @__PURE__ */ Em(em);
 //#endregion
 //#region node_modules/@noble/post-quantum/ml-dsa.js
-function Tm(e) {
-	lm(e), e.externalMu !== void 0 && Sp(e.externalMu, "opts.externalMu");
+function km(e) {
+	pm(e), e.externalMu !== void 0 && Sp(e.externalMu, "opts.externalMu");
 }
-var Em = 256, Dm = 8380417, Om = 1753, km = 8347681, Am = 13, jm = 95232, Mm = 261888, Nm = /* @__PURE__ */ Object.freeze({
+var Am = 256, jm = 8380417, Mm = 1753, Nm = 8347681, Pm = 13, Fm = 95232, Im = 261888, Lm = /* @__PURE__ */ Object.freeze({
 	2: Object.freeze({
 		K: 4,
 		L: 4,
-		D: Am,
+		D: Pm,
 		GAMMA1: 2 ** 17,
-		GAMMA2: jm,
+		GAMMA2: Fm,
 		TAU: 39,
 		ETA: 2,
 		OMEGA: 80
@@ -11307,9 +11310,9 @@ var Em = 256, Dm = 8380417, Om = 1753, km = 8347681, Am = 13, jm = 95232, Mm = 2
 	3: Object.freeze({
 		K: 6,
 		L: 5,
-		D: Am,
+		D: Pm,
 		GAMMA1: 2 ** 19,
-		GAMMA2: Mm,
+		GAMMA2: Im,
 		TAU: 49,
 		ETA: 4,
 		OMEGA: 55
@@ -11317,62 +11320,62 @@ var Em = 256, Dm = 8380417, Om = 1753, km = 8347681, Am = 13, jm = 95232, Mm = 2
 	5: Object.freeze({
 		K: 8,
 		L: 7,
-		D: Am,
+		D: Pm,
 		GAMMA1: 2 ** 19,
-		GAMMA2: Mm,
+		GAMMA2: Im,
 		TAU: 60,
 		ETA: 2,
 		OMEGA: 75
 	})
-}), Pm = (e) => new Int32Array(e), Q = /* @__PURE__ */ xm({
-	N: Em,
-	Q: Dm,
-	F: km,
-	ROOT_OF_UNITY: Om,
-	newPoly: Pm,
+}), Rm = (e) => new Int32Array(e), Q = /* @__PURE__ */ Tm({
+	N: Am,
+	Q: jm,
+	F: Nm,
+	ROOT_OF_UNITY: Mm,
+	newPoly: Rm,
 	isKyber: !1,
 	brvBits: 8
-}), Fm = (e) => e, Im = (e, t = Fm, n = Fm) => Q.bitsCoder(e, {
+}), zm = (e) => e, Bm = (e, t = zm, n = zm) => Q.bitsCoder(e, {
 	encode: (e) => t(n(e)),
 	decode: (e) => n(t(e))
-}), Lm = (e, t) => {
+}), Vm = (e, t) => {
 	let n = e, r = t;
 	for (let e = 0; e < n.length; e++) n[e] = Q.mod(n[e] + r[e]);
 	return n;
-}, Rm = (e, t) => {
+}, Hm = (e, t) => {
 	let n = e, r = t;
 	for (let e = 0; e < n.length; e++) n[e] = Q.mod(n[e] - r[e]);
 	return n;
-}, zm = (e) => {
+}, Um = (e) => {
 	let t = e;
-	for (let e = 0; e < Em; e++) t[e] <<= Am;
+	for (let e = 0; e < Am; e++) t[e] <<= Pm;
 	return t;
-}, Bm = (e, t) => {
+}, Wm = (e, t) => {
 	let n = e;
-	for (let e = 0; e < Em; e++) if (Math.abs(Q.smod(n[e])) >= t) return !0;
+	for (let e = 0; e < Am; e++) if (Math.abs(Q.smod(n[e])) >= t) return !0;
 	return !1;
-}, Vm = (e, t) => {
-	let n = e, r = t, i = Pm(Em);
+}, Gm = (e, t) => {
+	let n = e, r = t, i = Rm(Am);
 	for (let e = 0; e < n.length; e++) i[e] = Q.mod(n[e] * r[e]);
 	return i;
 };
-function Hm(e) {
-	let t = e, n = Pm(Em);
-	for (let e = 0; e < Em;) {
+function Km(e) {
+	let t = e, n = Rm(Am);
+	for (let e = 0; e < Am;) {
 		let r = t();
 		if (r.length % 3) throw Error("RejNTTPoly: unaligned block");
-		for (let t = 0; e < Em && t <= r.length - 3; t += 3) {
+		for (let t = 0; e < Am && t <= r.length - 3; t += 3) {
 			let i = (r[t + 0] | r[t + 1] << 8 | r[t + 2] << 16) & 8388607;
-			i < Dm && (n[e++] = i);
+			i < jm && (n[e++] = i);
 		}
 	}
 	return n;
 }
-function Um(e) {
+function qm(e) {
 	let t = e, { K: n, L: r, GAMMA1: i, GAMMA2: a, TAU: o, ETA: s, OMEGA: c } = t, { CRH_BYTES: l, TR_BYTES: u, C_TILDE_BYTES: d, XOF128: f, XOF256: p, securityLevel: m } = t;
 	if (![2, 4].includes(s)) throw Error("Wrong ETA");
 	if (![1 << 17, 1 << 19].includes(i)) throw Error("Wrong GAMMA1");
-	if (![jm, Mm].includes(a)) throw Error("Wrong GAMMA2");
+	if (![Fm, Im].includes(a)) throw Error("Wrong GAMMA2");
 	let h = o * s, g = (e) => {
 		let t = Q.mod(e), n = Q.smod(t, 2 * a) | 0;
 		return t - n === 8380416 ? {
@@ -11382,13 +11385,13 @@ function Um(e) {
 			r1: Math.floor((t - n) / (2 * a)) | 0,
 			r0: n
 		};
-	}, _ = (e) => g(e).r1, v = (e) => g(e).r0, y = (e, t) => e <= a || e > Dm - a || e === Dm - a && t === 0 ? 0 : 1, b = Math.floor(8380416 / (2 * a)), x = (e, t) => {
+	}, _ = (e) => g(e).r1, v = (e) => g(e).r0, y = (e, t) => e <= a || e > jm - a || e === jm - a && t === 0 ? 0 : 1, b = Math.floor(8380416 / (2 * a)), x = (e, t) => {
 		let { r1: n, r0: r } = g(t);
 		return e === 1 ? r > 0 ? Q.mod(n + 1, b) | 0 : Q.mod(n - 1, b) | 0 : n | 0;
 	}, S = (e) => {
-		let t = Q.mod(e), n = Q.smod(t, 2 ** Am) | 0;
+		let t = Q.mod(e), n = Q.smod(t, 2 ** Pm) | 0;
 		return {
-			r1: Math.floor((t - n) / 2 ** Am) | 0,
+			r1: Math.floor((t - n) / 2 ** Pm) | 0,
 			r0: n
 		};
 	}, C = {
@@ -11398,7 +11401,7 @@ function Um(e) {
 			if (t === !1) throw Error("hint.encode: hint is false");
 			let r = new Uint8Array(c + n);
 			for (let e = 0, i = 0; e < n; e++) {
-				for (let n = 0; n < Em; n++) t[e][n] !== 0 && (r[i++] = n);
+				for (let n = 0; n < Am; n++) t[e][n] !== 0 && (r[i++] = n);
 				r[c + e] = i;
 			}
 			return r;
@@ -11406,7 +11409,7 @@ function Um(e) {
 		decode: (e) => {
 			let t = [], r = 0;
 			for (let i = 0; i < n; i++) {
-				let n = Pm(Em);
+				let n = Rm(Am);
 				if (e[c + i] < r || e[c + i] > c) return !1;
 				for (let t = r; t < e[c + i]; t++) {
 					if (t > r && e[t] <= e[t - 1]) return !1;
@@ -11417,33 +11420,33 @@ function Um(e) {
 			for (let t = r; t < c; t++) if (e[t] !== 0) return !1;
 			return t;
 		}
-	}, w = Im(s === 2 ? 3 : 4, (e) => s - e, (e) => {
+	}, w = Bm(s === 2 ? 3 : 4, (e) => s - e, (e) => {
 		if (!(-s <= e && e <= s)) throw Error(`malformed key s1/s3 ${e} outside of ETA range [${-s}, ${s}]`);
 		return e;
-	}), T = Im(13, (e) => 4096 - e), E = Im(10), D = Im(i === 1 << 17 ? 18 : 20, (e) => Q.smod(i - e)), O = pm(Im(a === jm ? 6 : 4), n), k = fm("publicKey", 32, pm(E, n)), A = fm("secretKey", 32, 32, u, pm(w, r), pm(w, n), pm(T, n)), j = fm("signature", d, pm(D, r), C), M = s === 2 ? (e) => e < 15 && 2 - e % 5 : (e) => e < 9 && 4 - e;
+	}), T = Bm(13, (e) => 4096 - e), E = Bm(10), D = Bm(i === 1 << 17 ? 18 : 20, (e) => Q.smod(i - e)), O = _m(Bm(a === Fm ? 6 : 4), n), k = gm("publicKey", 32, _m(E, n)), A = gm("secretKey", 32, 32, u, _m(w, r), _m(w, n), _m(T, n)), j = gm("signature", d, _m(D, r), C), M = s === 2 ? (e) => e < 15 && 2 - e % 5 : (e) => e < 9 && 4 - e;
 	function N(e) {
-		let t = e, n = Pm(Em);
-		for (let e = 0; e < Em;) {
+		let t = e, n = Rm(Am);
+		for (let e = 0; e < Am;) {
 			let r = t();
-			for (let t = 0; e < Em && t < r.length; t += 1) {
+			for (let t = 0; e < Am && t < r.length; t += 1) {
 				let i = M(r[t] & 15), a = M(r[t] >> 4 & 15);
-				i !== !1 && (n[e++] = i), e < Em && a !== !1 && (n[e++] = a);
+				i !== !1 && (n[e++] = i), e < Am && a !== !1 && (n[e++] = a);
 			}
 		}
 		return n;
 	}
 	let P = (e) => {
-		let t = Pm(Em), n = Zp.create({}).update(e), r = new Uint8Array(Zp.blockLen);
+		let t = Rm(Am), n = em.create({}).update(e), r = new Uint8Array(em.blockLen);
 		n.xofInto(r);
 		let i = r.slice(0, 8);
-		for (let e = Em - o, a = 8, s = 0, c = 0; e < Em; e++) {
+		for (let e = Am - o, a = 8, s = 0, c = 0; e < Am; e++) {
 			let o = e + 1;
-			for (; o > e;) o = r[a++], !(a < Zp.blockLen) && (n.xofInto(r), a = 0);
+			for (; o > e;) o = r[a++], !(a < em.blockLen) && (n.xofInto(r), a = 0);
 			t[e] = t[o], t[o] = 1 - ((i[s] >> c++ & 1) << 1), c >= 8 && (s++, c = 0);
 		}
 		return t;
 	}, F = (e) => {
-		let t = e, n = Pm(Em), r = Pm(Em);
+		let t = e, n = Rm(Am), r = Rm(Am);
 		for (let e = 0; e < t.length; e++) {
 			let { r0: i, r1: a } = S(t[e]);
 			n[e] = i, r[e] = a;
@@ -11454,11 +11457,11 @@ function Um(e) {
 		};
 	}, I = (e, t) => {
 		let n = e, r = t;
-		for (let e = 0; e < Em; e++) n[e] = x(r[e], n[e]);
+		for (let e = 0; e < Am; e++) n[e] = x(r[e], n[e]);
 		return n;
 	}, L = (e, t) => {
-		let n = e, r = t, i = Pm(Em), a = 0;
-		for (let e = 0; e < Em; e++) {
+		let n = e, r = t, i = Rm(Am), a = 0;
+		for (let e = 0; e < Am; e++) {
 			let t = y(n[e], r[e]);
 			i[e] = t, a += t;
 		}
@@ -11466,7 +11469,7 @@ function Um(e) {
 			v: i,
 			cnt: a
 		};
-	}, R = fm("seed", 32, 64, 32), z = Object.freeze({
+	}, R = gm("seed", 32, 64, 32), z = Object.freeze({
 		info: Object.freeze({ type: "internal-ml-dsa" }),
 		lengths: Object.freeze({
 			secretKey: A.bytesLen,
@@ -11477,20 +11480,20 @@ function Um(e) {
 		}),
 		keygen: (e) => {
 			let t = /* @__PURE__ */ new Uint8Array(34), i = e === void 0;
-			i && (e = am(32)), im(e, 32, "seed"), t.set(e), i && mm(e), t[32] = n, t[33] = r;
-			let [a, o, s] = R.decode(Zp(t, { dkLen: R.bytesLen })), c = p(o), l = [];
+			i && (e = cm(32)), sm(e, 32, "seed"), t.set(e), i && vm(e), t[32] = n, t[33] = r;
+			let [a, o, s] = R.decode(em(t, { dkLen: R.bytesLen })), c = p(o), l = [];
 			for (let e = 0; e < r; e++) l.push(N(c.get(e & 255, e >> 8 & 255)));
 			let d = [];
 			for (let e = r; e < r + n; e++) d.push(N(c.get(e & 255, e >> 8 & 255)));
-			let m = l.map((e) => Q.NTT.encode(e.slice())), h = [], g = [], _ = f(a), v = Pm(Em);
+			let m = l.map((e) => Q.NTT.encode(e.slice())), h = [], g = [], _ = f(a), v = Rm(Am);
 			for (let e = 0; e < n; e++) {
-				mm(v);
-				for (let t = 0; t < r; t++) Lm(v, Vm(Hm(_.get(t, e)), m[t]));
+				vm(v);
+				for (let t = 0; t < r; t++) Vm(v, Gm(Km(_.get(t, e)), m[t]));
 				Q.NTT.decode(v);
-				let { r0: t, r1: n } = F(Lm(v, d[e]));
+				let { r0: t, r1: n } = F(Vm(v, d[e]));
 				h.push(t), g.push(n);
 			}
-			let y = k.encode([a, g]), b = Zp(y, { dkLen: u }), x = A.encode([
+			let y = k.encode([a, g]), b = em(y, { dkLen: u }), x = A.encode([
 				a,
 				s,
 				b,
@@ -11498,64 +11501,64 @@ function Um(e) {
 				d,
 				h
 			]);
-			return _.clean(), c.clean(), mm(a, o, s, l, d, m, v, h, g, b, t), {
+			return _.clean(), c.clean(), vm(a, o, s, l, d, m, v, h, g, b, t), {
 				publicKey: y,
 				secretKey: x
 			};
 		},
 		getPublicKey: (e) => {
-			let [t, i, a, o, s, c] = A.decode(e), l = f(t), u = o.map((e) => Q.NTT.encode(e.slice())), d = [], p = Pm(Em);
+			let [t, i, a, o, s, c] = A.decode(e), l = f(t), u = o.map((e) => Q.NTT.encode(e.slice())), d = [], p = Rm(Am);
 			for (let e = 0; e < n; e++) {
 				p.fill(0);
-				for (let t = 0; t < r; t++) Lm(p, Vm(Hm(l.get(t, e)), u[t]));
-				Q.NTT.decode(p), Lm(p, s[e]);
+				for (let t = 0; t < r; t++) Vm(p, Gm(Km(l.get(t, e)), u[t]));
+				Q.NTT.decode(p), Vm(p, s[e]);
 				let { r1: t } = F(p);
 				d.push(t);
 			}
-			return l.clean(), mm(p, u, c, o, s), k.encode([t, d]);
+			return l.clean(), vm(p, u, c, o, s), k.encode([t, d]);
 		},
 		sign: (e, t, o = {}) => {
-			dm(o), Tm(o);
+			hm(o), km(o);
 			let { extraEntropy: s, externalMu: u = !1 } = o;
-			u && im(e, l, "mu");
-			let m = s === !1 || s === void 0, g = s === !1 ? /* @__PURE__ */ new Uint8Array(32) : s === void 0 ? am(32) : s;
-			im(g, 32, "extraEntropy");
+			u && sm(e, l, "mu");
+			let m = s === !1 || s === void 0, g = s === !1 ? /* @__PURE__ */ new Uint8Array(32) : s === void 0 ? cm(32) : s;
+			sm(g, 32, "extraEntropy");
 			let [y, b, x, S, C, w] = (() => {
 				try {
 					return A.decode(t);
 				} catch (e) {
-					throw m && mm(g), e;
+					throw m && vm(g), e;
 				}
 			})(), T = [], E = f(y);
 			for (let e = 0; e < n; e++) {
 				let t = [];
-				for (let n = 0; n < r; n++) t.push(Hm(E.get(n, e)));
+				for (let n = 0; n < r; n++) t.push(Km(E.get(n, e)));
 				T.push(t);
 			}
 			E.clean();
 			for (let e = 0; e < r; e++) Q.NTT.encode(S[e]);
 			for (let e = 0; e < n; e++) Q.NTT.encode(C[e]), Q.NTT.encode(w[e]);
-			let k = u ? e : Zp.create({ dkLen: l }).update(x).update(e).digest(), M = Zp.create({ dkLen: l }).update(b).update(g).update(k).digest();
-			m && mm(g), im(M, l);
+			let k = u ? e : em.create({ dkLen: l }).update(x).update(e).digest(), M = em.create({ dkLen: l }).update(b).update(g).update(k).digest();
+			m && vm(g), sm(M, l);
 			let N = p(M, D.bytesLen);
 			main_loop: for (let e = 0;;) {
 				let t = [];
 				for (let n = 0; n < r; n++, e++) t.push(D.decode(N.get(e & 255, e >> 8)()));
 				let o = t.map((e) => Q.NTT.encode(e.slice())), s = [];
 				for (let e = 0; e < n; e++) {
-					let t = Pm(Em);
-					for (let n = 0; n < r; n++) Lm(t, Vm(T[e][n], o[n]));
+					let t = Rm(Am);
+					for (let n = 0; n < r; n++) Vm(t, Gm(T[e][n], o[n]));
 					Q.NTT.decode(t), s.push(t);
 				}
-				let l = s.map((e) => e.map(_)), f = Zp.create({ dkLen: d }).update(k).update(O.encode(l)).digest(), p = Q.NTT.encode(P(f)), m = S.map((e) => Vm(e, p));
-				for (let e = 0; e < r; e++) if (Lm(Q.NTT.decode(m[e]), t[e]), Bm(m[e], i - h)) continue main_loop;
+				let l = s.map((e) => e.map(_)), f = em.create({ dkLen: d }).update(k).update(O.encode(l)).digest(), p = Q.NTT.encode(P(f)), m = S.map((e) => Gm(e, p));
+				for (let e = 0; e < r; e++) if (Vm(Q.NTT.decode(m[e]), t[e]), Wm(m[e], i - h)) continue main_loop;
 				let g = 0, y = [];
 				for (let e = 0; e < n; e++) {
-					let t = Q.NTT.decode(Vm(C[e], p)), n = Rm(s[e], t).map(v);
-					if (Bm(n, a - h)) continue main_loop;
-					let r = Q.NTT.decode(Vm(w[e], p));
-					if (Bm(r, a)) continue main_loop;
-					Lm(n, r);
+					let t = Q.NTT.decode(Gm(C[e], p)), n = Hm(s[e], t).map(v);
+					if (Wm(n, a - h)) continue main_loop;
+					let r = Q.NTT.decode(Gm(w[e], p));
+					if (Wm(r, a)) continue main_loop;
+					Vm(n, r);
 					let i = L(n, l[e]);
 					y.push(i.v), g += i.cnt;
 				}
@@ -11566,33 +11569,33 @@ function Um(e) {
 					m,
 					y
 				]);
-				return mm(f, m, y, p, l, s, o, t, M, S, C, w, ...T), u || mm(k), b;
+				return vm(f, m, y, p, l, s, o, t, M, S, C, w, ...T), u || vm(k), b;
 			}
 			throw Error("Unreachable code path reached, report this error");
 		},
 		verify: (e, t, a, o = {}) => {
-			Tm(o);
+			km(o);
 			let { externalMu: s = !1 } = o;
-			s && im(t, l, "mu");
-			let [p, m] = k.decode(a), g = Zp(a, { dkLen: u });
+			s && sm(t, l, "mu");
+			let [p, m] = k.decode(a), g = em(a, { dkLen: u });
 			if (e.length !== j.bytesLen) return !1;
 			let [_, v, y] = j.decode(e);
 			if (y === !1) return !1;
-			for (let e = 0; e < r; e++) if (Bm(v[e], i - h)) return !1;
-			let b = s ? t : Zp.create({ dkLen: l }).update(g).update(t).digest(), x = Q.NTT.encode(P(_)), S = v.map((e) => e.slice());
+			for (let e = 0; e < r; e++) if (Wm(v[e], i - h)) return !1;
+			let b = s ? t : em.create({ dkLen: l }).update(g).update(t).digest(), x = Q.NTT.encode(P(_)), S = v.map((e) => e.slice());
 			for (let e = 0; e < r; e++) Q.NTT.encode(S[e]);
 			let C = [], w = f(p);
 			for (let e = 0; e < n; e++) {
-				let t = Vm(Q.NTT.encode(zm(m[e])), x), n = Pm(Em);
-				for (let t = 0; t < r; t++) Lm(n, Vm(Hm(w.get(t, e)), S[t]));
-				let i = Q.NTT.decode(Rm(n, t));
+				let t = Gm(Q.NTT.encode(Um(m[e])), x), n = Rm(Am);
+				for (let t = 0; t < r; t++) Vm(n, Gm(Km(w.get(t, e)), S[t]));
+				let i = Q.NTT.decode(Hm(n, t));
 				C.push(I(i, y[e]));
 			}
 			w.clean();
-			let T = Zp.create({ dkLen: d }).update(b).update(O.encode(C)).digest();
+			let T = em.create({ dkLen: d }).update(b).update(O.encode(C)).digest();
 			for (let e of y) if (!(e.reduce((e, t) => e + t, 0) <= c)) return !1;
-			for (let e of v) if (Bm(e, i - h)) return !1;
-			return cm(_, T);
+			for (let e of v) if (Wm(e, i - h)) return !1;
+			return dm(_, T);
 		}
 	});
 	return Object.freeze({
@@ -11603,13 +11606,13 @@ function Um(e) {
 		lengths: z.lengths,
 		getPublicKey: z.getPublicKey,
 		sign: (e, t, n = {}) => {
-			dm(n);
-			let r = _m(e, n.context), i = z.sign(r, t, n);
-			return mm(r), i;
+			hm(n);
+			let r = xm(e, n.context), i = z.sign(r, t, n);
+			return vm(r), i;
 		},
-		verify: (e, t, n, r = {}) => (um(r), im(e, void 0, "signature"), z.verify(e, _m(t, r.context), n)),
+		verify: (e, t, n, r = {}) => (mm(r), sm(e, void 0, "signature"), z.verify(e, xm(t, r.context), n)),
 		prehash: (e) => {
-			ym(e, m);
+			Cm(e, m);
 			let t = e;
 			return Object.freeze({
 				info: Object.freeze({ type: "hashml-dsa" }),
@@ -11618,125 +11621,125 @@ function Um(e) {
 				keygen: z.keygen,
 				getPublicKey: z.getPublicKey,
 				sign: (e, n, r = {}) => {
-					dm(r);
-					let i = bm(t, e, r.context), a = z.sign(i, n, r);
-					return mm(i), a;
+					hm(r);
+					let i = wm(t, e, r.context), a = z.sign(i, n, r);
+					return vm(i), a;
 				},
-				verify: (e, n, r, i = {}) => (um(i), im(e, void 0, "signature"), z.verify(e, bm(t, n, i.context), r))
+				verify: (e, n, r, i = {}) => (mm(i), sm(e, void 0, "signature"), z.verify(e, wm(t, n, i.context), r))
 			});
 		}
 	});
 }
-var Wm = /* @__PURE__ */ Um({
-	...Nm[5],
+var Jm = /* @__PURE__ */ qm({
+	...Lm[5],
 	CRH_BYTES: 64,
 	TR_BYTES: 64,
 	C_TILDE_BYTES: 64,
-	XOF128: Cm,
-	XOF256: wm,
+	XOF128: Dm,
+	XOF256: Om,
 	securityLevel: 256
-}), Gm = "ML-DSA-87", Km = "tkmchain:pq-address:v1:";
-function qm(e) {
+}), Ym = "ML-DSA-87", Xm = "tkmchain:pq-address:v1:";
+function Zm(e) {
 	return e.Crypto && !e.crypto && (e.crypto = e.Crypto, delete e.Crypto), e.address && (e.address = e.address.toLowerCase(), e.address.startsWith("0x") && (e.address = e.address.slice(2))), e;
 }
-function Jm(e) {
+function Qm(e) {
 	if (typeof e != "string") return "";
 	let t = e.startsWith("0x") ? e.slice(2) : e;
 	return !/^[0-9a-fA-F]+$/.test(t) || t.length !== 5184 ? "" : K(T(W(C([
-		H(Km),
-		H(Gm),
+		H(Xm),
+		H(Ym),
 		_("0x" + t)
 	])), 12));
 }
 //#endregion
 //#region vendor/pq.js
-var Ym = 6, Xm = 32, Zm = 32;
-function Qm(e, t) {
+var $m = 6, eh = 32, th = 32;
+function nh(e, t) {
 	try {
 		return _(e);
 	} catch {
 		throw Error(`${t} is not valid hexadecimal data`);
 	}
 }
-function $m(e) {
+function rh(e) {
 	let t = e?.crypto || e?.Crypto;
 	if (!t) throw Error("PQ keyfile is missing its crypto section");
 	return t;
 }
-function eh(e, t) {
+function ih(e, t) {
 	if (e.length !== t.length) return !1;
 	let n = 0;
 	for (let r = 0; r < e.length; r++) n |= e[r] ^ t[r];
 	return n === 0;
 }
-async function th(e, t) {
-	let n = String(e.kdf || "").toLowerCase(), r = e.kdfparams || {}, i = Qm("0x" + String(r.salt || "").replace(/^0x/, ""), "KDF salt"), a = H(t), o = Number(r.dklen);
-	if (o !== Xm) throw Error("PQ keyfile KDF must derive 32 bytes");
+async function ah(e, t) {
+	let n = String(e.kdf || "").toLowerCase(), r = e.kdfparams || {}, i = nh("0x" + String(r.salt || "").replace(/^0x/, ""), "KDF salt"), a = H(t), o = Number(r.dklen);
+	if (o !== eh) throw Error("PQ keyfile KDF must derive 32 bytes");
 	if (n === "scrypt") {
 		let e = Number(r.n), t = Number(r.r), n = Number(r.p);
 		if (!Number.isSafeInteger(e) || e <= 1 || e & e - 1 || t <= 0 || n <= 0) throw Error("PQ keyfile has invalid scrypt parameters");
-		return Qm(await fr(a, i, e, t, n, o), "derived key");
+		return nh(await fr(a, i, e, t, n, o), "derived key");
 	}
 	if (n === "pbkdf2") {
 		let e = Number(r.c), t = String(r.prf || "").toLowerCase().split("-").pop();
 		if (!Number.isSafeInteger(e) || e <= 0 || t !== "sha256" && t !== "sha512") throw Error("PQ keyfile has invalid PBKDF2 parameters");
-		return Qm(Yn(a, i, e, o, t), "derived key");
+		return nh(Yn(a, i, e, o, t), "derived key");
 	}
 	throw Error(`unsupported PQ keyfile KDF: ${n || "missing"}`);
 }
-function nh(e, t) {
-	let n = Wm.keygen(t), r = Qm("0x" + String(e.publicKey || "").replace(/^0x/, ""), "PQ public key");
+function oh(e, t) {
+	let n = Jm.keygen(t), r = nh("0x" + String(e.publicKey || "").replace(/^0x/, ""), "PQ public key");
 	try {
-		if (r.length !== 2592 || !eh(n.publicKey, r)) throw Error("PQ keyfile public key does not match its encrypted seed");
-		if (Jm(S(n.publicKey)) !== K("0x" + String(e.address || "").replace(/^0x/, ""))) throw Error("PQ keyfile address does not match its encrypted seed");
+		if (r.length !== 2592 || !ih(n.publicKey, r)) throw Error("PQ keyfile public key does not match its encrypted seed");
+		if (Qm(S(n.publicKey)) !== K("0x" + String(e.address || "").replace(/^0x/, ""))) throw Error("PQ keyfile address does not match its encrypted seed");
 		return n;
 	} catch (e) {
 		throw n.secretKey.fill(0), e;
 	}
 }
-async function rh(e, t) {
+async function sh(e, t) {
 	if (Number(e?.version) !== 4 || e?.algorithm !== "ML-DSA-87") throw Error("a version-4 ML-DSA-87 keyfile is required");
 	if (typeof t != "string" || t.length === 0) throw Error("PQ keyfile password is required");
-	let n = $m(e);
+	let n = rh(e);
 	if (String(n.cipher || "").toLowerCase() !== "aes-128-ctr") throw Error("PQ keyfile cipher must be aes-128-ctr");
-	let r = await th(n, t), i = Qm("0x" + String(n.ciphertext || "").replace(/^0x/, ""), "ciphertext"), a = String(n.mac || "").replace(/^0x/, "").toLowerCase();
+	let r = await ah(n, t), i = nh("0x" + String(n.ciphertext || "").replace(/^0x/, ""), "ciphertext"), a = String(n.mac || "").replace(/^0x/, "").toLowerCase();
 	if (W(C([r.slice(16, 32), i])).slice(2) !== a) throw r.fill(0), Error("incorrect PQ keyfile password");
-	let o = Qm("0x" + String(n.cipherparams?.iv || "").replace(/^0x/, ""), "cipher IV"), s = $f(r.slice(0, 16), o).decrypt(i);
-	if (r.fill(0), s.length !== Zm) throw s.fill(0), Error(`PQ keyfile seed has ${s.length} bytes, want ${Zm}`);
+	let o = nh("0x" + String(n.cipherparams?.iv || "").replace(/^0x/, ""), "cipher IV"), s = $f(r.slice(0, 16), o).decrypt(i);
+	if (r.fill(0), s.length !== th) throw s.fill(0), Error(`PQ keyfile seed has ${s.length} bytes, want ${th}`);
 	try {
-		return nh(e, s).secretKey.fill(0), s;
+		return oh(e, s).secretKey.fill(0), s;
 	} catch (e) {
 		throw s.fill(0), e;
 	}
 }
-function ih(e, t) {
+function ch(e, t) {
 	let n = I(e, t);
 	return n === 0n ? "0x" : te(n);
 }
-function ah(e = []) {
+function lh(e = []) {
 	return e.map((e) => {
 		let t = Array.isArray(e) ? e[0] : e.address, n = Array.isArray(e) ? e[1] : e.storageKeys;
 		return [K(t), (n || []).map((e) => S(e))];
 	});
 }
-function oh(e, t) {
-	let n = Wm.keygen(t), r = S(n.publicKey), i = [
-		ih(e.chainId, "chainId"),
-		ih(e.nonce, "nonce"),
-		ih(e.gasTipCap ?? e.gasPrice, "gasTipCap"),
-		ih(e.gasFeeCap ?? e.gasPrice, "gasFeeCap"),
-		ih(e.gas, "gas"),
+function uh(e, t) {
+	let n = Jm.keygen(t), r = S(n.publicKey), i = [
+		ch(e.chainId, "chainId"),
+		ch(e.nonce, "nonce"),
+		ch(e.gasTipCap ?? e.gasPrice, "gasTipCap"),
+		ch(e.gasFeeCap ?? e.gasPrice, "gasFeeCap"),
+		ch(e.gas, "gas"),
 		e.to == null ? "0x" : K(e.to),
-		ih(e.value ?? 0, "value"),
+		ch(e.value ?? 0, "value"),
 		S(e.data ?? e.input ?? "0x"),
-		ah(e.accessList),
-		S(H(Gm)),
+		lh(e.accessList),
+		S(H(Ym)),
 		r
-	], a = W(C([te(Ym, 1), Qe(i)]));
+	], a = W(C([te($m, 1), Qe(i)]));
 	try {
-		let e = Wm.sign(_(a), n.secretKey, { extraEntropy: !1 });
-		if (!Wm.verify(e, _(a), n.publicKey)) throw Error("local ML-DSA-87 signature verification failed");
-		let t = C([te(Ym, 1), Qe([...i, S(e)])]);
+		let e = Jm.sign(_(a), n.secretKey, { extraEntropy: !1 });
+		if (!Jm.verify(e, _(a), n.publicKey)) throw Error("local ML-DSA-87 signature verification failed");
+		let t = C([te($m, 1), Qe([...i, S(e)])]);
 		return {
 			rawTransaction: t,
 			transactionHash: W(t),
@@ -11749,8 +11752,8 @@ function oh(e, t) {
 }
 //#endregion
 //#region node_modules/@noble/curves/esm/abstract/montgomery.js
-var sh = BigInt(0), ch = BigInt(1);
-function lh(e) {
+var dh = BigInt(0), fh = BigInt(1);
+function ph(e) {
 	return Gr(e, { a: "bigint" }, {
 		montgomeryBits: "isSafeInteger",
 		nByteLength: "isSafeInteger",
@@ -11760,21 +11763,21 @@ function lh(e) {
 		Gu: "bigint"
 	}), Object.freeze({ ...e });
 }
-function uh(e) {
-	let t = lh(e), { P: n } = t, r = (e) => ei(e, n), i = t.montgomeryBits, a = Math.ceil(i / 8), o = t.nByteLength, s = t.adjustScalarBytes || ((e) => e), c = t.powPminus2 || ((e) => ti(e, n - BigInt(2), n));
+function mh(e) {
+	let t = ph(e), { P: n } = t, r = (e) => ei(e, n), i = t.montgomeryBits, a = Math.ceil(i / 8), o = t.nByteLength, s = t.adjustScalarBytes || ((e) => e), c = t.powPminus2 || ((e) => ti(e, n - BigInt(2), n));
 	function l(e, t, n) {
 		let i = r(e * (t - n));
 		return t = r(t - i), n = r(n + i), [t, n];
 	}
 	function u(e) {
-		if (typeof e == "bigint" && sh <= e && e < n) return e;
+		if (typeof e == "bigint" && dh <= e && e < n) return e;
 		throw Error("Expected valid scalar 0 < scalar < CURVE.P");
 	}
 	let d = (t.a - BigInt(2)) / BigInt(4);
 	function f(e, t) {
-		let n = u(e), a = u(t), o = n, s = ch, f = sh, p = n, m = ch, h = sh, g;
-		for (let e = BigInt(i - 1); e >= sh; e--) {
-			let t = a >> e & ch;
+		let n = u(e), a = u(t), o = n, s = fh, f = dh, p = n, m = fh, h = dh, g;
+		for (let e = BigInt(i - 1); e >= dh; e--) {
+			let t = a >> e & fh;
 			h ^= t, g = l(h, s, p), s = g[0], p = g[1], g = l(h, f, m), f = g[0], m = g[1], h = t;
 			let n = s + f, i = r(n * n), c = s - f, u = r(c * c), _ = i - u, v = p + m, y = p - m, b = r(y * n), x = r(v * c), S = b + x, C = b - x;
 			p = r(S * S), m = r(o * r(C * C)), s = r(i * u), f = r(_ * (i + r(d * _)));
@@ -11797,7 +11800,7 @@ function uh(e) {
 	}
 	function g(e, t) {
 		let n = f(m(t), h(e));
-		if (n === sh) throw Error("Invalid private or public key received");
+		if (n === dh) throw Error("Invalid private or public key received");
 		return p(n);
 	}
 	let _ = p(t.Gu);
@@ -11815,85 +11818,85 @@ function uh(e) {
 }
 //#endregion
 //#region node_modules/@noble/curves/esm/ed25519.js
-var dh = BigInt("57896044618658097711785492504343953926634992332820282019728792003956564819949"), fh = BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752"), ph = BigInt(1), mh = BigInt(2), hh = BigInt(5), gh = BigInt(10), _h = BigInt(20), vh = BigInt(40), yh = BigInt(80);
-function bh(e) {
-	let t = dh, n = e * e % t * e % t, r = ni(ni(n, mh, t) * n % t, ph, t) * e % t, i = ni(r, hh, t) * r % t, a = ni(i, gh, t) * i % t, o = ni(a, _h, t) * a % t, s = ni(o, vh, t) * o % t;
+var hh = BigInt("57896044618658097711785492504343953926634992332820282019728792003956564819949"), gh = BigInt("19681161376707505956807079304988542015446066515923890162744021073123829784752"), _h = BigInt(1), vh = BigInt(2), yh = BigInt(5), bh = BigInt(10), xh = BigInt(20), Sh = BigInt(40), Ch = BigInt(80);
+function wh(e) {
+	let t = hh, n = e * e % t * e % t, r = ni(ni(n, vh, t) * n % t, _h, t) * e % t, i = ni(r, yh, t) * r % t, a = ni(i, bh, t) * i % t, o = ni(a, xh, t) * a % t, s = ni(o, Sh, t) * o % t;
 	return {
-		pow_p_5_8: ni(ni(ni(ni(s, yh, t) * s % t, yh, t) * s % t, gh, t) * i % t, mh, t) * e % t,
+		pow_p_5_8: ni(ni(ni(ni(s, Ch, t) * s % t, Ch, t) * s % t, bh, t) * i % t, vh, t) * e % t,
 		b2: n
 	};
 }
-function xh(e) {
+function Th(e) {
 	return e[0] &= 248, e[31] &= 127, e[31] |= 64, e;
 }
-function Sh(e, t) {
-	let n = dh, r = ei(t * t * t, n), i = bh(e * ei(r * r * t, n)).pow_p_5_8, a = ei(e * r * i, n), o = ei(t * a * a, n), s = a, c = ei(a * fh, n), l = o === e, u = o === ei(-e, n), d = o === ei(-e * fh, n);
+function Eh(e, t) {
+	let n = hh, r = ei(t * t * t, n), i = wh(e * ei(r * r * t, n)).pow_p_5_8, a = ei(e * r * i, n), o = ei(t * a * a, n), s = a, c = ei(a * gh, n), l = o === e, u = o === ei(-e, n), d = o === ei(-e * gh, n);
 	return l && (a = s), (u || d) && (a = c), oi(a, n) && (a = ei(-a, n)), {
 		isValid: l || u,
 		value: a
 	};
 }
-var Ch = fi(dh, void 0, !0), wh = {
+var Dh = fi(hh, void 0, !0), Oh = {
 	a: BigInt(-1),
 	d: BigInt("37095705934669439343138083508754565189542113879843219016388785533085940283555"),
-	Fp: Ch,
+	Fp: Dh,
 	n: BigInt("7237005577332262213973186563042994240857116359379907606001950938285454250989"),
 	h: BigInt(8),
 	Gx: BigInt("15112221349535400772501151409588531511454012693041857206046113283949847762202"),
 	Gy: BigInt("46316835694926478169428394003475163141307993866256225615783033603165251855960"),
 	hash: bn,
 	randomBytes: Ft,
-	adjustScalarBytes: xh,
-	uvRatio: Sh
+	adjustScalarBytes: Th,
+	uvRatio: Eh
 };
-({ ...wh }), { ...wh };
-var Th = /* @__PURE__ */ uh({
-	P: dh,
+({ ...Oh }), { ...Oh };
+var kh = /* @__PURE__ */ mh({
+	P: hh,
 	a: BigInt(486662),
 	montgomeryBits: 255,
 	nByteLength: 32,
 	Gu: BigInt(9),
 	powPminus2: (e) => {
-		let t = dh, { pow_p_5_8: n, b2: r } = bh(e);
+		let t = hh, { pow_p_5_8: n, b2: r } = wh(e);
 		return ei(ni(n, BigInt(3), t) * r, t);
 	},
-	adjustScalarBytes: xh,
+	adjustScalarBytes: Th,
 	randomBytes: Ft
-}), Eh = (Ch.ORDER + BigInt(3)) / BigInt(8);
-Ch.pow(mh, Eh), Ch.sqrt(Ch.neg(Ch.ONE)), (Ch.ORDER - BigInt(5)) / BigInt(8), pi(Ch, Ch.neg(BigInt(486664)));
+}), Ah = (Dh.ORDER + BigInt(3)) / BigInt(8);
+Dh.pow(vh, Ah), Dh.sqrt(Dh.neg(Dh.ONE)), (Dh.ORDER - BigInt(5)) / BigInt(8), pi(Dh, Dh.neg(BigInt(486664)));
 //#endregion
 //#region node_modules/@noble/ciphers/_arx.js
-var Dh = (e) => Uint8Array.from(e.split(""), (e) => e.charCodeAt(0)), Oh = /* @__PURE__ */ Tf(vf(Dh("expand 16-byte k"))), kh = /* @__PURE__ */ Tf(vf(Dh("expand 32-byte k")));
+var jh = (e) => Uint8Array.from(e.split(""), (e) => e.charCodeAt(0)), Mh = /* @__PURE__ */ Tf(vf(jh("expand 16-byte k"))), Nh = /* @__PURE__ */ Tf(vf(jh("expand 32-byte k")));
 function $(e, t) {
 	return e << t | e >>> 32 - t;
 }
-var Ah = 64, jh = 16, Mh = 2 ** 32 - 1, Nh = /* @__PURE__ */ Uint32Array.of();
-function Ph(e, t, n, r, i, a, o, s) {
-	let c = i.length, l = new Uint8Array(Ah), u = vf(l), d = xf && Pf(i) && Pf(a), f = d ? vf(i) : Nh, p = d ? vf(a) : Nh;
+var Ph = 64, Fh = 16, Ih = 2 ** 32 - 1, Lh = /* @__PURE__ */ Uint32Array.of();
+function Rh(e, t, n, r, i, a, o, s) {
+	let c = i.length, l = new Uint8Array(Ph), u = vf(l), d = xf && Pf(i) && Pf(a), f = d ? vf(i) : Lh, p = d ? vf(a) : Lh;
 	if (!xf) {
 		for (let d = 0; d < c; o++) {
-			if (e(t, n, r, u, o, s), Tf(u), o >= Mh) throw Error("arx: counter overflow");
-			let f = Math.min(Ah, c - d);
+			if (e(t, n, r, u, o, s), Tf(u), o >= Ih) throw Error("arx: counter overflow");
+			let f = Math.min(Ph, c - d);
 			for (let e = 0, t; e < f; e++) t = d + e, a[t] = i[t] ^ l[e];
 			d += f;
 		}
 		return;
 	}
 	for (let m = 0; m < c; o++) {
-		if (e(t, n, r, u, o, s), o >= Mh) throw Error("arx: counter overflow");
-		let h = Math.min(Ah, c - m);
-		if (d && h === Ah) {
+		if (e(t, n, r, u, o, s), o >= Ih) throw Error("arx: counter overflow");
+		let h = Math.min(Ph, c - m);
+		if (d && h === Ph) {
 			let e = m / 4;
 			if (m % 4 != 0) throw Error("arx: invalid block position");
-			for (let t = 0, n; t < jh; t++) n = e + t, p[n] = f[n] ^ u[t];
-			m += Ah;
+			for (let t = 0, n; t < Fh; t++) n = e + t, p[n] = f[n] ^ u[t];
+			m += Ph;
 			continue;
 		}
 		for (let e = 0, t; e < h; e++) t = m + e, a[t] = i[t] ^ l[e];
 		m += h;
 	}
 }
-function Fh(e, t) {
+function zh(e, t) {
 	let { allowShortKeys: n, extendNonceFn: r, counterLength: i, counterRight: a, rounds: o } = Of({
 		allowShortKeys: !1,
 		counterLength: 8,
@@ -11904,10 +11907,10 @@ function Fh(e, t) {
 	return ff(i), ff(o), df(a), df(n), (t, s, c, l, u = 0) => {
 		pf(t, void 0, "key"), pf(s, void 0, "nonce"), pf(c, void 0, "data");
 		let d = c.length;
-		if (l = Mf(d, l, !1), ff(u), u < 0 || u >= Mh) throw Error("arx: counter overflow");
+		if (l = Mf(d, l, !1), ff(u), u < 0 || u >= Ih) throw Error("arx: counter overflow");
 		let f = [], p = t.length, m, h;
-		if (p === 32) f.push(m = Ff(t)), h = kh;
-		else if (p === 16 && n) m = /* @__PURE__ */ new Uint8Array(32), m.set(t), m.set(t, 16), h = Oh, f.push(m);
+		if (p === 32) f.push(m = Ff(t)), h = Nh;
+		else if (p === 16 && n) m = /* @__PURE__ */ new Uint8Array(32), m.set(t), m.set(t, 16), h = Mh, f.push(m);
 		else throw pf(t, 32, "arx key"), Error("invalid key size");
 		(!xf || !Pf(s)) && f.push(s = Ff(s));
 		let g = vf(m);
@@ -11929,7 +11932,7 @@ function Fh(e, t) {
 		}
 		let v = Tf(vf(s));
 		try {
-			return Ph(e, h, g, v, c, l, u, o), l;
+			return Rh(e, h, g, v, c, l, u, o), l;
 		} finally {
 			yf(...f);
 		}
@@ -11937,10 +11940,10 @@ function Fh(e, t) {
 }
 //#endregion
 //#region node_modules/@noble/ciphers/_poly1305.js
-function Ih(e, t) {
+function Bh(e, t) {
 	return e[t++] & 255 | (e[t++] & 255) << 8;
 }
-var Lh = class {
+var Vh = class {
 	blockLen = 16;
 	outputLen = 16;
 	buffer = /* @__PURE__ */ new Uint8Array(16);
@@ -11952,12 +11955,12 @@ var Lh = class {
 	destroyed = !1;
 	constructor(e) {
 		e = Ff(pf(e, 32, "key"));
-		let t = Ih(e, 0), n = Ih(e, 2), r = Ih(e, 4), i = Ih(e, 6), a = Ih(e, 8), o = Ih(e, 10), s = Ih(e, 12), c = Ih(e, 14);
+		let t = Bh(e, 0), n = Bh(e, 2), r = Bh(e, 4), i = Bh(e, 6), a = Bh(e, 8), o = Bh(e, 10), s = Bh(e, 12), c = Bh(e, 14);
 		this.r[0] = t & 8191, this.r[1] = (t >>> 13 | n << 3) & 8191, this.r[2] = (n >>> 10 | r << 6) & 7939, this.r[3] = (r >>> 7 | i << 9) & 8191, this.r[4] = (i >>> 4 | a << 12) & 255, this.r[5] = a >>> 1 & 8190, this.r[6] = (a >>> 14 | o << 2) & 8191, this.r[7] = (o >>> 11 | s << 5) & 8065, this.r[8] = (s >>> 8 | c << 8) & 8191, this.r[9] = c >>> 5 & 127;
-		for (let t = 0; t < 8; t++) this.pad[t] = Ih(e, 16 + 2 * t);
+		for (let t = 0; t < 8; t++) this.pad[t] = Bh(e, 16 + 2 * t);
 	}
 	process(e, t, n = !1) {
-		let r = n ? 0 : 2048, { h: i, r: a } = this, o = a[0], s = a[1], c = a[2], l = a[3], u = a[4], d = a[5], f = a[6], p = a[7], m = a[8], h = a[9], g = Ih(e, t + 0), _ = Ih(e, t + 2), v = Ih(e, t + 4), y = Ih(e, t + 6), b = Ih(e, t + 8), x = Ih(e, t + 10), S = Ih(e, t + 12), C = Ih(e, t + 14), w = i[0] + (g & 8191), T = i[1] + ((g >>> 13 | _ << 3) & 8191), E = i[2] + ((_ >>> 10 | v << 6) & 8191), D = i[3] + ((v >>> 7 | y << 9) & 8191), O = i[4] + ((y >>> 4 | b << 12) & 8191), k = i[5] + (b >>> 1 & 8191), A = i[6] + ((b >>> 14 | x << 2) & 8191), j = i[7] + ((x >>> 11 | S << 5) & 8191), M = i[8] + ((S >>> 8 | C << 8) & 8191), N = i[9] + (C >>> 5 | r), P = 0, F = P + w * o + 5 * h * T + 5 * m * E + 5 * p * D + 5 * f * O;
+		let r = n ? 0 : 2048, { h: i, r: a } = this, o = a[0], s = a[1], c = a[2], l = a[3], u = a[4], d = a[5], f = a[6], p = a[7], m = a[8], h = a[9], g = Bh(e, t + 0), _ = Bh(e, t + 2), v = Bh(e, t + 4), y = Bh(e, t + 6), b = Bh(e, t + 8), x = Bh(e, t + 10), S = Bh(e, t + 12), C = Bh(e, t + 14), w = i[0] + (g & 8191), T = i[1] + ((g >>> 13 | _ << 3) & 8191), E = i[2] + ((_ >>> 10 | v << 6) & 8191), D = i[3] + ((v >>> 7 | y << 9) & 8191), O = i[4] + ((y >>> 4 | b << 12) & 8191), k = i[5] + (b >>> 1 & 8191), A = i[6] + ((b >>> 14 | x << 2) & 8191), j = i[7] + ((x >>> 11 | S << 5) & 8191), M = i[8] + ((S >>> 8 | C << 8) & 8191), N = i[9] + (C >>> 5 | r), P = 0, F = P + w * o + 5 * h * T + 5 * m * E + 5 * p * D + 5 * f * O;
 		P = F >>> 13, F &= 8191, F += 5 * d * k + 5 * u * A + 5 * l * j + 5 * c * M + 5 * s * N, P += F >>> 13, F &= 8191;
 		let I = P + w * s + T * o + 5 * h * E + 5 * m * D + 5 * p * O;
 		P = I >>> 13, I &= 8191, I += 5 * f * k + 5 * d * A + 5 * u * j + 5 * l * M + 5 * c * N, P += I >>> 13, I &= 8191;
@@ -12028,39 +12031,39 @@ var Lh = class {
 		let n = e.slice(0, t);
 		return this.destroy(), n;
 	}
-}, Rh = /* @__PURE__ */ Af(32, (e) => new Lh(e));
+}, Hh = /* @__PURE__ */ Af(32, (e) => new Vh(e));
 //#endregion
 //#region node_modules/@noble/ciphers/chacha.js
-function zh(e, t, n, r, i, a = 20) {
+function Uh(e, t, n, r, i, a = 20) {
 	let o = e[0], s = e[1], c = e[2], l = e[3], u = t[0], d = t[1], f = t[2], p = t[3], m = t[4], h = t[5], g = t[6], _ = t[7], v = i, y = n[0], b = n[1], x = n[2], S = o, C = s, w = c, T = l, E = u, D = d, O = f, k = p, A = m, j = h, M = g, N = _, P = v, F = y, I = b, L = x;
 	for (let e = 0; e < a; e += 2) S = S + E | 0, P = $(P ^ S, 16), A = A + P | 0, E = $(E ^ A, 12), S = S + E | 0, P = $(P ^ S, 8), A = A + P | 0, E = $(E ^ A, 7), C = C + D | 0, F = $(F ^ C, 16), j = j + F | 0, D = $(D ^ j, 12), C = C + D | 0, F = $(F ^ C, 8), j = j + F | 0, D = $(D ^ j, 7), w = w + O | 0, I = $(I ^ w, 16), M = M + I | 0, O = $(O ^ M, 12), w = w + O | 0, I = $(I ^ w, 8), M = M + I | 0, O = $(O ^ M, 7), T = T + k | 0, L = $(L ^ T, 16), N = N + L | 0, k = $(k ^ N, 12), T = T + k | 0, L = $(L ^ T, 8), N = N + L | 0, k = $(k ^ N, 7), S = S + D | 0, L = $(L ^ S, 16), M = M + L | 0, D = $(D ^ M, 12), S = S + D | 0, L = $(L ^ S, 8), M = M + L | 0, D = $(D ^ M, 7), C = C + O | 0, P = $(P ^ C, 16), N = N + P | 0, O = $(O ^ N, 12), C = C + O | 0, P = $(P ^ C, 8), N = N + P | 0, O = $(O ^ N, 7), w = w + k | 0, F = $(F ^ w, 16), A = A + F | 0, k = $(k ^ A, 12), w = w + k | 0, F = $(F ^ w, 8), A = A + F | 0, k = $(k ^ A, 7), T = T + E | 0, I = $(I ^ T, 16), j = j + I | 0, E = $(E ^ j, 12), T = T + E | 0, I = $(I ^ T, 8), j = j + I | 0, E = $(E ^ j, 7);
 	let R = 0;
 	r[R++] = o + S | 0, r[R++] = s + C | 0, r[R++] = c + w | 0, r[R++] = l + T | 0, r[R++] = u + E | 0, r[R++] = d + D | 0, r[R++] = f + O | 0, r[R++] = p + k | 0, r[R++] = m + A | 0, r[R++] = h + j | 0, r[R++] = g + M | 0, r[R++] = _ + N | 0, r[R++] = v + P | 0, r[R++] = y + F | 0, r[R++] = b + I | 0, r[R++] = x + L | 0;
 }
-function Bh(e, t, n, r) {
+function Wh(e, t, n, r) {
 	let i = xf ? e : Tf(e.slice(0, 4)), a = xf ? t : Tf(t.slice(0, 8)), o = xf ? n : Tf(n.slice(0, 4)), s = /* @__PURE__ */ new Uint32Array(16);
-	zh(i, a, o.subarray(1), s, o[0]);
+	Uh(i, a, o.subarray(1), s, o[0]);
 	let c = 0;
 	r[c++] = s[0] - i[0] | 0, r[c++] = s[1] - i[1] | 0, r[c++] = s[2] - i[2] | 0, r[c++] = s[3] - i[3] | 0, r[c++] = s[12] - o[0] | 0, r[c++] = s[13] - o[1] | 0, r[c++] = s[14] - o[2] | 0, r[c++] = s[15] - o[3] | 0, Tf(r), xf || yf(i, a, o), yf(s);
 }
-var Vh = /* @__PURE__ */ Fh(zh, {
+var Gh = /* @__PURE__ */ zh(Uh, {
 	counterRight: !1,
 	counterLength: 8,
-	extendNonceFn: Bh,
+	extendNonceFn: Wh,
 	allowShortKeys: !1
-}), Hh = /* @__PURE__ */ new Uint8Array(16), Uh = (e, t) => {
+}), Kh = /* @__PURE__ */ new Uint8Array(16), qh = (e, t) => {
 	e.update(t);
 	let n = t.length % 16;
-	n && e.update(Hh.subarray(n));
-}, Wh = /* @__PURE__ */ new Uint8Array(32);
-function Gh(e, t, n, r, i) {
+	n && e.update(Kh.subarray(n));
+}, Jh = /* @__PURE__ */ new Uint8Array(32);
+function Yh(e, t, n, r, i) {
 	i !== void 0 && pf(i, void 0, "AAD");
-	let a = e(t, n, Wh), o = Nf(r.length, i ? i.length : 0, !0), s = Rh.create(a);
-	i && Uh(s, i), Uh(s, r), s.update(o);
+	let a = e(t, n, Jh), o = Nf(r.length, i ? i.length : 0, !0), s = Hh.create(a);
+	i && qh(s, i), qh(s, r), s.update(o);
 	let c = s.digest();
 	return yf(a, o), c;
 }
-var Kh = /* @__PURE__ */ jf({
+var Xh = /* @__PURE__ */ jf({
 	blockSize: 64,
 	nonceLength: 24,
 	tagLength: 16,
@@ -12071,66 +12074,66 @@ var Kh = /* @__PURE__ */ jf({
 		a = Mf(o + 16, a, !1), a.set(i);
 		let s = a.subarray(0, -16);
 		e(t, n, s, s, 1);
-		let c = Gh(e, t, n, s, r);
+		let c = Yh(e, t, n, s, r);
 		return a.set(c, o), yf(c), a;
 	},
 	decrypt(i, a) {
 		a = Mf(i.length - 16, a, !1);
-		let o = i.subarray(0, -16), s = i.subarray(-16), c = Gh(e, t, n, o, r);
+		let o = i.subarray(0, -16), s = i.subarray(-16), c = Yh(e, t, n, o, r);
 		if (!kf(s, c)) throw yf(c), Error("invalid tag");
 		return a.set(i.subarray(0, -16)), e(t, n, a, a, 1), yf(c), a;
 	}
-}))(Vh));
+}))(Gh));
 //#endregion
 //#region node_modules/@noble/hashes/esm/hkdf.js
-function qh(e, t, n) {
+function Zh(e, t, n) {
 	return vt(e), n === void 0 && (n = new Uint8Array(e.outputLen)), Lt(e, kt(n), kt(t));
 }
-var Jh = /* @__PURE__ */ new Uint8Array([0]), Yh = /* @__PURE__ */ new Uint8Array();
-function Xh(e, t, n, r = 32) {
+var Qh = /* @__PURE__ */ new Uint8Array([0]), $h = /* @__PURE__ */ new Uint8Array();
+function eg(e, t, n, r = 32) {
 	if (vt(e), gt(r), r > 255 * e.outputLen) throw Error("Length should be <= 255*HashLen");
 	let i = Math.ceil(r / e.outputLen);
-	n === void 0 && (n = Yh);
+	n === void 0 && (n = $h);
 	let a = new Uint8Array(i * e.outputLen), o = Lt.create(e, t), s = o._cloneInto(), c = new Uint8Array(o.outputLen);
-	for (let t = 0; t < i; t++) Jh[0] = t + 1, s.update(t === 0 ? Yh : c).update(n).update(Jh).digestInto(c), a.set(c, e.outputLen * t), o._cloneInto(s);
-	return o.destroy(), s.destroy(), c.fill(0), Jh.fill(0), a.slice(0, r);
+	for (let t = 0; t < i; t++) Qh[0] = t + 1, s.update(t === 0 ? $h : c).update(n).update(Qh).digestInto(c), a.set(c, e.outputLen * t), o._cloneInto(s);
+	return o.destroy(), s.destroy(), c.fill(0), Qh.fill(0), a.slice(0, r);
 }
-var Zh = (e, t, n, r, i) => Xh(e, qh(e, t, n), r, i), Qh = K("0x00000000000000000000000000000000000000f7"), $h = 2001n, eg = 21888242871839275222246405745257275088548364400416034343698204186575808495617n, tg = H("TKMSHIELD1"), ng = "TKM_SHIELDED_NOTE_X25519_XCHACHA20POLY1305_V1", rg = "TKM_SHIELDED_VIEW_SALT_V1", ig = "TKM_SHIELDED_VIEW_X25519_V1", ag = "TKM_SHIELDED_STORE_SALT_V1", og = "TKM_SHIELDED_STORE_AES256_V1";
-function sg(e) {
+var tg = (e, t, n, r, i) => eg(e, Zh(e, t, n), r, i), ng = K("0x00000000000000000000000000000000000000f7"), rg = 2001n, ig = 21888242871839275222246405745257275088548364400416034343698204186575808495617n, ag = H("TKMSHIELD1"), og = "TKM_SHIELDED_NOTE_X25519_XCHACHA20POLY1305_V1", sg = "TKM_SHIELDED_VIEW_SALT_V1", cg = "TKM_SHIELDED_VIEW_X25519_V1", lg = "TKM_SHIELDED_STORE_SALT_V1", ug = "TKM_SHIELDED_STORE_AES256_V1";
+function dg(e) {
 	return _(e);
 }
-var cg = null;
-function lg(e) {
-	let t = BigInt(e) % eg;
-	return t < 0n ? t + eg : t;
+var fg = null;
+function pg(e) {
+	let t = BigInt(e) % ig;
+	return t < 0n ? t + ig : t;
 }
-function ug(e) {
-	let t = e * e % eg;
-	return t * t % eg * e % eg;
+function mg(e) {
+	let t = e * e % ig;
+	return t * t % ig * e % ig;
 }
-function dg() {
-	if (cg) return cg;
+function hg() {
+	if (fg) return fg;
 	let e = [], t = W(H("seed"));
-	for (let n = 0; n < 110; n++) t = W(t), e.push(lg(t));
-	return cg = e, e;
+	for (let n = 0; n < 110; n++) t = W(t), e.push(pg(t));
+	return fg = e, e;
 }
-function fg(e) {
+function gg(e) {
 	let t = 0n;
 	for (let n of e) {
-		let e = lg(n), r = e;
-		for (let e of dg()) r = ug(lg(r + t + e));
-		r = lg(r + t), t = lg(r + t + e);
+		let e = pg(n), r = e;
+		for (let e of hg()) r = mg(pg(r + t + e));
+		r = pg(r + t), t = pg(r + t + e);
 	}
 	return t;
 }
-function pg(e) {
-	return te(lg(e), 32).toLowerCase();
+function _g(e) {
+	return te(pg(e), 32).toLowerCase();
 }
-function mg(e, t, n) {
+function vg(e, t, n) {
 	if (Number(t?.shieldedVersion) !== 2) throw Error("proof builder did not return a Shielded V2 response");
-	let r = sg(e?.data || "0x");
-	if (r.length <= tg.length || !tg.every((e, t) => r[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
-	let i = Je(r.slice(tg.length));
+	let r = dg(e?.data || "0x");
+	if (r.length <= ag.length || !ag.every((e, t) => r[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
+	let i = Je(r.slice(ag.length));
 	if (!Array.isArray(i) || BigInt(i[0]) !== 2n || !Array.isArray(i[2]) || i[2].length !== 4) throw Error("proof builder returned an invalid Shielded V2 envelope");
 	let a = Array.isArray(t.outputOpenings) ? t.outputOpenings : [];
 	if (a.length !== n.length) throw Error("proof builder returned incomplete V2 output openings");
@@ -12143,8 +12146,8 @@ function mg(e, t, n) {
 		if (!Number.isInteger(n) || n < 0 || n >= 4) throw Error("proof builder returned an invalid V2 output index");
 		let r = K(t.recipient);
 		if (r !== K(e.recipient) || BigInt(t.valueWei) !== BigInt(e.valueWei) || BigInt(t.assetId) !== BigInt(e.assetId)) throw Error("proof builder changed the requested V2 recipient, value, or asset");
-		let s = pg(fg([
-			$h,
+		let s = _g(gg([
+			rg,
 			BigInt(r),
 			BigInt(t.assetId),
 			BigInt(t.valueWei),
@@ -12154,9 +12157,9 @@ function mg(e, t, n) {
 	}
 	return e;
 }
-function hg(e, t, { recipient: n, valueWei: r, expectedOutputs: i = [] }) {
-	mg(e, t, i);
-	let a = Je(sg(e?.data || "0x").slice(tg.length));
+function yg(e, t, { recipient: n, valueWei: r, expectedOutputs: i = [] }) {
+	vg(e, t, i);
+	let a = Je(dg(e?.data || "0x").slice(ag.length));
 	if (!Array.isArray(a) || a.length < 7) throw Error("proof builder omitted the shielded withdrawal fields");
 	let o;
 	try {
@@ -12167,35 +12170,35 @@ function hg(e, t, { recipient: n, valueWei: r, expectedOutputs: i = [] }) {
 	if (o !== K(n) || BigInt(a[6]) !== BigInt(r)) throw Error("proof builder changed the withdrawal recipient or value");
 	return e;
 }
-function gg(e, t) {
-	let n = sg(e?.data || "0x");
-	if (n.length <= tg.length || !tg.every((e, t) => n[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
-	let r = Je(n.slice(tg.length)), i = Array.isArray(r) && r.length >= 8 && r[7] !== "0x" ? BigInt(r[7]) : 0n, a = BigInt(t?.gasSponsorWei || 0), o = BigInt(e.gas) * BigInt(e.gasFeeCap);
+function bg(e, t) {
+	let n = dg(e?.data || "0x");
+	if (n.length <= ag.length || !ag.every((e, t) => n[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
+	let r = Je(n.slice(ag.length)), i = Array.isArray(r) && r.length >= 8 && r[7] !== "0x" ? BigInt(r[7]) : 0n, a = BigInt(t?.gasSponsorWei || 0), o = BigInt(e.gas) * BigInt(e.gasFeeCap);
 	if (i !== a || i < 0n || i > o) throw Error("proof builder returned an invalid shielded gas sponsorship");
 	return i;
 }
-function _g(e, t) {
-	let n = S(t).toLowerCase(), r = sg(e?.data || "0x");
-	if (r.length <= tg.length || !tg.every((e, t) => r[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
-	let i = Je(r.slice(tg.length)), a = Array.isArray(i) ? i[1] : null, o = Array.isArray(a) && a.length > 0 ? a[0] : null;
+function xg(e, t) {
+	let n = S(t).toLowerCase(), r = dg(e?.data || "0x");
+	if (r.length <= ag.length || !ag.every((e, t) => r[t] === e)) throw Error("proof builder returned an invalid shielded envelope");
+	let i = Je(r.slice(ag.length)), a = Array.isArray(i) ? i[1] : null, o = Array.isArray(a) && a.length > 0 ? a[0] : null;
 	if (!Array.isArray(o) || o.length < 4 || S(o[3]).toLowerCase() !== n) throw Error("proof builder changed or omitted the domain/mail application data");
 	return e;
 }
-function vg(e) {
+function Sg(e) {
 	let t = Array.from(e, (e) => String.fromCharCode(e)).join("");
 	return btoa(t).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
-function yg(e) {
+function Cg(e) {
 	let t = e.replaceAll("-", "+").replaceAll("_", "/"), n = t + "=".repeat((4 - t.length % 4) % 4);
 	return Uint8Array.from(atob(n), (e) => e.charCodeAt(0));
 }
-function bg(e, t, n = 8979) {
-	let r = K(t), i = Zh(Yt, e, H(rg), H(ig), 32), a = Th.getPublicKey(i), o = Zh(Yt, e, H(ag), H(og), 32), s = Sg({
+function wg(e, t, n = 8979) {
+	let r = K(t), i = tg(Yt, e, H(sg), H(cg), 32), a = kh.getPublicKey(i), o = tg(Yt, e, H(lg), H(ug), 32), s = Eg({
 		chainId: n,
 		address: r,
 		viewPublicKey: a,
 		version: 1
-	}), c = Sg({
+	}), c = Eg({
 		chainId: n,
 		address: r,
 		viewPublicKey: a,
@@ -12212,10 +12215,10 @@ function bg(e, t, n = 8979) {
 		paymentCodeV2: c
 	};
 }
-function xg(e) {
+function Tg(e) {
 	e && (e.viewPrivateKey?.fill(0), e.storageKey?.fill(0));
 }
-function Sg({ chainId: e, address: t, viewPublicKey: n, version: r = 2 }) {
+function Eg({ chainId: e, address: t, viewPublicKey: n, version: r = 2 }) {
 	if (r !== 1 && r !== 2) throw Error("unsupported shielded payment-code version");
 	let i = {
 		v: r,
@@ -12223,19 +12226,19 @@ function Sg({ chainId: e, address: t, viewPublicKey: n, version: r = 2 }) {
 		a: K(t),
 		k: S(n).slice(2)
 	};
-	return `tkmshield${r}.` + vg(H(JSON.stringify(i)));
+	return `tkmshield${r}.` + Sg(H(JSON.stringify(i)));
 }
-function Cg(e, t = 8979) {
+function Dg(e, t = 8979) {
 	let n = typeof e == "string" ? e.match(/^tkmshield([12])\./) : null;
 	if (!n) throw Error("recipient must be a tkmshield1 or tkmshield2 payment code");
 	let r = Number(n[1]), i;
 	try {
-		i = JSON.parse(me(yg(e.slice(`tkmshield${r}.`.length))));
+		i = JSON.parse(me(Cg(e.slice(`tkmshield${r}.`.length))));
 	} catch {
 		throw Error("invalid shielded payment code");
 	}
 	if (i.v !== r || Number(i.c) !== Number(t)) throw Error(`shielded payment code is not for chain ${t}`);
-	let a = K(i.a), o = sg("0x" + String(i.k || "").replace(/^0x/, ""));
+	let a = K(i.a), o = dg("0x" + String(i.k || "").replace(/^0x/, ""));
 	if (o.length !== 32) throw Error("shielded payment code has an invalid viewing public key");
 	return {
 		version: r,
@@ -12244,16 +12247,16 @@ function Cg(e, t = 8979) {
 		viewPublicKey: o
 	};
 }
-function wg(e, t, n) {
-	return Zh(Yt, Th.getSharedSecret(e, t), sg(n), H(ng), 33);
+function Og(e, t, n) {
+	return tg(Yt, kh.getSharedSecret(e, t), dg(n), H(og), 33);
 }
-function Tg(e, t) {
-	let n = sg(e.ephemeralPubKey), r = sg(e.encryptedPayload), i = sg(e.nonce), a = S(e.commitment);
-	if (n.length !== 32 || i.length !== 24 || sg(e.viewTag).length !== 1) return null;
+function kg(e, t) {
+	let n = dg(e.ephemeralPubKey), r = dg(e.encryptedPayload), i = dg(e.nonce), a = S(e.commitment);
+	if (n.length !== 32 || i.length !== 24 || dg(e.viewTag).length !== 1) return null;
 	let o;
 	try {
-		if (o = wg(t.viewPrivateKey, n, a), o[32] !== sg(e.viewTag)[0] || W(r).toLowerCase() !== String(e.payloadHash).toLowerCase()) return null;
-		let s = sg(C([H(ng), sg(a)])), c = Kh(o.slice(0, 32), i, s).decrypt(r), l = JSON.parse(me(c));
+		if (o = Og(t.viewPrivateKey, n, a), o[32] !== dg(e.viewTag)[0] || W(r).toLowerCase() !== String(e.payloadHash).toLowerCase()) return null;
+		let s = dg(C([H(og), dg(a)])), c = Xh(o.slice(0, 32), i, s).decrypt(r), l = JSON.parse(me(c));
 		if (l.format !== "TKM_SHIELDED_NOTE_PAYLOAD_V3" && l.format !== "TKM_SHIELDED_NOTE_PAYLOAD_V4") return null;
 		let u = Number(l.version || 1);
 		return u !== 1 && u !== 2 || String(l.commitment).toLowerCase() !== a.toLowerCase() || K(l.recipient) !== t.address || BigInt(l.noteValueWei) <= 0n ? null : {
@@ -12266,7 +12269,7 @@ function Tg(e, t) {
 		o?.fill(0);
 	}
 }
-var Eg = class {
+var Ag = class {
 	constructor(e, t, n = globalThis.fetch) {
 		this.url = String(e || "").replace(/\/$/, ""), this.bearerToken = String(t || "").trim(), this.requestFetch = n;
 	}
@@ -12296,21 +12299,21 @@ var Eg = class {
 		return this.request("/build-withdrawal", e);
 	}
 };
-function Dg(e, { chainId: t = 8979, value: n = null } = {}) {
+function jg(e, { chainId: t = 8979, value: n = null } = {}) {
 	if (!e || Number(BigInt(e.chainId)) !== Number(t)) throw Error("proof builder returned the wrong chain ID");
-	if (K(e.to) !== Qh) throw Error("proof builder returned the wrong shielded pool address");
+	if (K(e.to) !== ng) throw Error("proof builder returned the wrong shielded pool address");
 	if (!String(e.data || "").startsWith(S(H("TKMSHIELD1")))) throw Error("proof builder did not return a TKMSHIELD1 envelope");
 	if (n != null && BigInt(e.value) !== BigInt(n)) throw Error("proof builder returned an unexpected public value");
 	return e;
 }
-function Og(e, t) {
+function Mg(e, t) {
 	let n = e.findIndex((e) => e.commitment?.toLowerCase() === t.commitment.toLowerCase());
 	n >= 0 ? e[n] = {
 		...e[n],
 		...t
 	} : e.push(t);
 }
-async function kg(e, t, n) {
+async function Ng(e, t, n) {
 	if (n <= 0n) return 0;
 	let r = await e.getBlock(t, !1);
 	if (!r || BigInt(r.timestamp) < n) return t + 1;
@@ -12322,14 +12325,14 @@ async function kg(e, t, n) {
 	}
 	return i;
 }
-async function Ag(e, t, n, r = null) {
+async function Pg(e, t, n, r = null) {
 	let i = await e.getBlockNumber(), a = Number(n.lastScannedBlock ?? -1), o;
 	if (a < 0) {
 		let t = 0n;
 		try {
 			t = BigInt(await e.privacyCommitmentActivationTime());
 		} catch {}
-		o = await kg(e, i, t);
+		o = await Ng(e, i, t);
 	} else o = Math.max(0, a - 12);
 	let s = n.notes || [];
 	for (let t of s) {
@@ -12347,10 +12350,10 @@ async function Ag(e, t, n, r = null) {
 	for (n.lastScannedBlock = o - 1; o <= i;) {
 		let a = Math.min(i, o + 2047), s = await e.privacyShieldedOutputs(o, a);
 		for (let n of s || []) {
-			let r = Tg(n, t);
+			let r = kg(n, t);
 			if (!r) continue;
 			let i = await e.privacyCommitmentPath(r.commitment), a = await e.privacyNullifierStatus(r.nullifier);
-			Og(c, {
+			Mg(c, {
 				id: `scan-${String(n.transactionHash).slice(2, 14)}-${Number(BigInt(n.outputIndex))}`,
 				commitment: r.commitment,
 				version: Number(r.version || 1),
@@ -12376,12 +12379,12 @@ async function Ag(e, t, n, r = null) {
 	}
 	return n.notes = c, n;
 }
-function jg(e) {
+function Fg(e) {
 	return (e || []).reduce((e, t) => t.status === "available" ? e + BigInt(t.noteValueWei) : e, 0n);
 }
 //#endregion
 //#region vendor/api.js
-var Mg = class {
+var Ig = class {
 	constructor(e) {
 		this.provider = e, this.rpcUrl = e?._getConnection?.()?.url || e?.connection?.url || globalThis.location?.href || "";
 	}
@@ -12858,12 +12861,29 @@ var Mg = class {
 			n
 		]);
 	}
+	async phoneDeviceKeySigningHashV2(e, t, n, r) {
+		return this.phoneRpc("deviceKeySigningHashV2", [
+			e,
+			t,
+			n,
+			r
+		]);
+	}
 	async phoneRegisterDeviceKey(e, t, n, r) {
 		return this.phoneRpc("registerDeviceKey", [
 			e,
 			t,
 			n,
 			r
+		]);
+	}
+	async phoneRegisterDeviceKeyV2(e, t, n, r, i) {
+		return this.phoneRpc("registerDeviceKeyV2", [
+			e,
+			t,
+			n,
+			r,
+			i
 		]);
 	}
 	async phoneEncryptPayload(e, t, n, r) {
@@ -12915,17 +12935,17 @@ var Mg = class {
 			n
 		]);
 	}
-}, Ng = !1;
-function Pg() {
-	if (Ng) throw Error("Another wallet operation is in progress. Wait for it to finish.");
-	return Ng = !0, () => {
-		Ng = !1;
+}, Lg = !1;
+function Rg() {
+	if (Lg) throw Error("Another wallet operation is in progress. Wait for it to finish.");
+	return Lg = !0, () => {
+		Lg = !1;
 	};
 }
 //#endregion
 //#region shield2-send.js
-var Fg = 3000000n, Ig = (1n << 64n) - 1n;
-function Lg(e, t, n, r, i) {
+var zg = 3000000n, Bg = (1n << 64n) - 1n;
+function Vg(e, t, n, r, i) {
 	let a = BigInt(t), o = BigInt(r);
 	if (a <= 0n) throw Error("Amount must be positive.");
 	let s = [];
@@ -12943,7 +12963,7 @@ function Lg(e, t, n, r, i) {
 		}), o -= n - e, a -= c;
 	}
 	for (; a > 0n;) {
-		let e = a < Ig ? a : Ig;
+		let e = a < Bg ? a : Bg;
 		if (o < e + n) throw Error("Insufficient spendable TKM including network gas.");
 		s.push({
 			note: null,
@@ -12953,7 +12973,7 @@ function Lg(e, t, n, r, i) {
 	}
 	return s;
 }
-function Rg(e, t, n, r, i) {
+function Hg(e, t, n, r, i) {
 	let a = BigInt(t), o = BigInt(r);
 	if (a <= 0n) throw Error("Amount must be positive.");
 	let s = [];
@@ -12969,7 +12989,7 @@ function Rg(e, t, n, r, i) {
 		}), o -= n - e, a -= c);
 	}
 	for (; a > 0n;) {
-		let e = a < Ig + n ? a : Ig + n;
+		let e = a < Bg + n ? a : Bg + n;
 		if (e <= n || o < e) throw Error("Insufficient payout amount or spendable funds after network gas.");
 		s.push({
 			note: null,
@@ -12981,13 +13001,13 @@ function Rg(e, t, n, r, i) {
 	}
 	return s;
 }
-function zg(e, { nonce: t, gasPrice: n, part: r, address: i, recipient: a }) {
+function Ug(e, { nonce: t, gasPrice: n, part: r, address: i, recipient: a }) {
 	let o = e.transaction;
-	if (Dg(o, {
+	if (jg(o, {
 		chainId: 8979,
 		value: r.note ? 0n : r.value
-	}), BigInt(o.nonce) !== BigInt(t) || BigInt(o.gas) !== Fg || BigInt(o.gasFeeCap) !== n || BigInt(o.gasTipCap) !== n || !Array.isArray(o.accessList) || o.accessList.length) throw Error("Proof builder changed transaction fees or nonce.");
-	if (gg(o, e) !== r.sponsor) throw Error("Proof builder changed gas sponsorship.");
+	}), BigInt(o.nonce) !== BigInt(t) || BigInt(o.gas) !== zg || BigInt(o.gasFeeCap) !== n || BigInt(o.gasTipCap) !== n || !Array.isArray(o.accessList) || o.accessList.length) throw Error("Proof builder changed transaction fees or nonce.");
+	if (bg(o, e) !== r.sponsor) throw Error("Proof builder changed gas sponsorship.");
 	let s = [{
 		index: 0,
 		recipient: a.address,
@@ -13004,14 +13024,14 @@ function zg(e, { nonce: t, gasPrice: n, part: r, address: i, recipient: a }) {
 			valueWei: t
 		});
 	}
-	mg(o, e, s);
+	vg(o, e, s);
 	let c = Je(_(o.data).slice(10));
 	if (c[6] && c[6] !== "0x" && BigInt(c[6]) !== 0n || c[1].length !== +!!r.note) throw Error("Proof builder changed the spend or withdrawal.");
 	if (r.note && S(c[1][0][0]).toLowerCase() !== r.note.nullifier.toLowerCase()) throw Error("Proof envelope contains the wrong nullifier.");
 	return o;
 }
-async function Bg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i, proverToken: a, onProgress: o, beforePart: s, onSubmitted: c, prepareOnly: l = !1, proverFetch: u, recipientPaysGas: d = !1, rpcToken: f = "" }) {
-	let p = Pg(), m, h, g, _ = [];
+async function Wg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i, proverToken: a, onProgress: o, beforePart: s, onSubmitted: c, prepareOnly: l = !1, proverFetch: u, recipientPaysGas: d = !1, rpcToken: f = "" }) {
+	let p = Rg(), m, h, g, _ = [];
 	try {
 		let p = new URL(r), v = new URL(i);
 		if (!["https:", "http:"].includes(p.protocol)) throw Error("Enter an HTTP(S) TKM RPC URL.");
@@ -13020,30 +13040,30 @@ async function Bg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i
 			"localhost",
 			"[::1]"
 		].includes(v.hostname) || typeof window < "u" && v.origin === window.location.origin))) throw Error("The configured proof builder must use HTTPS.");
-		let y = Cg(n.from, 8979), b = Cg(n.deposit_address || n.recipient_address, 8979);
+		let y = Dg(n.from, 8979), b = Dg(n.deposit_address || n.recipient_address, 8979);
 		if (y.version !== 2 || b.version !== 2) throw Error("TKM requires shield2 payment codes.");
 		o("Unlocking keyfile locally...");
-		let x = qm(e);
-		m = await rh(x, t);
+		let x = Zm(e);
+		m = await sh(x, t);
 		let C = K("0x" + String(x.address).replace(/^0x/i, ""));
-		if (h = bg(m, C, 8979), C !== y.address || S(h.viewPublicKey) !== S(y.viewPublicKey)) throw Error("Keyfile does not match the source payment code.");
+		if (h = wg(m, C, 8979), C !== y.address || S(h.viewPublicKey) !== S(y.viewPublicKey)) throw Error("Keyfile does not match the source payment code.");
 		let w = new Oe(r);
 		if (f && w.setHeader("X-GUI-Token", f), g = new Vd(w), BigInt(await g.send("eth_chainId", [])) !== 8979n) throw Error("RPC is not TKM chain 8979.");
-		let T = new Mg(g);
+		let T = new Ig(g);
 		if (!await T.shieldedV2Active()) throw Error("Shielded V2 is not active.");
-		let E = new Eg(i, a, u), D = await E.health();
+		let E = new Ag(i, a, u), D = await E.health();
 		if (!D.ok || !D.hasProvingKeyV2) throw Error(D.startupError || "Proof builder is not ready.");
 		let O = {
 			lastScannedBlock: -1,
 			notes: []
 		};
-		await Ag(T, h, O, (e, t) => o(`Scanning notes: ${e} / ${t}`));
-		let k = BigInt(await g.send("eth_gasPrice", [])), A = BigInt(await g.send("eth_getBalance", [C, "latest"])), j = (d ? Rg : Lg)(O.notes, tt(n.amount, 18), Fg * k, A, await T.shieldedGasSponsorActive());
+		await Pg(T, h, O, (e, t) => o(`Scanning notes: ${e} / ${t}`));
+		let k = BigInt(await g.send("eth_gasPrice", [])), A = BigInt(await g.send("eth_getBalance", [C, "latest"])), j = (d ? Hg : Vg)(O.notes, tt(n.amount, 18), zg * k, A, await T.shieldedGasSponsorActive());
 		for (let e = 0; e < j.length; e++) {
 			let t = j[e], n = await T.getTransactionCount(C, "latest");
 			if (BigInt(await T.getTransactionCount(C, "pending")) !== BigInt(n)) throw Error("Source wallet has a pending transaction. Wait for confirmation before retrying.");
 			let r = BigInt(await g.send("eth_getBalance", [C, "latest"]));
-			t.note && (t.sponsor = r < Fg * k ? Fg * k - r : 0n), o(`Building proof ${e + 1} of ${j.length}...`);
+			t.note && (t.sponsor = r < zg * k ? zg * k - r : 0n), o(`Building proof ${e + 1} of ${j.length}...`);
 			let i = {
 				requestId: `exchange-${S($n(16)).slice(2)}`,
 				from: C,
@@ -13073,7 +13093,7 @@ async function Bg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i
 				assetId: "1",
 				ownerSecret: BigInt(C).toString()
 			});
-			let u = zg(a, {
+			let u = Ug(a, {
 				nonce: n,
 				gasPrice: k,
 				part: t,
@@ -13081,7 +13101,7 @@ async function Bg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i
 				recipient: b
 			}), f = l ? null : await s(et(t.value, 18), j.length);
 			o(`Signing and broadcasting part ${e + 1} locally...`);
-			let p = oh(u, m), v = W(p.rawTransaction);
+			let p = uh(u, m), v = W(p.rawTransaction);
 			if (l) return {
 				hash: v,
 				raw: p.rawTransaction,
@@ -13108,25 +13128,25 @@ async function Bg({ keystore: e, password: t, intent: n, rpcURL: r, proverURL: i
 	} catch (e) {
 		throw _.length && (e.message += ` Submitted or attempted hashes: ${_.join(", ")}. Check these before retrying.`), e;
 	} finally {
-		m?.fill(0), xg(h), g?.destroy(), p();
+		m?.fill(0), Tg(h), g?.destroy(), p();
 	}
 }
 //#endregion
 //#region shield3.js
-var Vg = 5000000n * 10n ** 18n;
-function Hg(e) {
+var Gg = 5000000n * 10n ** 18n;
+function Kg(e) {
 	let t = tt(String(e), 18);
-	if (t <= 0n || t > Vg) throw Error("Shield3 sends must be greater than zero and at most 5,000,000 TKM.");
+	if (t <= 0n || t > Gg) throw Error("Shield3 sends must be greater than zero and at most 5,000,000 TKM.");
 	return t;
 }
-function Ug(e) {
+function qg(e) {
 	if (!Array.isArray(e) || e.length < 1 || e.length > 3) throw Error("Choose one to three Shield3 recipients.");
 	let t = 0n;
 	return {
 		requests: e.map((e) => {
 			if (!e.recipient_address?.startsWith("tkmshield3.")) throw Error("Every recipient requires a Shield3 receiving address.");
-			let n = Hg(e.amount);
-			if (t += n, t > Vg) throw Error("The combined payment amount must not exceed 5,000,000 TKM.");
+			let n = Kg(e.amount);
+			if (t += n, t > Gg) throw Error("The combined payment amount must not exceed 5,000,000 TKM.");
 			return {
 				recipient: e.recipient_address,
 				amountWei: n.toString()
@@ -13135,7 +13155,7 @@ function Ug(e) {
 		total: t
 	};
 }
-async function Wg({ rpcURL: e, rpcToken: t }) {
+async function Jg({ rpcURL: e, rpcToken: t }) {
 	let n = await (await fetch(e, {
 		method: "POST",
 		headers: {
@@ -13155,13 +13175,13 @@ async function Wg({ rpcURL: e, rpcToken: t }) {
 	}
 	return n.result;
 }
-async function Gg(e, { walletURL: t, rpcToken: n }) {
-	return Kg("validate", { recipient: e }, {
+async function Yg(e, { walletURL: t, rpcToken: n }) {
+	return Xg("validate", { recipient: e }, {
 		walletURL: t,
 		rpcToken: n
 	});
 }
-async function Kg(e, t, { walletURL: n, rpcToken: r }) {
+async function Xg(e, t, { walletURL: n, rpcToken: r }) {
 	let i = n || new URL("/shield3", globalThis.location.href).href, a = new URL(i, globalThis.location?.href);
 	if (![
 		"127.0.0.1",
@@ -13179,10 +13199,10 @@ async function Kg(e, t, { walletURL: n, rpcToken: r }) {
 	if (!o.ok || s.error) throw Error(s.error || "Shield3 wallet operation failed.");
 	return s;
 }
-async function qg(e, t, n = {}) {
-	let r = qm(t.keystore), i = await rh(r, t.password);
+async function Zg(e, t, n = {}) {
+	let r = Zm(t.keystore), i = await sh(r, t.password);
 	try {
-		return await Kg(e, {
+		return await Xg(e, {
 			seed: S(i),
 			stamp: r.shield3Stamp,
 			account: K("0x" + r.address.replace(/^0x/, "")),
@@ -13192,35 +13212,35 @@ async function qg(e, t, n = {}) {
 		i.fill(0);
 	}
 }
-function Jg(e) {
-	return qg("identity", e);
-}
-function Yg(e) {
-	return qg("viewkeys", e, { scope: e.scope || "incoming" });
-}
-function Xg(e) {
-	return Kg("view-scan", { view: e.view }, e);
-}
-function Zg(e) {
-	return Kg("view-stamp", { stampDisclosure: e.stampDisclosure }, e);
-}
 function Qg(e) {
-	return Kg("fetch-relay-offer", {
+	return Zg("identity", e);
+}
+function $g(e) {
+	return Zg("viewkeys", e, { scope: e.scope || "incoming" });
+}
+function e_(e) {
+	return Xg("view-scan", { view: e.view }, e);
+}
+function t_(e) {
+	return Xg("view-stamp", { stampDisclosure: e.stampDisclosure }, e);
+}
+function n_(e) {
+	return Xg("fetch-relay-offer", {
 		relayURL: e.relayURL,
 		requestId: e.requestId
 	}, e);
 }
-function $g(e) {
-	return qg("scan", e);
+function r_(e) {
+	return Zg("scan", e);
 }
-async function e_(e) {
-	let t = Pg();
+async function i_(e) {
+	let t = Rg();
 	try {
-		let { requests: t } = Ug(e.intent.payments || [e.intent]), n = e.requestId || S($n(16));
+		let { requests: t } = qg(e.intent.payments || [e.intent]), n = e.requestId || S($n(16));
 		e.onProgress?.("Building the private Shield3 proof…");
 		let r;
 		if (e.relayURL) {
-			let i = await qg("prepare-relay", e, {
+			let i = await Zg("prepare-relay", e, {
 				payments: t,
 				relay: e.relayOffer,
 				relayURL: e.relayURL,
@@ -13229,7 +13249,7 @@ async function e_(e) {
 			e.onPrepared?.(i), e.onProgress?.("Submitting the saved payment to the shared relay…");
 			for (let t = 0; t < 3; t++) {
 				try {
-					if (r = await i_({
+					if (r = await c_({
 						...e,
 						stage: "retry",
 						requestId: n
@@ -13239,7 +13259,7 @@ async function e_(e) {
 				}
 				e.onProgress?.("Relay submission uncertain. Retrying the same saved transaction…"), await new Promise((e) => setTimeout(e, 2e3));
 			}
-		} else r = await qg("send", e, {
+		} else r = await Zg("send", e, {
 			payments: t,
 			requestId: n
 		});
@@ -13248,26 +13268,26 @@ async function e_(e) {
 		t();
 	}
 }
-async function t_(e) {
-	let t = Pg();
+async function a_(e) {
+	let t = Rg();
 	try {
-		return await qg("shield", e, {
-			amountWei: Hg(e.amount).toString(),
+		return await Zg("shield", e, {
+			amountWei: Kg(e.amount).toString(),
 			requestId: e.requestId || S($n(16))
 		});
 	} finally {
 		t();
 	}
 }
-async function n_(e) {
-	let t = Pg();
+async function o_(e) {
+	let t = Rg();
 	try {
-		return await qg("register-stamp", e, { requestId: e.requestId });
+		return await Zg("register-stamp", e, { requestId: e.requestId });
 	} finally {
 		t();
 	}
 }
-async function r_(e) {
+async function s_(e) {
 	let t = {
 		offer: "stamp-offer",
 		authorize: "authorize-stamp",
@@ -13275,9 +13295,9 @@ async function r_(e) {
 		submit: "sponsor-stamp"
 	}[e.stage];
 	if (!t) throw Error("Choose a stamp sponsorship step.");
-	let n = Pg();
+	let n = Rg();
 	try {
-		return await qg(t, e, {
+		return await Zg(t, e, {
 			recipient: e.recipient,
 			sponsorship: e.sponsorship,
 			requestId: e.requestId
@@ -13286,7 +13306,7 @@ async function r_(e) {
 		n();
 	}
 }
-async function i_(e) {
+async function c_(e) {
 	let t = {
 		offer: "relay-offer",
 		prepare: "prepare-relay",
@@ -13296,48 +13316,380 @@ async function i_(e) {
 		retry: "submit-relay-draft"
 	}[e.stage];
 	if (!t) throw Error("Choose a relay step.");
-	if (e.stage === "status" || e.stage === "retry") return Kg(t, {
-		account: e.account || K("0x" + qm(e.keystore).address.replace(/^0x/, "")),
+	if (e.stage === "status" || e.stage === "retry") return Xg(t, {
+		account: e.account || K("0x" + Zm(e.keystore).address.replace(/^0x/, "")),
 		requestId: e.requestId
 	}, e);
-	let n = Pg();
+	let n = Rg();
 	try {
-		return await qg(t, e, {
+		return await Zg(t, e, {
 			relay: e.relay,
 			relayTransaction: e.transaction,
 			recipient: e.recipient,
-			amountWei: e.amount ? Hg(e.amount).toString() : void 0,
+			amountWei: e.amount ? Kg(e.amount).toString() : void 0,
 			requestId: e.requestId
 		});
 	} finally {
 		n();
 	}
 }
-function a_(e) {
-	return Kg("review-relay-offer", { relay: e.relay }, e);
+function l_(e) {
+	return Xg("review-relay-offer", { relay: e.relay }, e);
 }
-async function o_(e) {
-	return e.stage === "verify" ? Kg("verify-disclosure", {
+async function u_(e) {
+	return e.stage === "verify" ? Xg("verify-disclosure", {
 		disclosure: e.disclosure,
 		capsule: e.capsule,
 		auditKey: e.auditKey
-	}, e) : qg(e.stage === "key" ? "disclosure-key" : "export-disclosure", e, {
+	}, e) : Zg(e.stage === "key" ? "disclosure-key" : "export-disclosure", e, {
 		transactionHash: e.transactionHash,
 		outputIndex: e.outputIndex,
 		auditPublicKey: e.auditPublicKey
 	});
 }
 //#endregion
+//#region node_modules/@noble/post-quantum/ml-kem.js
+var d_ = 256, f_ = 3329, p_ = /* @__PURE__ */ Tm({
+	N: d_,
+	Q: f_,
+	F: 3303,
+	ROOT_OF_UNITY: 17,
+	newPoly: (e) => new Uint16Array(e),
+	brvBits: 7,
+	isKyber: !0
+}), m_ = /* @__PURE__ */ Object.freeze({
+	512: Object.freeze({
+		N: d_,
+		Q: f_,
+		K: 2,
+		ETA1: 3,
+		ETA2: 2,
+		du: 10,
+		dv: 4,
+		RBGstrength: 128
+	}),
+	768: Object.freeze({
+		N: d_,
+		Q: f_,
+		K: 3,
+		ETA1: 2,
+		ETA2: 2,
+		du: 10,
+		dv: 4,
+		RBGstrength: 192
+	}),
+	1024: Object.freeze({
+		N: d_,
+		Q: f_,
+		K: 4,
+		ETA1: 2,
+		ETA2: 2,
+		du: 11,
+		dv: 5,
+		RBGstrength: 256
+	})
+}), h_ = (e) => {
+	if (e >= 12) return {
+		encode: (e) => e,
+		decode: (e) => e >= f_ ? e - f_ : e
+	};
+	let t = 2 ** (e - 1);
+	return {
+		encode: (t) => ((t << e) + f_ / 2) / f_,
+		decode: (n) => n * f_ + t >>> e
+	};
+}, g_ = (e) => p_.bitsCoder(e, e === 12 ? {
+	encode: (e) => e,
+	decode: (e) => e >= f_ ? e - f_ : e
+} : {
+	encode: (e) => e,
+	decode: (e) => e
+}), __ = (e) => e === 12 ? g_(12) : p_.bitsCoder(e, h_(e));
+function v_(e, t) {
+	let n = e, r = t;
+	for (let e = 0; e < d_; e++) {
+		let t = n[e] + r[e];
+		n[e] = t >= f_ ? t - f_ : t;
+	}
+}
+function y_(e, t) {
+	let n = e, r = t;
+	for (let e = 0; e < d_; e++) {
+		let t = n[e] - r[e];
+		n[e] = t < 0 ? t + f_ : t;
+	}
+}
+function b_(e, t, n, r, i) {
+	return {
+		c0: p_.mod(p_.mod(t * r) * i + e * n),
+		c1: p_.mod(e * r + t * n)
+	};
+}
+function x_(e, t) {
+	let n = e, r = t;
+	for (let e = 0; e < d_ / 2; e++) {
+		let t = p_.nttZetas[64 + (e >> 1)];
+		e & 1 && (t = -t);
+		let { c0: i, c1: a } = b_(n[2 * e + 0], n[2 * e + 1], r[2 * e + 0], r[2 * e + 1], t);
+		n[2 * e + 0] = i, n[2 * e + 1] = a;
+	}
+	return n;
+}
+function S_(e) {
+	let t = e, n = new Uint16Array(d_);
+	for (let e = 0; e < d_;) {
+		let r = t();
+		if (r.length % 3) throw Error("SampleNTT: unaligned block");
+		for (let t = 0; e < d_ && t + 3 <= r.length; t += 3) {
+			let i = (r[t + 0] >> 0 | r[t + 1] << 8) & 4095, a = (r[t + 1] >> 4 | r[t + 2] << 4) & 4095;
+			i < f_ && (n[e++] = i), e < d_ && a < f_ && (n[e++] = a);
+		}
+	}
+	return n;
+}
+var C_ = (e, t) => {
+	let n = new Uint16Array(d_), r = lp(e);
+	mp(r);
+	let i = 0;
+	for (let e = 0, a = 0, o = 0, s = 0; e < r.length; e++) {
+		let c = r[e];
+		for (let e = 0; e < 32; e++) o += c & 1, c >>= 1, i += 1, i === t ? (s = o, o = 0) : i === 2 * t && (n[a++] = p_.mod(s - o), o = 0, i = 0);
+	}
+	if (mp(r), i) throw Error(`sampleCBD: leftover bits: ${i}`);
+	return n;
+};
+function w_(e, t, n, r) {
+	return C_(e(r * d_ / 4, t, n), r);
+}
+var T_ = (e) => {
+	let { K: t, PRF: n, XOF: r, HASH512: i, ETA1: a, ETA2: o, du: s, dv: c } = e, l = __(1), u = __(c), d = __(s), f = gm("publicKey", _m(__(12), t), 32), p = _m(__(12), t), m = gm("ciphertext", _m(d, t), u), h = gm("seed", 32, 32), g = (e, r, i, s) => {
+		let c = [];
+		for (let e = 0; e < t; e++) c.push(p_.NTT.encode(w_(n, s, e, a)));
+		let u = new Uint16Array(d_), d = [];
+		for (let i = 0; i < t; i++) {
+			let a = w_(n, s, t + i, o), l = new Uint16Array(d_);
+			for (let e = 0; e < t; e++) v_(l, x_(r(i, e), c[e]));
+			v_(a, p_.NTT.decode(l)), d.push(a), v_(u, x_(e[i], c[i])), vm(l);
+		}
+		let f = w_(n, s, 2 * t, o);
+		v_(f, p_.NTT.decode(u));
+		let p = l.decode(i);
+		return v_(p, f), vm(e, c, u, f), m.encode([d, p]);
+	};
+	return {
+		secretCoder: p,
+		lengths: {
+			secretKey: p.bytesLen,
+			publicKey: f.bytesLen,
+			cipherText: m.bytesLen
+		},
+		keygen: (e) => {
+			sm(e, 32, "seed");
+			let o = /* @__PURE__ */ new Uint8Array(33);
+			o.set(e), o[32] = t;
+			let s = i(o), [c, l] = h.decode(s), u = [], d = [];
+			for (let e = 0; e < t; e++) u.push(p_.NTT.encode(w_(n, l, e, a)));
+			let m = r(c);
+			for (let e = 0; e < t; e++) {
+				let r = p_.NTT.encode(w_(n, l, t + e, a));
+				for (let n = 0; n < t; n++) v_(r, x_(S_(m.get(n, e)), u[n]));
+				d.push(r);
+			}
+			m.clean();
+			let g = {
+				publicKey: f.encode([d, c]),
+				secretKey: p.encode(u)
+			};
+			return vm(c, l, u, d, o, s), g;
+		},
+		encrypt: (e, t, n) => {
+			let [i, a] = f.decode(e), o = r(a), s = g(i, (e, t) => S_(o.get(e, t)), t, n);
+			return o.clean(), s;
+		},
+		prepare: (e) => {
+			let [n, i] = f.decode(e), a = r(i), o = [];
+			for (let e = 0; e < t; e++) for (let n = 0; n < t; n++) o.push(S_(a.get(e, n)));
+			return a.clean(), {
+				encrypt: (e, r) => g(n.map((e) => e.slice()), (e, n) => o[e * t + n].slice(), e, r),
+				clean: () => vm(n, o)
+			};
+		},
+		decrypt: (e, n) => {
+			let [r, i] = m.decode(e), a = p.decode(n), o = new Uint16Array(d_);
+			for (let e = 0; e < t; e++) v_(o, x_(a[e], p_.NTT.encode(r[e])));
+			return y_(i, p_.NTT.decode(o)), vm(o, a, r), l.encode(i);
+		}
+	};
+};
+function E_(e) {
+	let t = e, n = T_(t), { HASH256: r, HASH512: i, KDF: a } = t, { secretCoder: o, lengths: s } = n, c = gm("secretKey", s.secretKey, s.publicKey, 32, 32), l = (e, n) => {
+		let r = e.subarray(0, 384 * t.K), i = o.encode(o.decode(fm(r))), a = dm(i, r);
+		if (vm(i), !a) throw Error(`ML-KEM.${n}: wrong publicKey modulus`);
+	}, u = Object.freeze({
+		...s,
+		seed: 64,
+		msg: 32,
+		msgRand: 32,
+		secretKey: c.bytesLen
+	});
+	return Object.freeze({
+		info: Object.freeze({ type: "ml-kem" }),
+		lengths: u,
+		keygen: (e = cm(64)) => {
+			sm(e, 64, "seed");
+			let { publicKey: t, secretKey: i } = n.keygen(e.subarray(0, 32)), a = r(t), o = c.encode([
+				i,
+				t,
+				a,
+				e.subarray(32)
+			]);
+			return vm(i, a), {
+				publicKey: t,
+				secretKey: o
+			};
+		},
+		getPublicKey: (e) => {
+			let [t, n, r, i] = c.decode(e);
+			return Uint8Array.from(n);
+		},
+		encapsulate: (e, t = cm(32)) => {
+			sm(e, s.publicKey, "publicKey"), sm(t, 32, "message"), l(e, "encapsulate");
+			let a = i.create().update(t).update(r(e)).digest(), o = n.encrypt(e, t, a.subarray(32, 64));
+			return vm(a.subarray(32)), {
+				cipherText: o,
+				sharedSecret: a.subarray(0, 32)
+			};
+		},
+		decapsulate: (e, t) => {
+			sm(t, c.bytesLen, "secretKey"), sm(e, s.cipherText, "cipherText");
+			let o = c.bytesLen - 96, l = o + 32;
+			if (!dm(r(t.subarray(o / 2, l)), t.subarray(l, l + 32))) throw Error("invalid secretKey: hash check failed");
+			let [u, d, f, p] = c.decode(t), m = n.decrypt(e, u), h = i.create().update(m).update(f).digest(), g = h.subarray(0, 32), _ = n.encrypt(d, m, h.subarray(32, 64)), v = dm(e, _), y = a.create({ dkLen: 32 }).update(p).update(e).digest();
+			return vm(m, _, h.subarray(32), v ? y : g), v ? g : y;
+		},
+		prepare: (e) => {
+			sm(e, s.publicKey, "publicKey"), l(e, "prepare");
+			let t = fm(e), o = r(t), u = n.prepare(t);
+			return Object.freeze({
+				publicKey: t,
+				encapsulate: (e = cm(32)) => {
+					sm(e, 32, "message");
+					let t = i.create().update(e).update(o).digest(), n = u.encrypt(e, t.subarray(32, 64));
+					return vm(t.subarray(32)), {
+						cipherText: n,
+						sharedSecret: t.subarray(0, 32)
+					};
+				},
+				decapsulate: (e, r) => {
+					sm(r, c.bytesLen, "secretKey"), sm(e, s.cipherText, "cipherText");
+					let [l, d, f, p] = c.decode(r);
+					if (!dm(d, t) || !dm(f, o)) throw Error("ML-KEM.decapsulate: secretKey does not match prepared publicKey");
+					let m = n.decrypt(e, l), h = i.create().update(m).update(o).digest(), g = h.subarray(0, 32), _ = u.encrypt(m, h.subarray(32, 64)), v = dm(e, _), y = a.create({ dkLen: 32 }).update(p).update(e).digest();
+					return vm(m, _, h.subarray(32), v ? y : g), v ? g : y;
+				},
+				clean: u.clean
+			});
+		}
+	});
+}
+function D_(e, t, n) {
+	return em.create({ dkLen: e }).update(t).update(new Uint8Array([n])).digest();
+}
+var O_ = {
+	HASH256: Xp,
+	HASH512: Zp,
+	KDF: em,
+	XOF: Dm,
+	PRF: D_
+}, k_ = /* @__PURE__ */ ((e) => E_({
+	...O_,
+	...e
+}))(m_[1024]), A_ = new TextEncoder().encode("TKPQ"), j_ = new TextEncoder().encode("TKM_PHONE_ANTARTICAL_CONTEXT_V1"), M_ = new TextEncoder().encode("TKM_SHIELD3_ENCRYPTION_TRANSCRIPT_V1"), N_ = new TextEncoder().encode("TKM_SHIELD3_XCHACHA20POLY1305_KEY_V1"), P_ = new TextEncoder().encode("TKM_PHONE_ANTARTICAL_DEVICE_SEED_V1"), F_ = 3, I_ = 1, L_ = 5, R_ = 8979, z_ = 4096, B_ = 79, V_ = 1568, H_ = 24, U_ = 5785;
+function W_(e, t) {
+	try {
+		return e instanceof Uint8Array ? new Uint8Array(e) : _(e);
+	} catch {
+		throw Error(`${t} must be hexadecimal data`);
+	}
+}
+function G_(e) {
+	let t = /* @__PURE__ */ new Uint8Array(8);
+	return new DataView(t.buffer).setBigUint64(0, BigInt(e), !1), t;
+}
+function K_(...e) {
+	let t = e.reduce((e, t) => e + t.length, 0), n = new Uint8Array(t), r = 0;
+	for (let t of e) n.set(t, r), r += t.length;
+	return n;
+}
+function q_(e) {
+	return K_(G_(e.length), e);
+}
+function J_(e, t, n, r) {
+	return bn(K_(j_, G_(e), q_(new TextEncoder().encode(t)), q_(new TextEncoder().encode(n)), q_(r)));
+}
+function Y_(e, t, n, r) {
+	return K_(A_, new Uint8Array([
+		F_,
+		I_,
+		L_
+	]), G_(e), J_(e, t, n, r));
+}
+function X_(e, t, n, r) {
+	return tg(bn, e, bn(K_(M_, t, n, r)), N_, 32);
+}
+function Z_(e, t, n, r, i) {
+	if (e.length !== U_) throw Error("invalid Antartical phone envelope size");
+	let a = Y_(t, n, r, i);
+	for (let t = 0; t < B_; t++) if (e[t] !== a[t]) throw Error("invalid Antartical phone envelope context");
+}
+function Q_(e) {
+	let t = W_(e, "device private key");
+	if (t.length !== 32) throw Error("device private key must be 32 bytes");
+	return bn(K_(P_, t));
+}
+function $_(e) {
+	let t = W_(e, "phone encryption seed");
+	if (t.length !== 64) throw Error("phone encryption seed must be 64 bytes");
+	return k_.keygen(t).publicKey;
+}
+function ev(e, t = R_, n, r, i, a) {
+	let o = W_(e, "recipient ML-KEM public key");
+	if (o.length !== V_) throw Error("recipient ML-KEM public key must be 1568 bytes");
+	let s = W_(i, "phone nonce");
+	if (s.length === 0) throw Error("phone nonce is required");
+	let c = typeof a == "string" ? new TextEncoder().encode(a) : W_(a, "plaintext");
+	if (c.length > z_) throw Error("phone plaintext exceeds 4096 bytes");
+	let l = Y_(t, n, r, s), { cipherText: u, sharedSecret: d } = k_.encapsulate(o), f = X_(d, o, l, u), p = /* @__PURE__ */ new Uint8Array(4098);
+	new DataView(p.buffer).setUint16(0, c.length, !1), p.set(c, 2);
+	let m = crypto.getRandomValues(new Uint8Array(H_)), h = K_(l, u, m);
+	return S(K_(h, Xh(f, m, h).encrypt(p)));
+}
+function tv(e, t, n = R_, r, i, a) {
+	let o = W_(e, "phone encryption seed"), s = W_(t, "phone envelope"), c = W_(a, "phone nonce");
+	if (o.length !== 64) throw Error("phone encryption seed must be 64 bytes");
+	Z_(s, n, r, i, c);
+	let l = s.slice(0, B_), u = s.slice(B_, 1647), d = s.slice(1647, 1671), f = s.slice(0, 1671), p = s.slice(1671), m = k_.keygen(o).secretKey, h = k_.decapsulate(u, m), g = k_.keygen(o).publicKey, _ = X_(h, g, l, u), v;
+	try {
+		v = Xh(_, d, f).decrypt(p);
+	} catch {
+		throw Error("invalid Antartical phone envelope authentication");
+	}
+	let y = new DataView(v.buffer, v.byteOffset, v.byteLength).getUint16(0, !1);
+	if (v.length !== 4098 || y > z_) throw Error("invalid Antartical phone envelope payload");
+	for (let e = 2 + y; e < v.length; e++) if (v[e] !== 0) throw Error("invalid Antartical phone envelope padding");
+	return v.slice(2, 2 + y);
+}
+//#endregion
 //#region phone.js
-var s_ = H("TKMPHONE_PQ_V1");
-function c_(e, t) {
+var nv = H("TKMPHONE_PQ_V1");
+function rv(e, t) {
 	let n = _(t);
 	if (n.length !== 32) throw Error("Phone signing hash must be 32 bytes.");
-	let r = Wm.keygen(e);
+	let r = Jm.keygen(e);
 	try {
-		let e = Wm.sign(_(C([s_, n])), r.secretKey);
+		let e = Jm.sign(_(C([nv, n])), r.secretKey);
 		return S(C([
-			s_,
+			nv,
 			r.publicKey,
 			e
 		]));
@@ -13345,86 +13697,105 @@ function c_(e, t) {
 		r.secretKey.fill(0);
 	}
 }
-async function l_(e, t, n) {
-	let r = await rh(qm(e), t);
+async function iv(e, t, n) {
+	let r = await sh(Zm(e), t);
 	try {
-		return c_(r, n);
+		return rv(r, n);
 	} finally {
 		r.fill(0);
 	}
 }
-async function u_(e, t) {
-	let n = qm(e), r = await rh(n, t);
+async function av(e, t) {
+	let n = Zm(e), r = await sh(n, t);
 	try {
 		return "0x" + n.publicKey.replace(/^0x/, "");
 	} finally {
 		r.fill(0);
 	}
 }
+async function ov(e, t) {
+	let n = await sh(Zm(e), t);
+	try {
+		return S($_(Q_(n)));
+	} finally {
+		n.fill(0);
+	}
+}
+async function sv(e, t, n, r, i, a) {
+	return ev(e, t, n, r, i, a);
+}
+async function cv(e, t, n, r, i, a, o) {
+	let s = await sh(Zm(e), t);
+	try {
+		return S(tv(Q_(s), o, n, r, i, a));
+	} finally {
+		s.fill(0);
+	}
+}
 //#endregion
 //#region vendor/email-crypto.js
-var d_ = new TextEncoder(), f_ = new TextDecoder(), p_ = d_.encode("TKM_EMAILVM_X25519_SALT_V1"), m_ = d_.encode("TKM_EMAILVM_X25519_KEY_V1"), h_ = d_.encode("TKM_EMAILVM_XCHACHA20POLY1305_V1");
-function g_(...e) {
+var lv = new TextEncoder(), uv = new TextDecoder(), dv = lv.encode("TKM_EMAILVM_X25519_SALT_V1"), fv = lv.encode("TKM_EMAILVM_X25519_KEY_V1"), pv = lv.encode("TKM_EMAILVM_XCHACHA20POLY1305_V1");
+function mv(...e) {
 	let t = e.reduce((e, t) => e + t.length, 0), n = new Uint8Array(t), r = 0;
 	for (let t of e) n.set(t, r), r += t.length;
 	return n;
 }
-function __(e, t) {
-	return d_.encode(`${String(e).toLowerCase()}\n${String(t).toLowerCase()}`);
+function hv(e, t) {
+	return lv.encode(`${String(e).toLowerCase()}\n${String(t).toLowerCase()}`);
 }
-function v_(e) {
-	let t = Zh(Yt, e, p_, m_, 32);
+function gv(e) {
+	let t = tg(Yt, e, dv, fv, 32);
 	return {
 		privateKey: t,
-		publicKey: Th.getPublicKey(t)
+		publicKey: kh.getPublicKey(t)
 	};
 }
-function y_(e) {
+function _v(e) {
 	if (!globalThis.crypto?.getRandomValues) throw Error("secure browser randomness is unavailable; use HTTPS");
 	return globalThis.crypto.getRandomValues(e);
 }
-function b_(e, t, n, r) {
-	let i = Th.getSharedSecret(e, t);
+function vv(e, t, n, r) {
+	let i = kh.getSharedSecret(e, t);
 	try {
-		return Zh(Yt, i, __(n, r), h_, 32);
+		return tg(Yt, i, hv(n, r), pv, 32);
 	} finally {
 		i.fill(0);
 	}
 }
-function x_(e, t, n, r, i, a = y_) {
-	let o = a(/* @__PURE__ */ new Uint8Array(24)), s = g_(h_, __(n, r)), c = b_(e, t, n, r);
+function yv(e, t, n, r, i, a = _v) {
+	let o = a(/* @__PURE__ */ new Uint8Array(24)), s = mv(pv, hv(n, r)), c = vv(e, t, n, r);
 	try {
 		return {
-			ciphertext: Kh(c, o, s).encrypt(d_.encode(i)),
+			ciphertext: Xh(c, o, s).encrypt(lv.encode(i)),
 			nonce: o
 		};
 	} finally {
 		c.fill(0);
 	}
 }
-function S_(e, t, n, r, i, a) {
-	let o = g_(h_, __(n, r)), s = b_(e, t, n, r);
+function bv(e, t, n, r, i, a) {
+	let o = mv(pv, hv(n, r)), s = vv(e, t, n, r);
 	try {
-		return f_.decode(Kh(s, a, o).decrypt(i));
+		return uv.decode(Xh(s, a, o).decrypt(i));
 	} finally {
 		s.fill(0);
 	}
 }
-function C_(e) {
+function xv(e) {
 	e?.privateKey?.fill(0);
 }
 //#endregion
 //#region vendor/email-registry.js
-var w_ = "TKM_EMAILVM_REGISTRY_V1";
-function T_(e, t) {
+var Sv = "TKM_EMAILVM_REGISTRY_V1";
+function Cv(e, t) {
 	if (e !== "domain" && e !== "mailbox") throw Error("invalid EmailVM registry kind");
 	if (!t || t !== t.toLowerCase()) throw Error("EmailVM registry names must be canonical lowercase values");
-	return W(H(`${w_}\0${e}\0${t}`));
+	return W(H(`${Sv}\0${e}\0${t}`));
 }
 //#endregion
 //#region mail.js
-var E_ = 3000000n, D_ = (1n << 64n) - 1n, O_ = (e) => String(e || "").toLowerCase(), k_ = (e) => String(e || "").trim().toLowerCase();
-function A_(e, t, n, r, i) {
+var wv = 3000000n, Tv = (1n << 64n) - 1n, Ev = (e) => String(e || "").toLowerCase(), Dv = (e) => String(e || "").trim().toLowerCase();
+function Ov(e, t, n, r, i) {
 	let a = BigInt(t), o = BigInt(r), s = 0;
 	for (let t of e) {
 		if (!a) break;
@@ -13435,7 +13806,7 @@ function A_(e, t, n, r, i) {
 		r <= 0n || (a -= a < r ? a : r, o -= n - e, s++);
 	}
 	for (; a > 0n;) {
-		let e = a < D_ ? a : D_;
+		let e = a < Tv ? a : Tv;
 		if (o < e + 2n * n) throw Error("Insufficient total funds for the complete Mail payment and network gas.");
 		o -= e + 2n * n, a -= e, s += 2;
 	}
@@ -13444,24 +13815,24 @@ function A_(e, t, n, r, i) {
 		maxGas: BigInt(s) * n
 	};
 }
-function j_(e, t) {
+function kv(e, t) {
 	let n = _(e.applicationData), r = H("TKMEMAILVM1");
 	if (n.length > 12288 || S(n.slice(0, r.length)) !== S(r)) throw Error("Invalid mail action encoding.");
 	let i = JSON.parse(me(n.slice(r.length)));
 	if (i.v !== 3) throw Error("Unsupported mail action version.");
-	for (let [e, n] of Object.entries(t)) if (O_(i[e]) !== O_(n)) throw Error("Node changed the mail action: " + e);
+	for (let [e, n] of Object.entries(t)) if (Ev(i[e]) !== Ev(n)) throw Error("Node changed the mail action: " + e);
 	return i;
 }
-function M_(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipient: o, address: s, applicationData: c }) {
+function Av(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipient: o, address: s, applicationData: c }) {
 	let l = e.transaction;
-	if (Dg(l, {
+	if (jg(l, {
 		chainId: 8979,
 		value: 0n
-	}), BigInt(l.nonce) !== BigInt(t) || BigInt(l.gas) !== E_ || BigInt(l.gasFeeCap) !== n || BigInt(l.gasTipCap) !== n || !Array.isArray(l.accessList) || l.accessList.length) throw Error("Proof builder changed mail transaction fees or nonce.");
-	if (gg(l, e) !== a) throw Error("Proof builder changed mail gas sponsorship.");
+	}), BigInt(l.nonce) !== BigInt(t) || BigInt(l.gas) !== wv || BigInt(l.gasFeeCap) !== n || BigInt(l.gasTipCap) !== n || !Array.isArray(l.accessList) || l.accessList.length) throw Error("Proof builder changed mail transaction fees or nonce.");
+	if (bg(l, e) !== a) throw Error("Proof builder changed mail gas sponsorship.");
 	let u = BigInt(r.noteValueWei) - i - a;
 	if (u < 0n) throw Error("Insufficient note value for mail payment and gas.");
-	hg(l, e, {
+	yg(l, e, {
 		recipient: o,
 		valueWei: i,
 		expectedOutputs: u ? [{
@@ -13470,28 +13841,28 @@ function M_(e, { nonce: t, gasPrice: n, note: r, amount: i, sponsor: a, recipien
 			assetId: 1n,
 			valueWei: u
 		}] : []
-	}), _g(l, c);
+	}), xg(l, c);
 	let d = Je(_(l.data).slice(10));
-	if (d[1].length !== 1 || O_(d[1][0][0]) !== O_(r.nullifier) || O_(e.spentNullifier) !== O_(r.nullifier)) throw Error("Proof builder changed the mail input note.");
+	if (d[1].length !== 1 || Ev(d[1][0][0]) !== Ev(r.nullifier) || Ev(e.spentNullifier) !== Ev(r.nullifier)) throw Error("Proof builder changed the mail input note.");
 	return l;
 }
-async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch: i, operation: a, params: o = {}, onReview: s, onProgress: c = () => {}, onSubmitted: l = () => {} }) {
-	let u = Pg(), d, f, p, m = [];
+async function jv({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch: i, operation: a, params: o = {}, onReview: s, onProgress: c = () => {}, onSubmitted: l = () => {} }) {
+	let u = Rg(), d, f, p, m = [];
 	try {
-		let u = qm(e);
-		d = await rh(u, t);
+		let u = Zm(e);
+		d = await sh(u, t);
 		let h = K("0x" + u.address.replace(/^0x/, ""));
-		if (f = bg(d, h, 8979), p = v_(d), BigInt(await n("eth_chainId", [])) !== 8979n) throw Error("Mail requires TKM chain 8979.");
-		let g = new Mg({ send: n }), v = new Eg(r, "", i), y = {
+		if (f = wg(d, h, 8979), p = gv(d), BigInt(await n("eth_chainId", [])) !== 8979n) throw Error("Mail requires TKM chain 8979.");
+		let g = new Ig({ send: n }), v = new Ag(r, "", i), y = {
 			lastScannedBlock: -1,
 			notes: []
 		}, b = S(p.publicKey), x = async (e) => {
 			let t = await n("tkmdomain_mailbox", [e]);
-			if (O_(t.owner) !== O_(h)) throw Error("Selected PQ account does not own " + e);
+			if (Ev(t.owner) !== Ev(h)) throw Error("Selected PQ account does not own " + e);
 			return t;
 		}, C = async (e) => {
-			let t = oh(e, d), r = W(t.rawTransaction);
-			if (m.push(r), await l(r), O_(await n("eth_sendRawTransaction", [t.rawTransaction])) !== O_(r)) throw Error("Node returned an unexpected transaction hash.");
+			let t = uh(e, d), r = W(t.rawTransaction);
+			if (m.push(r), await l(r), Ev(await n("eth_sendRawTransaction", [t.rawTransaction])) !== Ev(r)) throw Error("Node returned an unexpected transaction hash.");
 			for (let e = 0; e < 150; e++) {
 				c("Waiting for confirmation: " + r);
 				let e = await n("eth_getTransactionReceipt", [r]);
@@ -13510,9 +13881,9 @@ async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 			if (!await g.shieldedV2Active()) throw Error("Shield2 must be active.");
 			let a = await v.health();
 			if (!a.ok || !a.hasProvingKeyV2 || !a.withdrawalBuildReady) throw Error("Local Mail proof builder is not ready.");
-			let o = BigInt(await n("eth_gasPrice", [])), l = E_ * o;
-			await Ag(g, f, y, (e, t) => c(`Scanning notes: ${e} / ${t}`));
-			let u = A_(y.notes, r, l, BigInt(await n("eth_getBalance", [h, "latest"])), await g.shieldedGasSponsorActive());
+			let o = BigInt(await n("eth_gasPrice", [])), l = wv * o;
+			await Pg(g, f, y, (e, t) => c(`Scanning notes: ${e} / ${t}`));
+			let u = Ov(y.notes, r, l, BigInt(await n("eth_getBalance", [h, "latest"])), await g.shieldedGasSponsorActive());
 			if (!s || !await s({
 				label: i,
 				recipient: t,
@@ -13523,16 +13894,16 @@ async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 			})) throw Error("Operation cancelled.");
 			let d = r;
 			for (; d > 0n;) {
-				await Ag(g, f, y, (e, t) => c(`Scanning notes: ${e} / ${t}`));
+				await Pg(g, f, y, (e, t) => c(`Scanning notes: ${e} / ${t}`));
 				let r = BigInt(await n("eth_getBalance", [h, "latest"])), a = r < l ? l - r : 0n;
 				if (a && !await g.shieldedGasSponsorActive()) throw Error("Public balance cannot cover network gas.");
 				let s = y.notes.find((e) => e.status === "available" && Number(e.version) === 2 && BigInt(e.assetId) === 1n && BigInt(e.noteValueWei) > a);
 				if (!s) {
-					let e = d < D_ ? d : D_;
+					let e = d < Tv ? d : Tv;
 					if (r < e + 2n * l) throw Error("Insufficient public balance for self-shielding and Mail gas.");
 					let t = await w();
 					c("Creating a private note for Mail…");
-					let n = zg(await v.buildDeposit({
+					let n = Ug(await v.buildDeposit({
 						requestId: "mail-fund-" + S($n(16)),
 						from: h,
 						to: h,
@@ -13571,7 +13942,7 @@ async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 				};
 				let _ = await w();
 				c("Building " + i + " proof…");
-				let b = M_(await v.buildWithdrawal({
+				let b = Av(await v.buildWithdrawal({
 					requestId: "mail-" + S($n(16)),
 					applicationData: e.applicationData,
 					from: h,
@@ -13597,38 +13968,38 @@ async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 			}
 		}, E = async (e) => {
 			let t = await x(e);
-			if (O_(t.encryptionKey) === O_(b)) return;
+			if (Ev(t.encryptionKey) === Ev(b)) return;
 			if (t.encryptionKey && t.encryptionKey !== "0x") throw Error("This mailbox uses a different mail key. Refusing to replace it and lose access to existing mail.");
 			let r = await n("emailvm_publishKey", [e, b]);
-			if (j_(r, {
+			if (kv(r, {
 				kind: "key",
 				mailbox: e,
 				key: b.slice(2)
-			}), await T(r, h, 1n, "Publish encryption key for " + e), O_((await n("emailvm_key", [e])).publicKey) !== O_(b)) throw Error("Encryption key is not yet indexed. Check publication before sending.");
+			}), await T(r, h, 1n, "Publish encryption key for " + e), Ev((await n("emailvm_key", [e])).publicKey) !== Ev(b)) throw Error("Encryption key is not yet indexed. Check publication before sending.");
 		};
 		if (a === "buy") {
-			let e = k_(o.username), t = k_(o.domain).replace(/^@/, ""), r = e + "@" + t, i = await n("tkmdomain_domain", [t]), a = K(i.payoutAddress && i.payoutAddress !== "0x0000000000000000000000000000000000000000" ? i.payoutAddress : i.operator), s = BigInt(await n("tkmdomain_subscriberUnitPrice", [])), c = await n("tkmdomain_buy", [e, t]), l = T_("mailbox", r);
-			if (j_(c, {
+			let e = Dv(o.username), t = Dv(o.domain).replace(/^@/, ""), r = e + "@" + t, i = await n("tkmdomain_domain", [t]), a = K(i.payoutAddress && i.payoutAddress !== "0x0000000000000000000000000000000000000000" ? i.payoutAddress : i.operator), s = BigInt(await n("tkmdomain_subscriberUnitPrice", [])), c = await n("tkmdomain_buy", [e, t]), l = Cv("mailbox", r);
+			if (kv(c, {
 				kind: "buy",
 				username: e,
 				domain: t,
 				registryHash: l
-			}), O_(c.registryHash) !== O_(l) || O_(c.withdrawalRecipient) !== O_(a) || BigInt(c.totalWithdrawalAmountWei) !== s) throw Error("Mailbox payment differs from the domain price or payout address.");
-			let u = (await n("tkmdomain_pending", []) || []).find((n) => n.kind === "buy" && n.domain === t && n.username === e && O_(n.payer) === O_(h) && O_(n.recipient) === O_(a) && BigInt(n.required) === s), d = s - BigInt(u?.paid || 0);
+			}), Ev(c.registryHash) !== Ev(l) || Ev(c.withdrawalRecipient) !== Ev(a) || BigInt(c.totalWithdrawalAmountWei) !== s) throw Error("Mailbox payment differs from the domain price or payout address.");
+			let u = (await n("tkmdomain_pending", []) || []).find((n) => n.kind === "buy" && n.domain === t && n.username === e && Ev(n.payer) === Ev(h) && Ev(n.recipient) === Ev(a) && BigInt(n.required) === s), d = s - BigInt(u?.paid || 0);
 			if (d <= 0n) throw Error("Mailbox payment is awaiting indexing. Check registration before retrying.");
 			await T(c, a, d, "Register " + r), await x(r), await E(r);
-		} else if (a === "publish") await E(k_(o.mailbox));
+		} else if (a === "publish") await E(Dv(o.mailbox));
 		else if (a === "send") {
-			let e = k_(o.from), t = k_(o.to), r = String(o.subject || "").trim() + "\n\n" + String(o.body || "");
+			let e = Dv(o.from), t = Dv(o.to), r = String(o.subject || "").trim() + "\n\n" + String(o.body || "");
 			if (!r.trim() || H(r).length > 4e3) throw Error("Write a message of at most 4,000 UTF-8 bytes including subject.");
-			if (O_((await x(e)).encryptionKey) !== O_(b)) throw Error("Publish this wallet’s Mail encryption key before sending.");
-			let i = await n("emailvm_key", [t]), a = x_(p.privateKey, _(i.publicKey), e, t, r), s = S(a.ciphertext), c = S(a.nonce), l = await n("emailvm_send", [
+			if (Ev((await x(e)).encryptionKey) !== Ev(b)) throw Error("Publish this wallet’s Mail encryption key before sending.");
+			let i = await n("emailvm_key", [t]), a = yv(p.privateKey, _(i.publicKey), e, t, r), s = S(a.ciphertext), c = S(a.nonce), l = await n("emailvm_send", [
 				e,
 				t,
 				s,
 				c
 			]);
-			j_(l, {
+			kv(l, {
 				kind: "message",
 				from: e,
 				to: t,
@@ -13636,38 +14007,38 @@ async function N_({ keystore: e, password: t, rpc: n, proverURL: r, proverFetch:
 				nonce: c.slice(2)
 			}), await T(l, h, 1n, "Send encrypted mail to " + t);
 		} else if (a === "decrypt") {
-			let e = k_(o.mailbox), t = o.message;
-			if (O_((await x(e)).encryptionKey) !== O_(b)) throw Error("This wallet does not hold the published Mail key.");
-			let r = k_(t.from), i = k_(t.to);
+			let e = Dv(o.mailbox), t = o.message;
+			if (Ev((await x(e)).encryptionKey) !== Ev(b)) throw Error("This wallet does not hold the published Mail key.");
+			let r = Dv(t.from), i = Dv(t.to);
 			if (r !== e && i !== e) throw Error("Message does not belong to this mailbox.");
 			let a = await n("emailvm_key", [r === e ? i : r]);
-			return S_(p.privateKey, _(a.publicKey), r, i, _(t.ciphertext), _(t.nonce));
+			return bv(p.privateKey, _(a.publicKey), r, i, _(t.ciphertext), _(t.nonce));
 		} else throw Error("Unsupported Mail operation.");
 		return m;
 	} catch (e) {
 		throw m.length && (e.message += " Attempted transaction hashes: " + m.join(", ") + ". Check before retrying."), e;
 	} finally {
-		d?.fill(0), xg(f), C_(p), u();
+		d?.fill(0), Tg(f), xv(p), u();
 	}
 }
 //#endregion
 //#region shield3-migrate.js
-var P_ = 3000000n;
-function F_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
+var Mv = 3000000n;
+function Nv(e, { address: t, note: n, nonce: r, gasPrice: i }) {
 	let a = e.transaction;
-	if (Dg(a, {
+	if (jg(a, {
 		chainId: 8979,
 		value: 0n
-	}), hg(a, e, {
+	}), yg(a, e, {
 		recipient: t,
 		valueWei: BigInt(n.noteValueWei)
-	}), BigInt(a.nonce) !== BigInt(r) || BigInt(a.gas) !== P_ || BigInt(a.gasFeeCap) !== i || BigInt(a.gasTipCap) !== i || a.accessList?.length || gg(a, e) !== 0n) throw Error("Migration proof changed nonce, fees or gas sponsorship.");
+	}), BigInt(a.nonce) !== BigInt(r) || BigInt(a.gas) !== Mv || BigInt(a.gasFeeCap) !== i || BigInt(a.gasTipCap) !== i || a.accessList?.length || bg(a, e) !== 0n) throw Error("Migration proof changed nonce, fees or gas sponsorship.");
 	let o = Je(_(a.data).slice(10));
 	if (o[1]?.length !== 1 || S(o[1][0][0]).toLowerCase() !== n.nullifier.toLowerCase() || S(o[1][0][1]).toLowerCase() !== n.merkleRoot.toLowerCase() || o[8]?.length !== 4) throw Error("Migration proof changed the input or omitted empty-output openings.");
 	for (let e = 0; e < 4; e++) {
 		let n = BigInt(o[8][e]);
 		if (n <= 0n || n >= 21888242871839275222246405745257275088548364400416034343698204186575808495617n) throw Error("Migration proof returned invalid randomness.");
-		if (te(fg([
+		if (te(gg([
 			2001n,
 			e === 0 ? BigInt(t) : 0n,
 			1n,
@@ -13677,26 +14048,26 @@ function F_(e, { address: t, note: n, nonce: r, gasPrice: i }) {
 	}
 	return a;
 }
-async function I_(e) {
-	let t = Pg(), n, r, i;
+async function Pv(e) {
+	let t = Rg(), n, r, i;
 	try {
-		let t = qm(e.keystore);
-		n = await rh(t, e.password);
+		let t = Zm(e.keystore);
+		n = await sh(t, e.password);
 		let a = K("0x" + t.address.replace(/^0x/, ""));
-		r = bg(n, a, 8979);
+		r = wg(n, a, 8979);
 		let o = new Oe(e.rpcURL);
 		if (o.setHeader("X-GUI-Token", e.rpcToken), i = new Vd(o), BigInt(await i.send("eth_chainId", [])) !== 8979n || !(await i.send("tkmprivacy_shieldedV3Status", [])).active) throw Error("Migration requires Antartical on TKM mainnet.");
-		let s = new Mg(i), c = {
+		let s = new Ig(i), c = {
 			lastScannedBlock: -1,
 			notes: []
 		};
-		e.onProgress?.("Scanning legacy notes…"), await Ag(s, r, c, () => {});
+		e.onProgress?.("Scanning legacy notes…"), await Pg(s, r, c, () => {});
 		let l = c.notes.find((e) => e.status === "available" && Number(e.version) === 2 && BigInt(e.assetId) === 1n);
 		if (!l) throw Error("No confirmed Shield2 note remains to migrate.");
 		let u = await s.getTransactionCount(a, "latest");
 		if (BigInt(await s.getTransactionCount(a, "pending")) !== BigInt(u)) throw Error("Wait for your pending transaction to confirm.");
 		let d = BigInt(await i.send("eth_gasPrice", []));
-		if (BigInt(await i.send("eth_getBalance", [a, "latest"])) + BigInt(l.noteValueWei) < P_ * d) throw Error("This note and public balance cannot cover migration gas.");
+		if (BigInt(await i.send("eth_getBalance", [a, "latest"])) + BigInt(l.noteValueWei) < Mv * d) throw Error("This note and public balance cannot cover migration gas.");
 		if ((await s.privacyNullifierStatus(l.nullifier))?.spent) throw Error("Legacy note is already spent. Rescan.");
 		let f = await s.privacyCommitmentPath(l.commitment);
 		if (!f.found) throw Error("Legacy note is no longer confirmed.");
@@ -13705,7 +14076,7 @@ async function I_(e) {
 			merkleRoot: f.root,
 			merklePath: f.merklePath.map(String),
 			merklePathIndex: f.merklePathIndex.map((e) => BigInt(e).toString())
-		}, m = new Eg(new URL("/prover", globalThis.location.href).href, "", (t, n) => fetch(t, {
+		}, m = new Ag(new URL("/prover", globalThis.location.href).href, "", (t, n) => fetch(t, {
 			...n,
 			headers: {
 				...n.headers,
@@ -13713,7 +14084,7 @@ async function I_(e) {
 			}
 		}));
 		e.onProgress?.("Building the full-note migration proof…");
-		let h = oh(F_(await m.buildWithdrawal({
+		let h = uh(Nv(await m.buildWithdrawal({
 			requestId: S($n(16)),
 			from: a,
 			to: a,
@@ -13736,60 +14107,60 @@ async function I_(e) {
 		}
 		return g;
 	} finally {
-		n?.fill(0), xg(r), i?.destroy(), t();
+		n?.fill(0), Tg(r), i?.destroy(), t();
 	}
 }
 //#endregion
 //#region engine.js
-async function L_(e) {
-	return (await Wg(e)).active ? e_(e) : Bg(e);
+async function Fv(e) {
+	return (await Jg(e)).active ? i_(e) : Wg(e);
 }
-function R_() {
+function Iv() {
 	return cf.fromEntropy($n(32)).phrase;
 }
-function z_(e) {
+function Lv(e) {
 	let t = String(e).normalize("NFKD").trim().toLowerCase().split(/\s+/).join(" ");
 	if (t.split(" ").length !== 24) throw Error("Enter all 24 recovery words.");
 	let n = cf.fromPhrase(t);
 	if (_(n.entropy).length !== 32) throw Error("Expected a 24-word TKM PQ recovery phrase.");
 	return n.entropy;
 }
-async function B_(e, t) {
-	let n = await rh(qm(e), t);
+async function Rv(e, t) {
+	let n = await sh(Zm(e), t);
 	try {
 		return cf.fromEntropy(n).phrase;
 	} finally {
 		n.fill(0);
 	}
 }
-function V_(e) {
+function zv(e) {
 	return JSON.parse(me(e));
 }
-function H_(e) {
-	return Cg(String(e).trim(), 8979);
+function Bv(e) {
+	return Dg(String(e).trim(), 8979);
 }
-async function U_({ keystore: e, password: t, rpcURL: n, rpcToken: r, onProgress: i }) {
-	if ((await Wg({
+async function Vv({ keystore: e, password: t, rpcURL: n, rpcToken: r, onProgress: i }) {
+	if ((await Jg({
 		rpcURL: n,
 		rpcToken: r
-	})).active) return nt((await $g({
+	})).active) return nt((await r_({
 		keystore: e,
 		password: t,
 		rpcToken: r
 	})).balanceWei);
-	let a = qm(e), o = await rh(a, t), s, c;
+	let a = Zm(e), o = await sh(a, t), s, c;
 	try {
-		s = bg(o, K("0x" + a.address.replace(/^0x/, "")), 8979);
+		s = wg(o, K("0x" + a.address.replace(/^0x/, "")), 8979);
 		let e = new Oe(n);
 		if (e.setHeader("X-GUI-Token", r), c = new Vd(e), BigInt(await c.send("eth_chainId", [])) !== 8979n) throw Error("This wallet requires TKM mainnet.");
 		let t = {
 			lastScannedBlock: -1,
 			notes: []
 		};
-		return await Ag(new Mg(c), s, t, i), nt(jg(t.notes));
+		return await Pg(new Ig(c), s, t, i), nt(Fg(t.notes));
 	} finally {
-		o.fill(0), xg(s), c?.destroy();
+		o.fill(0), Tg(s), c?.destroy();
 	}
 }
 //#endregion
-export { Cg as decodeShieldedPaymentCode, V_ as keyfileFromHex, I_ as migrateShield2Note, R_ as newRecoveryPhrase, u_ as phonePublicKey, B_ as recoveryPhraseForKeyfile, N_ as runMailOperation, U_ as scanWallet, z_ as seedFromPhrase, L_ as sendTKM, o_ as shield3Disclosure, Qg as shield3FetchRelayOffer, t_ as shield3Funds, Jg as shield3Identity, n_ as shield3RegisterStamp, i_ as shield3Relay, a_ as shield3ReviewRelayOffer, $g as shield3Scan, r_ as shield3StampSponsorship, Wg as shield3Status, Yg as shield3ViewKeys, Xg as shield3ViewScan, Zg as shield3ViewStamp, l_ as signPhoneDigest, H_ as validateRecipient, Hg as validateShield3Amount, Ug as validateShield3Payments, Gg as validateShield3Recipient };
+export { Dg as decodeShieldedPaymentCode, zv as keyfileFromHex, Pv as migrateShield2Note, Iv as newRecoveryPhrase, cv as phoneDecryptV2, sv as phoneEncryptV2, ov as phoneEncryptionPublicKey, av as phonePublicKey, Rv as recoveryPhraseForKeyfile, jv as runMailOperation, Vv as scanWallet, Lv as seedFromPhrase, Fv as sendTKM, u_ as shield3Disclosure, n_ as shield3FetchRelayOffer, a_ as shield3Funds, Qg as shield3Identity, o_ as shield3RegisterStamp, c_ as shield3Relay, l_ as shield3ReviewRelayOffer, r_ as shield3Scan, s_ as shield3StampSponsorship, Jg as shield3Status, $g as shield3ViewKeys, e_ as shield3ViewScan, t_ as shield3ViewStamp, iv as signPhoneDigest, Bv as validateRecipient, Kg as validateShield3Amount, qg as validateShield3Payments, Yg as validateShield3Recipient };
