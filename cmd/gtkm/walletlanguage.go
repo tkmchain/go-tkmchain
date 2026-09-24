@@ -309,6 +309,19 @@ func walletText(key, fallback string) string {
 		value = terms.Refresh
 	case "menu.language":
 		value = terms.Language
+	case "menu.migrate":
+		value = map[string]string{
+			"zh": "将 ECDSA 迁移到 ML-DSA-87", "ru": "Миграция ECDSA → ML-DSA-87",
+			"ja": "ECDSA を ML-DSA-87 に移行", "ko": "ECDSA → ML-DSA-87 마이그레이션",
+			"es": "Migrar ECDSA → ML-DSA-87", "pt": "Migrar ECDSA → ML-DSA-87",
+			"fr": "Migrer ECDSA → ML-DSA-87", "de": "ECDSA → ML-DSA-87 migrieren",
+			"ar": "ترحيل ECDSA إلى ML-DSA-87", "hi": "ECDSA → ML-DSA-87 माइग्रेट करें",
+			"id": "Migrasikan ECDSA → ML-DSA-87", "tr": "ECDSA → ML-DSA-87 taşı",
+			"vi": "Di chuyển ECDSA → ML-DSA-87", "it": "Migra ECDSA → ML-DSA-87",
+			"nl": "ECDSA → ML-DSA-87 migreren", "pl": "Migruj ECDSA → ML-DSA-87",
+			"uk": "Міграція ECDSA → ML-DSA-87", "th": "ย้าย ECDSA → ML-DSA-87",
+			"bn": "ECDSA → ML-DSA-87 মাইগ্রেট করুন",
+		}[walletActiveLanguage.Code]
 	case "menu.exit":
 		value = terms.Exit
 	case "select":

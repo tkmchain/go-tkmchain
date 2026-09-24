@@ -179,6 +179,25 @@ Web wallets can pass the encrypted version 3 keyfile to
 `importLegacyKeyfileWithPassphrase` on a trusted local node, then use the
 prepare, export, and send helpers without exposing a raw ECDSA private key.
 
+### Interactive console migration
+
+The guided console wallet provides the same flow locally:
+
+```text
+./build/bin/gtkm wallet interactive
+9) Migrate ECDSA → ML-DSA-87
+```
+
+Choose the legacy `ECDSA-secp256k1` account, enter its password and a password
+for the new account, review the destination and fee, then type `MIGRATE`.
+The wallet creates an encrypted version 4 ML-DSA-87 keyfile, attaches a
+recipient-bound `TKMPQMIG1` marker, sends the balance less the estimated fee,
+and waits for a successful receipt. Only after canonical confirmation does it
+print the new ML-DSA-87 address and its 32-byte seed in hexadecimal. Save that
+seed and the new account password in separate secure backups. The old ECDSA
+keyfile is never printed, deleted, or overwritten. Cancelling leaves the new
+PQ key encrypted in the keystore but submits no transaction.
+
 ## Keystore-Assisted Auto Migration
 
 For a local keystore account, `autoMigrateToPQWithPassphrase` performs the

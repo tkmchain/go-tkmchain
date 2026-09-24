@@ -40,3 +40,16 @@ func TestWalletTransferTransactionUsesPQEnvelope(t *testing.T) {
 		t.Fatalf("unexpected PQ transfer transaction: type=%d nonce=%d to=%v value=%v", tx.Type(), tx.Nonce(), tx.To(), tx.Value())
 	}
 }
+
+func TestWalletMigrationTransactionCarriesMarker(t *testing.T) {
+	chainID := big.NewInt(8979)
+	to := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	data := []byte("TKMPQMIG1-marker")
+	tx := walletMigrationTransaction(chainID, 8, to, big.NewInt(99), 50000, big.NewInt(4), data)
+	if tx.Type() != types.DynamicFeeTxType || tx.Nonce() != 8 || tx.To() == nil || *tx.To() != to || tx.Value().Cmp(big.NewInt(99)) != 0 {
+		t.Fatalf("unexpected migration transaction: type=%d nonce=%d to=%v value=%v", tx.Type(), tx.Nonce(), tx.To(), tx.Value())
+	}
+	if string(tx.Data()) != string(data) {
+		t.Fatalf("migration data = %q, want %q", tx.Data(), data)
+	}
+}

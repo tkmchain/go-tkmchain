@@ -206,6 +206,9 @@ func TestPreparePQMigration(t *testing.T) {
 	if migration.PQAlgorithm != pqcrypto.AlgorithmMLDSA87 {
 		t.Fatalf("algorithm = %s, want %s", migration.PQAlgorithm, pqcrypto.AlgorithmMLDSA87)
 	}
+	if len(migration.PQSeed) != pqcrypto.MLDSA87SeedSize {
+		t.Fatalf("migration seed length = %d, want %d", len(migration.PQSeed), pqcrypto.MLDSA87SeedSize)
+	}
 	parsed, err := types.ParsePQMigrationData(migration.MigrationData)
 	if err != nil {
 		t.Fatal(err)

@@ -25,6 +25,9 @@ type PQMigrationAccount struct {
 	PQAccount     accounts.Account
 	PQAlgorithm   string
 	PQPublicKey   []byte
+	// PQSeed is the raw ML-DSA-87 seed for one-time recovery display. Callers
+	// must clear it after displaying or securely storing it.
+	PQSeed        []byte
 	MigrationData []byte
 }
 
@@ -155,6 +158,7 @@ func (ks *KeyStore) PreparePQMigration(a accounts.Account, legacyPassphrase, pqP
 		PQAccount:     pqAccount,
 		PQAlgorithm:   newKey.Algorithm,
 		PQPublicKey:   common.CopyBytes(newKey.PublicKey),
+		PQSeed:        common.CopyBytes(newKey.Seed),
 		MigrationData: migrationData,
 	}, nil
 }

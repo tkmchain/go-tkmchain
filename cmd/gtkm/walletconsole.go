@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +95,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  6) %s\n", walletText("menu.kings", "Kings"))
 		fmt.Printf("  7) %s\n", walletText("menu.refresh", "Refresh"))
 		fmt.Printf("  8) %s\n", walletText("menu.language", "Language"))
+		fmt.Printf("  9) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -130,11 +132,15 @@ func interactiveWallet(ctx *cli.Context) error {
 			}
 			fmt.Printf("\n  %s: %s — %s\n", walletText("language.saved", "Language saved"), selected.Name, selected.NativeName)
 			pauseWallet(reader)
+		case "9":
+			if err := migrateECDSAWallet(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, or 0.")
+			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -991,6 +997,138 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 	fmt.Printf("\n  Submitted successfully.\n  Transaction hash: %s\n", signed.Hash().Hex())
 	pauseWallet(reader)
 	return nil
+}
+
+func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	clearWalletScreen()
+	fmt.Println(walletText("section.migrate", "MIGRATE ECDSA → ML-DSA-87"))
+	fmt.Println("────────────────────────────")
+	fmt.Println("This creates a new ML-DSA-87 account and sends the source balance minus the network fee to it.")
+	fmt.Println("The legacy private key is never printed. The new PQ seed is shown only after the migration transaction is mined successfully.")
+
+	var legacyAccounts []accounts.Account
+	for _, account := range walletAccounts {
+		algorithm, err := ks.AccountAlgorithm(account)
+		if err == nil && algorithm == keystore.AlgorithmECDSA {
+			legacyAccounts = append(legacyAccounts, account)
+		}
+	}
+	if len(legacyAccounts) == 0 {
+		return errors.New("no ECDSA-secp256k1 accounts are available to migrate")
+	}
+	for i, account := range legacyAccounts {
+		fmt.Printf("  %d) %s\n", i+1, account.Address.Hex())
+	}
+	choice, err := readWalletLine(reader, "Legacy ECDSA account number")
+	if err != nil {
+		return err
+	}
+	var index int
+	if _, err := fmt.Sscanf(choice, "%d", &index); err != nil || index < 1 || index > len(legacyAccounts) {
+		return errors.New("invalid ECDSA account selection")
+	}
+	legacy := legacyAccounts[index-1]
+
+	legacyPassphrase := utils.GetPassPhrase("Legacy ECDSA account password", false)
+	defer clearWalletBytes([]byte(legacyPassphrase))
+	pqPassphrase := utils.GetPassPhrase("New ML-DSA-87 account password", false)
+	defer clearWalletBytes([]byte(pqPassphrase))
+
+	migration, err := ks.PreparePQMigration(legacy, legacyPassphrase, pqPassphrase)
+	if err != nil {
+		return fmt.Errorf("prepare PQ migration: %w", err)
+	}
+	defer clearWalletBytes(migration.PQSeed)
+	if len(migration.PQSeed) != pqcrypto.MLDSA87SeedSize {
+		return errors.New("generated PQ migration seed has an invalid length")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	nonce, err := client.PendingNonceAt(ctx, legacy.Address)
+	if err != nil {
+		return fmt.Errorf("read legacy account nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return fmt.Errorf("read network fee: %w", err)
+	}
+	balance, err := client.BalanceAt(ctx, legacy.Address, nil)
+	if err != nil {
+		return fmt.Errorf("read legacy account balance: %w", err)
+	}
+	// Estimate the ordinary value-transfer cost with the migration marker. The
+	// marker is calldata only; the value is set after the fee is known so the
+	// source account can be migrated without leaving a spendable ECDSA balance.
+	call := ethereum.CallMsg{
+		From:     legacy.Address,
+		To:       &migration.PQAccount.Address,
+		GasPrice: gasPrice,
+		Data:     migration.MigrationData,
+	}
+	gas := uint64(params.TxGas) + uint64(len(migration.MigrationData))*16
+	if estimated, estimateErr := client.EstimateGas(ctx, call); estimateErr == nil && estimated > gas {
+		gas = estimated
+	}
+	fee := new(big.Int).Mul(new(big.Int).SetUint64(gas), gasPrice)
+	if balance.Cmp(fee) <= 0 {
+		return fmt.Errorf("legacy account balance %s does not cover migration fee %s", formatTKM(balance), formatTKM(fee))
+	}
+	value := new(big.Int).Sub(new(big.Int).Set(balance), fee)
+	unsigned := walletMigrationTransaction(chainID, nonce, migration.PQAccount.Address, value, gas, gasPrice, migration.MigrationData)
+
+	fmt.Println("\nReview migration")
+	fmt.Printf("  From (ECDSA): %s\n  To (ML-DSA-87): %s\n  Amount: %s\n  Fee limit: %s\n  Transaction type: ECDSA migration transfer\n", legacy.Address.Hex(), migration.PQAccount.Address.Hex(), formatTKM(value), formatTKM(fee))
+	confirm, err := readWalletLine(reader, "Type MIGRATE to sign and submit")
+	if err != nil {
+		return err
+	}
+	if confirm != "MIGRATE" {
+		fmt.Println("  Cancelled. The new PQ account remains encrypted in the keystore; no migration transaction was signed.")
+		pauseWallet(reader)
+		return nil
+	}
+
+	signed, err := ks.SignTxWithPassphrase(legacy, legacyPassphrase, unsigned, chainID)
+	if err != nil {
+		return fmt.Errorf("sign migration transaction: %w", err)
+	}
+	submitCtx, submitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer submitCancel()
+	if err := client.SendTransaction(submitCtx, signed); err != nil {
+		return fmt.Errorf("submit migration transaction: %w", err)
+	}
+	fmt.Printf("\n  Migration submitted: %s\n  Waiting for canonical confirmation...\n", signed.Hash().Hex())
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer waitCancel()
+	receipt, err := waitWalletReceipt(waitCtx, client, signed.Hash())
+	if err != nil {
+		return fmt.Errorf("migration %s was submitted but confirmation failed: %w", signed.Hash().Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("migration %s was mined but failed; the new PQ account remains in the keystore", signed.Hash().Hex())
+	}
+
+	fmt.Println("\n  Migration complete.")
+	fmt.Printf("  New ML-DSA-87 address: %s\n", migration.PQAccount.Address.Hex())
+	fmt.Printf("  New ML-DSA-87 seed (hex, save this securely): %s\n", hex.EncodeToString(migration.PQSeed))
+	fmt.Printf("  Migration transaction: %s\n", signed.Hash().Hex())
+	fmt.Println("  The seed is displayed once. Keep the new account password and this seed in separate secure backups.")
+	pauseWallet(reader)
+	return nil
+}
+
+func walletMigrationTransaction(chainID *big.Int, nonce uint64, to common.Address, value *big.Int, gas uint64, gasPrice *big.Int, data []byte) *types.Transaction {
+	return types.NewTx(&types.DynamicFeeTx{
+		ChainID:   chainID,
+		Nonce:     nonce,
+		GasTipCap: new(big.Int).Set(gasPrice),
+		GasFeeCap: new(big.Int).Set(gasPrice),
+		Gas:       gas,
+		To:        &to,
+		Value:     new(big.Int).Set(value),
+		Data:      common.CopyBytes(data),
+	})
 }
 
 func walletTransferTransaction(chainID *big.Int, nonce uint64, to common.Address, value *big.Int, gas uint64, gasPrice *big.Int, algorithm string) *types.Transaction {
