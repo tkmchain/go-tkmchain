@@ -31,7 +31,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		NetRestrict      *netutil.Netlist `toml:",omitempty"`
 		NodeDatabase     string           `toml:",omitempty"`
 		Protocols        []Protocol       `toml:"-" json:"-"`
-		OnionHostname    string           `toml:",omitempty"`
+		OnionHostname    string           `toml:"onionHostname,omitempty"`
 		ListenAddr       string
 		DiscAddr         string
 		NAT              nat.Interface `toml:",omitempty"`
@@ -85,7 +85,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		NetRestrict      *netutil.Netlist `toml:",omitempty"`
 		NodeDatabase     *string          `toml:",omitempty"`
 		Protocols        []Protocol       `toml:"-" json:"-"`
-		OnionHostname    *string          `toml:",omitempty"`
+		OnionHostname    *string          `toml:"onionHostname,omitempty"`
 		ListenAddr       *string
 		DiscAddr         *string
 		NAT              *configNAT `toml:",omitempty"`
