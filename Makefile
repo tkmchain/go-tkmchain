@@ -288,7 +288,8 @@ randomx: randomx-host
 randomx-host:
 	@set -e; \
 	echo "=== Building RandomX for Host ==="; \
-	SOURCE_DIR="$$(pwd)/$(RANDOMX_DIR)"; \
+	PROJECT_ROOT="$$(pwd)"; \
+	SOURCE_DIR="$$PROJECT_ROOT/$(RANDOMX_DIR)"; \
 	if [ ! -d "$$SOURCE_DIR/.git" ]; then \
 		echo "Cloning RandomX into $$SOURCE_DIR..."; \
 		rm -rf "$$SOURCE_DIR"; \
@@ -312,13 +313,14 @@ randomx-host:
 	if [ -f "$(RANDOMX_LIB_STATIC)" ]; then \
 		echo "✓ RandomX static library built: $(RANDOMX_BUILD_DIR_HOST)/$(RANDOMX_LIB_STATIC)"; \
 		TARGET_DIR=""; \
-		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; fi; \
-		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "x86_64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; fi; \
-		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "aarch64" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_LINUX_ARM64)"; fi; \
-		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "armv7l" ]; then TARGET_DIR="$(RANDOMX_BUILD_DIR_LINUX_ARM)"; fi; \
+		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "arm64" ]; then TARGET_DIR="$$PROJECT_ROOT/$(RANDOMX_BUILD_DIR_DARWIN_ARM64)"; fi; \
+		if [ "$$HOST_OS" = "Darwin" ] && [ "$$HOST_ARCH" = "x86_64" ]; then TARGET_DIR="$$PROJECT_ROOT/$(RANDOMX_BUILD_DIR_DARWIN_AMD64)"; fi; \
+		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "aarch64" ]; then TARGET_DIR="$$PROJECT_ROOT/$(RANDOMX_BUILD_DIR_LINUX_ARM64)"; fi; \
+		if [ "$$HOST_OS" = "Linux" ] && [ "$$HOST_ARCH" = "armv7l" ]; then TARGET_DIR="$$PROJECT_ROOT/$(RANDOMX_BUILD_DIR_LINUX_ARM)"; fi; \
 		if [ -n "$$TARGET_DIR" ]; then \
 			mkdir -p "$$TARGET_DIR"; \
 			cp "$(RANDOMX_LIB_STATIC)" "$$TARGET_DIR/$(RANDOMX_LIB_STATIC)"; \
+			test -s "$$TARGET_DIR/$(RANDOMX_LIB_STATIC)"; \
 			echo "✓ RandomX host library copied for cgo: $$TARGET_DIR/$(RANDOMX_LIB_STATIC)"; \
 		fi; \
 	else \

@@ -11,7 +11,7 @@ package shielded3
 #cgo windows,amd64 LDFLAGS: ${SRCDIR}/stark/target/x86_64-pc-windows-gnu/release/libtkm_shield3_stark.a
 #cgo android,arm64 LDFLAGS: ${SRCDIR}/stark/target/aarch64-linux-android/release/libtkm_shield3_stark.a
 #cgo android LDFLAGS: -ldl -lm -llog
-#cgo darwin LDFLAGS: -framework Security -framework CoreFoundation -liconv -lm
+#cgo darwin LDFLAGS: ${SRCDIR}/stark/target/release/libtkm_shield3_stark.a -framework Security -framework CoreFoundation -liconv -lm
 #cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll
 int tkm_shield3_call(uint32_t, const uint8_t*, size_t, uint8_t*, size_t, size_t*);
 */
