@@ -153,12 +153,12 @@ func New(conf *Config) (*Node, error) {
 		}
 	}
 	if conf.PrivacyStrict {
-		// Keep public RPC namespaces to wallet/mining essentials. Administrative,
+		// Keep public RPC namespaces to wallet and RandomX submission essentials. Administrative,
 		// debug, tracing, and account-management APIs remain IPC/auth-only.
 		conf.HTTPModules = []string{
-			"eth", "net", "web3", "miner", "randomx", "tvm", "tkm",
+			"eth", "net", "web3", "randomx", "tvm", "tkm",
 			"tkmphone", "tkmdomain", "emailvm", "tkmgov", "tkmaccount",
-			"tkminstitution", "tkmsupply", "tkmprivacy", "mainking", "rk", "rotatingking",
+			"tkminstitution", "tkmsupply", "tkmprivacy", "mainking",
 		}
 		conf.WSModules = append([]string(nil), conf.HTTPModules...)
 		conf.WSExposeAll = false

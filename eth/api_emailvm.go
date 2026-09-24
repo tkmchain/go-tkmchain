@@ -50,6 +50,7 @@ var (
 	emailVMDomainPattern               = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 	emailVMUsernamePattern             = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$`)
 	emailVMOTPPattern                  = regexp.MustCompile(`^[0-9]{6}$`)
+	emailVMOTPPerMailboxPerMinute      = 3
 )
 
 type EmailVMService struct {
@@ -72,6 +73,7 @@ type EmailVMService struct {
 	outboxIndex   map[string][]common.Hash
 	dirtyMessages map[common.Hash]struct{}
 	pending       map[string]EmailPendingPayment
+	otpRate       map[string][]time.Time
 }
 
 type emailVMSnapshot struct {
@@ -284,6 +286,7 @@ func (svc *EmailVMService) resetLocked() {
 	svc.outboxIndex = make(map[string][]common.Hash)
 	svc.dirtyMessages = make(map[common.Hash]struct{})
 	svc.pending = make(map[string]EmailPendingPayment)
+	svc.otpRate = make(map[string][]time.Time)
 }
 
 func (api *TkmDomainAPI) RegistrationFee() *hexutil.Big {
@@ -676,6 +679,19 @@ func (api *EmailVMAPI) DeliverOTP(to string, code string) (EmailMessage, error) 
 }
 
 func (s *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint64) (EmailMessage, error) {
+	now := time.Now()
+	cutoff := now.Add(-time.Minute)
+	events := s.otpRate[to][:0]
+	for _, event := range s.otpRate[to] {
+		if event.After(cutoff) {
+			events = append(events, event)
+		}
+	}
+	if len(events) >= emailVMOTPPerMailboxPerMinute {
+		s.otpRate[to] = events
+		return EmailMessage{}, errors.New("OTP delivery rate limit exceeded")
+	}
+	s.otpRate[to] = append(events, now)
 	mailbox, ok := s.mailboxes[to]
 	if !ok {
 		return EmailMessage{}, errors.New("mailbox not found")

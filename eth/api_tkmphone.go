@@ -31,18 +31,19 @@ import (
 )
 
 var (
-	tkmPhoneMainKingNumberPrice           = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
-	tkmPhoneOperatorKeyPrice              = new(big.Int).Mul(big.NewInt(25000), big.NewInt(params.Ether))
-	tkmPhoneDefaultNumberSalePrice        = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
-	tkmPhoneBucketSize             uint64 = 5
-	tkmPhoneBucketBatchSize        uint64 = 5
-	tkmPhoneDefaultChainID                = big.NewInt(8979)
-	tkmPhoneStateKey                      = []byte("tkmphone-state-v1")
-	tkmPhoneMaxPayloadSize                = 64 * 1024
-	tkmPhoneBucketPaymentScanLimit uint64 = 20000
-	tkmPhoneMessageRateLimit              = 20
-	tkmPhoneCallRateLimit                 = 10
-	tkmPhoneCallCandidateRateLimit        = 120
+	tkmPhoneMainKingNumberPrice             = new(big.Int).Mul(big.NewInt(5000), big.NewInt(params.Ether))
+	tkmPhoneOperatorKeyPrice                = new(big.Int).Mul(big.NewInt(25000), big.NewInt(params.Ether))
+	tkmPhoneDefaultNumberSalePrice          = new(big.Int).Mul(big.NewInt(10000), big.NewInt(params.Ether))
+	tkmPhoneBucketSize               uint64 = 5
+	tkmPhoneBucketBatchSize          uint64 = 5
+	tkmPhoneDefaultChainID                  = big.NewInt(8979)
+	tkmPhoneStateKey                        = []byte("tkmphone-state-v1")
+	tkmPhoneMaxPayloadSize                  = 64 * 1024
+	tkmPhoneBucketPaymentScanLimit   uint64 = 20000
+	tkmPhoneMessageRateLimit                = 20
+	tkmPhoneCallRateLimit                   = 10
+	tkmPhoneCallCandidateRateLimit          = 120
+	tkmPhonePeerPropagationRateLimit        = 120
 )
 
 var tkmPhoneBucketPaymentDataPrefix = []byte("TKMPHONE_BUCKET_V1")
@@ -276,6 +277,8 @@ type PhoneContact struct {
 	PeerNumber  string         `json:"peerNumber"`
 	Ciphertext  hexutil.Bytes  `json:"ciphertext"`
 	Nonce       hexutil.Bytes  `json:"nonce"`
+	AuthHash    common.Hash    `json:"authHash"`
+	Signature   hexutil.Bytes  `json:"signature"`
 	CreatedAt   hexutil.Uint64 `json:"createdAt"`
 }
 
@@ -285,6 +288,8 @@ type PhoneFraudReport struct {
 	Reporter  string         `json:"reporter"`
 	Reason    string         `json:"reason"`
 	Evidence  common.Hash    `json:"evidence"`
+	AuthHash  common.Hash    `json:"authHash"`
+	Signature hexutil.Bytes  `json:"signature"`
 	CreatedAt hexutil.Uint64 `json:"createdAt"`
 }
 
@@ -300,6 +305,8 @@ type PhonePropagation struct {
 type phoneBlockRecord struct {
 	OwnerNumber   string         `json:"ownerNumber"`
 	BlockedNumber string         `json:"blockedNumber"`
+	AuthHash      common.Hash    `json:"authHash"`
+	Signature     hexutil.Bytes  `json:"signature"`
 	CreatedAt     hexutil.Uint64 `json:"createdAt"`
 }
 
@@ -307,6 +314,8 @@ type phoneRecoveryRecord struct {
 	Number    string         `json:"number"`
 	Recovery  common.Address `json:"recovery"`
 	NewOwner  common.Address `json:"newOwner"`
+	AuthHash  common.Hash    `json:"authHash"`
+	Signature hexutil.Bytes  `json:"signature"`
 	CreatedAt hexutil.Uint64 `json:"createdAt"`
 }
 
@@ -687,8 +696,12 @@ func (api *TkmPhoneAPI) RecoverNumber(number string, newOwner common.Address, si
 	return api.service.RecoverNumber(number, newOwner, []byte(signature))
 }
 func (api *TkmPhoneAPI) PropagationQueue() []PhonePropagation { return api.service.PropagationQueue() }
-func (api *TkmPhoneAPI) ImportPropagation(prop PhonePropagation) (bool, error) {
-	return true, api.service.ImportPropagation(prop)
+
+// ImportPropagation is intentionally unavailable over RPC. Propagation records
+// are accepted only from the authenticated p2p protocol path; exposing this
+// write operation over HTTP/WS would let any caller inject untrusted state.
+func (api *TkmPhoneAPI) ImportPropagation(_ PhonePropagation) (bool, error) {
+	return false, errors.New("phone propagation import is restricted to peer networking")
 }
 func (api *TkmPhoneAPI) NewMessages(ctx context.Context) (*rpc.Subscription, error) {
 	return api.service.subscribe(ctx, "message")
@@ -767,8 +780,39 @@ func (svc *TkmPhoneService) requirePhoneForkActive() error {
 	return fmt.Errorf("tkm phone hardfork is not active yet: current timestamp %d, activation timestamp %d", status.CurrentTimestamp, status.ActivationTimestamp)
 }
 
+func (s *Ethereum) allowTkmPhonePropagation(peerID string) bool {
+	if s == nil || peerID == "" {
+		return false
+	}
+	now := time.Now()
+	cutoff := now.Add(-time.Minute)
+	s.phonePropagationMu.Lock()
+	defer s.phonePropagationMu.Unlock()
+	if s.phonePropagationRate == nil {
+		s.phonePropagationRate = make(map[string][]time.Time)
+	}
+	events := s.phonePropagationRate[peerID]
+	keep := events[:0]
+	for _, event := range events {
+		if event.After(cutoff) {
+			keep = append(keep, event)
+		}
+	}
+	if len(keep) >= tkmPhonePeerPropagationRateLimit {
+		s.phonePropagationRate[peerID] = keep
+		return false
+	}
+	keep = append(keep, now)
+	s.phonePropagationRate[peerID] = keep
+	return true
+}
+
 func (s *Ethereum) noteTkmPhonePropagationFromPeer(packet ethproto.TkmPhonePropagationPacket, peerID string) {
 	if s == nil {
+		return
+	}
+	if !s.allowTkmPhonePropagation(peerID) {
+		log.Debug("Rate-limited TKM Phone propagation", "peer", peerID)
 		return
 	}
 	svc := s.tkmPhoneService()
@@ -1987,12 +2031,13 @@ func (svc *TkmPhoneService) ReportOperator(operator common.Address, reporter str
 	if err := svc.verifyNumberOwnerSignature(reporter, "report-operator", payload, signature); err != nil {
 		return PhoneFraudReport{}, err
 	}
+	authHash := svc.ownerActionHash(reporter, "report-operator", payload)
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.nextReport++
-	r := PhoneFraudReport{ID: hexutil.Uint64(svc.nextReport), Operator: operator, Reporter: reporter, Reason: reason, Evidence: evidence, CreatedAt: hexutil.Uint64(time.Now().Unix())}
+	r := PhoneFraudReport{ID: hexutil.Uint64(svc.nextReport), Operator: operator, Reporter: reporter, Reason: reason, Evidence: evidence, AuthHash: authHash, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(time.Now().Unix())}
 	svc.reports[svc.nextReport] = r
-	svc.addPropagationLocked("operator-report", svc.nextReport, svc.randomXServiceHash("operator-report", operator.Bytes(), []byte(reporter), []byte(reason), evidence.Bytes()), uint64(r.CreatedAt), r)
+	svc.addPropagationLocked("operator-report", svc.nextReport, svc.stablePhoneHash("operator-report", operator.Bytes(), []byte(reporter), []byte(reason), evidence.Bytes(), authHash.Bytes(), signature), uint64(r.CreatedAt), r)
 	return r, svc.saveLocked()
 }
 func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ciphertext []byte, nonce []byte, signature []byte) (PhoneContact, error) {
@@ -2003,11 +2048,12 @@ func (svc *TkmPhoneService) AddContact(ownerNumber string, peerNumber string, ci
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "add-contact", payload, signature); err != nil {
 		return PhoneContact{}, err
 	}
-	c := PhoneContact{OwnerNumber: ownerNumber, PeerNumber: peerNumber, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), CreatedAt: hexutil.Uint64(time.Now().Unix())}
+	authHash := svc.ownerActionHash(ownerNumber, "add-contact", payload)
+	c := PhoneContact{OwnerNumber: ownerNumber, PeerNumber: peerNumber, Ciphertext: append([]byte(nil), ciphertext...), Nonce: append([]byte(nil), nonce...), AuthHash: authHash, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(time.Now().Unix())}
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.contacts[ownerNumber] = append(svc.contacts[ownerNumber], c)
-	svc.addPropagationLocked("contact", uint64(len(svc.contacts[ownerNumber])), svc.randomXServiceHash("contact", []byte(ownerNumber), []byte(peerNumber), nonce, ciphertext), uint64(c.CreatedAt), c)
+	svc.addPropagationLocked("contact", uint64(len(svc.contacts[ownerNumber])), svc.stablePhoneHash("contact", []byte(ownerNumber), []byte(peerNumber), nonce, ciphertext, authHash.Bytes(), signature), uint64(c.CreatedAt), c)
 	return c, svc.saveLocked()
 }
 func (svc *TkmPhoneService) Contacts(number string) ([]PhoneContact, error) {
@@ -2026,6 +2072,7 @@ func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "block-number", payload, signature); err != nil {
 		return err
 	}
+	authHash := svc.ownerActionHash(ownerNumber, "block-number", payload)
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	if svc.blocked[ownerNumber] == nil {
@@ -2033,8 +2080,8 @@ func (svc *TkmPhoneService) BlockNumber(ownerNumber string, blockedNumber string
 	}
 	svc.blocked[ownerNumber][blockedNumber] = true
 	now := uint64(time.Now().Unix())
-	record := phoneBlockRecord{OwnerNumber: ownerNumber, BlockedNumber: blockedNumber, CreatedAt: hexutil.Uint64(now)}
-	svc.addPropagationLocked("blocked", 0, svc.randomXServiceHash("blocked", []byte(ownerNumber), []byte(blockedNumber)), now, record)
+	record := phoneBlockRecord{OwnerNumber: ownerNumber, BlockedNumber: blockedNumber, AuthHash: authHash, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("blocked", 0, svc.stablePhoneHash("blocked", []byte(ownerNumber), []byte(blockedNumber), authHash.Bytes(), signature), now, record)
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber string, signature []byte) error {
@@ -2045,11 +2092,15 @@ func (svc *TkmPhoneService) UnblockNumber(ownerNumber string, blockedNumber stri
 	if err := svc.verifyNumberOwnerSignature(ownerNumber, "unblock-number", payload, signature); err != nil {
 		return err
 	}
+	authHash := svc.ownerActionHash(ownerNumber, "unblock-number", payload)
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	if svc.blocked[ownerNumber] != nil {
 		delete(svc.blocked[ownerNumber], blockedNumber)
 	}
+	now := uint64(time.Now().Unix())
+	record := phoneBlockRecord{OwnerNumber: ownerNumber, BlockedNumber: blockedNumber, AuthHash: authHash, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("unblocked", 0, svc.stablePhoneHash("unblocked", []byte(ownerNumber), []byte(blockedNumber), authHash.Bytes(), signature), now, record)
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Address, signature []byte) error {
@@ -2060,12 +2111,13 @@ func (svc *TkmPhoneService) RegisterRecovery(number string, recovery common.Addr
 	if err := svc.verifyNumberOwnerSignature(number, "register-recovery", payload, signature); err != nil {
 		return err
 	}
+	authHash := svc.ownerActionHash(number, "register-recovery", payload)
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
 	svc.recovery[number] = recovery
 	now := uint64(time.Now().Unix())
-	record := phoneRecoveryRecord{Number: number, Recovery: recovery, CreatedAt: hexutil.Uint64(now)}
-	svc.addPropagationLocked("recovery", 0, svc.randomXServiceHash("recovery", []byte(number), recovery.Bytes()), now, record)
+	record := phoneRecoveryRecord{Number: number, Recovery: recovery, AuthHash: authHash, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("recovery", 0, svc.stablePhoneHash("recovery", []byte(number), recovery.Bytes(), authHash.Bytes(), signature), now, record)
 	return svc.saveLocked()
 }
 func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address, signature []byte) (PhoneNumber, error) {
@@ -2090,8 +2142,8 @@ func (svc *TkmPhoneService) RecoverNumber(number string, newOwner common.Address
 	svc.refreshNumberOwnershipHashesLocked(&rec)
 	svc.numbers[number] = rec
 	now := uint64(time.Now().Unix())
-	record := phoneRecoveryRecord{Number: number, Recovery: recovery, NewOwner: newOwner, CreatedAt: hexutil.Uint64(now)}
-	svc.addPropagationLocked("number-recovered", 0, svc.randomXServiceHash("number-recovered", []byte(number), newOwner.Bytes()), now, record)
+	record := phoneRecoveryRecord{Number: number, Recovery: recovery, NewOwner: newOwner, AuthHash: payload, Signature: append([]byte(nil), signature...), CreatedAt: hexutil.Uint64(now)}
+	svc.addPropagationLocked("number-recovered", 0, svc.stablePhoneHash("number-recovered", []byte(number), recovery.Bytes(), newOwner.Bytes(), payload.Bytes(), signature), now, record)
 	return rec, svc.saveLocked()
 }
 func (svc *TkmPhoneService) PropagationQueue() []PhonePropagation {
@@ -2840,6 +2892,24 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		if err := json.Unmarshal(prop.Payload, &contact); err != nil {
 			return err
 		}
+		owner, ok := svc.numbers[contact.OwnerNumber]
+		if !ok || !owner.Active {
+			return errors.New("contact owner number is not active")
+		}
+		peer, ok := svc.numbers[contact.PeerNumber]
+		if !ok || !peer.Active {
+			return errors.New("contact peer number is not active")
+		}
+		if contact.AuthHash == (common.Hash{}) || len(contact.Signature) == 0 {
+			return errors.New("propagated contact is missing owner authorization")
+		}
+		if err := verifyPhoneAddressSignature(owner.Owner, contact.AuthHash, contact.Signature); err != nil {
+			return fmt.Errorf("invalid propagated contact authorization: %w", err)
+		}
+		wantHash := svc.stablePhoneHash("contact", []byte(contact.OwnerNumber), []byte(contact.PeerNumber), contact.Nonce, contact.Ciphertext, contact.AuthHash.Bytes(), contact.Signature)
+		if prop.Hash != wantHash || contact.AuthHash != svc.ownerActionHash(contact.OwnerNumber, "add-contact", svc.randomXServiceHash("add-contact-payload", []byte(contact.OwnerNumber), []byte(contact.PeerNumber), contact.Nonce, contact.Ciphertext)) {
+			return errors.New("invalid propagated contact hash")
+		}
 		contacts := svc.contacts[contact.OwnerNumber]
 		for _, existing := range contacts {
 			if existing.PeerNumber == contact.PeerNumber && bytes.Equal(existing.Ciphertext, contact.Ciphertext) {
@@ -2851,6 +2921,34 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		var record phoneBlockRecord
 		if err := json.Unmarshal(prop.Payload, &record); err != nil {
 			return err
+		}
+		owner, ok := svc.numbers[record.OwnerNumber]
+		if !ok || !owner.Active {
+			return errors.New("block owner number is not active")
+		}
+		blocked, ok := svc.numbers[record.BlockedNumber]
+		if !ok || !blocked.Active {
+			return errors.New("blocked number is not active")
+		}
+		if record.AuthHash == (common.Hash{}) || len(record.Signature) == 0 {
+			return errors.New("propagated block is missing owner authorization")
+		}
+		action := "block-number"
+		label := "blocked"
+		if prop.Kind == "unblocked" {
+			action = "unblock-number"
+			label = "unblocked"
+		}
+		wantAuth := svc.ownerActionHash(record.OwnerNumber, action, svc.randomXServiceHash(action+"-payload", []byte(record.OwnerNumber), []byte(record.BlockedNumber)))
+		if record.AuthHash != wantAuth {
+			return errors.New("invalid propagated block authorization hash")
+		}
+		if err := verifyPhoneAddressSignature(owner.Owner, record.AuthHash, record.Signature); err != nil {
+			return fmt.Errorf("invalid propagated block authorization: %w", err)
+		}
+		wantHash := svc.stablePhoneHash(label, []byte(record.OwnerNumber), []byte(record.BlockedNumber), record.AuthHash.Bytes(), record.Signature)
+		if prop.Hash != wantHash {
+			return errors.New("invalid propagated block hash")
 		}
 		if svc.blocked[record.OwnerNumber] == nil {
 			svc.blocked[record.OwnerNumber] = make(map[string]bool)
@@ -2865,14 +2963,48 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		if err := json.Unmarshal(prop.Payload, &record); err != nil {
 			return err
 		}
-		if record.Recovery != (common.Address{}) {
-			svc.recovery[record.Number] = record.Recovery
+		current, ok := svc.numbers[record.Number]
+		if !ok || !current.Active {
+			return errors.New("recovery number is not active")
 		}
-		if record.NewOwner != (common.Address{}) {
-			number := svc.numbers[record.Number]
-			number.Owner = record.NewOwner
-			number.Active = true
-			svc.numbers[record.Number] = number
+		if record.AuthHash == (common.Hash{}) || len(record.Signature) == 0 || record.Recovery == (common.Address{}) {
+			return errors.New("propagated recovery is missing authorization")
+		}
+		if prop.Kind == "recovery" {
+			wantAuth := svc.ownerActionHash(record.Number, "register-recovery", svc.randomXServiceHash("register-recovery-payload", []byte(record.Number), record.Recovery.Bytes()))
+			if record.AuthHash != wantAuth {
+				return errors.New("invalid propagated recovery authorization hash")
+			}
+			if err := verifyPhoneAddressSignature(current.Owner, record.AuthHash, record.Signature); err != nil {
+				return fmt.Errorf("invalid propagated recovery authorization: %w", err)
+			}
+			wantHash := svc.stablePhoneHash("recovery", []byte(record.Number), record.Recovery.Bytes(), record.AuthHash.Bytes(), record.Signature)
+			if prop.Hash != wantHash {
+				return errors.New("invalid propagated recovery hash")
+			}
+			svc.recovery[record.Number] = record.Recovery
+		} else {
+			recovery, ok := svc.recovery[record.Number]
+			if !ok || recovery != record.Recovery || record.NewOwner == (common.Address{}) {
+				return errors.New("propagated recovery owner does not match local recovery")
+			}
+			wantAuth := svc.randomXServiceHash("recover-number-payload", []byte(record.Number), record.NewOwner.Bytes())
+			if record.AuthHash != wantAuth {
+				return errors.New("invalid propagated number recovery authorization hash")
+			}
+			if err := verifyPhoneAddressSignature(record.Recovery, record.AuthHash, record.Signature); err != nil {
+				return fmt.Errorf("invalid propagated number recovery authorization: %w", err)
+			}
+			wantHash := svc.stablePhoneHash("number-recovered", []byte(record.Number), record.Recovery.Bytes(), record.NewOwner.Bytes(), record.AuthHash.Bytes(), record.Signature)
+			if prop.Hash != wantHash {
+				return errors.New("invalid propagated number recovery hash")
+			}
+			current.Owner = record.NewOwner
+			current.Active = true
+			svc.refreshNumberOwnershipHashesLocked(&current)
+			svc.numbers[record.Number] = current
+			delete(svc.devices, record.Number)
+			delete(svc.recovery, record.Number)
 		}
 	case "operator-report":
 		var report PhoneFraudReport
@@ -2880,8 +3012,23 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 			return err
 		}
 		id := uint64(report.ID)
-		if id == 0 {
+		if id == 0 || report.AuthHash == (common.Hash{}) || len(report.Signature) == 0 {
 			return errors.New("invalid propagated report")
+		}
+		reporter, ok := svc.numbers[report.Reporter]
+		if !ok || !reporter.Active {
+			return errors.New("reporter number is not active")
+		}
+		wantAuth := svc.ownerActionHash(report.Reporter, "report-operator", svc.randomXServiceHash("report-operator-payload", report.Operator.Bytes(), []byte(report.Reporter), []byte(report.Reason), report.Evidence.Bytes()))
+		if report.AuthHash != wantAuth {
+			return errors.New("invalid propagated report authorization hash")
+		}
+		if err := verifyPhoneAddressSignature(reporter.Owner, report.AuthHash, report.Signature); err != nil {
+			return fmt.Errorf("invalid propagated report authorization: %w", err)
+		}
+		wantHash := svc.stablePhoneHash("operator-report", report.Operator.Bytes(), []byte(report.Reporter), []byte(report.Reason), report.Evidence.Bytes(), report.AuthHash.Bytes(), report.Signature)
+		if prop.Hash != wantHash {
+			return errors.New("invalid propagated report hash")
 		}
 		svc.reports[id] = report
 		if id > svc.nextReport {

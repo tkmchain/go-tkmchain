@@ -130,22 +130,24 @@ type Ethereum struct {
 	shutdownTracker *shutdowncheck.ShutdownTracker // Tracks if and when the node has shutdown ungracefully
 
 	// Rotating King configuration
-	mainKingAddress    common.Address
-	kingAddresses      []common.Address
-	rkLocks            map[common.Address]rkLockInfo
-	privacyActivations map[common.Address]privacyActivationInfo
-	privacyCommitments map[common.Hash]privacyCommitmentInfo
-	privacyNullifiers  map[common.Hash]privacyNullifierInfo
-	transactionBucket  *transactionBucket
-	miningStartPending bool
-	miningStartPool    bool
-	phoneService       *TkmPhoneService
-	downloaderAPI      *downloader.DownloaderAPI
-	phoneDir           string
-	emailService       *EmailVMService
-	emailDir           string
-	governanceSvc      *GovernanceService
-	governanceDir      string
+	mainKingAddress      common.Address
+	kingAddresses        []common.Address
+	rkLocks              map[common.Address]rkLockInfo
+	privacyActivations   map[common.Address]privacyActivationInfo
+	privacyCommitments   map[common.Hash]privacyCommitmentInfo
+	privacyNullifiers    map[common.Hash]privacyNullifierInfo
+	transactionBucket    *transactionBucket
+	miningStartPending   bool
+	miningStartPool      bool
+	phoneService         *TkmPhoneService
+	phonePropagationMu   sync.Mutex
+	phonePropagationRate map[string][]time.Time
+	downloaderAPI        *downloader.DownloaderAPI
+	phoneDir             string
+	emailService         *EmailVMService
+	emailDir             string
+	governanceSvc        *GovernanceService
+	governanceDir        string
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -311,27 +313,28 @@ func newEthereum(stack *node.Node, config *ethconfig.Config, engine consensus.En
 
 	// Assemble the Ethereum object
 	eth := &Ethereum{
-		config:             config,
-		chainDb:            chainDb,
-		checkpointDb:       checkpointDb,
-		rotatingKingDb:     rotatingKingDb,
-		privacyDb:          privacyDb,
-		accountManager:     stack.AccountManager(),
-		engine:             engine,
-		networkID:          networkID,
-		gasPrice:           config.Miner.GasPrice,
-		p2pServer:          stack.Server(),
-		discmix:            enode.NewFairMix(discmixTimeout),
-		shutdownTracker:    shutdowncheck.NewShutdownTracker(chainDb),
-		mainKingAddress:    mainKingAddress,
-		kingAddresses:      kingAddresses,
-		rkLocks:            make(map[common.Address]rkLockInfo),
-		privacyActivations: make(map[common.Address]privacyActivationInfo),
-		privacyCommitments: make(map[common.Hash]privacyCommitmentInfo),
-		privacyNullifiers:  make(map[common.Hash]privacyNullifierInfo),
-		phoneDir:           stack.ResolvePath("phone"),
-		emailDir:           stack.ResolvePath("emailvm"),
-		governanceDir:      stack.ResolvePath("governance"),
+		config:               config,
+		chainDb:              chainDb,
+		checkpointDb:         checkpointDb,
+		rotatingKingDb:       rotatingKingDb,
+		privacyDb:            privacyDb,
+		accountManager:       stack.AccountManager(),
+		engine:               engine,
+		networkID:            networkID,
+		gasPrice:             config.Miner.GasPrice,
+		p2pServer:            stack.Server(),
+		discmix:              enode.NewFairMix(discmixTimeout),
+		shutdownTracker:      shutdowncheck.NewShutdownTracker(chainDb),
+		mainKingAddress:      mainKingAddress,
+		kingAddresses:        kingAddresses,
+		rkLocks:              make(map[common.Address]rkLockInfo),
+		privacyActivations:   make(map[common.Address]privacyActivationInfo),
+		privacyCommitments:   make(map[common.Hash]privacyCommitmentInfo),
+		privacyNullifiers:    make(map[common.Hash]privacyNullifierInfo),
+		phonePropagationRate: make(map[string][]time.Time),
+		phoneDir:             stack.ResolvePath("phone"),
+		emailDir:             stack.ResolvePath("emailvm"),
+		governanceDir:        stack.ResolvePath("governance"),
 	}
 	if err := eth.loadCheckpoints(); err != nil {
 		privacyDb.Close()

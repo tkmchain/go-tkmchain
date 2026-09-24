@@ -180,3 +180,52 @@ func TestPhonePQDeviceSignature(t *testing.T) {
 		t.Fatal("inactive device retained signing authority")
 	}
 }
+
+func TestPhonePropagationRejectsForgedRecoveryAndPublicImport(t *testing.T) {
+	svc := NewTkmPhoneService(nil, common.Address{1}, big.NewInt(8979))
+	ownerKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attackerKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := crypto.PubkeyToAddress(ownerKey.PublicKey)
+	recovery := crypto.PubkeyToAddress(attackerKey.PublicKey)
+	const number = "123456"
+	svc.numbers[number] = PhoneNumber{Number: number, Owner: owner, Active: true}
+	peer := NewTkmPhoneService(nil, common.Address{1}, big.NewInt(8979))
+	peer.numbers[number] = svc.numbers[number]
+	peer.recovery[number] = recovery
+
+	newOwnerKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOwner := crypto.PubkeyToAddress(newOwnerKey.PublicKey)
+	payload := peer.randomXServiceHash("recover-number-payload", []byte(number), newOwner.Bytes())
+	forgedSignature := signTkmPhoneDigest(t, ownerKey, payload)
+	record := phoneRecoveryRecord{Number: number, Recovery: recovery, NewOwner: newOwner, AuthHash: payload, Signature: forgedSignature}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prop := PhonePropagation{
+		ID:      1,
+		Kind:    "number-recovered",
+		Hash:    peer.stablePhoneHash("number-recovered", []byte(number), recovery.Bytes(), newOwner.Bytes(), payload.Bytes(), forgedSignature),
+		Payload: data,
+	}
+	if err := peer.ImportPropagation(prop); err == nil {
+		t.Fatal("accepted number-recovered propagation signed by the wrong key")
+	}
+	if peer.numbers[number].Owner != owner {
+		t.Fatal("forged propagation changed the local phone owner")
+	}
+
+	api := &TkmPhoneAPI{service: peer}
+	if ok, err := api.ImportPropagation(prop); err == nil || ok {
+		t.Fatalf("public propagation import = (%v, %v), want a hard failure", ok, err)
+	}
+}

@@ -160,9 +160,17 @@ func TestPrivacyStrictConfiguration(t *testing.T) {
 	if _, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "0.0.0.0", DataDir: t.TempDir()}); err == nil {
 		t.Fatal("strict privacy accepted a public HTTP listener")
 	}
-	node, err := New(&Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "127.0.0.1", DataDir: t.TempDir()})
+	config := &Config{PrivacyStrict: true, P2PSOCKS5Proxy: "socks5://127.0.0.1:9050", HTTPHost: "127.0.0.1", DataDir: t.TempDir()}
+	node, err := New(config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"miner", "rk", "rotatingking", "admin", "debug"} {
+		for _, module := range config.HTTPModules {
+			if module == forbidden {
+				t.Fatalf("strict privacy exposed mutating namespace %q", forbidden)
+			}
+		}
 	}
 	if err := node.Close(); err != nil {
 		t.Fatal(err)
