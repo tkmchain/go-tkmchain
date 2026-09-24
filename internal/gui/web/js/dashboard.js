@@ -1,7 +1,7 @@
 /* Dashboard — node + chain overview. */
 (function () {
   'use strict';
-  const { rpc, rpcBatch, register, el, card, stat, table, fmtTKM, fmtHash, fmtHexNum, fmtTS, live, startTicker, empty } = window.GUI;
+  const { rpc, rpcBatch, bootstrap, register, el, card, stat, table, fmtTKM, fmtHash, fmtHexNum, fmtTS, live, startTicker, runAction, empty } = window.GUI;
 
   const section = {
     id: 'dashboard',
@@ -83,8 +83,25 @@
       }
     } catch (e) { chainEl.body.innerHTML = ''; chainEl.body.appendChild(empty(e.message)); }
 
-    // sync progress
+    // sync progress and verified bootstrap download
     syncEl.body.innerHTML = '';
+    const bootstrapStatus = el('div', { class: 'dim', text: 'The archive is saved to the node data directory. Stop the node before importing it.' });
+    const bootstrapButton = el('button', {
+      class: 'btn secondary',
+      type: 'button',
+      text: 'Download verified bootstrap',
+      onclick: () => {
+        runAction(bootstrapButton, async () => {
+          const result = await bootstrap();
+          const size = result.bytes ? ' (' + Math.round(Number(result.bytes) / 1048576) + ' MiB)' : '';
+          bootstrapStatus.textContent = 'Saved ' + (result.filename || 'bootstrap archive') + size + '. Stop the node, then import it with gtkm.';
+          bootstrapStatus.className = 'green';
+          return result;
+        }, 'Bootstrap archive downloaded.').catch(() => {});
+      },
+    });
+    syncEl.body.appendChild(el('div', { class: 'btn-row' }, [bootstrapButton]));
+    syncEl.body.appendChild(bootstrapStatus);
     if (syncing && typeof syncing === 'object') {
       const cur = fmtHexNum(syncing.currentBlock) || 0;
       const high = fmtHexNum(syncing.highestBlock) || 0;

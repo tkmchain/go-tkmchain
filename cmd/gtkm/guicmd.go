@@ -28,6 +28,11 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+const (
+	officialBootstrapURL    = "https://tkmchain.site/tkm-mainnet.rlp.gz"
+	officialBootstrapSHA256 = "1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779"
+)
+
 var (
 	guiBrowserFlag = &cli.BoolFlag{
 		Name:  "gui.browser",
@@ -108,17 +113,25 @@ func localGUI(ctx *cli.Context) error {
 		proverConfig = filepath.Join(home, ".tkmchain", "tkmprover", "config.json")
 	}
 	client := stack.Attach()
+	socks5 := ctx.String("p2p.tor-socks5")
+	if socks5 == "" {
+		socks5 = "socks5://127.0.0.1:9050"
+	}
 
 	g, err := gui.New(client, gui.Options{
-		Title:          "TKM Wallet",
-		ProverConfig:   proverConfig,
-		WalletStateDir: stack.ResolvePath("shield3-submissions"),
-		Width:          1280,
-		Height:         800,
-		Port:           ctx.Int(guiPortFlag.Name),
-		Host:           ctx.String(guiHostFlag.Name),
-		RelayTransport: shield3wallet.RelayTransportConfig{SOCKS5Proxy: ctx.String("p2p.tor-socks5"), OnionOnly: ctx.Bool("privacy.onion-only")},
-		ForceBrowser:   ctx.Bool(guiBrowserFlag.Name),
+		Title:           "TKM Wallet",
+		ProverConfig:    proverConfig,
+		WalletStateDir:  stack.ResolvePath("shield3-submissions"),
+		BootstrapDir:    filepath.Join(stack.ResolvePath(""), "bootstrap"),
+		BootstrapURL:    officialBootstrapURL,
+		BootstrapSHA256: officialBootstrapSHA256,
+		BootstrapSOCKS5: socks5,
+		Width:           1280,
+		Height:          800,
+		Port:            ctx.Int(guiPortFlag.Name),
+		Host:            ctx.String(guiHostFlag.Name),
+		RelayTransport:  shield3wallet.RelayTransportConfig{SOCKS5Proxy: socks5, OnionOnly: ctx.Bool("privacy.onion-only")},
+		ForceBrowser:    ctx.Bool(guiBrowserFlag.Name),
 	})
 	if err != nil {
 		return err

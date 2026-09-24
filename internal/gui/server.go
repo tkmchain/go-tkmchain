@@ -47,9 +47,13 @@ var webAssets embed.FS
 
 // Options controls how the GUI is launched.
 type Options struct {
-	WalletStateDir string                             // local durable Shield3 submission records
-	ProverConfig   string                             // private local proof-only prover configuration
-	RelayTransport shield3wallet.RelayTransportConfig // explicit Tor/relay transport
+	WalletStateDir  string                             // local durable Shield3 submission records
+	ProverConfig    string                             // private local proof-only prover configuration
+	RelayTransport  shield3wallet.RelayTransportConfig // explicit Tor/relay transport
+	BootstrapDir    string                             // verified chain archives are stored here
+	BootstrapURL    string                             // official chain archive URL
+	BootstrapSHA256 string                             // expected archive digest
+	BootstrapSOCKS5 string                             // Tor SOCKS5 proxy for the archive download
 
 	Title         string // window title
 	Width, Height int    // initial desktop window size
@@ -187,6 +191,7 @@ func (g *GUI) listen() error {
 	mux.HandleFunc("/rpc", g.handleRPC)
 	mux.HandleFunc("/prover/", g.handleProver)
 	mux.HandleFunc("/shield3/", g.handleShield3)
+	mux.HandleFunc("/bootstrap", g.handleBootstrap)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})

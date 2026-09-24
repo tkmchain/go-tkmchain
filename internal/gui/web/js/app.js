@@ -55,6 +55,18 @@
     });
   }
 
+  async function bootstrapDownload() {
+    const res = await fetch('/bootstrap', {
+      method: 'POST',
+      headers: { 'X-GUI-Token': TOKEN },
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (_) {}
+    if (!res.ok) throw new Error(data.error || ('bootstrap download failed (' + res.status + ')'));
+    return data;
+  }
+
   /* ---------- helpers ---------- */
 
   function el(tag, attrs, children) {
@@ -292,6 +304,7 @@
   GUI.engine = () => import("/engine/wallet.js");
   GUI.rpc = rpc;
   GUI.rpcBatch = rpcBatch;
+  GUI.bootstrap = bootstrapDownload;
   GUI.register = register;
   GUI.activate = activate;
   GUI.startTicker = startTicker;
