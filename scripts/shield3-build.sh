@@ -5,7 +5,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 target="${SHIELD3_RUST_TARGET:-}"
 if [[ -z "$target" && "${GOOS:-}" == windows ]]; then target=x86_64-pc-windows-gnu; fi
 case "${OSTYPE:-}" in msys*|cygwin*) target="${target:-x86_64-pc-windows-gnu}";; esac
-args=(build --release --locked --manifest-path "$root/zk/shielded3/stark/Cargo.toml" -j "${CARGO_BUILD_JOBS:-2}")
+# Keep the artifact beside the Go package even when the runner exports a global
+# CARGO_TARGET_DIR. The cgo directives use this deterministic path.
+target_dir="${SHIELD3_CARGO_TARGET_DIR:-$root/zk/shielded3/stark/target}"
+args=(build --release --locked --manifest-path "$root/zk/shielded3/stark/Cargo.toml" --target-dir "$target_dir" -j "${CARGO_BUILD_JOBS:-2}")
 if [[ -n "$target" ]]; then
   args+=(--target "$target" --lib)
   case "$target" in
@@ -16,3 +19,14 @@ if [[ -n "$target" ]]; then
   esac
 fi
 "${CARGO:-cargo}" "${args[@]}"
+
+if [[ -n "$target" ]]; then
+  library="$target_dir/$target/release/libtkm_shield3_stark.a"
+else
+  library="$target_dir/release/libtkm_shield3_stark.a"
+fi
+if [[ ! -s "$library" ]]; then
+  echo "Shield3 native library was not produced: $library" >&2
+  exit 1
+fi
+printf 'Shield3 native library: %s (%s bytes)\n' "$library" "$(stat -c '%s' "$library" 2>/dev/null || wc -c < "$library")"

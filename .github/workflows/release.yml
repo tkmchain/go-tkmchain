@@ -295,11 +295,19 @@ jobs:
           ARM_CROSS_TARGET: ${{ matrix.cross_target }}
           ARM_MAKE_CC: ${{ matrix.make_cc }}
           ARM_MAKE_CXX: ${{ matrix.make_cxx }}
+          ARM_RUST_TARGET: ${{ matrix.rust_target }}
           ARM_DEB_ARCH: ${{ matrix.deb_arch }}
         run: |
           set -euo pipefail
+          # Build the architecture-specific Rust static library explicitly. The
+          # Go cgo package links this exact path, so fail here with a useful
+          # diagnostic instead of waiting for clang to report a missing file.
+          CC="$ARM_CC" SHIELD3_RUST_TARGET="$ARM_RUST_TARGET" ./scripts/shield3-build.sh
+          native_lib="zk/shielded3/stark/target/$ARM_RUST_TARGET/release/libtkm_shield3_stark.a"
+          test -s "$native_lib"
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default \
             make "$ARM_MAKE_CC=$ARM_CC" "$ARM_MAKE_CXX=$ARM_CXX" "$ARM_CROSS_TARGET"
+          test -s "$native_lib"
 
           # The pool prover is a separate binary and must carry the same
           # architecture-specific Shield3 verifier as gtkm.
