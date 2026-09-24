@@ -34,6 +34,14 @@ sha256sum /srv/bootstrap/tkm-mainnet.rlp.gz
 Publish the archive and its digest over an HTTPS or Tor onion URL. The digest
 must be communicated separately from the download URL.
 
+## Official archive
+
+The official current-chain archive is published at:
+
+`https://tkmchain.site/tkm-mainnet.rlp.gz`
+
+Published SHA-256: `1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779`
+
 ## Bootstrap a new or partially synced node
 
 Stop any running `gtkm` process first. Tor must be listening on
@@ -41,8 +49,8 @@ Stop any running `gtkm` process first. Tor must be listening on
 
 ```bash
 ./build/bin/gtkm bootstrap \
-  --url 'https://bootstrap.example/onion/tkm-mainnet.rlp.gz' \
-  --sha256 '<64-hex-character-sha256>' \
+  --url 'https://tkmchain.site/tkm-mainnet.rlp.gz' \
+  --sha256 '1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779' \
   --datadir "$HOME/.tkmchain"
 ```
 

@@ -86,8 +86,8 @@ archive over Tor and import it in batches with consensus validation:
 
 ```bash
 ./build/bin/gtkm bootstrap \
-  --url 'https://bootstrap.example/tkm-mainnet.rlp.gz' \
-  --sha256 '<64-hex-character-sha256>' \
+  --url 'https://tkmchain.site/tkm-mainnet.rlp.gz' \
+  --sha256 '1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779' \
   --datadir "$HOME/.tkmchain"
 ```
 
