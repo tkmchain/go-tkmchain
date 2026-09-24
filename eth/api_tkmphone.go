@@ -2922,6 +2922,9 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		if err := json.Unmarshal(prop.Payload, &record); err != nil {
 			return err
 		}
+		if svc.hasNewerPhoneActionLocked(prop.ID, prop.CreatedAt, record.OwnerNumber, record.BlockedNumber, false) {
+			return errors.New("stale phone block propagation")
+		}
 		owner, ok := svc.numbers[record.OwnerNumber]
 		if !ok || !owner.Active {
 			return errors.New("block owner number is not active")
@@ -2962,6 +2965,9 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		var record phoneRecoveryRecord
 		if err := json.Unmarshal(prop.Payload, &record); err != nil {
 			return err
+		}
+		if svc.hasNewerPhoneActionLocked(prop.ID, prop.CreatedAt, record.Number, "", true) {
+			return errors.New("stale phone recovery propagation")
 		}
 		current, ok := svc.numbers[record.Number]
 		if !ok || !current.Active {
@@ -3036,6 +3042,40 @@ func (svc *TkmPhoneService) importPropagationLocked(prop PhonePropagation) error
 		}
 	}
 	return nil
+}
+
+// hasNewerPhoneActionLocked prevents an authenticated but obsolete phone
+// action from being replayed after a newer action has already been accepted.
+// Peer propagation is asynchronous, so a globally increasing propagation ID
+// alone is insufficient: records can arrive out of order. CreatedAt is the
+// primary ordering key and the propagation ID breaks ties (and supports
+// legacy records that did not persist a timestamp).
+func (svc *TkmPhoneService) hasNewerPhoneActionLocked(id hexutil.Uint64, createdAt hexutil.Uint64, ownerNumber, blockedNumber string, recovery bool) bool {
+	currentID := uint64(id)
+	for existingID, existing := range svc.prop {
+		if existingID == currentID || existing.CreatedAt < createdAt || (existing.CreatedAt == createdAt && existingID <= currentID) {
+			continue
+		}
+		switch existing.Kind {
+		case "blocked", "unblocked":
+			if recovery {
+				continue
+			}
+			var record phoneBlockRecord
+			if json.Unmarshal(existing.Payload, &record) == nil && record.OwnerNumber == ownerNumber && record.BlockedNumber == blockedNumber {
+				return true
+			}
+		case "recovery", "number-recovered":
+			if !recovery {
+				continue
+			}
+			var record phoneRecoveryRecord
+			if json.Unmarshal(existing.Payload, &record) == nil && record.Number == ownerNumber {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func phonePropagationPacket(prop PhonePropagation) ethproto.TkmPhonePropagationPacket {

@@ -229,3 +229,46 @@ func TestPhonePropagationRejectsForgedRecoveryAndPublicImport(t *testing.T) {
 		t.Fatalf("public propagation import = (%v, %v), want a hard failure", ok, err)
 	}
 }
+
+func TestPhonePropagationRejectsReplayedBlockAction(t *testing.T) {
+	ownerKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := crypto.PubkeyToAddress(ownerKey.PublicKey)
+	const ownerNumber = "123456"
+	const blockedNumber = "789012"
+	peer := NewTkmPhoneService(nil, common.Address{1}, big.NewInt(8979))
+	peer.numbers[ownerNumber] = PhoneNumber{Number: ownerNumber, Owner: owner, Active: true}
+	peer.numbers[blockedNumber] = PhoneNumber{Number: blockedNumber, Owner: common.Address{8}, Active: true}
+
+	payload := peer.randomXServiceHash("block-number-payload", []byte(ownerNumber), []byte(blockedNumber))
+	authHash := peer.ownerActionHash(ownerNumber, "block-number", payload)
+	signature := signTkmPhoneDigest(t, ownerKey, authHash)
+	record := phoneBlockRecord{
+		OwnerNumber:   ownerNumber,
+		BlockedNumber: blockedNumber,
+		AuthHash:      authHash,
+		Signature:     signature,
+		CreatedAt:     20,
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := peer.stablePhoneHash("blocked", []byte(ownerNumber), []byte(blockedNumber), authHash.Bytes(), signature)
+	newer := PhonePropagation{ID: 2, Kind: "blocked", Hash: hash, CreatedAt: 20, Payload: data}
+	if err := peer.ImportPropagation(newer); err != nil {
+		t.Fatal(err)
+	}
+
+	record.CreatedAt = 19
+	data, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := PhonePropagation{ID: 1, Kind: "blocked", Hash: hash, CreatedAt: 19, Payload: data}
+	if err := peer.ImportPropagation(older); err == nil {
+		t.Fatal("accepted an older authenticated block action after a newer action")
+	}
+}
