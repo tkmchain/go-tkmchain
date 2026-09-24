@@ -129,7 +129,7 @@ func TestShieldedV3SeparationAndBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clear(seed)
-	for _, ctx := range []ShieldedV3Context{{}, {ChainID: 8979, Purpose: 0, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: 5, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: ShieldedV3Incoming}} {
+	for _, ctx := range []ShieldedV3Context{{}, {ChainID: 8979, Purpose: 0, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: 6, Commitment: valid.Commitment}, {ChainID: 8979, Purpose: ShieldedV3Incoming}} {
 		if _, err := SealShieldedV3(pub, nil, ctx); err != ErrInvalidShieldedV3Context {
 			t.Fatalf("invalid context: %v", err)
 		}

@@ -36,6 +36,9 @@ const (
 	ShieldedV3Outgoing   ShieldedV3Purpose = 2
 	ShieldedV3Stamp      ShieldedV3Purpose = 3
 	ShieldedV3Disclosure ShieldedV3Purpose = 4
+	// ShieldedV3Phone is reserved for the Antartical phone envelope. It is
+	// intentionally separate from wallet viewing and disclosure purposes.
+	ShieldedV3Phone ShieldedV3Purpose = 5
 )
 
 var (
@@ -180,7 +183,7 @@ func openShieldedV3Payload(aead cipher.AEAD, envelope []byte) ([]byte, error) {
 }
 
 func validShieldedV3Purpose(purpose ShieldedV3Purpose) bool {
-	return purpose >= ShieldedV3Incoming && purpose <= ShieldedV3Disclosure
+	return purpose >= ShieldedV3Incoming && purpose <= ShieldedV3Phone
 }
 
 func shieldedV3Header(context ShieldedV3Context) ([]byte, error) {
