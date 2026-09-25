@@ -630,6 +630,14 @@ func (c *ChainConfig) IsAntartical(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.AntarticalTime, time)
 }
 
+// IsTkmnetRequired reports whether the TKMNet relay is a mandatory node
+// service for the active chain rules. TKMNet becomes mandatory with the
+// Antartical consensus rules, so existing chain configurations do not need a
+// second timestamp that could drift from the hardfork schedule.
+func (c *ChainConfig) IsTkmnetRequired(num *big.Int, time uint64) bool {
+	return c.IsAntartical(num, time)
+}
+
 func (c *ChainConfig) IsPQMigrationAllowed(num *big.Int, time uint64) bool {
 	if !c.IsQuantumResistant(num, time) {
 		return true
@@ -671,7 +679,7 @@ type Rules struct {
 	IsBPO1, IsBPO2, IsBPO3, IsBPO4, IsBPO5                  bool
 	IsAmsterdam, IsUBT                                      bool
 	IsKyoto, IsPhone                                        bool
-	IsQuantumResistant, IsAntartical                        bool
+	IsQuantumResistant, IsAntartical, IsTkmnetRequired      bool
 	IsPQMigrationAllowed                                    bool
 	IsEIP2929, IsEIP4762                                    bool
 	IsMerge                                                 bool // Always false for RandomX
@@ -713,6 +721,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsPhone:              c.IsPhone(num, timestamp),
 		IsQuantumResistant:   c.IsQuantumResistant(num, timestamp),
 		IsAntartical:         c.IsAntartical(num, timestamp),
+		IsTkmnetRequired:     c.IsTkmnetRequired(num, timestamp),
 		IsPQMigrationAllowed: c.IsPQMigrationAllowed(num, timestamp),
 		IsEIP2929:            isEIP2929,
 		IsEIP4762:            isEIP4762,

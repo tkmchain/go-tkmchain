@@ -354,28 +354,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
         if err != nil {
                 utils.Fatalf("Failed to create the protocol stack: %v", err)
         }
-        if cfg.Tkmnet.Enabled {
-                keyPath := cfg.Tkmnet.PrivateKeyPath
-                if keyPath == "" {
-                        keyPath = filepath.Join(stack.InstanceDir(), "tkmnet", "relay-key")
-                }
-                relay, err := tkmnet.NewService(tkmnet.ServiceConfig{
-                        Enabled:        true,
-                        ListenAddr:     cfg.Tkmnet.ListenAddr,
-                        OnionOnly:      cfg.Tkmnet.OnionOnly,
-                        HopIndex:       cfg.Tkmnet.HopIndex,
-                        PrivateKeyPath: keyPath,
-                        Logger: func(message string, args ...any) {
-                                log.Info(message, args...)
-                        },
-                })
-                if err != nil {
-                        utils.Fatalf("Failed to configure tkmnet: %v", err)
-                }
-                stack.RegisterLifecycle(relay)
-                log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID())
-        }
-        // Node doesn't by default populate account manager backends
+		// Node doesn't by default populate account manager backends
         if err := setAccountManagerBackends(stack.Config(), stack.AccountManager(), stack.KeyStoreDir()); err != nil {
                 utils.Fatalf("Failed to set account manager backends: %v", err)
         }
@@ -406,7 +385,50 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
                 )
         }
 
-        return stack, cfg
+		return stack, cfg
+}
+
+// registerTkmnetService attaches TKMNet after the Ethereum backend has loaded
+// the canonical chain. This lets the Antartical consensus rule force the
+// relay on from the active chain head while keeping it optional before the
+// fork. TKMNet itself only listens on loopback; Tor publishes that listener.
+func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ethereum) {
+	required := false
+	if backend != nil && backend.BlockChain() != nil {
+		chain := backend.BlockChain()
+		head := chain.CurrentHeader()
+		if head != nil && chain.Config() != nil {
+			required = chain.Config().IsTkmnetRequired(head.Number, head.Time)
+		}
+	}
+	if required {
+		if !cfg.Tkmnet.Enabled {
+			log.Info("Antartical requires TKMNet; enabling the relay")
+		}
+		cfg.Tkmnet.Enabled = true
+	}
+	if !cfg.Tkmnet.Enabled {
+		return
+	}
+	keyPath := cfg.Tkmnet.PrivateKeyPath
+	if keyPath == "" {
+		keyPath = filepath.Join(stack.InstanceDir(), "tkmnet", "relay-key")
+	}
+	relay, err := tkmnet.NewService(tkmnet.ServiceConfig{
+		Enabled:        true,
+		ListenAddr:     cfg.Tkmnet.ListenAddr,
+		OnionOnly:      cfg.Tkmnet.OnionOnly,
+		HopIndex:       cfg.Tkmnet.HopIndex,
+		PrivateKeyPath: keyPath,
+		Logger: func(message string, args ...any) {
+			log.Info(message, args...)
+		},
+	})
+	if err != nil {
+		utils.Fatalf("Failed to configure tkmnet: %v", err)
+	}
+	stack.RegisterLifecycle(relay)
+	log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID(), "required", required)
 }
 
 // constructs the disclaimer text block which will be printed in the logs upon
@@ -477,8 +499,9 @@ func makeFullNodeWithBackend(ctx *cli.Context) (*node.Node, *eth.Ethereum) {
                 utils.Fatalf("failed to setup OpenTelemetry: %v", err)
         }
 
-        // Add Ethereum service and capture the backend
-        backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+		// Add Ethereum service and capture the backend
+		backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+		registerTkmnetService(stack, &cfg, eth)
 
         // Create gauge with geth system and build information
         if eth != nil {
@@ -571,8 +594,9 @@ func makeFullNode(ctx *cli.Context) (*node.Node, *eth.Ethereum) {
                 utils.Fatalf("failed to setup OpenTelemetry: %v", err)
         }
 
-        // Add Ethereum service and capture the backend
-        backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+		// Add Ethereum service and capture the backend
+		backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+		registerTkmnetService(stack, &cfg, eth)
 
         // Create gauge with geth system and build information
         if eth != nil {

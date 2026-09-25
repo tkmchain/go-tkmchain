@@ -451,3 +451,15 @@ func TestAntarticalForkSchedule(t *testing.T) {
 		t.Fatal("Antartical rules enabled for a different chain")
 	}
 }
+
+func TestTkmnetRequiredForkSchedule(t *testing.T) {
+	if MainnetChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime-1) {
+		t.Fatal("TKMNet requirement active before Antartical")
+	}
+	if !MainnetChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime) {
+		t.Fatal("TKMNet requirement inactive at Antartical")
+	}
+	if EgyptChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime) {
+		t.Fatal("TKMNet requirement enabled for Egypt without a configured fork")
+	}
+}

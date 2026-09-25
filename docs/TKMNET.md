@@ -59,6 +59,16 @@ release build currently compiles the copy in the main module, so the node and
 the transport are versioned together. A submodule pointer can be introduced
 after the first pinned transport release without changing the lifecycle API.
 
+## Antartical requirement
+
+TKMNet is part of the Antartical consensus schedule. Before Antartical it is
+optional unless `--tkmnet.enable` is supplied. Once the canonical chain head
+is at or past the Antartical timestamp, `gtkm` automatically enables and
+registers the relay even when the flag is omitted. The relay is therefore a
+required node service after the fork; a node that cannot construct its
+loopback-only relay fails during startup instead of silently running without
+the required protection.
+
 ## Lifecycle behavior
 
 When enabled, `gtkm` constructs the relay before starting the node and
