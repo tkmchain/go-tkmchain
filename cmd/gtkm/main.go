@@ -118,6 +118,10 @@ var (
 		utils.P2POnionHostnameFlag,
 		utils.PrivacyStrictFlag,
 		utils.PrivacyOnionOnlyFlag,
+		utils.TkmnetEnabledFlag,
+		utils.TkmnetListenFlag,
+		utils.TkmnetKeyFlag,
+		utils.TkmnetHopFlag,
 		// RandomX mining flags (restored, not deprecated)
 		utils.MiningEnabledFlag,
 		utils.PoolMiningFlag,

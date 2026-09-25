@@ -928,6 +928,28 @@ var (
 		Usage:    "Use only Tor .onion peers and bind P2P locally for a Tor hidden service",
 		Category: flags.NetworkingCategory,
 	}
+	TkmnetEnabledFlag = &cli.BoolFlag{
+		Name:     "tkmnet.enable",
+		Usage:    "Enable the fixed-size encrypted tkmnet relay service",
+		Category: flags.NetworkingCategory,
+	}
+	TkmnetListenFlag = &cli.StringFlag{
+		Name:     "tkmnet.listen",
+		Usage:    "Local listener for the tkmnet Tor onion service",
+		Value:    "127.0.0.1:0",
+		Category: flags.NetworkingCategory,
+	}
+	TkmnetKeyFlag = &cli.StringFlag{
+		Name:     "tkmnet.key",
+		Usage:    "Persistent ML-KEM relay key path (defaults inside the node datadir)",
+		Category: flags.NetworkingCategory,
+	}
+	TkmnetHopFlag = &cli.UintFlag{
+		Name:     "tkmnet.hop",
+		Usage:    "Relay position in a tkmnet circuit (0, 1, or 2)",
+		Value:    0,
+		Category: flags.NetworkingCategory,
+	}
 	DiscoveryV4Flag = &cli.BoolFlag{
 		Name:     "discovery.v4",
 		Aliases:  []string{"discv4"},

@@ -23,6 +23,7 @@ import (
         "math"
         "math/big"
         "os"
+        "path/filepath"
         "reflect"
         "runtime"
         "slices"
@@ -47,6 +48,7 @@ import (
         "github.com/ethereum/go-ethereum/log"
         "github.com/ethereum/go-ethereum/metrics"
         "github.com/ethereum/go-ethereum/node"
+        "github.com/ethereum/go-ethereum/tkmnet"
         "github.com/naoina/toml"
         "github.com/urfave/cli/v2"
 )
@@ -112,6 +114,16 @@ type ethstatsConfig struct {
         URL string `toml:",omitempty"`
 }
 
+// tkmnetConfig is the TOML/CLI-facing subset of tkmnet.ServiceConfig. Runtime
+// callbacks and key material stay inside the tkmnet package.
+type tkmnetConfig struct {
+        Enabled        bool   `toml:",omitempty"`
+        ListenAddr     string `toml:",omitempty"`
+        OnionOnly      bool   `toml:",omitempty"`
+        HopIndex       uint8  `toml:",omitempty"`
+        PrivateKeyPath string `toml:",omitempty"`
+}
+
 // RandomXMinerConfig holds RandomX mining configuration
 type RandomXMinerConfig struct {
         Enabled          bool     `toml:",omitempty"`
@@ -136,6 +148,7 @@ type gethConfig struct {
         Ethstats ethstatsConfig
         Metrics  metrics.Config
         RandomX  RandomXMinerConfig `toml:",omitempty"`
+        Tkmnet   tkmnetConfig       `toml:",omitempty"`
 }
 
 func loadConfig(file string, cfg *gethConfig) error {
@@ -183,6 +196,7 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
                         MinMemoryGB:      4,
                         RotationInterval: 100,
                 },
+                Tkmnet: tkmnetConfig{ListenAddr: "127.0.0.1:0"},
         }
 
         // Load config file.
@@ -194,11 +208,36 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 
         // Apply flags.
         utils.SetNodeConfig(ctx, &cfg.Node)
+        applyTkmnetConfig(ctx, &cfg)
 
         // Apply RandomX mining flags
         applyRandomXMinerConfig(ctx, &cfg)
 
         return cfg
+}
+
+func applyTkmnetConfig(ctx *cli.Context, cfg *gethConfig) {
+        if ctx.IsSet(utils.TkmnetEnabledFlag.Name) {
+                cfg.Tkmnet.Enabled = ctx.Bool(utils.TkmnetEnabledFlag.Name)
+        }
+        if ctx.IsSet(utils.TkmnetListenFlag.Name) {
+                cfg.Tkmnet.ListenAddr = strings.TrimSpace(ctx.String(utils.TkmnetListenFlag.Name))
+        }
+        if ctx.IsSet(utils.TkmnetKeyFlag.Name) {
+                cfg.Tkmnet.PrivateKeyPath = strings.TrimSpace(ctx.String(utils.TkmnetKeyFlag.Name))
+        }
+        if ctx.IsSet(utils.TkmnetHopFlag.Name) {
+                hop := ctx.Uint(utils.TkmnetHopFlag.Name)
+                if hop >= 3 {
+                        utils.Fatalf("--%s must be 0, 1, or 2", utils.TkmnetHopFlag.Name)
+                }
+                cfg.Tkmnet.HopIndex = uint8(hop)
+        }
+        // Onion-only gtkm instances must never expose a separate clearnet
+        // relay listener. The listener is local and is published only by Tor.
+        if cfg.Node.OnionOnly {
+                cfg.Tkmnet.OnionOnly = true
+        }
 }
 
 // applyRandomXMinerConfig applies RandomX mining flags to the config
@@ -314,6 +353,27 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
         stack, err := node.New(&cfg.Node)
         if err != nil {
                 utils.Fatalf("Failed to create the protocol stack: %v", err)
+        }
+        if cfg.Tkmnet.Enabled {
+                keyPath := cfg.Tkmnet.PrivateKeyPath
+                if keyPath == "" {
+                        keyPath = filepath.Join(stack.InstanceDir(), "tkmnet", "relay-key")
+                }
+                relay, err := tkmnet.NewService(tkmnet.ServiceConfig{
+                        Enabled:        true,
+                        ListenAddr:     cfg.Tkmnet.ListenAddr,
+                        OnionOnly:      cfg.Tkmnet.OnionOnly,
+                        HopIndex:       cfg.Tkmnet.HopIndex,
+                        PrivateKeyPath: keyPath,
+                        Logger: func(message string, args ...any) {
+                                log.Info(message, args...)
+                        },
+                })
+                if err != nil {
+                        utils.Fatalf("Failed to configure tkmnet: %v", err)
+                }
+                stack.RegisterLifecycle(relay)
+                log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID())
         }
         // Node doesn't by default populate account manager backends
         if err := setAccountManagerBackends(stack.Config(), stack.AccountManager(), stack.KeyStoreDir()); err != nil {

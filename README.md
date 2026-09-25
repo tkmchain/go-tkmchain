@@ -79,6 +79,9 @@ when a remote RPC client is required.
 See [Tor-only deployment details](docs/PRIVACY_MODE.md#onion-only-networking). For installation by operating system, see [Tor installation](docs/TOR_INSTALLATION.md).
 for the hidden-service configuration and pool/prover settings.
 
+The optional encrypted TKMNet transport runs inside `gtkm` for shielded
+transaction, P2P, email, and phone service traffic. See [TKMNet transport](docs/TKMNET.md).
+
 ## Fast chain bootstrap
 
 A synced node can export an RLP block archive. A new node can download that
