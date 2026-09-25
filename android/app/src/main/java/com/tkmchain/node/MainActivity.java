@@ -476,8 +476,9 @@ public class MainActivity extends Activity {
             main.post(() -> showRestartPrompt("Bootstrap applied through block " + BOOTSTRAP_HEIGHT + ". Restart the node to reconnect."));
         } catch (Exception e) {
             restoreChainData(moved, backupRoot);
-            appendLog("[wallet] bootstrap import failed; existing chain data restored: " + e.getMessage() + "\n");
-            main.post(() -> showRestartPrompt("Bootstrap could not be applied. Existing chain data was restored; restart the node to reconnect."));
+            String reason = e.getMessage() == null ? e.toString() : e.getMessage();
+            appendLog("[wallet] bootstrap import failed; existing chain data restored: " + reason + "\n");
+            main.post(() -> showRestartPrompt("Bootstrap could not be applied: " + reason + ". Existing chain data was restored; restart the node to reconnect."));
         }
     }
 
@@ -511,6 +512,10 @@ public class MainActivity extends Activity {
         command.add(bin.getAbsolutePath());
         command.add("--datadir");
         command.add(dataDir.getAbsolutePath());
+        // Import is offline and must not try to construct the default
+        // onion-only P2P stack. Without this explicit override, the command
+        // exits before reading the archive because it has no onion hostname.
+        command.add("--privacy.onion-only=false");
         command.add("import");
         command.add(archive.getAbsolutePath());
         command.add("--no-compaction");
