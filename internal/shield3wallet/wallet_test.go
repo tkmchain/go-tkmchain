@@ -642,6 +642,29 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if err != nil || !v4Found {
 		t.Fatalf("Shield4 recipient scan: %+v %v", v4Received, err)
 	}
+	// Exercise the Shield4 relay packet path: B builds the private spend, A
+	// reviews and signs it as operator, and replaying the confirmed spend fails.
+	v4Offer, err := BuildRelayOffer(ctx, rpc, seedA, a)
+	if err != nil {
+		t.Fatal("Shield4 relay offer:", err)
+	}
+	v4RelayUnsigned, err := BuildV4Relayed(ctx, rpc, seedB, b, pa, big.NewInt(500_000_000_000_000_000), &v4Offer)
+	if err != nil {
+		t.Fatal("Shield4 relay build:", err)
+	}
+	v4Packet, err := RelayPacketForTransaction(v4RelayUnsigned)
+	if err != nil || v4Packet.InputCount != 1 {
+		t.Fatalf("Shield4 relay packet: %+v %v", v4Packet, err)
+	}
+	v4Reviewed, err := BuildRelaySubmission(ctx, rpc, seedA, a, v4Packet.Transaction)
+	if err != nil {
+		t.Fatal("Shield4 relay review:", err)
+	}
+	v4Relay := sign(v4Reviewed, seedA)
+	process(v4Relay)
+	if err := core.ProcessShieldedTransaction(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime, st, v4Relay, make(map[common.Hash]struct{})); err == nil {
+		t.Fatal("accepted replayed Shield4 relay")
+	}
 }
 
 func TestCarrotInspiredOutputKeyAndOutgoingViewScope(t *testing.T) {

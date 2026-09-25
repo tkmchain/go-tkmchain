@@ -147,6 +147,9 @@ func BuildRelayOffer(ctx context.Context, rpc RPC, seed []byte, identity *Identi
 	return offer, nil
 }
 func relayPacket(tx *types.Transaction) (RelayPacket, error) {
+	if core.HasShieldedV4Prefix(tx.Data()) {
+		return relayPacketV4(tx)
+	}
 	e, ok, err := core.DecodeShieldedV3Transaction(tx.Data())
 	if err != nil {
 		return RelayPacket{}, err
@@ -155,6 +158,27 @@ func relayPacket(tx *types.Transaction) (RelayPacket, error) {
 		return RelayPacket{}, errors.New("not a private relay spend")
 	}
 	ns, err := core.ShieldedV3Nullifiers(e)
+	if err != nil {
+		return RelayPacket{}, err
+	}
+	algorithm, pub, _, _ := tx.PQTkmFields()
+	address, err := pqcrypto.Address(algorithm, pub)
+	if err != nil {
+		return RelayPacket{}, err
+	}
+	raw, err := tx.MarshalBinary()
+	return RelayPacket{raw, tx.Hash(), address, e.GasSponsorValue.String(), e.ValidUntil, uint64(len(ns))}, err
+}
+
+func relayPacketV4(tx *types.Transaction) (RelayPacket, error) {
+	e, ok, err := core.DecodeShieldedV4Transaction(tx.Data())
+	if err != nil {
+		return RelayPacket{}, err
+	}
+	if !ok || e.Version != 4 || !e.Relayed || e.GasSponsorValue == nil {
+		return RelayPacket{}, errors.New("not a private Shield4 relay spend")
+	}
+	ns, err := core.ShieldedV4Nullifiers(e)
 	if err != nil {
 		return RelayPacket{}, err
 	}
@@ -193,6 +217,9 @@ func BuildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *I
 	address, err := pqcrypto.Address(algorithm, pub)
 	if err != nil || address != identity.Address {
 		return nil, errors.New("wrong relay operator")
+	}
+	if core.HasShieldedV4Prefix(tx.Data()) {
+		return buildShieldedV4RelaySubmission(ctx, rpc, identity, &tx, address)
 	}
 	e, ok, err := core.DecodeShieldedV3Transaction(tx.Data())
 	if err != nil {
@@ -267,6 +294,82 @@ func BuildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *I
 		return nil, errors.New("relay proof exceeds gas limit")
 	}
 	return &tx, nil
+}
+
+func buildShieldedV4RelaySubmission(ctx context.Context, rpc RPC, identity *Identity, tx *types.Transaction, address common.Address) (*types.Transaction, error) {
+	e, ok, err := core.DecodeShieldedV4Transaction(tx.Data())
+	if err != nil {
+		return nil, err
+	}
+	if !ok || e.Version != 4 || !e.Relayed || e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || e.GasSponsorValue == nil || e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+		return nil, errors.New("Shield4 relay must not release value except its authorized gas reserve")
+	}
+	seenOutputs := make(map[shielded3.Digest]bool)
+	commitments := make([]shielded3.Digest, 0, len(e.Outputs))
+	for _, out := range e.Outputs {
+		if out.Commitment == (shielded3.Digest{}) || seenOutputs[out.Commitment] {
+			return nil, errors.New("relay has zero or duplicate output commitment")
+		}
+		seenOutputs[out.Commitment] = true
+		commitments = append(commitments, out.Commitment)
+		for _, record := range []struct {
+			data []byte
+			role pqcrypto.ShieldedV3Purpose
+		}{{out.Incoming, pqcrypto.ShieldedV3Incoming}, {out.Outgoing, pqcrypto.ShieldedV3Outgoing}, {out.Stamp, pqcrypto.ShieldedV3Stamp}} {
+			if err := pqcrypto.ValidateShieldedV3CiphertextContext(record.data, core.ShieldedV3OutputContext(identity.ChainID, record.role, out.Commitment)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	var outputs []core.ShieldedV3Path
+	if err := rpc.CallContext(ctx, &outputs, "tkmprivacy_shieldedV3Paths", commitments); err != nil {
+		return nil, err
+	}
+	if len(outputs) != len(commitments) {
+		return nil, errors.New("incomplete relay output reuse check")
+	}
+	for _, path := range outputs {
+		if path.Found {
+			return nil, errors.New("relay output commitment already exists")
+		}
+	}
+	if err := relayState(ctx, rpc, address, tx.Nonce(), e.ValidUntil); err != nil {
+		return nil, err
+	}
+	ns, err := core.ShieldedV4Nullifiers(e)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range ns {
+		var state struct {
+			TransactionHash common.Hash `json:"transactionHash"`
+			Pending         bool        `json:"pending"`
+		}
+		if err := rpc.CallContext(ctx, &state, "tkmprivacy_shieldedV3NullifierStatus", n); err != nil {
+			return nil, err
+		}
+		if state.Pending || state.TransactionHash != (common.Hash{}) {
+			return nil, errors.New("relay input is already pending or spent")
+		}
+	}
+	var known bool
+	if err := rpc.CallContext(ctx, &known, "tkmprivacy_shieldedV3RootsKnown", e.Anchor, e.StampRoot); err != nil {
+		return nil, err
+	}
+	if !known {
+		return nil, errors.New("relay packet uses roots outside the canonical chain")
+	}
+	if err := core.ValidateShieldedV4Proof(tx); err != nil {
+		return nil, err
+	}
+	gas, err := core.IntrinsicGasWithShield4(tx.Data(), nil, nil, false, true, true, true, false, true)
+	if err != nil {
+		return nil, err
+	}
+	if gas.RegularGas > tx.Gas() {
+		return nil, errors.New("relay proof exceeds gas limit")
+	}
+	return tx, nil
 }
 func ReviewRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *Identity, raw []byte) (RelayPacket, error) {
 	tx, err := BuildRelaySubmission(ctx, rpc, seed, identity, raw)
