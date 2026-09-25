@@ -41,12 +41,19 @@ func (s *testRPCService) Fail() (string, error) {
 	return "", fmt.Errorf("boom")
 }
 
+type testEthService struct{}
+
+func (s *testEthService) BlockNumber() string { return "0x0" }
+
 // newTestServer starts a fake node RPC server plus a GUI bound to it.
 func newTestServer(t *testing.T) (*GUI, string) {
 	t.Helper()
 	node := rpc.NewServer()
 	if err := node.RegisterName("test", &testRPCService{}); err != nil {
 		t.Fatalf("failed to register test service: %v", err)
+	}
+	if err := node.RegisterName("eth", &testEthService{}); err != nil {
+		t.Fatalf("failed to register test eth service: %v", err)
 	}
 	client := rpc.DialInProc(node)
 
@@ -59,6 +66,31 @@ func newTestServer(t *testing.T) (*GUI, string) {
 	}
 	t.Cleanup(func() { g.Close() })
 	return g, g.Endpoint()
+}
+
+func TestHealthRequiresRPCReady(t *testing.T) {
+	g, url := newTestServer(t)
+	resp, err := http.Get(url + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ready node returned %d", resp.StatusCode)
+	}
+
+	// Closing the attached client simulates the chain backend going away while
+	// the GUI listener is still alive.  Health must become non-ready so clients
+	// wait for a restart instead of showing an endless reconnect loop.
+	g.client.Close()
+	resp, err = http.Get(url + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz after close failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("closed node returned %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+	}
 }
 
 func callRPC(t *testing.T, url, token, body string) *http.Response {

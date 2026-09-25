@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/log"
@@ -192,14 +193,35 @@ func (g *GUI) listen() error {
 	mux.HandleFunc("/prover/", g.handleProver)
 	mux.HandleFunc("/shield3/", g.handleShield3)
 	mux.HandleFunc("/bootstrap", g.handleBootstrap)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
-	})
+	mux.HandleFunc("/healthz", g.handleHealth)
 	mux.Handle("/", g.handleAssets())
 
 	g.server = &http.Server{Handler: mux}
 	go g.server.Serve(ln)
 	return nil
+}
+
+// handleHealth only reports ready after the embedded RPC client can answer a
+// cheap chain query.  A listening HTTP socket by itself is not enough: after
+// an import or a node restart the GUI can briefly outlive the chain backend,
+// and advertising readiness then makes clients loop forever on reconnecting.
+func (g *GUI) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	var block json.RawMessage
+	if err := g.client.CallContext(ctx, &block, "eth_blockNumber"); err != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "node RPC is not ready", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
 }
 
 // handleAssets serves the embedded dashboard files. The token is injected into
