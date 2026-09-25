@@ -103,7 +103,11 @@ func (ac *accountCache) hasAddress(addr common.Address) bool {
 func (ac *accountCache) add(newAccount accounts.Account) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+	ac.addLocked(newAccount)
+}
 
+// addLocked inserts an account into the cache. The caller must hold ac.mu.
+func (ac *accountCache) addLocked(newAccount accounts.Account) {
 	i := sort.Search(len(ac.all), func(i int) bool { return ac.all[i].URL.Cmp(newAccount.URL) >= 0 })
 	if i < len(ac.all) && ac.all[i] == newAccount {
 		return
@@ -119,7 +123,11 @@ func (ac *accountCache) add(newAccount accounts.Account) {
 func (ac *accountCache) delete(removed accounts.Account) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+	ac.deleteLocked(removed)
+}
 
+// deleteLocked removes an account from the cache. The caller must hold ac.mu.
+func (ac *accountCache) deleteLocked(removed accounts.Account) {
 	ac.all = removeAccount(ac.all, removed)
 	if ba := removeAccount(ac.byAddr[removed.Address], removed); len(ba) == 0 {
 		delete(ac.byAddr, removed.Address)
@@ -132,6 +140,12 @@ func (ac *accountCache) delete(removed accounts.Account) {
 func (ac *accountCache) deleteByFile(path string) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+	ac.deleteByFileLocked(path)
+}
+
+// deleteByFileLocked removes an account referenced by the given path. The
+// caller must hold ac.mu.
+func (ac *accountCache) deleteByFileLocked(path string) {
 	i := sort.Search(len(ac.all), func(i int) bool { return ac.all[i].URL.Path >= path })
 
 	if i < len(ac.all) && ac.all[i].URL.Path == path {
@@ -238,6 +252,13 @@ func (ac *accountCache) close() {
 // scanAccounts checks if any changes have occurred on the filesystem, and
 // updates the account cache accordingly
 func (ac *accountCache) scanAccounts() error {
+	// Direct keystore operations update the cache immediately, while the
+	// filesystem watcher observes those same changes asynchronously. Serialize
+	// the complete scan with cache mutations so a scan that read a file before a
+	// delete cannot re-add that stale account after the delete has completed.
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
 	// Scan the entire folder metadata for file changes
 	creates, deletes, updates, err := ac.fileC.scan(ac.keydir)
 	if err != nil {
@@ -284,16 +305,16 @@ func (ac *accountCache) scanAccounts() error {
 
 	for _, path := range creates.ToSlice() {
 		if a := readAccount(path); a != nil {
-			ac.add(*a)
+			ac.addLocked(*a)
 		}
 	}
 	for _, path := range deletes.ToSlice() {
-		ac.deleteByFile(path)
+		ac.deleteByFileLocked(path)
 	}
 	for _, path := range updates.ToSlice() {
-		ac.deleteByFile(path)
+		ac.deleteByFileLocked(path)
 		if a := readAccount(path); a != nil {
-			ac.add(*a)
+			ac.addLocked(*a)
 		}
 	}
 	end := time.Now()
