@@ -42,7 +42,8 @@ public class MainActivity extends Activity {
     private static final String NODE_BINARY = "libgtkm.so";
     private static final String PROVER_BINARY = "libshielded-payout-prover.so";
     private static final String BOOTSTRAP_URL = "https://tkmchain.site/tkm-mainnet.rlp.gz";
-    private static final String BOOTSTRAP_SHA256 = "1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779";
+    private static final String BOOTSTRAP_SHA256 = "5ab874b65f31d972b6e70ac2dd4cc4c2ad4bd4e5a4814b4a183c8632cab685c1";
+    private static final long BOOTSTRAP_HEIGHT = 43947;
     private static final long MAX_BOOTSTRAP_BYTES = 512L << 30;
     private static final String ORBOT_PACKAGE = "org.torproject.android";
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
@@ -307,11 +308,7 @@ public class MainActivity extends Activity {
                 }
                 File target = downloadBootstrapArchive(socksPort);
                 appendLog("[wallet] bootstrap saved to " + target.getAbsolutePath() + "\n");
-                main.post(() -> {
-                    if (shuttingDown) return;
-                    setStatus("bootstrap saved to " + target.getName());
-                    setStatusDot(Color.GREEN);
-                });
+                main.post(() -> applyBootstrapAfterConfirmation(target));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
@@ -417,6 +414,152 @@ public class MainActivity extends Activity {
         StringBuilder out = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) out.append(String.format(Locale.US, "%02x", b & 0xff));
         return out.toString();
+    }
+
+    private void applyBootstrapAfterConfirmation(File archive) {
+        if (shuttingDown) return;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Replace chain data?")
+                .setMessage("The verified bootstrap will replace the current chain data at height " + BOOTSTRAP_HEIGHT + ". The node will stop while it is imported, then you will be asked to restart it.")
+                .setNegativeButton("Keep current data", (dialog, which) -> {
+                    setStatus("bootstrap saved; current chain data was kept");
+                    setStatusDot(Color.YELLOW);
+                })
+                .setPositiveButton("Replace and import", (dialog, which) -> {
+                    bootstrapBtn.setEnabled(false);
+                    restartBtn.setEnabled(false);
+                    if (probeThread != null) probeThread.interrupt();
+                    if (!requestNodeStop()) {
+                        bootstrapBtn.setEnabled(true);
+                        restartBtn.setEnabled(true);
+                        setStatus("could not stop the node for bootstrap import");
+                        setStatusDot(Color.RED);
+                        return;
+                    }
+                    web.stopLoading();
+                    web.loadData("<html><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"margin:0;background:#111316;color:#eee;font:16px sans-serif;padding:48px 24px\"><h1 style=\"color:#f0b90b\">TKM Wallet</h1><h2>Applying bootstrap</h2><p style=\"color:#a9afb9;line-height:1.7\">The node is paused while the verified chain archive replaces the local chain data.</p></body></html>", "text/html", "UTF-8");
+                    setStatus("stopping node to apply bootstrap\u2026");
+                    setStatusDot(Color.YELLOW);
+                    bootstrapThread = new Thread(() -> applyBootstrap(archive), "bootstrap-import");
+                    bootstrapThread.setDaemon(true);
+                    bootstrapThread.start();
+                })
+                .setOnCancelListener(dialog -> {
+                    setStatus("bootstrap saved; current chain data was kept");
+                    setStatusDot(Color.YELLOW);
+                })
+                .show();
+    }
+
+    private void applyBootstrap(File archive) {
+        File backupRoot = new File(dataDir, ".bootstrap-backup-" + System.currentTimeMillis());
+        ArrayList<File[]> moved = new ArrayList<>();
+        try {
+            waitForNodeStop();
+            if (!backupRoot.mkdirs()) throw new IOException("cannot create " + backupRoot);
+
+            File instanceDir = new File(dataDir, "gtkm");
+            for (String name : new String[]{"chaindata", "triedb"}) {
+                File current = new File(instanceDir, name);
+                if (!current.exists()) continue;
+                File backup = new File(backupRoot, name);
+                if (!current.renameTo(backup)) {
+                    throw new IOException("cannot move existing " + current);
+                }
+                moved.add(new File[]{current, backup});
+            }
+
+            appendLog("[wallet] importing bootstrap into " + dataDir.getAbsolutePath() + "\n");
+            runBootstrapImport(archive);
+            deleteRecursively(backupRoot);
+            appendLog("[wallet] bootstrap import completed at height " + BOOTSTRAP_HEIGHT + "\n");
+            main.post(() -> showRestartPrompt("Bootstrap applied through block " + BOOTSTRAP_HEIGHT + ". Restart the node to reconnect."));
+        } catch (Exception e) {
+            restoreChainData(moved, backupRoot);
+            appendLog("[wallet] bootstrap import failed; existing chain data restored: " + e.getMessage() + "\n");
+            main.post(() -> showRestartPrompt("Bootstrap could not be applied. Existing chain data was restored; restart the node to reconnect."));
+        }
+    }
+
+    private boolean requestNodeStop() {
+        Intent stop = new Intent(this, NodeKeepAliveService.class)
+                .setAction(NodeKeepAliveService.ACTION_STOP);
+        try {
+            startService(stop);
+            return true;
+        } catch (RuntimeException e) {
+            appendLog("[wallet] node stop request failed: " + e.getMessage() + "\n");
+            return false;
+        }
+    }
+
+    private void waitForNodeStop() throws IOException, InterruptedException {
+        // NodeKeepAliveService waits briefly for the child process to exit.
+        // Give that stop request time to reach the service before checking the
+        // HTTP endpoint, avoiding a database move while gtkm still has files open.
+        Thread.sleep(2500);
+        for (int i = 0; i < 100 && !shuttingDown; i++) {
+            if (!health()) return;
+            Thread.sleep(100);
+        }
+        throw new IOException("node did not stop before bootstrap import");
+    }
+
+    private void runBootstrapImport(File archive) throws IOException, InterruptedException {
+        File bin = new File(nativeBinDir, NODE_BINARY);
+        ArrayList<String> command = new ArrayList<>();
+        command.add(bin.getAbsolutePath());
+        command.add("--datadir");
+        command.add(dataDir.getAbsolutePath());
+        command.add("import");
+        command.add(archive.getAbsolutePath());
+        command.add("--no-compaction");
+
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(dataDir);
+        builder.environment().put("LD_LIBRARY_PATH", nativeBinDir.getAbsolutePath());
+        builder.redirectErrorStream(true);
+        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
+        Process process = builder.start();
+        int exit = process.waitFor();
+        if (exit != 0) throw new IOException("bootstrap import exited with code " + exit);
+    }
+
+    private void restoreChainData(ArrayList<File[]> moved, File backupRoot) {
+        File instanceDir = new File(dataDir, "gtkm");
+        for (String name : new String[]{"chaindata", "triedb"}) {
+            deleteRecursively(new File(instanceDir, name));
+        }
+        for (int i = moved.size() - 1; i >= 0; i--) {
+            File[] pair = moved.get(i);
+            pair[1].renameTo(pair[0]);
+        }
+        if (backupRoot.exists()) deleteRecursively(backupRoot);
+    }
+
+    private void deleteRecursively(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        file.delete();
+    }
+
+    private void showRestartPrompt(String message) {
+        if (shuttingDown) return;
+        setStatus(message);
+        setStatusDot(Color.YELLOW);
+        bootstrapBtn.setEnabled(true);
+        restartBtn.setEnabled(true);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Restart node")
+                .setMessage(message)
+                .setCancelable(false)
+                .setNegativeButton("Later", null)
+                .setPositiveButton("Restart", (dialog, which) -> startNode())
+                .show();
     }
 
     private List<String> nodeCommand(String proxy) {

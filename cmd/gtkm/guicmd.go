@@ -30,7 +30,7 @@ import (
 
 const (
 	officialBootstrapURL    = "https://tkmchain.site/tkm-mainnet.rlp.gz"
-	officialBootstrapSHA256 = "1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779"
+	officialBootstrapSHA256 = "5ab874b65f31d972b6e70ac2dd4cc4c2ad4bd4e5a4814b4a183c8632cab685c1"
 )
 
 var (
