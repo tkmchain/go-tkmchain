@@ -27,7 +27,7 @@ RX_SRC_DIR="$RX_SRC/src"
 RX_BUILD="$ROOT/build/_workspace/randomx/build-android-arm64"
 NDK_API=24
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-APP="$SCRIPT_DIR/app/src/main/assets"
+NATIVE_DIR="$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a"
 
 echo "==> Android SDK:  $ANDROID_HOME"
 echo "==> Android NDK:  $ANDROID_NDK_HOME"
@@ -42,7 +42,8 @@ if [ ! -x "$GRADLE_BIN" ]; then
     exit 1
 fi
 
-mkdir -p "$RX_BUILD" "$APP"
+mkdir -p "$RX_BUILD" "$NATIVE_DIR"
+rm -f "$NATIVE_DIR/libgtkm.so" "$NATIVE_DIR/libshielded-payout-prover.so" "$NATIVE_DIR/libc++_shared.so"
 
 echo "==> Building RandomX for android-arm64"
 cmake -S "$RX_SRC" -B "$RX_BUILD" \
@@ -61,19 +62,20 @@ export CXX="$NDK_BIN/aarch64-linux-android${NDK_API}-clang++"
 export CGO_CFLAGS="-I$RX_SRC_DIR"
 export CGO_LDFLAGS="-L$RX_BUILD -lrandomx -static-libstdc++ -lm -ldl -llog"
 SHIELD3_RUST_TARGET=aarch64-linux-android "$ROOT/scripts/shield3-build.sh"
-(cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$APP/gtkm" ./cmd/gtkm)
-chmod 0700 "$APP/gtkm"
-file --brief "$APP/gtkm"
+(cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$NATIVE_DIR/libgtkm.so" ./cmd/gtkm)
+chmod 0755 "$NATIVE_DIR/libgtkm.so"
+file --brief "$NATIVE_DIR/libgtkm.so"
 
 echo "==> Building shielded-payout-prover for android-arm64"
 unset CGO_CFLAGS
 export CGO_LDFLAGS="-lm -ldl -llog"
-(cd "$ROOT" && go build -tags "shield3,urfave_cli_no_docs" -o "$APP/shielded-payout-prover" ./cmd/shielded-payout-prover)
-chmod 0700 "$APP/shielded-payout-prover"
-file --brief "$APP/shielded-payout-prover"
+(cd "$ROOT" && go build -tags "shield3,urfave_cli_no_docs" -o "$NATIVE_DIR/libshielded-payout-prover.so" ./cmd/shielded-payout-prover)
+chmod 0755 "$NATIVE_DIR/libshielded-payout-prover.so"
+file --brief "$NATIVE_DIR/libshielded-payout-prover.so"
 
 echo "==> Copying libc++ runtime"
-cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$APP/libc++_shared.so"
+cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$NATIVE_DIR/libc++_shared.so"
+chmod 0644 "$NATIVE_DIR/libc++_shared.so"
 
 BUILD_VARIANT="${TKM_ANDROID_BUILD_VARIANT:-debug}"
 case "$BUILD_VARIANT" in

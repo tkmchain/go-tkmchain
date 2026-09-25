@@ -21,22 +21,17 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.Socket;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
 
-    private static final String NODE_ASSET = "gtkm";
-    private static final String PROVER_ASSET = "shielded-payout-prover";
-    private static final String CXX_ASSET = "libc++_shared.so";
+    private static final String NODE_BINARY = "libgtkm.so";
+    private static final String PROVER_BINARY = "libshielded-payout-prover.so";
     private static final String ORBOT_PACKAGE = "org.torproject.android";
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
     private static final String[] TOR_BOOTNODES = {
@@ -53,7 +48,7 @@ public class MainActivity extends Activity {
     private static final String HEALTH_URL = "http://127.0.0.1:" + GUI_PORT + "/healthz";
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private File binDir;
+    private File nativeBinDir;
     private File dataDir;
     private File logFile;
     private boolean shuttingDown = false;
@@ -71,11 +66,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Executables are extracted from APK assets into an app-private directory.
-        // Running directly from nativeLibraryDir is not reliable across Android
-        // versions: the package linker may strip execute permissions from files
-        // whose names end in .so, and ProcessBuilder then reports only EACCES.
-        binDir = new File(getFilesDir(), "bin");
+        // Executables are extracted by Android into nativeLibraryDir. On devices
+        // with a noexec app-data mount, running a copy from filesDir fails with
+        // EACCES even when chmod reports success.
+        nativeBinDir = new File(getApplicationInfo().nativeLibraryDir);
         dataDir = new File(getFilesDir(), "node");
         logFile = new File(getFilesDir(), "node.log");
 
@@ -175,86 +169,18 @@ public class MainActivity extends Activity {
 
     private boolean prepareAssets() {
         try {
-            if (!binDir.exists() && !binDir.mkdirs()) {
-                throw new IOException("cannot create " + binDir);
-            }
-            installAsset(NODE_ASSET, true);
-            installAsset(PROVER_ASSET, true);
-            installAsset(CXX_ASSET, false);
-            for (String name : new String[]{NODE_ASSET, PROVER_ASSET}) {
-                File binary = new File(binDir, name);
+            for (String name : new String[]{NODE_BINARY, PROVER_BINARY}) {
+                File binary = new File(nativeBinDir, name);
                 if (!binary.isFile() || !binary.canExecute() || binary.length() == 0) {
-                    throw new IOException(name + " is not executable");
+                    throw new IOException(name + " is not executable in " + nativeBinDir);
                 }
             }
             return true;
-        } catch (IOException | NoSuchAlgorithmException e) {
+        } catch (IOException e) {
             appendLog("[wallet] executable setup failed: " + e.getMessage() + "\n");
             setStatus("Wallet installation is incomplete: " + e.getMessage());
             setStatusDot(Color.RED);
             return false;
-        }
-    }
-
-    private void installAsset(String assetName, boolean executable)
-            throws IOException, NoSuchAlgorithmException {
-        File target = new File(binDir, assetName);
-        String sourceDigest = digestAsset(assetName);
-        if (target.isFile() && target.length() > 0 && sourceDigest.equals(digestFile(target))) {
-            setPermissions(target, executable);
-            return;
-        }
-
-        File temporary = new File(binDir, "." + assetName + ".tmp");
-        try (InputStream in = getAssets().open(assetName);
-             OutputStream out = new FileOutputStream(temporary)) {
-            byte[] buffer = new byte[1024 * 1024];
-            int n;
-            while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
-            out.flush();
-        }
-        if (!sourceDigest.equals(digestFile(temporary))) {
-            temporary.delete();
-            throw new IOException("asset verification failed for " + assetName);
-        }
-        setPermissions(temporary, executable);
-        if (target.exists() && !target.delete()) {
-            temporary.delete();
-            throw new IOException("cannot replace " + target);
-        }
-        if (!temporary.renameTo(target)) {
-            temporary.delete();
-            throw new IOException("cannot install " + target);
-        }
-        setPermissions(target, executable);
-    }
-
-    private String digestAsset(String assetName) throws IOException, NoSuchAlgorithmException {
-        try (InputStream in = getAssets().open(assetName)) {
-            return digest(in);
-        }
-    }
-
-    private String digestFile(File file) throws IOException, NoSuchAlgorithmException {
-        try (InputStream in = new FileInputStream(file)) {
-            return digest(in);
-        }
-    }
-
-    private String digest(InputStream in) throws IOException, NoSuchAlgorithmException {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] buffer = new byte[1024 * 1024];
-        int n;
-        while ((n = in.read(buffer)) != -1) digest.update(buffer, 0, n);
-        StringBuilder out = new StringBuilder(64);
-        for (byte b : digest.digest()) out.append(String.format("%02x", b & 0xff));
-        return out.toString();
-    }
-
-    private void setPermissions(File file, boolean executable) throws IOException {
-        if (!file.setReadable(true, true) || !file.setWritable(true, true) ||
-                (executable && !file.setExecutable(true, true))) {
-            throw new IOException("cannot set permissions on " + file);
         }
     }
 
@@ -333,7 +259,7 @@ public class MainActivity extends Activity {
     }
 
     private List<String> nodeCommand(String proxy) {
-        File bin = new File(binDir, NODE_ASSET);
+        File bin = new File(nativeBinDir, NODE_BINARY);
         List<String> cmd = new ArrayList<>();
         cmd.add(bin.getAbsolutePath());
         cmd.add("gui");
@@ -368,7 +294,7 @@ public class MainActivity extends Activity {
         cmd.add("eth,net,web3,tkm,tkmprivacy");
         cmd.add("--tkmprover");
         cmd.add("--tkmprover.bin");
-        cmd.add(new File(binDir, PROVER_ASSET).getAbsolutePath());
+        cmd.add(new File(nativeBinDir, PROVER_BINARY).getAbsolutePath());
         cmd.add("--tkmprover.config");
         cmd.add(new File(dataDir, "tkmprover/config.json").getAbsolutePath());
         return cmd;
@@ -383,7 +309,7 @@ public class MainActivity extends Activity {
                     .putStringArrayListExtra(NodeKeepAliveService.EXTRA_COMMAND, new ArrayList<>(cmd))
                     .putExtra(NodeKeepAliveService.EXTRA_WORK_DIR, dataDir.getAbsolutePath())
                     .putExtra(NodeKeepAliveService.EXTRA_LOG_FILE, logFile.getAbsolutePath())
-                    .putExtra(NodeKeepAliveService.EXTRA_LIBRARY_DIR, binDir.getAbsolutePath());
+                    .putExtra(NodeKeepAliveService.EXTRA_LIBRARY_DIR, nativeBinDir.getAbsolutePath());
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 startForegroundService(start);
             } else {
