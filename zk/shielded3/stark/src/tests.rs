@@ -166,6 +166,10 @@ fn shield4_tag_and_program_domain_are_bound() {
     let public_v4 = v4_public(&public, &secret);
     let proof = prove_spend_v4(&public_v4, &secret, &path).expect("real Shield4 STARK proving");
     verify_spend_v4(&public_v4, &proof).expect("real Shield4 STARK verification");
+    assert!(
+        verify_spend(&public, &proof).is_err(),
+        "a Shield4 proof was accepted by the Shield3 verifier"
+    );
     if let Ok(directory) = std::env::var("TKM_SHIELD4_TESTDATA") {
         use std::io::Write;
         std::fs::create_dir_all(&directory).unwrap();
