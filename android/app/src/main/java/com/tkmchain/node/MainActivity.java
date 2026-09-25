@@ -21,17 +21,29 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.Socket;
+import java.net.URL;
+import java.net.URLConnection;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
 
 public class MainActivity extends Activity {
 
     private static final String NODE_BINARY = "libgtkm.so";
     private static final String PROVER_BINARY = "libshielded-payout-prover.so";
+    private static final String BOOTSTRAP_URL = "https://tkmchain.site/tkm-mainnet.rlp.gz";
+    private static final String BOOTSTRAP_SHA256 = "1a0137cdbef67217edbe6d4fb7001666897f477335461b07d2f03dcab2b2f779";
+    private static final long MAX_BOOTSTRAP_BYTES = 512L << 30;
     private static final String ORBOT_PACKAGE = "org.torproject.android";
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
     private static final String[] TOR_BOOTNODES = {
@@ -59,8 +71,10 @@ public class MainActivity extends Activity {
     private ScrollView logScroll;
     private TextView logView;
     private Button restartBtn;
+    private Button bootstrapBtn;
     private Thread probeThread;
     private Thread torThread;
+    private Thread bootstrapThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,6 +142,20 @@ public class MainActivity extends Activity {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Restart", (dialog, which) -> startNode()).show());
         bar.addView(restartBtn);
+
+        bootstrapBtn = new Button(this);
+        bootstrapBtn.setText("Download bootstrap");
+        bootstrapBtn.setTextColor(0xFFdceaff);
+        bootstrapBtn.setMinHeight(dp(44));
+        bootstrapBtn.setTextSize(11);
+        bootstrapBtn.setAllCaps(false);
+        bootstrapBtn.setContentDescription("Download the verified TKM chain bootstrap archive");
+        android.graphics.drawable.GradientDrawable bootstrapBackground = new android.graphics.drawable.GradientDrawable();
+        bootstrapBackground.setColor(0xFF243a57);
+        bootstrapBackground.setCornerRadius(dp(10));
+        bootstrapBtn.setBackground(bootstrapBackground);
+        bootstrapBtn.setOnClickListener(v -> downloadBootstrap());
+        bar.addView(bootstrapBtn);
         root.addView(bar);
 
         web = new WebView(this);
@@ -256,6 +284,139 @@ public class MainActivity extends Activity {
             }
         }
         return false;
+    }
+
+    /** Downloads the official, hash-checked archive into the node instance directory. */
+    private void downloadBootstrap() {
+        if (bootstrapThread != null && bootstrapThread.isAlive()) return;
+        bootstrapBtn.setEnabled(false);
+        setStatusDot(Color.YELLOW);
+        setStatus("connecting to Tor before downloading bootstrap\u2026");
+        appendLog("[wallet] bootstrap download requested\n");
+        if (!requestOrbot()) {
+            bootstrapBtn.setEnabled(true);
+            setStatus("Tor is unavailable. Install Orbot, then try again.");
+            setStatusDot(Color.RED);
+            return;
+        }
+        bootstrapThread = new Thread(() -> {
+            try {
+                int socksPort = waitForTorPort();
+                if (socksPort == 0) {
+                    throw new IOException("Tor could not reach a TKM onion peer");
+                }
+                File target = downloadBootstrapArchive(socksPort);
+                appendLog("[wallet] bootstrap saved to " + target.getAbsolutePath() + "\n");
+                main.post(() -> {
+                    if (shuttingDown) return;
+                    setStatus("bootstrap saved to " + target.getName());
+                    setStatusDot(Color.GREEN);
+                });
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                appendLog("[wallet] bootstrap download failed: " + e.getMessage() + "\n");
+                main.post(() -> {
+                    if (shuttingDown) return;
+                    setStatus("bootstrap download failed: " + e.getMessage());
+                    setStatusDot(Color.RED);
+                });
+            } finally {
+                main.post(() -> {
+                    if (!shuttingDown) bootstrapBtn.setEnabled(true);
+                });
+            }
+        }, "bootstrap-download");
+        bootstrapThread.setDaemon(true);
+        bootstrapThread.start();
+    }
+
+    private int waitForTorPort() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 3 * 60 * 1000;
+        while (!shuttingDown && System.currentTimeMillis() < deadline) {
+            for (int port : TOR_SOCKS_PORTS) {
+                if (canReachOnion(port)) return port;
+            }
+            main.post(() -> {
+                if (!shuttingDown) setStatus("waiting for Tor to reach a TKM onion peer\u2026");
+            });
+            Thread.sleep(2000);
+        }
+        return 0;
+    }
+
+    private File downloadBootstrapArchive(int socksPort) throws IOException, NoSuchAlgorithmException {
+        File bootstrapDir = new File(dataDir, "gtkm/bootstrap");
+        if (!bootstrapDir.isDirectory() && !bootstrapDir.mkdirs()) {
+            throw new IOException("cannot create " + bootstrapDir);
+        }
+        File temporary = File.createTempFile(".chain-", ".part", bootstrapDir);
+        boolean installed = false;
+        try {
+            URLConnection connection = new URL(BOOTSTRAP_URL).openConnection(new Proxy(
+                    Proxy.Type.SOCKS, InetSocketAddress.createUnresolved("127.0.0.1", socksPort)));
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(60000);
+            if (connection instanceof HttpURLConnection) {
+                HttpURLConnection http = (HttpURLConnection) connection;
+                http.setInstanceFollowRedirects(false);
+                int code = http.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    throw new IOException("bootstrap server returned HTTP " + code);
+                }
+            }
+            long expectedSize = connection.getContentLengthLong();
+            if (expectedSize > MAX_BOOTSTRAP_BYTES) {
+                throw new IOException("bootstrap archive is too large");
+            }
+
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long total = 0;
+            long nextStatus = 0;
+            byte[] buffer = new byte[1024 * 1024];
+            try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(temporary)) {
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    total += read;
+                    if (total > MAX_BOOTSTRAP_BYTES) throw new IOException("bootstrap archive is too large");
+                    digest.update(buffer, 0, read);
+                    out.write(buffer, 0, read);
+                    if (total >= nextStatus) {
+                        nextStatus = total + (16L << 20);
+                        long downloaded = total;
+                        main.post(() -> {
+                            if (!shuttingDown) setStatus("downloading bootstrap (" + formatBytes(downloaded) + ")\u2026");
+                        });
+                    }
+                }
+                out.getFD().sync();
+            }
+            if (total == 0) throw new IOException("bootstrap archive is empty");
+            String actual = hex(digest.digest());
+            if (!BOOTSTRAP_SHA256.equalsIgnoreCase(actual)) {
+                throw new IOException("bootstrap SHA-256 mismatch");
+            }
+            SimpleDateFormat stamp = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US);
+            stamp.setTimeZone(TimeZone.getTimeZone("UTC"));
+            File target = new File(bootstrapDir, "chain-" + stamp.format(new Date()) + "-" + System.currentTimeMillis() + ".rlp.gz");
+            if (!temporary.renameTo(target)) throw new IOException("cannot install " + target);
+            installed = true;
+            return target;
+        } finally {
+            if (!installed) temporary.delete();
+        }
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < (1L << 20)) return (bytes / 1024) + " KiB";
+        if (bytes < (1L << 30)) return String.format(Locale.US, "%.1f MiB", bytes / (double) (1L << 20));
+        return String.format(Locale.US, "%.2f GiB", bytes / (double) (1L << 30));
+    }
+
+    private String hex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) out.append(String.format(Locale.US, "%02x", b & 0xff));
+        return out.toString();
     }
 
     private List<String> nodeCommand(String proxy) {
@@ -450,6 +611,7 @@ public class MainActivity extends Activity {
         shuttingDown = true;
         if (probeThread != null) probeThread.interrupt();
         if (torThread != null) torThread.interrupt();
+        if (bootstrapThread != null) bootstrapThread.interrupt();
         // NodeKeepAliveService owns the process so minimizing or rotating the
         // Activity cannot stop synchronization.
         super.onDestroy();
