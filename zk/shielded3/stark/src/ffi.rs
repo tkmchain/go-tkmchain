@@ -58,8 +58,10 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
     let ownership = operation == 6 || operation == 7;
     let public_count = if ownership {
         OWNER_PUBLIC_WORDS
+    } else if v4 {
+        PUBLIC_WORDS_V4
     } else {
-        if v4 { PUBLIC_WORDS_V4 } else { PUBLIC_WORDS }
+        PUBLIC_WORDS
     };
     let prefix = 8 + public_count * 8;
     let expected_magic = if ownership {
