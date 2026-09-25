@@ -659,6 +659,9 @@ func (h *handler) shield3DandelionActive(tx *types.Transaction) bool {
 	if tx == nil || h.chain == nil || h.chain.CurrentHeader() == nil || !h.chain.Config().IsAntartical(h.chain.CurrentHeader().Number, h.chain.CurrentHeader().Time) {
 		return false
 	}
+	if envelope, found, err := core.DecodeShieldedV4Transaction(tx.Data()); err == nil && found {
+		return envelope.Version == 4
+	}
 	envelope, found, err := core.DecodeShieldedV3Transaction(tx.Data())
 	return err == nil && found && envelope.Version >= 3
 }

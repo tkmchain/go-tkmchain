@@ -119,6 +119,90 @@ fn run(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
     .is_ok()
 }
 
+fn run_v4(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
+    let public = v4_public(public, secret);
+    let tokens = canonical_words(secret, SECRET_WORDS).unwrap();
+    let Ok(active) = spending_paths_v4(&public, path) else {
+        return false;
+    };
+    let digests: Vec<_> = active
+        .iter()
+        .map(|p| Digest::new(p.map(BFieldElement::new)))
+        .collect::<Vec<_>>();
+    VM::run(
+        spend_program_v4(),
+        PublicInput::new(canonical_words(&public, PUBLIC_WORDS_V4).unwrap()),
+        NonDeterminism::new(tokens).with_digests(digests),
+    )
+    .is_ok()
+}
+
+fn v4_public(public: &[u64], secret: &[u64]) -> Vec<u64> {
+    let mut public = public.to_vec();
+    let owner = hash(&[
+        DOMAIN_OWNER,
+        secret[0],
+        secret[1],
+        secret[2],
+        secret[3],
+        secret[4],
+    ]);
+    let mut tag = vec![DOMAIN_SHIELD4_TAG];
+    tag.extend(owner);
+    tag.extend(&secret[5..10]);
+    tag.push(secret[18]);
+    tag.extend(&public[28..33]);
+    public.extend(hash(&tag));
+    public
+}
+
+#[test]
+fn shield4_tag_and_program_domain_are_bound() {
+    let (public, secret, path) = fixture();
+    assert!(
+        run_v4(&public, &secret, &path),
+        "valid Shield4 witness rejected"
+    );
+    let public_v4 = v4_public(&public, &secret);
+    let proof = prove_spend_v4(&public_v4, &secret, &path).expect("real Shield4 STARK proving");
+    verify_spend_v4(&public_v4, &proof).expect("real Shield4 STARK verification");
+    if let Ok(directory) = std::env::var("TKM_SHIELD4_TESTDATA") {
+        use std::io::Write;
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, data) in [
+            ("public", public_v4),
+            ("secret", secret.clone()),
+            ("path", path.iter().flatten().copied().collect()),
+            ("proof", proof),
+        ] {
+            let mut file = std::fs::File::create(format!("{directory}/{name}.bin")).unwrap();
+            for value in data {
+                file.write_all(&value.to_le_bytes()).unwrap();
+            }
+        }
+    }
+
+    let mut changed_secret = secret.clone();
+    changed_secret[5] ^= 1;
+    assert!(
+        !run_v4(&public, &changed_secret, &path),
+        "changed randomness accepted"
+    );
+
+    let mut changed_tag = public.clone();
+    changed_tag[0] ^= 1;
+    assert!(
+        !run_v4(&changed_tag, &secret, &path),
+        "changed anchor context accepted"
+    );
+
+    assert_ne!(
+        spend_program().hash(),
+        spend_program_v4().hash(),
+        "Shield3 and Shield4 claims must use different frozen programs"
+    );
+}
+
 #[test]
 fn valid_spend_and_constraint_rejections() {
     let (public, secret, path) = fixture();

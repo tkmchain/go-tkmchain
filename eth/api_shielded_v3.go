@@ -100,6 +100,19 @@ func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]S
 				return nil, err
 			}
 			if !ok {
+				v4, v4ok, v4err := core.DecodeShieldedV4Transaction(tx.Data())
+				if v4err != nil {
+					return nil, v4err
+				}
+				if !v4ok {
+					continue
+				}
+				for i, out := range v4.Outputs {
+					if len(result) >= 512 {
+						return nil, fmt.Errorf("Shield3 scan exceeds 512 outputs; reduce the block range")
+					}
+					result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp)})
+				}
 				continue
 			}
 			for i, out := range e.Outputs {
@@ -134,6 +147,20 @@ func (api *PrivacyAPI) ShieldedV3NullifierStatus(nullifier shielded3.Digest) (Sh
 		for _, group := range []map[common.Address][]*types.Transaction{pending, queued} {
 			for _, transactions := range group {
 				for _, tx := range transactions {
+					if core.HasShieldedV4Prefix(tx.Data()) {
+						e, _, err := core.DecodeShieldedV4Transaction(tx.Data())
+						if err == nil {
+							nullifiers, err := core.ShieldedV4Nullifiers(e)
+							if err == nil {
+								for _, n := range nullifiers {
+									if n == nullifier {
+										return ShieldedV3NullifierStatus{TransactionHash: tx.Hash(), Pending: true}, nil
+									}
+								}
+							}
+						}
+						continue
+					}
 					if !core.HasShieldedV3Prefix(tx.Data()) {
 						continue
 					}

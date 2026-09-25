@@ -12,6 +12,7 @@ import (
 
 const AssetTKM uint64 = 1
 const MaxSendTKM uint64 = 5_000_000
+const protocolMagicV4 = "TKMS4STK"
 
 func MaxSendWei() *big.Int {
 	return new(big.Int).Mul(new(big.Int).SetUint64(MaxSendTKM), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
@@ -80,7 +81,67 @@ func (NativeBackend) Verify(ctx context.Context, s Statement, proof []byte) erro
 	}
 	return nil
 }
-func privateRequest(s Statement, w SpendWitness, describe bool) ([]byte, error) {
+
+// NativeBackendV4 calls the distinct Shield4 claim program. Its relation is
+// full-chain membership in the shared Tip5 tree, with a protocol-specific
+// frozen program digest so V3 proofs cannot be replayed as V4 proofs.
+type NativeBackendV4 struct{}
+
+func (NativeBackendV4) Verify(ctx context.Context, s StatementV4, proof []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	words, err := s.words()
+	if err != nil {
+		return err
+	}
+	if !validProof(proof) {
+		return ErrInvalidProof
+	}
+	request := appendWords([]byte(protocolMagicV4), words)
+	request = append(request, proof...)
+	out, err := nativeCall(8, request, 3)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(out, []byte("OK\n")) {
+		return ErrInvalidProof
+	}
+	return nil
+}
+
+func privateRequestV4(s StatementV4, w SpendWitness, describe bool) ([]byte, error) {
+	var public []uint64
+	var err error
+	if describe {
+		public, err = s.Statement.words()
+		if err != nil {
+			return nil, err
+		}
+		public = append(public, make([]uint64, 5)...)
+		if s.ChainID == 0 {
+			return nil, ErrInvalidStatement
+		}
+	} else {
+		public, err = s.words()
+		if err != nil {
+			return nil, err
+		}
+	}
+	secret, err := w.words()
+	if err != nil {
+		return nil, err
+	}
+	defer clear(secret)
+	request := appendWords(append(make([]byte, 0, len(protocolMagicV4)+(publicWords+5+secretWords+MerkleDepth*5)*8), protocolMagicV4...), public)
+	request = appendWords(request, secret)
+	for _, d := range w.allPaths() {
+		request = appendWords(request, d[:])
+	}
+	return request, nil
+}
+
+func privateRequestWithMagic(s Statement, w SpendWitness, describe bool, magic string) ([]byte, error) {
 	var public []uint64
 	var err error
 	if describe {
@@ -103,12 +164,15 @@ func privateRequest(s Statement, w SpendWitness, describe bool) ([]byte, error) 
 		return nil, err
 	}
 	defer clear(secret)
-	request := appendWords(append(make([]byte, 0, len(protocolMagic)+(publicWords+secretWords+MerkleDepth*5)*8), protocolMagic...), public)
+	request := appendWords(append(make([]byte, 0, len(magic)+(publicWords+secretWords+MerkleDepth*5)*8), magic...), public)
 	request = appendWords(request, secret)
 	for _, d := range w.allPaths() {
 		request = appendWords(request, d[:])
 	}
 	return request, nil
+}
+func privateRequest(s Statement, w SpendWitness, describe bool) ([]byte, error) {
+	return privateRequestWithMagic(s, w, describe, protocolMagic)
 }
 func (NativeBackend) Prove(ctx context.Context, s Statement, w SpendWitness) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -120,6 +184,24 @@ func (NativeBackend) Prove(ctx context.Context, s Statement, w SpendWitness) ([]
 	}
 	defer clear(request)
 	proof, err := nativeCall(2, request, MaxProofSize)
+	if err != nil {
+		return nil, err
+	}
+	if !validProof(proof) {
+		return nil, ErrInvalidProof
+	}
+	return proof, nil
+}
+func (NativeBackendV4) Prove(ctx context.Context, s StatementV4, w SpendWitness) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request, err := privateRequestV4(s, w, false)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(request)
+	proof, err := nativeCall(9, request, MaxProofSize)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +231,35 @@ func (NativeBackend) Describe(ctx context.Context, chainID, assetID uint64, w Sp
 	for i := range result.Outputs {
 		// Rust describe_spend returns each commitment followed by its
 		// one-time key. Preserve that wire order while decoding.
+		dest = append(dest, &result.Outputs[i], &result.OneTimeKeys[i])
+	}
+	for i, d := range dest {
+		*d, err = DigestFromBytes(data[i*40 : (i+1)*40])
+		if err != nil {
+			return DerivedSpend{}, err
+		}
+	}
+	return result, nil
+}
+func (NativeBackendV4) Describe(ctx context.Context, s StatementV4, w SpendWitness) (DerivedSpend, error) {
+	var result DerivedSpend
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	request, err := privateRequestV4(s, w, true)
+	if err != nil {
+		return result, err
+	}
+	defer clear(request)
+	data, err := nativeCall(10, request, 520)
+	if err != nil {
+		return result, err
+	}
+	if len(data) != 520 {
+		return result, ErrInvalidWitness
+	}
+	dest := []*Digest{&result.Owner, &result.InputCommitment, &result.Anchor, &result.Nullifier, &result.LinkTag}
+	for i := range result.Outputs {
 		dest = append(dest, &result.Outputs[i], &result.OneTimeKeys[i])
 	}
 	for i, d := range dest {

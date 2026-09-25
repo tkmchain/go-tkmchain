@@ -1,8 +1,8 @@
-# Shield4 FCMP++-inspired design boundary
+# Shield4 FCMP++-inspired production protocol
 
-Shield4 is reserved for a future full-chain membership proof system. It is not
-accepted by current consensus. Shield3 remains the active Antartical private
-transaction format.
+Shield4 is the version-4 full-chain membership protocol activated by the
+existing Antartical gate. Shield3 remains valid for its existing notes; new
+Shield4 spends use the separate envelope and native relation described here.
 
 ## Why this is a new version
 
@@ -34,18 +34,25 @@ state.
 
 ## Activation rule
 
-Any future Shield4 activation on this chain must use the existing Antartical
-activation timestamp (`1790812800`, 2026-10-01 00:00 UTC). If the complete
-implementation is not ready at that timestamp, Shield4 remains disabled; no
-second activation fork is silently introduced. A version-4 transaction must be
-rejected until the complete verifier and wallet implementation are present. No
-placeholder verifier may accept a Shield4 proof, and Shield3 validation must
-never fall back to Shield4 or a legacy verifier.
+Shield4 uses the existing Antartical activation timestamp (`1790812800`,
+2026-10-01 00:00 UTC). Before that timestamp, version-4 transactions are
+rejected. No second activation fork is introduced. The native verifier is
+embedded and consensus rejects a proof if that verifier is unavailable; there
+is no placeholder or legacy-verifier fallback.
 
-## Current status
+## Current implementation status
 
-The repository contains no FCMP++ implementation. The current Shield3 relation
-already hides Merkle paths and recipient amounts, uses recipient-secret
-nullifiers, and supports fixed outputs, relays, Tor, and Dandelion propagation.
-Implementing Shield4 requires first selecting and implementing a concrete
-post-quantum full-chain membership relation and its proof vectors.
+The repository contains a separate `TKMS4STK` native FFI entry point and a
+frozen Shield4 Triton claim program. The claim program has a protocol-specific
+domain assertion, so a Shield3 proof cannot be replayed under the Shield4
+verifier. It uses the canonical Tip5 membership witness shape, and consensus
+appends Shield4 commitments to the shared tree so the anonymity set spans both
+versions.
+
+The native layer is intentionally fail-closed until the embedded static library
+is rebuilt from this source. The versioned envelope, Antartical-gated state
+transition, txpool checks, shared full-chain root, link-tag replay state, RPC
+status, and direct, batch, and relayed wallet constructors are wired in the
+source tree. Every release must rebuild the static library and run the native
+proof vectors, reorg tests, and wallet end-to-end tests together so a partially
+deployed node cannot accept a proof that other nodes cannot reproduce.

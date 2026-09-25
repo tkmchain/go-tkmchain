@@ -70,7 +70,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
 	maxSize := opts.MaxSize
-	if opts.Config.IsAntartical(head.Number, head.Time) && (core.HasShieldedV3Prefix(tx.Data()) || core.HasAntarticalStampPrefix(tx.Data())) {
+	if opts.Config.IsAntartical(head.Number, head.Time) && (core.HasShieldedV4Prefix(tx.Data()) || core.HasShieldedV3Prefix(tx.Data()) || core.HasAntarticalStampPrefix(tx.Data())) {
 		maxSize = core.ShieldedV3MaxTxSize
 	}
 	if tx.Size() > maxSize {
@@ -201,6 +201,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	if rules.IsAntartical && core.HasAntarticalStampPrefix(tx.Data()) {
 		return core.ValidateAntarticalStampProof(tx)
+	}
+	if rules.IsAntartical && core.HasShieldedV4Prefix(tx.Data()) {
+		return core.ValidateShieldedV4Proof(tx)
 	}
 	if rules.IsAntartical && core.HasShieldedV3Prefix(tx.Data()) {
 		return core.ValidateShieldedV3Proof(tx)

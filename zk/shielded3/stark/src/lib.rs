@@ -6,6 +6,7 @@
 use triton_vm::prelude::*;
 
 pub const PUBLIC_WORDS: usize = 108;
+pub const PUBLIC_WORDS_V4: usize = 113;
 pub const SECRET_WORDS: usize = 137;
 pub const MERKLE_DEPTH: usize = 32;
 pub const PATH_DIGESTS: usize = MERKLE_DEPTH * 8;
@@ -19,6 +20,8 @@ pub const DOMAIN_NOTE: u64 = 3002;
 pub const DOMAIN_NULLIFIER: u64 = 3003;
 pub const DOMAIN_NULLIFIER_KEY: u64 = 3005;
 pub const DOMAIN_ONETIME_KEY: u64 = 3006;
+pub const DOMAIN_SHIELD4_PROGRAM: u64 = 4004;
+pub const DOMAIN_SHIELD4_TAG: u64 = 4007;
 
 // Public word order: chain lo/hi, asset lo/hi, public value (eight u32 limbs),
 // transaction intent (sixteen u32 words), anchor (five field words),
@@ -129,10 +132,22 @@ impl Assembly {
 
 /// Frozen spending computation. The verifier derives its digest locally;
 /// neither a prover-supplied program nor a prover-supplied claim is accepted.
-pub fn spend_program() -> Program {
+fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
     let mut a = Assembly(String::new());
+    // Shield4 uses the same audited witness relation but a distinct frozen
+    // claim program.  This constant assertion changes the program digest and
+    // prevents a proof produced for one protocol version from verifying under
+    // the other version, even when the public inputs happen to match.
+    if let Some(domain) = domain {
+        a.emit(&format!("push {domain} push {domain} eq assert"));
+    }
+    let public_words = if shield4 {
+        PUBLIC_WORDS_V4
+    } else {
+        PUBLIC_WORDS
+    };
     for (length, base, instruction) in
-        [(PUBLIC_WORDS, 0, "read_io"), (SECRET_WORDS, 1000, "divine")]
+        [(public_words, 0, "read_io"), (SECRET_WORDS, 1000, "divine")]
     {
         for i in (0..length).step_by(5) {
             let count = (length - i).min(5);
@@ -333,6 +348,19 @@ pub fn spend_program() -> Program {
     a.emit("push 0 eq assert");
     a.emit("push 1005 call nullifier_hash");
     a.assert_digest(33);
+    if shield4 {
+        // Shield4 adds a deterministic, hidden-owner linkability tag to the
+        // public statement. It is separate from the shared nullifier so the
+        // state transition can enforce both version binding and one-spend
+        // semantics without exposing the note commitment.
+        let mut tag = vec![Word::Literal(DOMAIN_SHIELD4_TAG)];
+        tag.extend((200..205).map(Word::Memory));
+        tag.extend((1005..1010).map(Word::Memory));
+        tag.push(Word::Memory(1018));
+        tag.extend((28..33).map(Word::Memory));
+        a.hash(tag);
+        a.assert_digest(108);
+    }
     a.emit("return");
     a.emit("public_deposit:");
     for i in 28..38 {
@@ -421,7 +449,19 @@ pub fn spend_program() -> Program {
     a.emit("return");
     a.note_routine();
     a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
-    Program::from_code(&a.0).expect("valid, fixed Shield3 assembly")
+    Program::from_code(&a.0).expect("valid, fixed Shield assembly")
+}
+
+pub fn spend_program() -> Program {
+    spend_program_with_domain(None, false)
+}
+
+/// Shield4 is a separate frozen claim program.  It keeps the same hidden
+/// full-chain membership witness shape so existing notes remain spendable,
+/// while the domain assertion gives the verifier a protocol-specific program
+/// digest and therefore a non-interchangeable proof system.
+pub fn spend_program_v4() -> Program {
+    spend_program_with_domain(Some(DOMAIN_SHIELD4_PROGRAM), true)
 }
 
 pub fn canonical_words(words: &[u64], size: usize) -> Result<Vec<BFieldElement>, String> {
@@ -532,6 +572,44 @@ fn prove_program(
 
 pub fn verify_spend(public: &[u64], words: &[u64]) -> Result<(), String> {
     verify_program(spend_program(), public_input(public)?, words)
+}
+
+pub fn prove_spend_v4(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> Result<Vec<u64>, String> {
+    let active_path = spending_paths_v4(public, path)?;
+    let public = public_input_v4(public)?;
+    let tokens = canonical_words(secret, SECRET_WORDS)?;
+    let digests = active_path
+        .iter()
+        .map(|d| canonical_words(d, 5).map(|words| Digest::new(words.try_into().unwrap())))
+        .collect::<Result<Vec<_>, _>>()?;
+    prove_program(spend_program_v4(), public, tokens, digests)
+}
+
+pub fn verify_spend_v4(public: &[u64], words: &[u64]) -> Result<(), String> {
+    verify_program(spend_program_v4(), public_input_v4(public)?, words)
+}
+
+fn public_input_v4(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
+    if words.len() != PUBLIC_WORDS_V4 {
+        return Err("invalid Shield4 public input length".into());
+    }
+    public_input(&words[..PUBLIC_WORDS])?;
+    if words[58] == 0 && words[108..113].iter().all(|&v| v == 0) {
+        return Err("zero Shield4 linkability tag".into());
+    }
+    if words[58] == 1 && words[108..113].iter().any(|&v| v != 0) {
+        return Err("deposit must not carry a Shield4 linkability tag".into());
+    }
+    canonical_words(words, PUBLIC_WORDS_V4)
+}
+
+fn spending_paths_v4(public: &[u64], path: &[[u64; 5]]) -> Result<Vec<[u64; 5]>, String> {
+    public_input_v4(public)?;
+    spending_paths(&public[..PUBLIC_WORDS], path)
 }
 
 fn verify_program(
@@ -653,6 +731,32 @@ pub fn describe_spend(
         let key = hash(&key_words);
         result.extend(key.values().map(|v| v.value()));
     }
+    Ok(result)
+}
+
+pub fn describe_spend_v4(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> Result<Vec<u64>, String> {
+    // Description is a witness-only derivation; the relation's domain is
+    // carried by the proof operation.  Keep the canonical output derivation
+    // identical so Shield3 notes can migrate into the common full-chain tree.
+    canonical_words(public, PUBLIC_WORDS_V4)?;
+    let mut result = describe_spend(&public[..PUBLIC_WORDS], secret, path)?;
+    let mut tag = vec![DOMAIN_SHIELD4_TAG];
+    let owner = &result[..5];
+    tag.extend(owner);
+    tag.extend(&secret[5..10]);
+    tag.push(secret[18]);
+    tag.extend(&public[28..33]);
+    let tag = Tip5::hash_varlen(
+        &tag.iter()
+            .copied()
+            .map(BFieldElement::new)
+            .collect::<Vec<_>>(),
+    );
+    result.splice(20..20, tag.values().map(|v| v.value()));
     Ok(result)
 }
 

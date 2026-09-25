@@ -218,6 +218,9 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 // ProcessShieldedTransaction applies consensus shielded commitment state for tx.
 // The seen map should be shared across all transactions in the candidate block.
 func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
+	if HasShieldedV4Prefix(tx.Data()) && (config == nil || !config.IsAntartical(blockNumber, blockTime) || !config.IsPrivacyCommitments(blockNumber, blockTime)) {
+		return fmt.Errorf("%w: Shield4 is not active until Antartical", ErrInvalidShieldedTx)
+	}
 	if config != nil && config.IsAntartical(blockNumber, blockTime) {
 		if HasAntarticalStampPrefix(tx.Data()) {
 			return ProcessAntarticalStamp(config, blockNumber, blockTime, statedb, tx)
@@ -231,6 +234,12 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		}
 	}
 
+	if HasShieldedV4Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+		if seen == nil {
+			seen = make(map[common.Hash]struct{})
+		}
+		return processShieldedV4(config, blockNumber, blockTime, statedb, tx, seen)
+	}
 	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
 		if seen == nil {
 			seen = make(map[common.Hash]struct{})
@@ -251,7 +260,14 @@ func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *
 	if HasAntarticalStampPrefix(tx.Data()) {
 		return ValidateAntarticalStampBasics(config, blockNumber, blockTime, tx)
 	}
+	if HasShieldedV4Prefix(tx.Data()) && (config == nil || !config.IsAntartical(blockNumber, blockTime) || !config.IsPrivacyCommitments(blockNumber, blockTime)) {
+		return fmt.Errorf("%w: Shield4 is not active until Antartical", ErrInvalidShieldedTx)
+	}
 
+	if HasShieldedV4Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+		_, err := shieldedV4Basics(config, blockNumber, blockTime, tx)
+		return err
+	}
 	if HasShieldedV3Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
 		_, err := shieldedV3Basics(config, blockNumber, blockTime, tx)
 		return err
@@ -838,6 +854,20 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 		return new(big.Int)
 	}
 	cost := tx.Cost()
+	if HasShieldedV4Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV4Transaction(tx.Data())
+		if err != nil || e.GasSponsorValue == nil {
+			return cost
+		}
+		sponsor := e.GasSponsorValue
+		if sponsor.Sign() > 0 {
+			cost.Sub(cost, sponsor)
+			if cost.Sign() < 0 {
+				return new(big.Int)
+			}
+		}
+		return cost
+	}
 	if HasShieldedV3Prefix(tx.Data()) {
 		e, _, err := DecodeShieldedV3Transaction(tx.Data())
 		if err != nil || e.GasSponsorValue == nil {
@@ -879,6 +909,13 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 func ValidateShieldedTransactionState(statedb *state.StateDB, tx *types.Transaction) error {
 	if statedb == nil || tx == nil {
 		return nil
+	}
+	if HasShieldedV4Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV4Transaction(tx.Data())
+		if err != nil {
+			return err
+		}
+		return validateShieldedV4State(statedb, tx, e)
 	}
 	if HasShieldedV3Prefix(tx.Data()) {
 		e, _, err := DecodeShieldedV3Transaction(tx.Data())

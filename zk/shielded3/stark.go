@@ -89,6 +89,34 @@ type Statement struct {
 	InputCount           uint32
 }
 
+// StatementV4 extends the canonical public statement with a deterministic
+// linkability tag. The tag is derived inside the native relation from the
+// hidden owner, input randomness, leaf index and full-chain anchor. It is zero
+// only for deposits, which have no private input to link.
+type StatementV4 struct {
+	Statement
+	LinkTag Digest
+}
+
+func (s StatementV4) words() ([]uint64, error) {
+	base, err := s.Statement.words()
+	if err != nil {
+		return nil, err
+	}
+	if s.Deposit {
+		if s.LinkTag != (Digest{}) {
+			return nil, ErrInvalidStatement
+		}
+	} else if s.LinkTag == (Digest{}) || !canonical(s.LinkTag[:]) {
+		return nil, ErrInvalidStatement
+	}
+	words := append(base, s.LinkTag[:]...)
+	if len(words) != publicWords+5 || !canonical(words) {
+		return nil, ErrInvalidStatement
+	}
+	return words, nil
+}
+
 // OutputOpening is private witness data for one fixed output slot. The owner
 // digest is Tip5(DOMAIN_OWNER || spendingSecret); fresh secret randomness hides
 // the owner and value in the note commitment, including zero-valued decoys.
@@ -292,6 +320,7 @@ type DerivedSpend struct {
 	InputCommitment Digest
 	Anchor          Digest
 	Nullifier       Digest
+	LinkTag         Digest
 	Outputs         [OutputSlots]Digest
 	OneTimeKeys     [OutputSlots]Digest
 }

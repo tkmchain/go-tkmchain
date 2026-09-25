@@ -234,3 +234,20 @@ are user-selected HTTPS URLs (HTTP is permitted only on loopback). See the
 [Antartical guide](../../docs/SHIELD3_ANTARTICAL.md) for configuration and limits.
 All nodes must rebuild this updated native relation before the existing
 Antartical activation. The fork time remains unchanged.
+
+## Shield4 full-chain membership
+
+Shield4 is the production Antartical protocol for new private spends. It uses
+the frozen native `TKMS4STK` Triton program, a 113-word public statement, and a
+five-word linkability tag derived from the hidden owner, input randomness, leaf
+index, and authenticated full-chain anchor. The program proves membership in
+the same append-only Tip5 tree as Shield3, so the anonymity set continues
+across the fork, while the Shield4 program digest, transaction intent domain,
+envelope magic, and link-tag replay namespace are all distinct. A Shield3
+proof cannot be replayed as Shield4.
+
+Nodes must rebuild `zk/shielded3/stark/target/release/libtkm_shield3_stark.a`
+before enabling Antartical. The consensus path invokes the embedded V4
+verifier directly and rejects the transaction if the native library is absent,
+the proof is malformed, the authenticated root is unknown, a shared nullifier
+or commitment is reused, or the Shield4 link tag has already been spent.

@@ -54,19 +54,27 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
                 .map(|v| v.value()),
         ));
     }
+    let v4 = (8..=10).contains(&operation);
     let ownership = operation == 6 || operation == 7;
     let public_count = if ownership {
         OWNER_PUBLIC_WORDS
     } else {
-        PUBLIC_WORDS
+        if v4 { PUBLIC_WORDS_V4 } else { PUBLIC_WORDS }
     };
     let prefix = 8 + public_count * 8;
-    if data.len() < prefix || &data[..8] != if ownership { b"TKMS3OWN" } else { b"TKMS3STK" } {
+    let expected_magic = if ownership {
+        b"TKMS3OWN" as &[u8]
+    } else if v4 {
+        b"TKMS4STK" as &[u8]
+    } else {
+        b"TKMS3STK" as &[u8]
+    };
+    if data.len() < prefix || &data[..8] != expected_magic {
         return Err("invalid request".into());
     }
     let public = words(&data[8..prefix])?;
     let input = &data[prefix..];
-    if operation == 1 || operation == 7 {
+    if operation == 1 || operation == 7 || operation == 8 {
         if input.len() < 4 {
             return Err("truncated proof".into());
         }
@@ -76,6 +84,8 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
         }
         if ownership {
             verify_owner(&public, &words(&input[4..])?)?;
+        } else if operation == 8 {
+            verify_spend_v4(&public, &words(&input[4..])?)?;
         } else {
             verify_spend(&public, &words(&input[4..])?)?;
         }
@@ -105,7 +115,13 @@ fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
             out.extend(bytes(&p));
             out
         }),
+        9 => prove_spend_v4(&public, &secret, &path).map(|p| {
+            let mut out = (p.len() as u32).to_le_bytes().to_vec();
+            out.extend(bytes(&p));
+            out
+        }),
         3 => describe_spend(&public, &secret, &path).map(|d| bytes(&d)),
+        10 => describe_spend_v4(&public, &secret, &path).map(|d| bytes(&d)),
         _ => Err("invalid operation".into()),
     };
     secret.fill(0);
@@ -127,7 +143,10 @@ pub unsafe extern "C" fn tkm_shield3_call(
     if input.is_null()
         || output.is_null()
         || written.is_null()
-        || length > 8 + PUBLIC_WORDS * 8 + 4 + MAX_PROOF_WORDS * 8
+        // Shield4 adds five public field words for its linkability tag. Keep
+        // the native ABI bound large enough for that envelope while retaining
+        // the same fixed proof-size cap.
+        || length > 8 + PUBLIC_WORDS_V4 * 8 + 4 + MAX_PROOF_WORDS * 8
         || capacity > 4 + MAX_PROOF_WORDS * 8
     {
         return 1;

@@ -1328,6 +1328,13 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 				err = core.ValidateAntarticalStampRegistrationState(pool.currentState, from, tx.Data(), head.Time)
 			}
 		}
+		if err == nil && antartical && core.HasShieldedV4Prefix(tx.Data()) {
+			var e *core.ShieldedV4Transaction
+			e, _, err = core.DecodeShieldedV4Transaction(tx.Data())
+			if err == nil {
+				err = core.ValidateShieldedV4Time(e, head.Time)
+			}
+		}
 		if err == nil && antartical && core.HasShieldedV3Prefix(tx.Data()) {
 			var e *core.ShieldedV3Transaction
 			e, _, err = core.DecodeShieldedV3Transaction(tx.Data())
