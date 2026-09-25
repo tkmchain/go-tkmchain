@@ -2,6 +2,7 @@ package com.tkmchain.node;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -24,6 +25,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -35,6 +37,17 @@ public class MainActivity extends Activity {
     private static final String NODE_ASSET = "gtkm";
     private static final String PROVER_ASSET = "shielded-payout-prover";
     private static final String CXX_ASSET = "libc++_shared.so";
+    private static final String ORBOT_PACKAGE = "org.torproject.android";
+    private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
+    private static final String[] TOR_BOOTNODES = {
+            "4aof7abdduh4vftejgdpdfqeosvxxco3xmpu4uqypnpdbi7wjuzfqhqd.onion",
+            "eaoerarabizbzwbbawjrlcyawnrnoobj3ndy3oh627hwl5rbmedukoqd.onion"
+    };
+    private static final String TOR_BOOTNODE_ENODES =
+            "enode://9f8ff5bda3629e9da4b2f1f4d4bd2385f38a382fa7f063b7f21c913411ef852dd224c7ee292450d587c3cbee5bd2d4a79999f0b9002070d7a559f8fe9a04baa2@4aof7abdduh4vftejgdpdfqeosvxxco3xmpu4uqypnpdbi7wjuzfqhqd.onion:3000?discport=0," +
+            "enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@eaoerarabizbzwbbawjrlcyawnrnoobj3ndy3oh627hwl5rbmedukoqd.onion:3000?discport=0";
+    private static final int[] TOR_SOCKS_PORTS = {9050, 9150};
+    private static final int TOR_P2P_PORT = 3000;
     private static final int GUI_PORT = 8081;
     private static final String GUI_URL = "http://127.0.0.1:" + GUI_PORT + "/";
     private static final String HEALTH_URL = "http://127.0.0.1:" + GUI_PORT + "/healthz";
@@ -52,6 +65,7 @@ public class MainActivity extends Activity {
     private TextView logView;
     private Button restartBtn;
     private Thread probeThread;
+    private Thread torThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -246,7 +260,79 @@ public class MainActivity extends Activity {
 
     private void startNode() {
         if (probeThread != null) probeThread.interrupt();
+        if (torThread != null) torThread.interrupt();
 
+        setStatusDot(Color.YELLOW);
+        setStatus("connecting to the TKM Tor network\u2026");
+        main.removeCallbacks(showWeb);
+        web.stopLoading();
+        web.loadData("<html><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"margin:0;background:#111316;color:#eee;font:16px sans-serif;padding:48px 24px\"><h1 style=\"color:#f0b90b\">TKM Wallet</h1><h2>Starting your wallet</h2><p style=\"color:#a9afb9;line-height:1.7\">Connecting to your local node. The first setup downloads verified proof files and can take a few minutes.</p></body></html>", "text/html", "UTF-8");
+
+        if (!requestOrbot()) {
+            setStatus("Tor is unavailable. Install Orbot, then tap RESTART.");
+            setStatusDot(Color.RED);
+            return;
+        }
+        torThread = new Thread(this::waitForTorThenStart, "tor-preflight");
+        torThread.setDaemon(true);
+        torThread.start();
+    }
+
+    private boolean requestOrbot() {
+        try {
+            getPackageManager().getApplicationInfo(ORBOT_PACKAGE, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+        try {
+            sendBroadcast(new Intent(ORBOT_START_ACTION).setPackage(ORBOT_PACKAGE));
+            Intent launch = getPackageManager().getLaunchIntentForPackage(ORBOT_PACKAGE);
+            if (launch != null) startActivity(launch);
+            return true;
+        } catch (RuntimeException e) {
+            appendLog("[wallet] could not start Orbot: " + e.getMessage() + "\n");
+            return false;
+        }
+    }
+
+    private void waitForTorThenStart() {
+        long deadline = System.currentTimeMillis() + 3 * 60 * 1000;
+        while (!shuttingDown && System.currentTimeMillis() < deadline) {
+            for (int port : TOR_SOCKS_PORTS) {
+                if (canReachOnion(port)) {
+                    String proxy = "socks5://127.0.0.1:" + port;
+                    main.post(() -> launchNode(proxy));
+                    return;
+                }
+            }
+            main.post(() -> setStatus("waiting for Tor to reach a TKM onion peer\u2026"));
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        main.post(() -> {
+            if (!shuttingDown) setStatus("Tor did not reach a TKM onion peer. Open Orbot and tap RESTART.");
+            setStatusDot(Color.RED);
+        });
+    }
+
+    private boolean canReachOnion(int socksPort) {
+        Proxy proxy = new Proxy(Proxy.Type.SOCKS,
+                InetSocketAddress.createUnresolved("127.0.0.1", socksPort));
+        for (String onion : TOR_BOOTNODES) {
+            try (Socket socket = new Socket(proxy)) {
+                socket.connect(InetSocketAddress.createUnresolved(onion, TOR_P2P_PORT), 8000);
+                return true;
+            } catch (IOException ignored) {
+                // Try the second bootstrap onion and then the alternate SOCKS port.
+            }
+        }
+        return false;
+    }
+
+    private List<String> nodeCommand(String proxy) {
         File bin = new File(binDir, NODE_ASSET);
         List<String> cmd = new ArrayList<>();
         cmd.add(bin.getAbsolutePath());
@@ -263,6 +349,14 @@ public class MainActivity extends Activity {
         cmd.add("snap");
         cmd.add("--cache");
         cmd.add("512");
+        cmd.add("--p2p.tor-socks5");
+        cmd.add(proxy);
+        cmd.add("--privacy.onion-only=false");
+        cmd.add("--bootnodes");
+        cmd.add(TOR_BOOTNODE_ENODES);
+        cmd.add("--nodiscover");
+        cmd.add("--nat");
+        cmd.add("none");
         cmd.add("--http");
         cmd.add("--http.addr");
         cmd.add("127.0.0.1");
@@ -277,13 +371,12 @@ public class MainActivity extends Activity {
         cmd.add(new File(binDir, PROVER_ASSET).getAbsolutePath());
         cmd.add("--tkmprover.config");
         cmd.add(new File(dataDir, "tkmprover/config.json").getAbsolutePath());
+        return cmd;
+    }
 
-        setStatusDot(Color.YELLOW);
-        setStatus("starting node\u2026");
-        main.removeCallbacks(showWeb);
-        web.stopLoading();
-        web.loadData("<html><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"margin:0;background:#111316;color:#eee;font:16px sans-serif;padding:48px 24px\"><h1 style=\"color:#f0b90b\">TKM Wallet</h1><h2>Starting your wallet</h2><p style=\"color:#a9afb9;line-height:1.7\">Connecting to your local node. The first setup downloads verified proof files and can take a few minutes.</p></body></html>", "text/html", "UTF-8");
-
+    private void launchNode(String proxy) {
+        List<String> cmd = nodeCommand(proxy);
+        setStatus("Tor connected \u2014 starting node\u2026");
         try {
             Intent start = new Intent(this, NodeKeepAliveService.class)
                     .setAction(NodeKeepAliveService.ACTION_START)
@@ -430,6 +523,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         shuttingDown = true;
         if (probeThread != null) probeThread.interrupt();
+        if (torThread != null) torThread.interrupt();
         // NodeKeepAliveService owns the process so minimizing or rotating the
         // Activity cannot stop synchronization.
         super.onDestroy();
