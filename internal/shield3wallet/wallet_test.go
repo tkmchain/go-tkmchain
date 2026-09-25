@@ -62,6 +62,9 @@ func (r *walletRPC) CallContext(_ context.Context, dest any, method string, args
 	case "tkmprivacy_shieldedV3Status":
 		fork := hexutil.Uint64(params.MainnetAntarticalTime)
 		result = status{Active: true, NativeVerifier: true, ActivationTime: &fork}
+	case "tkmprivacy_shieldedV4Status":
+		fork := hexutil.Uint64(params.MainnetAntarticalTime)
+		result = status{Active: true, NativeVerifier: true, ActivationTime: &fork}
 	case "eth_getTransactionCount":
 		result = hexutil.EncodeUint64(r.state.GetNonce(args[0].(common.Address)))
 	case "eth_gasPrice":
@@ -187,6 +190,16 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Logf("processed canonical transaction %s", tx.Hash())
 		rpc.transactions[tx.Hash()] = tx
 		if core.HasAntarticalStampPrefix(tx.Data()) {
+			return
+		}
+		if core.HasShieldedV4Prefix(tx.Data()) {
+			e, _, err := core.DecodeShieldedV4Transaction(tx.Data())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, out := range e.Outputs {
+				rpc.outputs = append(rpc.outputs, scanOutput{Commitment: out.Commitment, Incoming: out.Incoming, Outgoing: out.Outgoing, TransactionHash: tx.Hash()})
+			}
 			return
 		}
 		e, _, err := core.DecodeShieldedV3Transaction(tx.Data())
@@ -605,6 +618,30 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Fatal("accepted orphaned payment receipt")
 	}
 	rpc.reorg = false
+
+	// Shield4 uses the same authenticated output scan and full-chain tree while
+	// selecting a distinct native relation and envelope version.
+	v4Payment := big.NewInt(1_000_000_000_000_000_000)
+	v4Unsigned, err := BuildV4(ctx, rpc, seedA, a, pb, v4Payment, false)
+	if err != nil {
+		t.Fatal("Shield4 wallet build:", err)
+	}
+	v4 := sign(v4Unsigned, seedA)
+	if err := core.ValidateShieldedV4Proof(v4); err != nil {
+		t.Fatal("Shield4 wallet proof:", err)
+	}
+	process(v4)
+	v4Received, err := Scan(ctx, rpc, viewB)
+	v4Found := false
+	for _, history := range v4Received.History {
+		if history.Direction == "incoming" && history.TransactionHash == v4.Hash() && history.ValueWei == v4Payment.String() {
+			v4Found = true
+			break
+		}
+	}
+	if err != nil || !v4Found {
+		t.Fatalf("Shield4 recipient scan: %+v %v", v4Received, err)
+	}
 }
 
 func TestCarrotInspiredOutputKeyAndOutgoingViewScope(t *testing.T) {
