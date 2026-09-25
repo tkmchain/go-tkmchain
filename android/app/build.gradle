@@ -33,9 +33,22 @@ android {
         resValue "string", "publisher_name", System.getenv('TKM_PUBLISHER') ?: "TKMChain"
     }
 
-    // Executables are installed by Android from jniLibs, never writable assets.
-    sourceSets { main { assets.srcDirs = [] } }
-    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += ["**/libgtkm.so", "**/libtkmprover.so"] } }
+    // Gtkm and the prover are executable payloads, not JNI libraries. They are
+    // shipped as assets and copied to app-private storage before ProcessBuilder
+    // starts them. This avoids Android treating a .so-named executable as a
+    // native library and stripping its execute permission.
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+            // Do not package the legacy .so-named executable copies.
+            jniLibs.srcDirs = []
+        }
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    // These are already ELF binaries. Leaving them uncompressed keeps APK
+    // installation fast and lets AssetManager stream them without a second
+    // large decompression buffer.
+    aaptOptions { noCompress 'gtkm', 'shielded-payout-prover', 'libc++_shared.so' }
 
     signingConfigs {
         release {

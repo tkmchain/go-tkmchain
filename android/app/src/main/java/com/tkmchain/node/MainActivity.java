@@ -2,7 +2,6 @@ package com.tkmchain.node;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -17,36 +16,33 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
 
-    private static final String NODE_ASSET = "libgtkm.so";
-    private static final String PROVER_ASSET = "libtkmprover.so";
+    private static final String NODE_ASSET = "gtkm";
+    private static final String PROVER_ASSET = "shielded-payout-prover";
     private static final String CXX_ASSET = "libc++_shared.so";
     private static final int GUI_PORT = 8081;
     private static final String GUI_URL = "http://127.0.0.1:" + GUI_PORT + "/";
     private static final String HEALTH_URL = "http://127.0.0.1:" + GUI_PORT + "/healthz";
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Object procLock = new Object();
-
     private File binDir;
     private File dataDir;
     private File logFile;
-    private Process nodeProc;
     private boolean shuttingDown = false;
 
     private TextView status;
@@ -55,21 +51,17 @@ public class MainActivity extends Activity {
     private ScrollView logScroll;
     private TextView logView;
     private Button restartBtn;
-    private Thread pumpThread;
     private Thread probeThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        Intent keepAlive = new Intent(this, NodeKeepAliveService.class);
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            startForegroundService(keepAlive);
-        } else {
-            startService(keepAlive);
-        }
-
-        binDir = new File(getApplicationInfo().nativeLibraryDir);
+        // Executables are extracted from APK assets into an app-private directory.
+        // Running directly from nativeLibraryDir is not reliable across Android
+        // versions: the package linker may strip execute permissions from files
+        // whose names end in .so, and ProcessBuilder then reports only EACCES.
+        binDir = new File(getFilesDir(), "bin");
         dataDir = new File(getFilesDir(), "node");
         logFile = new File(getFilesDir(), "node.log");
 
@@ -168,24 +160,92 @@ public class MainActivity extends Activity {
     }
 
     private boolean prepareAssets() {
-        for (String name : new String[]{NODE_ASSET, PROVER_ASSET}) {
-            File binary = new File(binDir, name);
-            if (!binary.isFile() || !binary.canExecute()) {
-                setStatus("Wallet installation is incomplete. Install the ARM64 APK again without clearing wallet data.");
-                setStatusDot(Color.RED);
-                return false;
+        try {
+            if (!binDir.exists() && !binDir.mkdirs()) {
+                throw new IOException("cannot create " + binDir);
             }
+            installAsset(NODE_ASSET, true);
+            installAsset(PROVER_ASSET, true);
+            installAsset(CXX_ASSET, false);
+            for (String name : new String[]{NODE_ASSET, PROVER_ASSET}) {
+                File binary = new File(binDir, name);
+                if (!binary.isFile() || !binary.canExecute() || binary.length() == 0) {
+                    throw new IOException(name + " is not executable");
+                }
+            }
+            return true;
+        } catch (IOException | NoSuchAlgorithmException e) {
+            appendLog("[wallet] executable setup failed: " + e.getMessage() + "\n");
+            setStatus("Wallet installation is incomplete: " + e.getMessage());
+            setStatusDot(Color.RED);
+            return false;
         }
-        return true;
+    }
+
+    private void installAsset(String assetName, boolean executable)
+            throws IOException, NoSuchAlgorithmException {
+        File target = new File(binDir, assetName);
+        String sourceDigest = digestAsset(assetName);
+        if (target.isFile() && target.length() > 0 && sourceDigest.equals(digestFile(target))) {
+            setPermissions(target, executable);
+            return;
+        }
+
+        File temporary = new File(binDir, "." + assetName + ".tmp");
+        try (InputStream in = getAssets().open(assetName);
+             OutputStream out = new FileOutputStream(temporary)) {
+            byte[] buffer = new byte[1024 * 1024];
+            int n;
+            while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
+            out.flush();
+        }
+        if (!sourceDigest.equals(digestFile(temporary))) {
+            temporary.delete();
+            throw new IOException("asset verification failed for " + assetName);
+        }
+        setPermissions(temporary, executable);
+        if (target.exists() && !target.delete()) {
+            temporary.delete();
+            throw new IOException("cannot replace " + target);
+        }
+        if (!temporary.renameTo(target)) {
+            temporary.delete();
+            throw new IOException("cannot install " + target);
+        }
+        setPermissions(target, executable);
+    }
+
+    private String digestAsset(String assetName) throws IOException, NoSuchAlgorithmException {
+        try (InputStream in = getAssets().open(assetName)) {
+            return digest(in);
+        }
+    }
+
+    private String digestFile(File file) throws IOException, NoSuchAlgorithmException {
+        try (InputStream in = new FileInputStream(file)) {
+            return digest(in);
+        }
+    }
+
+    private String digest(InputStream in) throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] buffer = new byte[1024 * 1024];
+        int n;
+        while ((n = in.read(buffer)) != -1) digest.update(buffer, 0, n);
+        StringBuilder out = new StringBuilder(64);
+        for (byte b : digest.digest()) out.append(String.format("%02x", b & 0xff));
+        return out.toString();
+    }
+
+    private void setPermissions(File file, boolean executable) throws IOException {
+        if (!file.setReadable(true, true) || !file.setWritable(true, true) ||
+                (executable && !file.setExecutable(true, true))) {
+            throw new IOException("cannot set permissions on " + file);
+        }
     }
 
     private void startNode() {
-        if (nodeProc != null) {
-            nodeProc.destroy();
-            nodeProc = null;
-        }
         if (probeThread != null) probeThread.interrupt();
-        if (pumpThread != null) pumpThread.interrupt();
 
         File bin = new File(binDir, NODE_ASSET);
         List<String> cmd = new ArrayList<>();
@@ -225,60 +285,23 @@ public class MainActivity extends Activity {
         web.loadData("<html><meta name=viewport content=\"width=device-width,initial-scale=1\"><body style=\"margin:0;background:#111316;color:#eee;font:16px sans-serif;padding:48px 24px\"><h1 style=\"color:#f0b90b\">TKM Wallet</h1><h2>Starting your wallet</h2><p style=\"color:#a9afb9;line-height:1.7\">Connecting to your local node. The first setup downloads verified proof files and can take a few minutes.</p></body></html>", "text/html", "UTF-8");
 
         try {
-            Process p = launch(cmd, bin);
-            synchronized (procLock) {
-                nodeProc = p;
+            Intent start = new Intent(this, NodeKeepAliveService.class)
+                    .setAction(NodeKeepAliveService.ACTION_START)
+                    .putStringArrayListExtra(NodeKeepAliveService.EXTRA_COMMAND, new ArrayList<>(cmd))
+                    .putExtra(NodeKeepAliveService.EXTRA_WORK_DIR, dataDir.getAbsolutePath())
+                    .putExtra(NodeKeepAliveService.EXTRA_LOG_FILE, logFile.getAbsolutePath())
+                    .putExtra(NodeKeepAliveService.EXTRA_LIBRARY_DIR, binDir.getAbsolutePath());
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(start);
+            } else {
+                startService(start);
             }
-            pumpThread = new Thread(() -> pump(p), "node-log");
-            pumpThread.setDaemon(true);
-            pumpThread.start();
-            probeThread = new Thread(() -> probe(p), "node-probe");
+            probeThread = new Thread(this::probe, "node-probe");
             probeThread.setDaemon(true);
             probeThread.start();
-        } catch (IOException e) {
+        } catch (RuntimeException e) {
             setStatus("spawn failed: " + e.getMessage());
             setStatusDot(Color.RED);
-        }
-    }
-
-    private Process launch(List<String> cmd, File bin) throws IOException {
-        // APK native libraries are installed into Android's executable code directory.
-        // Never copy executable code into writable app data or invoke linker64.
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.environment().put("LD_LIBRARY_PATH", binDir.getAbsolutePath());
-        pb.directory(dataDir);
-        pb.redirectErrorStream(true);
-        return pb.start();
-    }
-
-    private void pump(Process p) {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-            StringBuilder tail = new StringBuilder();
-            String line;
-            while ((line = r.readLine()) != null) {
-                String l = line + "\n";
-                synchronized (tailBufferLock) {
-                    tailBuffer.add(l);
-                    while (tailBuffer.size() > 400) tailBuffer.remove(0);
-                }
-                appendLog(l);
-                if (tail.length() > 600) tail.delete(0, tail.length() / 2);
-                tail.append(line).append('\n');
-                String shown = tail.toString();
-                // Detailed output belongs in diagnostics, not the wallet header.
-            }
-        } catch (IOException ignored) {
-        }
-        if (!shuttingDown && nodeProc == p) {
-            int exit;
-            try { exit = p.waitFor(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
-            main.post(() -> {
-                if (!shuttingDown) {
-                    setStatus("node exited (code " + exit + ") \u2014 tap RESTART");
-                    setStatusDot(Color.RED);
-                }
-                if (nodeProc == p) nodeProc = null;
-            });
         }
     }
 
@@ -314,18 +337,60 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void probe(Process expected) {
+    private void probe() {
+        long started = System.currentTimeMillis();
         long deadline = System.currentTimeMillis() + 10 * 60 * 1000;
-        while (!shuttingDown && nodeProc == expected && expected.isAlive()) {
+        while (!shuttingDown) {
             if (System.currentTimeMillis() > deadline) {
                 main.post(() -> { if (!shuttingDown) setStatus("timeout waiting for dashboard"); setStatusDot(Color.RED); });
                 return;
             }
             if (health()) {
-                main.post(() -> { if (nodeProc == expected) showWeb.run(); });
+                main.post(showWeb);
                 return;
             }
+            if (System.currentTimeMillis() - started > 3000) {
+                String failure = serviceFailure();
+                if (failure != null) {
+                    main.post(() -> {
+                        if (!shuttingDown) setStatus(failure + " — tap RESTART");
+                        setStatusDot(Color.RED);
+                    });
+                    return;
+                }
+            }
             try { Thread.sleep(700); } catch (InterruptedException e) { return; }
+        }
+    }
+
+    private String serviceFailure() {
+        String text = readLogTail();
+        int request = text.lastIndexOf("[tkm-service] node launch requested");
+        if (request < 0) return null;
+        String[] markers = {"[tkm-service] node launch failed:", "[tkm-service] node exited (code "};
+        int started = text.lastIndexOf("[tkm-service] node started");
+        for (String marker : markers) {
+            int start = text.lastIndexOf(marker);
+            if (start < request) continue;
+            // An old process can finish just after a restart was requested.
+            // Ignore that exit if the replacement process started afterward.
+            if (marker.contains("node exited") && started >= request && start < started) continue;
+            int end = text.indexOf('\n', start);
+            if (end < 0) end = text.length();
+            return text.substring(start, end).trim();
+        }
+        return null;
+    }
+
+    private String readLogTail() {
+        try (FileInputStream in = new FileInputStream(logFile)) {
+            byte[] all = new byte[16 * 1024];
+            long skip = Math.max(0, logFile.length() - all.length);
+            while (skip > 0) skip -= in.skip(skip);
+            int n = in.read(all);
+            return n > 0 ? new String(all, 0, n) : "";
+        } catch (IOException ignored) {
+            return "";
         }
     }
 
@@ -364,14 +429,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         shuttingDown = true;
-        Process p;
-        synchronized (procLock) {
-            p = nodeProc;
-            nodeProc = null;
-        }
-        if (p != null) p.destroy();
         if (probeThread != null) probeThread.interrupt();
-        if (pumpThread != null) pumpThread.interrupt();
+        // NodeKeepAliveService owns the process so minimizing or rotating the
+        // Activity cannot stop synchronization.
         super.onDestroy();
     }
 
@@ -387,6 +447,4 @@ public class MainActivity extends Activity {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
-    private final java.util.List<String> tailBuffer = new java.util.LinkedList<>();
-    private final Object tailBufferLock = new Object();
 }

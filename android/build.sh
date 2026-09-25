@@ -27,7 +27,7 @@ RX_SRC_DIR="$RX_SRC/src"
 RX_BUILD="$ROOT/build/_workspace/randomx/build-android-arm64"
 NDK_API=24
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-APP="$SCRIPT_DIR/app/src/main/jniLibs/arm64-v8a"
+APP="$SCRIPT_DIR/app/src/main/assets"
 
 echo "==> Android SDK:  $ANDROID_HOME"
 echo "==> Android NDK:  $ANDROID_NDK_HOME"
@@ -61,14 +61,16 @@ export CXX="$NDK_BIN/aarch64-linux-android${NDK_API}-clang++"
 export CGO_CFLAGS="-I$RX_SRC_DIR"
 export CGO_LDFLAGS="-L$RX_BUILD -lrandomx -static-libstdc++ -lm -ldl -llog"
 SHIELD3_RUST_TARGET=aarch64-linux-android "$ROOT/scripts/shield3-build.sh"
-(cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$APP/libgtkm.so" ./cmd/gtkm)
-file --brief "$APP/libgtkm.so"
+(cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$APP/gtkm" ./cmd/gtkm)
+chmod 0700 "$APP/gtkm"
+file --brief "$APP/gtkm"
 
 echo "==> Building shielded-payout-prover for android-arm64"
 unset CGO_CFLAGS
 export CGO_LDFLAGS="-lm -ldl -llog"
-(cd "$ROOT" && go build -tags "shield3,urfave_cli_no_docs" -o "$APP/libtkmprover.so" ./cmd/shielded-payout-prover)
-file --brief "$APP/libtkmprover.so"
+(cd "$ROOT" && go build -tags "shield3,urfave_cli_no_docs" -o "$APP/shielded-payout-prover" ./cmd/shielded-payout-prover)
+chmod 0700 "$APP/shielded-payout-prover"
+file --brief "$APP/shielded-payout-prover"
 
 echo "==> Copying libc++ runtime"
 cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$APP/libc++_shared.so"
