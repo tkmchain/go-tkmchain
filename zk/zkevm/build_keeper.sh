@@ -13,6 +13,10 @@ build_parallelism="${TKM_KEEPER_BUILD_PARALLELISM:-2}"
 # stale cmd/keeper/go.mod file.
 goroot="$(cd "${repo_root}" && go env GOROOT)"
 gomodcache="$(cd "${repo_root}" && go env GOMODCACHE)"
+if ! goroot="$(realpath -e -- "${goroot}")" || [[ "${goroot}" == "/" ]] || [[ ! -f "${goroot}/src/runtime/os_linux.go" ]]; then
+  printf 'invalid Go GOROOT %q; refusing to copy outside the Go toolchain\n' "${goroot}" >&2
+  exit 1
+fi
 # Go refuses overlays that replace files below GOMODCACHE. This happens when
 # automatic toolchain selection downloads the active toolchain there. Stage a
 # private copy only in that case; normal runner/toolcache installations use the
@@ -27,6 +31,10 @@ if [[ "${goroot}" == "${gomodcache}"/* ]]; then
 fi
 printf 'guest toolchain: %s\n' "${goroot}" >&2
 xsys_module="$(cd "${repo_root}" && GOOS=linux GOARCH=mipsle go list -mod=readonly -m -f '{{.Dir}}' golang.org/x/sys)"
+if ! xsys_module="$(realpath -e -- "${xsys_module}")" || [[ "${xsys_module}" == "/" ]] || [[ ! -f "${xsys_module}/unix/zsyscall_linux.go" ]]; then
+  printf 'invalid golang.org/x/sys module path %q; refusing to copy it\n' "${xsys_module}" >&2
+  exit 1
+fi
 staged_xsys="$(mktemp -d "${TMPDIR:-/tmp}/tkm-xsys.XXXXXX")"
 cp -R "${xsys_module}/." "${staged_xsys}/"
 chmod -R u+rwX "${staged_xsys}"
