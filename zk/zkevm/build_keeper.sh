@@ -11,12 +11,13 @@ build_parallelism="${TKM_KEEPER_BUILD_PARALLELISM:-2}"
 # The keeper is part of the repository's root Go module.  Keep all toolchain
 # and module lookups rooted there so a checkout no longer needs a second,
 # stale cmd/keeper/go.mod file.
-goroot="$(cd "${repo_root}" && go env GOROOT)"
-gomodcache="$(cd "${repo_root}" && go env GOMODCACHE)"
+goroot="$(cd "${repo_root}" && env -u GOROOT go env GOROOT)"
+gomodcache="$(cd "${repo_root}" && env -u GOROOT go env GOMODCACHE)"
 if ! goroot="$(realpath -e -- "${goroot}")" || [[ "${goroot}" == "/" ]] || [[ ! -f "${goroot}/src/runtime/os_linux.go" ]]; then
   printf 'invalid Go GOROOT %q; refusing to copy outside the Go toolchain\n' "${goroot}" >&2
   exit 1
 fi
+export GOROOT="${goroot}"
 # Go refuses overlays that replace files below GOMODCACHE. This happens when
 # automatic toolchain selection downloads the active toolchain there. Stage a
 # private copy only in that case; normal runner/toolcache installations use the
