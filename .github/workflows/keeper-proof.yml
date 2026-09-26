@@ -61,7 +61,10 @@ jobs:
       - name: Install keeper build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang libclang-dev llvm python3
+          sudo apt-get install --no-install-recommends -y clang libclang-dev llvm protobuf-compiler python3
+          command -v protoc
+          protoc --version
+          echo 'PROTOC=/usr/bin/protoc' >> "$GITHUB_ENV"
 
       - name: Configure bindgen and payload
         env:
