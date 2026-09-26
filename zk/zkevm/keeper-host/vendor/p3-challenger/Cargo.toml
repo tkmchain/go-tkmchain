@@ -1,0 +1,19 @@
+[package]
+name = "p3-challenger"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+p3-field = { git = "https://github.com/ProjectZKM/Plonky3", version = "0.1.0" }
+p3-util = { git = "https://github.com/ProjectZKM/Plonky3", version = "0.1.0" }
+p3-maybe-rayon = { git = "https://github.com/ProjectZKM/Plonky3", version = "0.1.0" }
+p3-symmetric = { path = "../p3-symmetric", version = "0.1.0" }
+tracing = "0.1.37"
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+p3-bn254-fr = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-koala-bear = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-goldilocks = { git = "https://github.com/ProjectZKM/Plonky3" }

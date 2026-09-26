@@ -13,6 +13,15 @@ tonic-build = { path = "vendor/tonic-build" }
 lru = { path = "vendor/lru" }
 vergen = { path = "vendor/vergen" }
 
+[patch."https://github.com/ProjectZKM/Plonky3"]
+p3-field = { path = "vendor/p3-field" }
+p3-challenger = { path = "vendor/p3-challenger" }
+p3-symmetric = { path = "vendor/p3-symmetric" }
+
+[patch."https://github.com/ProjectZKM/Ziren"]
+zkm-recursion-core = { path = "vendor/ziren-patches/zkm-recursion-core" }
+zkm-recursion-circuit = { path = "vendor/ziren-patches/zkm-recursion-circuit" }
+
 [dependencies]
 anyhow = "1.0"
 bincode = "1.3"

@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = ["zkm-recursion-core", "zkm-recursion-circuit"]
+
+[workspace.package]
+version = "1.2.7"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ProjectZKM/Ziren"
+keywords = ["zkMIPS"]
+categories = ["cryptography"]
+
+[workspace.dependencies]
+# Plonky3 is patched by the keeper manifest to the audited local copies.
+p3-air = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-field = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-challenger = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-symmetric = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-commit = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-dft = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-matrix = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-maybe-rayon = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-util = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-fri = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-koala-bear = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-bn254-fr = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-merkle-tree = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-poseidon2 = { git = "https://github.com/ProjectZKM/Plonky3" }
+p3-monty-31 = { git = "https://github.com/ProjectZKM/Plonky3" }
+
+zkm-recursion-core = { path = "zkm-recursion-core", version = "1.2.7" }
+zkm-recursion-circuit = { path = "zkm-recursion-circuit", version = "1.2.7" }
+zkm-recursion-compiler = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-recursion-derive = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-recursion-gnark-ffi = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-stark = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-core-machine = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-core-executor = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-primitives = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+zkm-derive = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
+
+itertools = "0.13.0"
+tracing = "0.1.37"
+serde = { version = "1.0", default-features = false }
+hashbrown = "0.14.5"
+rand = "0.8.5"
+sha2 = "0.10.8"
+zkhash = "0.2.0"
+ff = "0.13"
+backtrace = "0.3.71"
+static_assertions = "1.1.0"
+thiserror = "1.0.60"
+vec_map = "0.8.2"
+rayon = "1.10.0"
+num-traits = "0.2.19"
+range-set-blaze = "0.1.16"
+smallvec = { version = "1.13.2", features = ["const_generics", "const_new", "serde", "union", "write"] }
+test-artifacts = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b" }
