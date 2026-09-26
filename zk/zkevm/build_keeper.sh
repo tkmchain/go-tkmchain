@@ -7,6 +7,7 @@ hostname_source="${repo_root}/zk/zkevm/go-overlay/os_sys_linux.go"
 netpoll_source="${repo_root}/zk/zkevm/go-overlay/netpoll_epoll_linux.go"
 getrandom_source="${repo_root}/zk/zkevm/go-overlay/getrandom_linux.go"
 output="${1:-${repo_root}/build/keeper-mipsle}"
+build_parallelism="${TKM_KEEPER_BUILD_PARALLELISM:-2}"
 # The keeper is part of the repository's root Go module.  Keep all toolchain
 # and module lookups rooted there so a checkout no longer needs a second,
 # stale cmd/keeper/go.mod file.
@@ -120,6 +121,6 @@ PY
 
 (cd "${repo_root}" && \
   GOTOOLCHAIN=local GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
-    "${goroot}/bin/go" build -a -mod=mod -modfile "${modfile}" -tags ziren -trimpath -overlay "${overlay_json}" \
+    "${goroot}/bin/go" build -a -p "${build_parallelism}" -mod=mod -modfile "${modfile}" -tags ziren -trimpath -overlay "${overlay_json}" \
     -o "${output}" ./cmd/keeper)
 printf 'keeper guest: %s\n' "${output}"

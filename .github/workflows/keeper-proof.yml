@@ -29,6 +29,9 @@ jobs:
   prove:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
+    env:
+      GOMAXPROCS: '2'
+      TKM_KEEPER_BUILD_PARALLELISM: '2'
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -83,7 +86,11 @@ jobs:
           test -s build/keeper-input.rlp
 
       - name: Build keeper guest ELF
-        run: zk/zkevm/build_keeper.sh build/keeper-mipsle
+        run: |
+          (while sleep 30; do echo "keeper guest build still running"; done) &
+          heartbeat=$!
+          trap 'kill "$heartbeat" 2>/dev/null || true' EXIT
+          zk/zkevm/build_keeper.sh build/keeper-mipsle
 
       - name: Fetch locked Rust dependencies
         run: cargo +nightly-2025-08-17 fetch --locked --manifest-path zk/zkevm/keeper-host/Cargo.toml
