@@ -1,0 +1,15 @@
+[package]
+name = "tonic"
+version = "0.8.3"
+edition = "2021"
+license = "MIT"
+description = "Minimal local-only tonic compatibility crate for the TKM keeper"
+
+[dependencies]
+async-trait = "0.1.89"
+
+[features]
+default = []
+tls = []
+tls-roots = []
+transport = []

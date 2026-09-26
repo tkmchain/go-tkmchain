@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[patch.crates-io]
+# Ziren's local prover path imports only `tonic::async_trait`; its network
+# feature is disabled below. Use a tiny compatibility surface so the keeper
+# cannot link the unused h2/rustls/ring transport stack.
+tonic = { path = "vendor/tonic" }
+tonic-build = { path = "vendor/tonic-build" }
+
 [dependencies]
 anyhow = "1.0"
 bincode = "1.3"
