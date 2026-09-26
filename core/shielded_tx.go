@@ -232,6 +232,13 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		if err := ValidateAntarticalStampState(statedb, from, tx.To(), tx.Value(), tx.Data()); err != nil {
 			return err
 		}
+		// Private TVM transitions have their own native STARK and state update
+		// path in processPrivateTVM. Do not send this envelope through the
+		// legacy ShieldedTransaction decoder, which would reject it as a
+		// transparent transaction.
+		if HasPrivateTVMPrefix(tx.Data()) {
+			return nil
+		}
 	}
 
 	if HasShieldedV4Prefix(tx.Data()) && config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
@@ -257,6 +264,10 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 // nullifier and commitment state checks so txpool validation can reject malformed
 // or transparent post-privacy transactions without needing a StateDB.
 func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if HasPrivateTVMPrefix(tx.Data()) {
+		_, err := ValidatePrivateTVMBasics(config, blockNumber, blockTime, tx)
+		return err
+	}
 	if HasAntarticalStampPrefix(tx.Data()) {
 		return ValidateAntarticalStampBasics(config, blockNumber, blockTime, tx)
 	}

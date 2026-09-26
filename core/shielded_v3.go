@@ -390,6 +390,9 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 // ShieldedV3GasData prices the bounded proof at one gas per byte plus a fixed
 // verifier charge. Other envelope bytes retain ordinary calldata pricing.
 func ShieldedV3GasData(data []byte) ([]byte, uint64, error) {
+	if HasPrivateTVMPrefix(data) {
+		return PrivateTVMGasData(data)
+	}
 	if HasShieldedV4Prefix(data) {
 		return ShieldedV4GasData(data)
 	}

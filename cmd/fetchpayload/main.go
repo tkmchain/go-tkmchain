@@ -47,14 +47,23 @@ type Payload struct {
 
 func main() {
 	var (
-		rpcURL   = flag.String("rpc", "http://localhost:8545", "RPC endpoint URL")
-		blockArg = flag.String("block", "latest", `Block number: decimal, 0x-hex, or "latest"`)
-		format   = flag.String("format", "rlp", "Comma-separated output formats: rlp, hex, json")
-		outDir   = flag.String("out", "", "Output directory (default: current directory)")
+		rpcURL       = flag.String("rpc", "http://localhost:8545", "RPC endpoint URL or local IPC path")
+		blockArg     = flag.String("block", "latest", `Block number: decimal, 0x-hex, or "latest"`)
+		format       = flag.String("format", "rlp", "Comma-separated output formats: rlp, hex, json")
+		outDir       = flag.String("out", "", "Output directory (default: current directory)")
+		recoverState = flag.Bool("recover-state", false, "Use debug_recoverExecutionWitness to rebuild missing parent state")
+		timeoutArg   = flag.Duration("timeout", 0, "RPC timeout (default: 30s, or 30m with --recover-state)")
 	)
 	flag.Parse()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := *timeoutArg
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+		if *recoverState {
+			timeout = 30 * time.Minute
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Parse block number (nil means "latest" in ethclient).
@@ -85,9 +94,13 @@ func main() {
 
 	// Fetch the execution witness via the debug namespace.
 	var extWitness stateless.ExtWitness
-	err = client.Client().CallContext(ctx, &extWitness, "debug_executionWitness", rpc.BlockNumber(block.NumberU64()))
+	witnessMethod := "debug_executionWitness"
+	if *recoverState {
+		witnessMethod = "debug_recoverExecutionWitness"
+	}
+	err = client.Client().CallContext(ctx, &extWitness, witnessMethod, rpc.BlockNumber(block.NumberU64()))
 	if err != nil {
-		fatal("failed to fetch execution witness: %v", err)
+		fatal("failed to fetch execution witness with %s: %v", witnessMethod, err)
 	}
 
 	witness := new(stateless.Witness)

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -60,6 +61,80 @@ type BlockChain interface {
 	StateAt(header *types.Header) (*state.StateDB, error)
 }
 
+// StateAtWithRetry opens the state for a pool head while the trie backend is
+// finishing its commit. Path-based state writes are committed before the
+// chain-head event is published, but the path database can still be replacing
+// its disk layer when a pool reset observes that event. Retrying here avoids
+// treating that short hand-off window as a missing state database and keeps
+// the subpools from repeatedly logging misleading missing-trie errors.
+type StateAtProvider interface {
+	StateAt(header *types.Header) (*state.StateDB, error)
+}
+
+type LatestStateAtProvider interface {
+	StateAtProvider
+	CurrentBlock() *types.Header
+}
+
+func StateAtWithRetry(chain StateAtProvider, header *types.Header) (*state.StateDB, error) {
+	if chain == nil || header == nil {
+		return nil, errors.New("cannot open state for a nil chain or header")
+	}
+	var err error
+	// Path-state commits publish the head before the backing disk layer has
+	// finished becoming readable on slower disks. Keep the retry window long
+	// enough to cover that hand-off, while still returning a real error when a
+	// state root is genuinely unavailable.
+	const maxAttempts = 32
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var statedb *state.StateDB
+		statedb, err = chain.StateAt(header)
+		if err == nil {
+			return statedb, nil
+		}
+		if attempt+1 < maxAttempts {
+			delay := time.Duration(attempt+1) * 25 * time.Millisecond
+			if delay > 250*time.Millisecond {
+				delay = 250 * time.Millisecond
+			}
+			time.Sleep(delay)
+		}
+	}
+	return nil, err
+}
+
+// StateAtWithLatestRetry resolves a queued head notification to the newest
+// canonical head before opening its state. Path-state keeps only the current
+// root as a live layer; a notification can become stale while the next block
+// is committed, so retrying the old root alone can never succeed.
+func StateAtWithLatestRetry(chain LatestStateAtProvider, header *types.Header) (*types.Header, *state.StateDB, error) {
+	if chain == nil || header == nil {
+		return nil, nil, errors.New("cannot open state for a nil chain or header")
+	}
+	resolved := header
+	var err error
+	const maxAttempts = 32
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if latest := chain.CurrentBlock(); latest != nil && latest.Number != nil &&
+			(resolved.Number == nil || latest.Number.Cmp(resolved.Number) > 0) {
+			resolved = latest
+		}
+		var statedb *state.StateDB
+		statedb, err = chain.StateAt(resolved)
+		if err == nil {
+			return resolved, statedb, nil
+		}
+		if attempt+1 < maxAttempts {
+			delay := time.Duration(attempt+1) * 25 * time.Millisecond
+			if delay > 250*time.Millisecond {
+				delay = 250 * time.Millisecond
+			}
+			time.Sleep(delay)
+		}
+	}
+	return resolved, nil, err
+}
+
 // TxPool is an aggregator for various transaction specific pools, collectively
 // tracking all the transactions deemed interesting by the node. Transactions
 // enter the pool when they are received from the network or submitted locally.
@@ -90,9 +165,9 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := chain.StateAt(head)
+	statedb, err := StateAtWithRetry(chain, head)
 	if err != nil {
-		statedb, err = chain.StateAt(chain.Genesis().Header())
+		statedb, err = StateAtWithRetry(chain, chain.Genesis().Header())
 	}
 	if err != nil {
 		return nil, err
@@ -186,11 +261,19 @@ func (p *TxPool) loop(head *types.Header) {
 			// Try to inject a busy marker and start a reset if successful
 			select {
 			case resetBusy <- struct{}{}:
+				// Head notifications can queue while a reset is running. In
+				// path-state mode, older roots are deliberately removed from the
+				// live layer tree after they are persisted, so opening the state
+				// from a queued (stale) notification can produce a misleading
+				// "missing trie node" error. Always reset against the latest
+				// canonical head available when the reset starts.
 				// Updates the statedb with the new chain head. The head state may be
 				// unavailable if the initial state sync has not yet completed.
-				if statedb, err := p.chain.StateAt(newHead); err != nil {
+				resolvedHead, statedb, err := StateAtWithLatestRetry(p.chain, newHead)
+				if err != nil {
 					log.Error("Failed to reset txpool state", "err", err)
 				} else {
+					newHead = resolvedHead
 					p.stateLock.Lock()
 					p.state = statedb
 					p.stateLock.Unlock()

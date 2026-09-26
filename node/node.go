@@ -158,7 +158,7 @@ func New(conf *Config) (*Node, error) {
 		conf.HTTPModules = []string{
 			"eth", "net", "web3", "randomx", "tvm", "tkm",
 			"tkmphone", "tkmdomain", "emailvm", "tkmgov", "tkmaccount",
-			"tkminstitution", "tkmsupply", "tkmprivacy", "mainking",
+			"tkminstitution", "tkmsupply", "tkmprivacy", "mainking", "tkmprotocol",
 		}
 		conf.WSModules = append([]string(nil), conf.HTTPModules...)
 		conf.WSExposeAll = false

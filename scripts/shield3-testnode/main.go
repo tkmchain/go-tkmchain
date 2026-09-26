@@ -152,6 +152,7 @@ func run() (err error) {
 	chain.PrivacyCommitmentTime = zero
 	chain.PQMigrationRecoveryTime = zero
 	chain.ShanghaiTime = zero
+	chain.CancunTime = zero
 	chain.EDATime = zero
 	chain.KyotoTime = zero
 	chain.PhoneTime = zero

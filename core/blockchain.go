@@ -1353,7 +1353,11 @@ func (bc *BlockChain) Stop() {
 
 		// Force commit of current state
 		if err := bc.triedb.Commit(head.Root, true); err != nil {
-			log.Error("Failed to commit state", "err", err)
+			if bc.triedb.Scheme() == rawdb.PathScheme && strings.Contains(err.Error(), "disk layer") {
+				log.Debug("State already on disk during shutdown", "root", head.Root)
+			} else {
+				log.Error("Failed to commit state", "err", err)
+			}
 		}
 
 		// Force snapshot journal
@@ -1369,7 +1373,11 @@ func (bc *BlockChain) Stop() {
 	// Ensure state is saved after stop
 	if head != nil && head.Number.Uint64() > 0 {
 		if err := bc.triedb.Commit(head.Root, true); err != nil {
-			log.Error("Failed final state commit", "err", err)
+			if bc.triedb.Scheme() == rawdb.PathScheme && strings.Contains(err.Error(), "disk layer") {
+				log.Debug("State already on disk after shutdown", "root", head.Root)
+			} else {
+				log.Error("Failed final state commit", "err", err)
+			}
 		}
 	}
 	// Ensure that the entirety of the state snapshot is journaled to disk.

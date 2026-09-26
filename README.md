@@ -62,7 +62,7 @@ SOCKS5 on `127.0.0.1:9050`, configure a hidden service that forwards port
   --p2p.onion-hostname=<this-node>.onion \
   --bootnodes='enode://<peer-key>@<peer-id>.onion:3000?discport=0' \
   --http --http.addr=127.0.0.1 --http.port=8545 \
-  --http.api=eth,net,web3,tvm,tkm,tkmaccount,tkmdomain,tkmgov,tkminstitution,tkmsupply,tkmprivacy,miner,randomx \
+  --http.api=eth,net,web3,tvm,tkm,tkmaccount,tkmdomain,tkmgov,tkminstitution,tkmsupply,tkmprivacy,tkmprotocol,miner,randomx \
   --http.vhosts=localhost --http.corsdomain=localhost \
   --ws --ws.addr=127.0.0.1 --ws.port=8546 \
   --ws.api=eth,net,web3,tvm,tkm \

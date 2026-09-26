@@ -104,3 +104,9 @@ cmd/shielded-payout-prover/wallet_version_windows_amd64.syso
 # Local build byproducts
 /gtkm
 /build/wallet-signing/__pycache__/
+
+# ZK-EVM keeper build output and local proof fixtures
+/zk/zkevm/keeper-host/target/
+/build/fetchpayload
+/build/keeper-mipsle
+/*_payload.rlp

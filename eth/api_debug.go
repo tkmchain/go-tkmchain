@@ -24,7 +24,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
@@ -496,24 +495,27 @@ func (api *DebugAPI) StateSize(blockHashOrNumber *rpc.BlockNumberOrHash) (interf
 	}, nil
 }
 
-func (api *DebugAPI) ExecutionWitness(bn rpc.BlockNumberOrHash) (*stateless.ExtWitness, error) {
+func (api *DebugAPI) ExecutionWitness(ctx context.Context, bn rpc.BlockNumberOrHash) (*stateless.ExtWitness, error) {
+	return api.executionWitness(ctx, bn, false)
+}
+
+// RecoverExecutionWitness rebuilds missing parent state by replaying stored
+// blocks before generating the witness. It is intended for local operator use
+// over IPC; callers should expect substantial CPU and disk activity when the
+// requested state is far behind the head.
+func (api *DebugAPI) RecoverExecutionWitness(ctx context.Context, bn rpc.BlockNumberOrHash) (*stateless.ExtWitness, error) {
+	return api.executionWitness(ctx, bn, true)
+}
+
+func (api *DebugAPI) executionWitness(ctx context.Context, bn rpc.BlockNumberOrHash, recoverState bool) (*stateless.ExtWitness, error) {
 	bc := api.eth.blockchain
 	block, err := api.eth.APIBackend.BlockByNumberOrHash(context.Background(), bn)
 	if err != nil {
 		return &stateless.ExtWitness{}, fmt.Errorf("block %v not found", bn)
 	}
-	parent := bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
-	if parent == nil {
-		return &stateless.ExtWitness{}, fmt.Errorf("block %v found, but parent missing", bn)
-	}
-	config := core.ExecuteConfig{
-		WriteState:   false,
-		EnableTracer: false,
-		MakeWitness:  true,
-	}
-	result, err := bc.ProcessBlock(context.Background(), parent.Root, block, config)
+	witness, err := bc.BuildExecutionWitness(ctx, block, recoverState)
 	if err != nil {
 		return nil, err
 	}
-	return result.Witness().ToExtWitness(), nil
+	return witness.ToExtWitness(), nil
 }

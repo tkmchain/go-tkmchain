@@ -112,11 +112,12 @@ that original record.
 
 Every user transaction signer requires a confirmed consensus stamp; public
 value recipients/withdrawal recipients must be stamped too. Shield3 output
-owners prove membership in the separate depth-32 stamp registry. Registration
-is the narrowly checked exception for unstamped beneficiaries. Protocol rewards
-and pre-execution system calls remain separate. Removing local wallet checks
-does not bypass enforcing validators: a block containing an illegal transaction
-is rejected by nodes enforcing the consensus rule.
+owners prove membership in the separate depth-32 stamp registry. At Antartical,
+the transaction boundary admits only Shield3 and Shield4 envelopes, so stamp
+registration and other protocol actions must be represented inside a shielded
+envelope. Protocol rewards remain separate. Removing local wallet checks does
+not bypass enforcing validators: a block containing an illegal transaction is
+rejected by nodes enforcing the consensus rule.
 
 ## Sponsored stamp registration
 

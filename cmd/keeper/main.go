@@ -44,7 +44,14 @@ func init() {
 func main() {
 	input := getInput()
 	var payload Payload
-	rlp.DecodeBytes(input, &payload)
+	if err := rlp.DecodeBytes(input, &payload); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid keeper payload: %v\n", err)
+		os.Exit(14)
+	}
+	if payload.Block == nil || payload.Witness == nil || len(payload.Witness.Headers) == 0 {
+		fmt.Fprintln(os.Stderr, "invalid keeper payload: block and non-empty witness are required")
+		os.Exit(15)
+	}
 
 	chainConfig, err := getChainConfig(payload.ChainID)
 	if err != nil {
@@ -66,4 +73,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "stateless self-validation receipt root mismatch (cross: %x local: %x)\n", crossReceiptRoot, payload.Block.ReceiptHash())
 		os.Exit(12)
 	}
+	// In the Ziren build this commits the exact public statement proved by the
+	// guest. The default build keeps the same execution checks without pulling
+	// the zkVM runtime into ordinary node tooling.
+	commitKeeperPublicValues(payload, crossStateRoot, crossReceiptRoot)
 }

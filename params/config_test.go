@@ -447,8 +447,11 @@ func TestAntarticalForkSchedule(t *testing.T) {
 	if !MainnetChainConfig.IsAntartical(big.NewInt(0), MainnetAntarticalTime) {
 		t.Fatal("Antartical rules inactive at scheduled timestamp")
 	}
-	if EgyptChainConfig.IsAntartical(big.NewInt(0), MainnetAntarticalTime) {
-		t.Fatal("Antartical rules enabled for a different chain")
+	if EgyptChainConfig.AntarticalTime == nil || *EgyptChainConfig.AntarticalTime != 0 {
+		t.Fatalf("Egypt Antartical time = %v, want genesis activation", EgyptChainConfig.AntarticalTime)
+	}
+	if !EgyptChainConfig.IsAntartical(big.NewInt(0), 0) {
+		t.Fatal("Antartical rules inactive at Egypt genesis")
 	}
 }
 
@@ -459,7 +462,7 @@ func TestTkmnetRequiredForkSchedule(t *testing.T) {
 	if !MainnetChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime) {
 		t.Fatal("TKMNet requirement inactive at Antartical")
 	}
-	if EgyptChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime) {
-		t.Fatal("TKMNet requirement enabled for Egypt without a configured fork")
+	if !EgyptChainConfig.IsTkmnetRequired(big.NewInt(0), 0) {
+		t.Fatal("TKMNet requirement inactive at Egypt genesis")
 	}
 }

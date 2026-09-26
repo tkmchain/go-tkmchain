@@ -16,7 +16,10 @@ package shielded3
 int tkm_shield3_call(uint32_t, const uint8_t*, size_t, uint8_t*, size_t, size_t*);
 */
 import "C"
-import "unsafe"
+import (
+	"fmt"
+	"unsafe"
+)
 
 func NativeAvailable() bool { return true }
 func nativeCall(operation uint32, input []byte, limit int) ([]byte, error) {
@@ -28,7 +31,7 @@ func nativeCall(operation uint32, input []byte, limit int) ([]byte, error) {
 	status := C.tkm_shield3_call(C.uint32_t(operation), (*C.uint8_t)(unsafe.Pointer(&input[0])), C.size_t(len(input)), (*C.uint8_t)(unsafe.Pointer(&output[0])), C.size_t(limit), &written)
 	if status != 0 || uint64(written) > uint64(limit) {
 		clear(output)
-		return nil, ErrInvalidProof
+		return nil, fmt.Errorf("%w: native status=%d written=%d", ErrInvalidProof, int(status), uint64(written))
 	}
 	return output[:int(written)], nil
 }

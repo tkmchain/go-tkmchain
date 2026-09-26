@@ -22,6 +22,10 @@ pub const DOMAIN_NULLIFIER_KEY: u64 = 3005;
 pub const DOMAIN_ONETIME_KEY: u64 = 3006;
 pub const DOMAIN_SHIELD4_PROGRAM: u64 = 4004;
 pub const DOMAIN_SHIELD4_TAG: u64 = 4007;
+pub const DOMAIN_PRIVATE_TVM_LEAF: u64 = 5001;
+pub const PRIVATE_TVM_PUBLIC_WORDS: usize = 34;
+pub const PRIVATE_TVM_SECRET_WORDS: usize = 21;
+pub const PRIVATE_TVM_PATH_DIGESTS: usize = MERKLE_DEPTH;
 
 // Public word order: chain lo/hi, asset lo/hi, public value (eight u32 limbs),
 // transaction intent (sixteen u32 words), anchor (five field words),
@@ -591,6 +595,169 @@ pub fn prove_spend_v4(
 
 pub fn verify_spend_v4(public: &[u64], words: &[u64]) -> Result<(), String> {
     verify_program(spend_program_v4(), public_input_v4(public)?, words)
+}
+
+/// Frozen private TVM storage transition relation.
+///
+/// Public words are: chain id (2), TVM code hash (5), old root (5), new root
+/// (5), transaction intent (16), and operation (1; zero is a read and one is a
+/// write). Secret words are the code hash (5), storage key (5), old value (5),
+/// new value (5), and leaf index (1), plus one 32-level Merkle path. The same
+/// path is supplied twice as nondeterminism so the relation proves both roots
+/// against one authenticated state tree.
+fn private_tvm_program() -> Program {
+    let mut a = Assembly(String::new());
+    for (length, base, instruction) in [
+        (PRIVATE_TVM_PUBLIC_WORDS, 0, "read_io"),
+        (PRIVATE_TVM_SECRET_WORDS, 1000, "divine"),
+    ] {
+        for i in (0..length).step_by(5) {
+            let count = (length - i).min(5);
+            a.emit(&format!("{instruction} {count}"));
+            for left in 0..count / 2 {
+                let right = count - 1 - left;
+                if left == 0 {
+                    a.emit(&format!("swap {right}"));
+                } else {
+                    a.emit(&format!("swap {left} swap {right} swap {left}"));
+                }
+            }
+            a.emit(&format!("push {} write_mem {count} pop 1", base + i));
+        }
+    }
+
+    // The chain id, code hash, and intent are domain-separated public inputs.
+    a.load(0);
+    a.load(1);
+    a.emit("add push 0 eq push 0 eq assert");
+    a.emit("push 1");
+    for i in 2..7 {
+        a.load(i);
+        a.emit("push 0 eq mul");
+    }
+    a.emit("push 0 eq assert");
+    a.emit("push 1");
+    for i in 17..33 {
+        a.load(i);
+        a.emit("push 0 eq mul");
+    }
+    a.emit("push 0 eq assert");
+    a.load(33);
+    a.emit("dup 0 push 0 eq swap 1 push 1 eq add assert");
+    a.u32(1020);
+
+    // The hidden contract identity must match the public code hash. The
+    // storage tree itself is keyed by the hidden storage key, so the empty
+    // tree root is independent of which contract is accessed.
+    for i in 0..5 {
+        a.load(1000 + i);
+        a.load(2 + i);
+        a.emit("eq assert");
+    }
+
+    // Old value -> old root.
+    let mut old_leaf = vec![Word::Literal(DOMAIN_PRIVATE_TVM_LEAF)];
+    old_leaf.extend((2..7).map(Word::Memory));
+    old_leaf.extend((1005..1015).map(Word::Memory));
+    a.hash(old_leaf);
+    a.store_digest(300);
+    a.load(1020);
+    a.digest(300);
+    a.emit("call merkle_path");
+    a.assert_digest(7);
+    a.emit("push 0 eq assert");
+
+    // New value -> new root using the exact same hidden key and Merkle path.
+    let mut new_leaf = vec![Word::Literal(DOMAIN_PRIVATE_TVM_LEAF)];
+    new_leaf.extend((2..7).map(Word::Memory));
+    new_leaf.extend((1005..1010).map(Word::Memory));
+    new_leaf.extend((1015..1020).map(Word::Memory));
+    a.hash(new_leaf);
+    a.store_digest(300);
+    a.load(1020);
+    a.digest(300);
+    a.emit("call merkle_path");
+    a.assert_digest(12);
+    a.emit("push 0 eq assert");
+
+    // A read cannot change the committed value. A write may change it, but
+    // the new root remains fully bound to the hidden key and new value.
+    a.load(33);
+    a.emit("push 0 eq skiz call private_tvm_read");
+    a.load(33);
+    a.emit("push 1 eq skiz call private_tvm_write");
+    a.emit("halt");
+    a.emit("private_tvm_read:");
+    a.emit("push 1");
+    for i in 0..5 {
+        a.load(1010 + i);
+        a.load(1015 + i);
+        a.emit("eq mul");
+    }
+    a.emit("push 0 eq assert return");
+    a.emit("private_tvm_write:");
+    let mut expected = vec![Word::Literal(DOMAIN_PRIVATE_TVM_LEAF + 1)];
+    expected.extend((2..7).map(Word::Memory));
+    expected.extend((1005..1010).map(Word::Memory));
+    expected.extend((1010..1015).map(Word::Memory));
+    expected.extend((17..33).map(Word::Memory));
+    a.hash(expected);
+    a.store_digest(350);
+    for i in 0..5 {
+        a.load(1015 + i);
+        a.load(350 + i);
+        a.emit("eq assert");
+    }
+    a.emit("return");
+    a.emit("merkle_path: push 32 push 320 write_mem 1 pop 1 call merkle_loop return");
+    a.emit("merkle_loop: merkle_step push 320 read_mem 1 pop 1 push -1 add dup 0 push 320 write_mem 1 pop 1 push 0 eq skiz return recurse");
+    a.emit("check_u32: read_mem 1 pop 1 split pop 1 push 0 eq assert return");
+    Program::from_code(&a.0).expect("valid, fixed private TVM assembly")
+}
+
+fn private_tvm_input(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
+    if words.len() != PRIVATE_TVM_PUBLIC_WORDS {
+        return Err("invalid private TVM public input length".into());
+    }
+    if words[0] == 0 && words[1] == 0 {
+        return Err("private TVM chain id is zero".into());
+    }
+    if words[2..7].iter().all(|&v| v == 0) {
+        return Err("private TVM code hash is zero".into());
+    }
+    if words[17..33].iter().all(|&v| v == 0) {
+        return Err("private TVM intent is zero".into());
+    }
+    if words[33] > 1 {
+        return Err("invalid private TVM operation".into());
+    }
+    canonical_words(words, PRIVATE_TVM_PUBLIC_WORDS)
+}
+
+pub fn prove_private_tvm(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> Result<Vec<u64>, String> {
+    let public = private_tvm_input(public)?;
+    if secret.len() != PRIVATE_TVM_SECRET_WORDS || path.len() != PRIVATE_TVM_PATH_DIGESTS {
+        return Err("invalid private TVM witness length".into());
+    }
+    let tokens = canonical_words(secret, PRIVATE_TVM_SECRET_WORDS)?;
+    let path = path
+        .iter()
+        .map(|d| canonical_words(d, 5).map(|w| Digest::new(w.try_into().unwrap())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let digests = path
+        .iter()
+        .cloned()
+        .chain(path.iter().cloned())
+        .collect::<Vec<_>>();
+    prove_program(private_tvm_program(), public, tokens, digests)
+}
+
+pub fn verify_private_tvm(public: &[u64], proof: &[u64]) -> Result<(), String> {
+    verify_program(private_tvm_program(), private_tvm_input(public)?, proof)
 }
 
 fn public_input_v4(words: &[u64]) -> Result<Vec<BFieldElement>, String> {

@@ -34,6 +34,105 @@ fn pair(left: [u64; 5], right: [u64; 5]) -> [u64; 5] {
     .values()
     .map(|v| v.value())
 }
+
+fn private_tvm_leaf(code: &[u64], key: &[u64], value: &[u64]) -> [u64; 5] {
+    let mut words = vec![DOMAIN_PRIVATE_TVM_LEAF];
+    words.extend(code);
+    words.extend(key);
+    words.extend(value);
+    hash(&words)
+}
+
+fn private_tvm_root(leaf: [u64; 5], index: u64, path: &[[u64; 5]]) -> [u64; 5] {
+    let mut root = leaf;
+    let mut index = index;
+    for sibling in path {
+        root = if index & 1 == 0 {
+            pair(root, *sibling)
+        } else {
+            pair(*sibling, root)
+        };
+        index >>= 1;
+    }
+    root
+}
+
+#[test]
+fn private_tvm_state_transition_is_real_and_bound() {
+    let code = [11, 22, 33, 44, 55];
+    let key = [101, 102, 103, 104, 105];
+    let old_value = [201, 202, 203, 204, 205];
+    let index = 17u64;
+    let path = (0..MERKLE_DEPTH)
+        .map(|i| hash(&[7000, i as u64]))
+        .collect::<Vec<_>>();
+    let old_root = private_tvm_root(private_tvm_leaf(&code, &key, &old_value), index, &path);
+    let mut public = vec![0; PRIVATE_TVM_PUBLIC_WORDS];
+    public[0] = 8979;
+    public[2..7].copy_from_slice(&code);
+    public[7..12].copy_from_slice(&old_root);
+    for (i, word) in public[17..33].iter_mut().enumerate() {
+        *word = 900 + i as u64;
+    }
+    public[33] = 1;
+    let mut expected = vec![DOMAIN_PRIVATE_TVM_LEAF + 1];
+    expected.extend(code);
+    expected.extend(key);
+    expected.extend(old_value);
+    expected.extend(&public[17..33]);
+    let new_value = hash(&expected);
+    let new_root = private_tvm_root(private_tvm_leaf(&code, &key, &new_value), index, &path);
+    public[12..17].copy_from_slice(&new_root);
+    let mut secret = vec![0; PRIVATE_TVM_SECRET_WORDS];
+    secret[..5].copy_from_slice(&code);
+    secret[5..10].copy_from_slice(&key);
+    secret[10..15].copy_from_slice(&old_value);
+    secret[15..20].copy_from_slice(&new_value);
+    secret[20] = index;
+    let tokens = canonical_words(&secret, PRIVATE_TVM_SECRET_WORDS).unwrap();
+    let digests = path
+        .iter()
+        .chain(path.iter())
+        .map(|d| Digest::new(d.map(BFieldElement::new)))
+        .collect::<Vec<_>>();
+    let valid_run = VM::run(
+        private_tvm_program(),
+        PublicInput::new(canonical_words(&public, PRIVATE_TVM_PUBLIC_WORDS).unwrap()),
+        NonDeterminism::new(tokens).with_digests(digests),
+    );
+    assert!(
+        valid_run.is_ok(),
+        "valid private TVM transition rejected: {valid_run:?}"
+    );
+    let proof = prove_private_tvm(&public, &secret, &path).expect("real private TVM proof");
+    verify_private_tvm(&public, &proof).expect("private TVM proof verification");
+
+    let mut changed = public.clone();
+    changed[12] ^= 1;
+    assert!(
+        verify_private_tvm(&changed, &proof).is_err(),
+        "new state root substitution accepted"
+    );
+    let mut changed_secret = secret.clone();
+    changed_secret[10] ^= 1;
+    assert!(
+        VM::run(
+            private_tvm_program(),
+            PublicInput::new(canonical_words(&public, PRIVATE_TVM_PUBLIC_WORDS).unwrap()),
+            NonDeterminism::new(
+                canonical_words(&changed_secret, PRIVATE_TVM_SECRET_WORDS).unwrap()
+            )
+            .with_digests(
+                path.iter()
+                    .chain(path.iter())
+                    .map(|d| Digest::new(d.map(BFieldElement::new)))
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .is_err(),
+        "new value substitution accepted"
+    );
+}
 fn fixture() -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
     let mut public = vec![0; PUBLIC_WORDS];
     public[0] = 8979;

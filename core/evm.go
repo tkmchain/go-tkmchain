@@ -57,7 +57,12 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	if header.BaseFee != nil {
 		baseFee = new(big.Int).Set(header.BaseFee)
 	}
-	if header.ExcessBlobGas != nil {
+	// Blob gas fields are only active once Cancun is enabled. A malformed or
+	// future-format header must not make execution panic while constructing the
+	// EVM context; header validation will reject it through the normal consensus
+	// path. In particular, stateless proof guests must fail with a validation
+	// error rather than an unrecoverable fork-schedule panic.
+	if header.ExcessBlobGas != nil && chain.Config().IsCancun(header.Number, header.Time) {
 		blobBaseFee = eip4844.CalcBlobFee(chain.Config(), header)
 	}
 	if header.Difficulty.Sign() == 0 {

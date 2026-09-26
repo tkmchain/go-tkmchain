@@ -483,6 +483,10 @@ func (st *stateTransition) preCheck() error {
 				return err
 			}
 		}
+		config := st.evm.ChainConfig()
+		if err := ValidatePrivateExecutionMessage(config, st.evm.Context.BlockNumber, st.evm.Context.Time, msg.TxType, msg.To, msg.Value.ToBig(), msg.Data); err != nil {
+			return err
+		}
 		if msg.TxType == types.RandomXTxType {
 			if !st.evm.ChainConfig().IsRandomXTx(st.evm.Context.BlockNumber) {
 				return fmt.Errorf("%w: type %d rejected, block not yet at RandomX transaction fork", ErrTxTypeNotSupported, msg.TxType)
@@ -498,7 +502,6 @@ func (st *stateTransition) preCheck() error {
 			}
 			isPQMigration = msg.Value.Sign() > 0 && types.IsPQMigrationTxType(msg.TxType)
 		}
-		config := st.evm.ChainConfig()
 		if config.IsQuantumResistant(st.evm.Context.BlockNumber, st.evm.Context.Time) && msg.TxType != types.PQTkmTxType && !(isPQMigration && config.IsPQMigrationAllowed(st.evm.Context.BlockNumber, st.evm.Context.Time)) {
 			return fmt.Errorf("%w: type %d rejected, quantum-resistant transaction fork requires PQ tx type %d", ErrTxTypeNotSupported, msg.TxType, types.PQTkmTxType)
 		}

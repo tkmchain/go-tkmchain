@@ -19,15 +19,20 @@ import (
 )
 
 const (
-	MerkleDepth   = 32
-	OutputSlots   = 4
-	InputSlots    = 4
-	fieldModulus  = uint64(0xffffffff00000001)
-	publicWords   = 108
-	secretWords   = 137
-	maxProofWords = 1 << 20
-	MaxProofSize  = 4 + maxProofWords*8
-	protocolMagic = "TKMS3STK"
+	MerkleDepth           = 32
+	OutputSlots           = 4
+	InputSlots            = 4
+	fieldModulus          = uint64(0xffffffff00000001)
+	publicWords           = 108
+	secretWords           = 137
+	maxProofWords         = 1 << 20
+	MaxProofSize          = 4 + maxProofWords*8
+	protocolMagic         = "TKMS3STK"
+	privateTVMMagic       = "TKMPTVM1"
+	PrivateTVMPathDepth   = 32
+	privateTVMPublicWords = 34
+	privateTVMSecretWords = 21
+	privateTVMLeafDomain  = uint64(5001)
 )
 
 var (
@@ -143,6 +148,32 @@ type SpendWitness struct {
 	MerklePath       [MerkleDepth]Digest
 	StampIndices     [OutputSlots]uint32
 	StampPaths       [OutputSlots][MerkleDepth]Digest
+}
+
+// PrivateTVMStatement is the public part of a private deterministic TVM
+// storage transition. The storage key and values are witness-only; validators
+// see only the authenticated old and new roots, code hash, operation, and
+// transaction intent.
+type PrivateTVMStatement struct {
+	ChainID  uint64
+	CodeHash Digest
+	OldRoot  Digest
+	NewRoot  Digest
+	Intent   [64]byte
+	// Operation is zero for a read and one for a write.
+	Operation uint8
+}
+
+// PrivateTVMWitness contains the hidden storage key/value transition and its
+// Merkle authentication path. The native relation proves both roots against
+// this path and rejects a read that changes the value.
+type PrivateTVMWitness struct {
+	CodeHash  Digest
+	Key       Digest
+	OldValue  Digest
+	NewValue  Digest
+	LeafIndex uint32
+	Path      [PrivateTVMPathDepth]Digest
 }
 
 // STARKBackend calls the pinned native verifier through a bounded binary

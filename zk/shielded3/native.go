@@ -210,6 +210,121 @@ func (NativeBackendV4) Prove(ctx context.Context, s StatementV4, w SpendWitness)
 	}
 	return proof, nil
 }
+
+func privateTVMWords(s PrivateTVMStatement) ([]uint64, error) {
+	if s.ChainID == 0 || s.CodeHash == (Digest{}) || s.Intent == ([64]byte{}) || s.Operation > 1 {
+		return nil, ErrInvalidStatement
+	}
+	words := []uint64{uint64(uint32(s.ChainID)), s.ChainID >> 32}
+	words = append(words, s.CodeHash[:]...)
+	words = append(words, s.OldRoot[:]...)
+	words = append(words, s.NewRoot[:]...)
+	for i := 0; i < len(s.Intent); i += 4 {
+		words = append(words, uint64(binary.BigEndian.Uint32(s.Intent[i:i+4])))
+	}
+	words = append(words, uint64(s.Operation))
+	if len(words) != privateTVMPublicWords || !canonical(words) {
+		return nil, ErrInvalidStatement
+	}
+	return words, nil
+}
+
+// PrivateTVMExpectedWriteValue derives the deterministic hidden value required
+// by a private write transition. Wallets use it when constructing the witness;
+// validators recompute it inside the native relation.
+func PrivateTVMExpectedWriteValue(codeHash, key, oldValue Digest, intent [64]byte) (Digest, error) {
+	words := []uint64{privateTVMLeafDomain + 1}
+	words = append(words, codeHash[:]...)
+	words = append(words, key[:]...)
+	words = append(words, oldValue[:]...)
+	for i := 0; i < len(intent); i += 4 {
+		words = append(words, uint64(binary.BigEndian.Uint32(intent[i:i+4])))
+	}
+	return HashWords(words)
+}
+
+func privateTVMWitnessWords(w PrivateTVMWitness) ([]uint64, [][5]uint64, error) {
+	secret := make([]uint64, 0, privateTVMSecretWords)
+	secret = append(secret, w.CodeHash[:]...)
+	secret = append(secret, w.Key[:]...)
+	secret = append(secret, w.OldValue[:]...)
+	secret = append(secret, w.NewValue[:]...)
+	secret = append(secret, uint64(w.LeafIndex))
+	if len(secret) != privateTVMSecretWords || !canonical(secret) {
+		return nil, nil, ErrInvalidWitness
+	}
+	path := make([][5]uint64, len(w.Path))
+	for i, d := range w.Path {
+		if !canonical(d[:]) {
+			return nil, nil, ErrInvalidWitness
+		}
+		path[i] = d
+	}
+	return secret, path, nil
+}
+
+func privateTVMRequest(s PrivateTVMStatement, w PrivateTVMWitness) ([]byte, error) {
+	public, err := privateTVMWords(s)
+	if err != nil {
+		return nil, err
+	}
+	secret, path, err := privateTVMWitnessWords(w)
+	if err != nil {
+		return nil, err
+	}
+	request := appendWords([]byte(privateTVMMagic), public)
+	request = appendWords(request, secret)
+	for _, d := range path {
+		request = appendWords(request, d[:])
+	}
+	return request, nil
+}
+
+// ProvePrivateTVM creates a real native STARK proof for a private deterministic
+// TVM storage transition. Witness bytes are cleared before returning.
+func (NativeBackend) ProvePrivateTVM(ctx context.Context, s PrivateTVMStatement, w PrivateTVMWitness) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request, err := privateTVMRequest(s, w)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(request)
+	proof, err := nativeCall(11, request, MaxProofSize)
+	if err != nil {
+		return nil, err
+	}
+	if !validProof(proof) {
+		return nil, fmt.Errorf("%w: native prover returned malformed proof", ErrInvalidProof)
+	}
+	return proof, nil
+}
+
+// VerifyPrivateTVM verifies the native STARK without receiving any private
+// witness. Invalid or malformed proofs fail closed.
+func (NativeBackend) VerifyPrivateTVM(ctx context.Context, s PrivateTVMStatement, proof []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	public, err := privateTVMWords(s)
+	if err != nil {
+		return err
+	}
+	if !validProof(proof) {
+		return ErrInvalidProof
+	}
+	request := appendWords([]byte(privateTVMMagic), public)
+	request = append(request, proof...)
+	out, err := nativeCall(12, request, 3)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(out, []byte("OK\n")) {
+		return fmt.Errorf("%w: native verifier returned unexpected response", ErrInvalidProof)
+	}
+	return nil
+}
 func (NativeBackend) Describe(ctx context.Context, chainID, assetID uint64, w SpendWitness) (DerivedSpend, error) {
 	var result DerivedSpend
 	if err := ctx.Err(); err != nil {

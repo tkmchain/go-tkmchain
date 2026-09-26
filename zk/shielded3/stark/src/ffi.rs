@@ -16,6 +16,40 @@ fn bytes(words: &[u64]) -> Vec<u8> {
     words.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
+    if operation == 11 || operation == 12 {
+        const MAGIC: &[u8] = b"TKMPTVM1";
+        let public_count = PRIVATE_TVM_PUBLIC_WORDS;
+        let prefix = MAGIC.len() + public_count * 8;
+        if data.len() < prefix || &data[..MAGIC.len()] != MAGIC {
+            return Err("invalid private TVM request".into());
+        }
+        let public = words(&data[MAGIC.len()..prefix])?;
+        let input = &data[prefix..];
+        if operation == 12 {
+            if input.len() < 4 {
+                return Err("truncated private TVM proof".into());
+            }
+            let count = u32::from_le_bytes(input[..4].try_into().unwrap()) as usize;
+            if count == 0 || count > MAX_PROOF_WORDS || input.len() != 4 + count * 8 {
+                return Err("invalid private TVM proof length".into());
+            }
+            verify_private_tvm(&public, &words(&input[4..])?)?;
+            return Ok(b"OK\n".to_vec());
+        }
+        if input.len() != (PRIVATE_TVM_SECRET_WORDS + PRIVATE_TVM_PATH_DIGESTS * 5) * 8 {
+            return Err("invalid private TVM witness length".into());
+        }
+        let mut secret = words(&input[..PRIVATE_TVM_SECRET_WORDS * 8])?;
+        let path = words(&input[PRIVATE_TVM_SECRET_WORDS * 8..])?
+            .chunks_exact(5)
+            .map(|d| d.try_into().unwrap())
+            .collect::<Vec<_>>();
+        let proof = prove_private_tvm(&public, &secret, &path)?;
+        secret.fill(0);
+        let mut out = (proof.len() as u32).to_le_bytes().to_vec();
+        out.extend(bytes(&proof));
+        return Ok(out);
+    }
     if operation == 4 {
         let w = words(data)?;
         if w.len() != 10 {

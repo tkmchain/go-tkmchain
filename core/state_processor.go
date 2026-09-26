@@ -116,6 +116,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		if err := ProcessShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
 			return nil, fmt.Errorf("could not apply shielded tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+		if config.IsAntartical(blockNumber, header.Time) && HasPrivateTVMPrefix(tx.Data()) {
+			if err := processPrivateTVM(config, blockNumber, header.Time, statedb, tx); err != nil {
+				return nil, fmt.Errorf("could not apply private TVM tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
 		statedb.SetTxContext(tx.Hash(), i)
 		_, _, spanEnd := telemetry.StartSpan(ctx, "core.ApplyTransactionWithEVM",
 			telemetry.StringAttribute("tx.hash", tx.Hash().Hex()),

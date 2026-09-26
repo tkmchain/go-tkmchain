@@ -234,15 +234,24 @@ does not need the mail body, private key, or plaintext attachment. A mailbox
 provider or recipient endpoint can still observe local metadata such as login,
 connection time, or the fact that it received a message.
 
-## 8. EVM and TVM compatibility
+## 8. EVM and TVM privacy boundary
 
-EVM accounts, contracts, storage, receipts, logs, ABI encoding, and JSON-RPC
-remain the compatibility layer. TVM is a bounded native execution path for
-carefully audited deterministic modules; it is not arbitrary host-code
-execution. TVM envelopes specify code and metadata hashes, memory and stack
-limits, call depth, and a restricted host interface. Filesystem, network,
-threads, wall-clock time, unmanaged syscalls, and nondeterministic behavior are
-forbidden in consensus execution.
+Transparent EVM and TVM execution is retained only before Antartical for
+compatibility and migration. At the Antartical timestamp (`1790812800`), the
+consensus and txpool paths reject transparent EVM transfers, contract calls,
+deployments, and TVM calls. The only user transaction envelopes admitted after
+that boundary are the consensus-verified Shield3/Shield4 private envelopes.
+Synthetic block rewards remain protocol-generated. Stamp registration and
+private TVM actions must be carried inside one of those shielded envelopes;
+standalone protocol envelopes are rejected.
+
+This boundary is intentionally fail-closed. Shield3/Shield4 prove private note
+ownership and value conservation. The bounded `TKMPRIVATEVM1` relation remains
+available only as shielded payload logic and is not a standalone transaction
+type. It does not claim arbitrary zkEVM
+compatibility: public EVM bytecode, logs, and unrestricted host calls remain
+disabled. Encrypted calldata is never treated as a substitute for a state
+transition proof.
 
 ## 9. Security boundaries
 

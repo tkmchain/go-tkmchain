@@ -321,9 +321,9 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head)
+	statedb, err := txpool.StateAtWithRetry(pool.chain, head)
 	if err != nil {
-		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
+		statedb, err = txpool.StateAtWithRetry(pool.chain, pool.chain.Genesis().Header())
 	}
 	if err != nil {
 		return err
@@ -1449,11 +1449,12 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead)
+	resolvedHead, statedb, err := txpool.StateAtWithLatestRetry(pool.chain, newHead)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return
 	}
+	newHead = resolvedHead
 	pool.currentHead.Store(newHead)
 	pool.currentState = statedb
 	pool.pendingNonces = newNoncer(statedb)

@@ -643,6 +643,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewPrivacyAPI(s),
 		},
 		{
+			Namespace: "tkmprotocol",
+			Service:   NewProtocolAPI(s),
+		},
+		{
 			Namespace: "admin",
 			Service:   NewAdminAPI(s),
 		},
