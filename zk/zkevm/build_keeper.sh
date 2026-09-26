@@ -7,8 +7,11 @@ hostname_source="${repo_root}/zk/zkevm/go-overlay/os_sys_linux.go"
 netpoll_source="${repo_root}/zk/zkevm/go-overlay/netpoll_epoll_linux.go"
 getrandom_source="${repo_root}/zk/zkevm/go-overlay/getrandom_linux.go"
 output="${1:-${repo_root}/build/keeper-mipsle}"
-goroot="$(cd "${repo_root}/cmd/keeper" && go env GOROOT)"
-gomodcache="$(cd "${repo_root}/cmd/keeper" && go env GOMODCACHE)"
+# The keeper is part of the repository's root Go module.  Keep all toolchain
+# and module lookups rooted there so a checkout no longer needs a second,
+# stale cmd/keeper/go.mod file.
+goroot="$(cd "${repo_root}" && go env GOROOT)"
+gomodcache="$(cd "${repo_root}" && go env GOMODCACHE)"
 # Go refuses overlays that replace files below GOMODCACHE. This happens when
 # automatic toolchain selection downloads the active toolchain there. Stage a
 # private copy only in that case; normal runner/toolcache installations use the
@@ -22,14 +25,14 @@ if [[ "${goroot}" == "${gomodcache}"/* ]]; then
   export GOROOT="${goroot}"
 fi
 printf 'guest toolchain: %s\n' "${goroot}" >&2
-xsys_module="$(cd "${repo_root}/cmd/keeper" && GOOS=linux GOARCH=mipsle go list -mod=readonly -m -f '{{.Dir}}' golang.org/x/sys)"
+xsys_module="$(cd "${repo_root}" && GOOS=linux GOARCH=mipsle go list -mod=readonly -m -f '{{.Dir}}' golang.org/x/sys)"
 staged_xsys="$(mktemp -d "${TMPDIR:-/tmp}/tkm-xsys.XXXXXX")"
 cp -R "${xsys_module}/." "${staged_xsys}/"
 chmod -R u+rwX "${staged_xsys}"
 modfile="$(mktemp "${TMPDIR:-/tmp}/tkm-keeper.XXXXXX.mod")"
 sumfile="${modfile%.mod}.sum"
-cp "${repo_root}/cmd/keeper/go.mod" "${modfile}"
-cp "${repo_root}/cmd/keeper/go.sum" "${sumfile}"
+cp "${repo_root}/go.mod" "${modfile}"
+cp "${repo_root}/go.sum" "${sumfile}"
 printf '\nreplace golang.org/x/sys => %s\n' "${staged_xsys}" >> "${modfile}"
 overlay_json="$(mktemp "${TMPDIR:-/tmp}/tkm-keeper-overlay.XXXXXX.json")"
 runtime_patch="$(mktemp "${TMPDIR:-/tmp}/tkm-runtime-os-linux.XXXXXX.go")"
@@ -115,8 +118,8 @@ replacements = {
 pathlib.Path(output).write_text(json.dumps({"Replace": replacements}) + "\n")
 PY
 
-(cd "${repo_root}/cmd/keeper" && \
+(cd "${repo_root}" && \
   GOTOOLCHAIN=local GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
     "${goroot}/bin/go" build -a -mod=mod -modfile "${modfile}" -tags ziren -trimpath -overlay "${overlay_json}" \
-    -o "${output}" .)
+    -o "${output}" ./cmd/keeper)
 printf 'keeper guest: %s\n' "${output}"

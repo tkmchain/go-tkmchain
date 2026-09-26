@@ -1,0 +1,123 @@
+name: Keeper proof artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload_path:
+        description: Repository-relative RLP payload path (used when payload_url is empty)
+        required: false
+        default: cmd/keeper/1192c3_witness.rlp
+        type: string
+      payload_url:
+        description: Optional HTTPS URL for the RLP payload; takes precedence over payload_path
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install pinned Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-08-17
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            zk/zkevm/keeper-host/target
+          key: keeper-${{ runner.os }}-${{ hashFiles('zk/zkevm/keeper-host/Cargo.toml', 'zk/zkevm/keeper-host/Cargo.lock') }}
+          restore-keys: |
+            keeper-${{ runner.os }}-
+
+      - name: Install keeper build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang libclang-dev llvm python3
+
+      - name: Configure bindgen and payload
+        env:
+          PAYLOAD_PATH: ${{ inputs.payload_path }}
+          PAYLOAD_URL: ${{ inputs.payload_url }}
+        run: |
+          gcc_include="$(gcc -print-file-name=include)"
+          test -d "$gcc_include"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${gcc_include}" >> "$GITHUB_ENV"
+          mkdir -p build
+          if [[ -n "$PAYLOAD_URL" ]]; then
+            case "$PAYLOAD_URL" in
+              https://*) ;;
+              *) echo "payload_url must use HTTPS" >&2; exit 2 ;;
+            esac
+            curl --fail --location --retry 5 --retry-all-errors "$PAYLOAD_URL" -o build/keeper-input.rlp
+          else
+            test -f "$PAYLOAD_PATH"
+            cp "$PAYLOAD_PATH" build/keeper-input.rlp
+          fi
+          test -s build/keeper-input.rlp
+
+      - name: Build keeper guest ELF
+        run: zk/zkevm/build_keeper.sh build/keeper-mipsle
+
+      - name: Fetch locked Rust dependencies
+        run: cargo +nightly-2025-08-17 fetch --locked --manifest-path zk/zkevm/keeper-host/Cargo.toml
+
+      - name: Generate compressed proof and verifying key
+        run: |
+          rm -f keeper-proof.bin keeper-vk.bin
+          BINDGEN_EXTRA_CLANG_ARGS="$BINDGEN_EXTRA_CLANG_ARGS" \
+            cargo +nightly-2025-08-17 run --release --offline --locked \
+              --manifest-path zk/zkevm/keeper-host/Cargo.toml -- \
+              --elf "$PWD/build/keeper-mipsle" \
+              --input "$PWD/build/keeper-input.rlp" \
+              --proof "$PWD/keeper-proof.bin" \
+              --vk "$PWD/keeper-vk.bin"
+
+      - name: Verify generated proof artifact
+        run: |
+          BINDGEN_EXTRA_CLANG_ARGS="$BINDGEN_EXTRA_CLANG_ARGS" \
+            cargo +nightly-2025-08-17 run --release --offline --locked \
+              --manifest-path zk/zkevm/keeper-host/Cargo.toml -- \
+              --verify "$PWD/keeper-proof.bin" \
+              --vk "$PWD/keeper-vk.bin"
+
+      - name: Write artifact metadata and checksums
+        run: |
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "workflow_run=${GITHUB_RUN_ID}"
+            echo "rust=nightly-2025-08-17"
+            echo "payload=build/keeper-input.rlp"
+          } > keeper-proof.metadata
+          sha256sum build/keeper-mipsle build/keeper-input.rlp keeper-proof.bin keeper-vk.bin > keeper-proof.sha256
+
+      - name: Upload keeper proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keeper-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            build/keeper-mipsle
+            build/keeper-input.rlp
+            keeper-proof.bin
+            keeper-vk.bin
+            keeper-proof.metadata
+            keeper-proof.sha256

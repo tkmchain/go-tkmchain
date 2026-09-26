@@ -81,6 +81,36 @@ cargo run --release --manifest-path zk/zkevm/keeper-host/Cargo.toml -- \
   --vk keeper-vk.bin
 ```
 
+### Run the prover on GitHub Actions
+
+If the local machine does not have the pinned Rust toolchain, clang headers,
+or enough memory for compressed proving, use the manual **Keeper proof
+artifact** workflow. It builds the guest ELF, installs
+`nightly-2025-08-17`, sets `BINDGEN_EXTRA_CLANG_ARGS` to the runner's GCC
+include directory, runs the locked offline command, verifies the result, and
+uploads the proof and verifying key together with the input, guest ELF, and
+SHA-256 checksums.
+
+In GitHub, open **Actions → Keeper proof artifact → Run workflow**. The
+default input uses `cmd/keeper/1192c3_witness.rlp`. For a locally generated
+payload such as `2_payload.rlp`, commit it to the branch and set
+`payload_path` to `2_payload.rlp`, or provide an HTTPS `payload_url`. The URL
+input is restricted to HTTPS and takes precedence over `payload_path`.
+
+Download the `keeper-proof-<run id>` artifact from the completed workflow (or
+with `gh run download <run id> -n keeper-proof-<run id>`). Verify the
+checksums before copying `keeper-proof.bin` and `keeper-vk.bin` into the host
+that will submit or inspect the proof:
+
+```bash
+sha256sum --check keeper-proof.sha256
+```
+
+The workflow is manual so a payload is never selected implicitly during a
+release build. It does not change consensus state or publish a proof as a
+release asset; the downloaded artifact must still be reviewed and wired into
+the intended verifier path explicitly.
+
 This uses Ziren's native STARK verifier. Groth16 and PLONK wrapping are not
 used here because those wrappers are not post-quantum.
 
