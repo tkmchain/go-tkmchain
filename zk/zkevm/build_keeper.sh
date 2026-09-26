@@ -31,7 +31,13 @@ if [[ "${goroot}" == "${gomodcache}"/* ]]; then
   export GOROOT="${goroot}"
 fi
 printf 'guest toolchain: %s\n' "${goroot}" >&2
-xsys_module="$(cd "${repo_root}" && GOOS=linux GOARCH=mipsle go list -mod=readonly -m -f '{{.Dir}}' golang.org/x/sys)"
+# `go list -m -f '{{.Dir}}'` can return an empty directory on a fresh
+# toolcache before the module has been materialized. Resolve it through the
+# module downloader as a fallback, which works with both warm and cold caches.
+xsys_module="$(cd "${repo_root}" && GOOS=linux GOARCH=mipsle go list -mod=readonly -m -f '{{.Dir}}' golang.org/x/sys 2>/dev/null || true)"
+if [[ -z "${xsys_module}" || ! -f "${xsys_module}/unix/zsyscall_linux.go" ]]; then
+  xsys_module="$(cd "${repo_root}" && go mod download -json golang.org/x/sys | python3 -c 'import json, sys; print(json.load(sys.stdin)["Dir"])')"
+fi
 if ! xsys_module="$(realpath -e -- "${xsys_module}")" || [[ "${xsys_module}" == "/" ]] || [[ ! -f "${xsys_module}/unix/zsyscall_linux.go" ]]; then
   printf 'invalid golang.org/x/sys module path %q; refusing to copy it\n' "${xsys_module}" >&2
   exit 1
