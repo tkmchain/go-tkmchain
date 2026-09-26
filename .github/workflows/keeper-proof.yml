@@ -1,25 +1,27 @@
 name: Keeper proof artifact
 
 on:
-  push:
-    branches:
-      - v1.21.3
-    paths:
-      - .github/workflows/keeper-proof.yml
-      - zk/zkevm/build_keeper.sh
-      - zk/zkevm/keeper-host/**
-      - cmd/keeper/**
   workflow_dispatch:
     inputs:
       payload_path:
-        description: Repository-relative RLP payload path (used when payload_url is empty)
+        description: Repository-relative complete Payload RLP for block 44423
         required: false
-        default: cmd/keeper/1192c3_witness.rlp
+        default: 2_payload.rlp
         type: string
       payload_url:
         description: Optional HTTPS URL for the RLP payload; takes precedence over payload_path
         required: false
         default: ''
+        type: string
+      chain_id:
+        description: TKM chain ID (8979 mainnet or 8980 Egypt)
+        required: false
+        default: '8979'
+        type: string
+      block_number:
+        description: Expected block height in the payload
+        required: false
+        default: '44423'
         type: string
 
 permissions:
@@ -70,8 +72,9 @@ jobs:
         env:
           PAYLOAD_PATH: ${{ inputs.payload_path }}
           PAYLOAD_URL: ${{ inputs.payload_url }}
+          EXPECTED_CHAIN_ID: ${{ inputs.chain_id }}
+          EXPECTED_BLOCK_NUMBER: ${{ inputs.block_number }}
         run: |
-          PAYLOAD_PATH="${PAYLOAD_PATH:-cmd/keeper/1192c3_witness.rlp}"
           gcc_include="$(gcc -print-file-name=include)"
           test -d "$gcc_include"
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I${gcc_include}" >> "$GITHUB_ENV"
@@ -82,11 +85,18 @@ jobs:
               *) echo "payload_url must use HTTPS" >&2; exit 2 ;;
             esac
             curl --fail --location --retry 5 --retry-all-errors "$PAYLOAD_URL" -o build/keeper-input.rlp
-          else
+          elif [[ -n "$PAYLOAD_PATH" ]]; then
             test -f "$PAYLOAD_PATH"
             cp "$PAYLOAD_PATH" build/keeper-input.rlp
+          else
+            echo "payload_path or payload_url is required for block ${EXPECTED_BLOCK_NUMBER}" >&2
+            exit 2
           fi
           test -s build/keeper-input.rlp
+          go run ./cmd/keeperpayload \
+            --input build/keeper-input.rlp \
+            --expect-chain-id "$EXPECTED_CHAIN_ID" \
+            --expect-block "$EXPECTED_BLOCK_NUMBER"
 
       - name: Build keeper guest ELF
         run: |

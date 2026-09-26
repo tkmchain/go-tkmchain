@@ -91,11 +91,11 @@ include directory, runs the locked offline command, verifies the result, and
 uploads the proof and verifying key together with the input, guest ELF, and
 SHA-256 checksums.
 
-In GitHub, open **Actions → Keeper proof artifact → Run workflow**. The
-default input uses `cmd/keeper/1192c3_witness.rlp`. For a locally generated
-payload such as `2_payload.rlp`, commit it to the branch and set
-`payload_path` to `2_payload.rlp`, or provide an HTTPS `payload_url`. The URL
-input is restricted to HTTPS and takes precedence over `payload_path`.
+In GitHub, open **Actions → Keeper proof artifact → Run workflow** and provide
+the complete payload for block `44423` (the default path is `2_payload.rlp`).
+The workflow validates both the payload chain ID (`8979` for mainnet or `8980`
+for Egypt) and block height before proving. You can commit the payload and use
+`payload_path`, or provide an HTTPS `payload_url`; the URL takes precedence.
 
 Download the `keeper-proof-<run id>` artifact from the completed workflow (or
 with `gh run download <run id> -n keeper-proof-<run id>`). Verify the
