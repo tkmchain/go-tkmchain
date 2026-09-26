@@ -1,0 +1,15 @@
+[package]
+name = "lru"
+version = "0.12.5"
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT"
+description = "A LRU cache implementation"
+
+[features]
+default = ["hashbrown"]
+hashbrown = ["dep:hashbrown"]
+nightly = ["hashbrown", "hashbrown/nightly"]
+
+[dependencies]
+hashbrown = { version = "0.17.0", optional = true }

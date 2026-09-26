@@ -10,6 +10,8 @@ publish = false
 # cannot link the unused h2/rustls/ring transport stack.
 tonic = { path = "vendor/tonic" }
 tonic-build = { path = "vendor/tonic-build" }
+lru = { path = "vendor/lru" }
+vergen = { path = "vendor/vergen" }
 
 [dependencies]
 anyhow = "1.0"

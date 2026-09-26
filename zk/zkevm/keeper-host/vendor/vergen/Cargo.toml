@@ -1,0 +1,12 @@
+[package]
+name = "vergen"
+version = "8.3.2"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Minimal local build metadata compatibility for the TKM keeper"
+
+[features]
+default = []
+build = []
+git = []
+git2 = []
