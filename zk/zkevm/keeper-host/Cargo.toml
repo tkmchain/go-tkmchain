@@ -9,4 +9,7 @@ anyhow = "1.0"
 bincode = "1.3"
 clap = { version = "4.5", features = ["derive"] }
 sha2 = "0.10"
-zkm-sdk = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b", package = "zkm-sdk" }
+# The keeper generates and verifies proofs locally. The SDK's default
+# `network` feature pulls an unused HTTP/TLS/ethers stack (including older
+# rustls and h2 releases), so keep the dependency surface local-only.
+zkm-sdk = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b", package = "zkm-sdk", default-features = false }
