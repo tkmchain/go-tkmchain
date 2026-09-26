@@ -538,7 +538,7 @@ func (d *Downloader) forwardHeaderResponse(p *peerConnection, req *eth.Request, 
 		return
 	case res := <-resCh:
 		headers := *res.Res.(*eth.BlockHeadersRequest)
-		err := d.DeliverHeaders(p.id, headers)
+		err := d.deliver(p.id, d.headerCh, &headerPack{peerID: p.id, headers: headers, elapsed: res.Time}, headerInMeter, headerDropMeter)
 		res.Done <- err
 	}
 }
@@ -579,7 +579,7 @@ func (d *Downloader) forwardBodyResponse(p *peerConnection, req *eth.Request, re
 				return
 			}
 		}
-		err = d.DeliverBodies(p.id, txs, uncles)
+		err = d.deliver(p.id, d.bodyCh, &bodyPack{peerID: p.id, transactions: txs, uncles: uncles, elapsed: res.Time}, bodyInMeter, bodyDropMeter)
 		res.Done <- err
 	}
 }
@@ -615,7 +615,7 @@ func (d *Downloader) forwardReceiptResponse(p *peerConnection, req *eth.Request,
 		for i := range resp {
 			receipts[i] = resp[i]
 		}
-		err := d.DeliverReceipts(p.id, receipts)
+		err := d.deliver(p.id, d.receiptCh, &receiptPack{peerID: p.id, receipts: receipts, elapsed: res.Time}, receiptInMeter, receiptDropMeter)
 		res.Done <- err
 	}
 }
@@ -1494,7 +1494,7 @@ func (d *Downloader) fillHeaderSkeleton(from uint64, skeleton []*types.Header) (
 			return nil
 		}
 		capacity = func(p *peerConnection) int { return p.HeaderCapacity(d.requestRTT()) }
-		setIdle  = func(p *peerConnection, accepted int) { p.SetHeadersIdle(accepted) }
+		setIdle  = func(p *peerConnection, accepted int, elapsed time.Duration) { p.SetHeadersIdle(accepted, elapsed) }
 	)
 	err := d.fetchParts(errCancelHeaderFetch, d.headerCh, deliver, d.queue.headerContCh, expire,
 		d.queue.PendingHeaders, d.queue.InFlightHeaders, throttle, reserve,
@@ -1520,7 +1520,7 @@ func (d *Downloader) fetchBodies(from uint64) error {
 		expire   = func() map[string]int { return d.queue.ExpireBodies(d.requestTTL()) }
 		fetch    = func(p *peerConnection, req *fetchRequest) error { return d.requestBodies(p, req) }
 		capacity = func(p *peerConnection) int { return p.BlockCapacity(d.requestRTT()) }
-		setIdle  = func(p *peerConnection, accepted int) { p.SetBodiesIdle(accepted) }
+		setIdle  = func(p *peerConnection, accepted int, elapsed time.Duration) { p.SetBodiesIdle(accepted, elapsed) }
 	)
 	err := d.fetchParts(errCancelBodyFetch, d.bodyCh, deliver, d.bodyWakeCh, expire,
 		d.queue.PendingBlocks, d.queue.InFlightBlocks, d.queue.ShouldThrottleBlocks, d.queue.ReserveBodies,
@@ -1544,7 +1544,7 @@ func (d *Downloader) fetchReceipts(from uint64) error {
 		expire   = func() map[string]int { return d.queue.ExpireReceipts(d.requestTTL()) }
 		fetch    = func(p *peerConnection, req *fetchRequest) error { return d.requestReceipts(p, req) }
 		capacity = func(p *peerConnection) int { return p.ReceiptCapacity(d.requestRTT()) }
-		setIdle  = func(p *peerConnection, accepted int) { p.SetReceiptsIdle(accepted) }
+		setIdle  = func(p *peerConnection, accepted int, elapsed time.Duration) { p.SetReceiptsIdle(accepted, elapsed) }
 	)
 	err := d.fetchParts(errCancelReceiptFetch, d.receiptCh, deliver, d.receiptWakeCh, expire,
 		d.queue.PendingReceipts, d.queue.InFlightReceipts, d.queue.ShouldThrottleReceipts, d.queue.ReserveReceipts,
@@ -1582,7 +1582,7 @@ func (d *Downloader) fetchReceipts(from uint64) error {
 func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliver func(dataPack) (int, error), wakeCh chan bool,
 	expire func() map[string]int, pending func() int, inFlight func() bool, throttle func() bool, reserve func(*peerConnection, int) (*fetchRequest, bool, error),
 	fetchHook func([]*types.Header), fetch func(*peerConnection, *fetchRequest) error, cancel func(*fetchRequest), capacity func(*peerConnection) int,
-	idle func() ([]*peerConnection, int), setIdle func(*peerConnection, int), kind string) error {
+	idle func() ([]*peerConnection, int), setIdle func(*peerConnection, int, time.Duration), kind string) error {
 
 	// Create a ticker to detect expired retrieval tasks
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -1610,7 +1610,7 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 				// caused by a timed out request which came through in the end), set it to
 				// idle. If the delivery's stale, the peer should have already been idled.
 				if err != errStaleDelivery {
-					setIdle(peer, accepted)
+					setIdle(peer, accepted, packet.ResponseTime())
 				}
 				// Issue a log to the user to see what's going on
 				switch {
@@ -1663,7 +1663,7 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 					// how response times reacts, to it always requests one more than the minimum (i.e. min 2).
 					if fails > 2 {
 						peer.log.Trace("Data delivery timed out", "type", kind)
-						setIdle(peer, 0)
+						setIdle(peer, 0, 0)
 					} else {
 						peer.log.Debug("Stalling delivery, dropping", "type", kind)
 						if d.dropPeer == nil {
@@ -1722,7 +1722,7 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 				}
 				if err := fetch(peer, request); err != nil {
 					cancel(request)
-					setIdle(peer, 0)
+					setIdle(peer, 0, 0)
 					peer.log.Warn("Failed to assign fetch request", "type", kind, "err", err)
 					if d.dropPeer != nil {
 						d.dropPeer(peer.id)
@@ -2118,17 +2118,17 @@ func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 // DeliverHeaders injects a new batch of block headers received from a remote
 // node into the download schedule.
 func (d *Downloader) DeliverHeaders(id string, headers []*types.Header) (err error) {
-	return d.deliver(id, d.headerCh, &headerPack{id, headers}, headerInMeter, headerDropMeter)
+	return d.deliver(id, d.headerCh, &headerPack{peerID: id, headers: headers}, headerInMeter, headerDropMeter)
 }
 
 // DeliverBodies injects a new batch of block bodies received from a remote node.
 func (d *Downloader) DeliverBodies(id string, transactions [][]*types.Transaction, uncles [][]*types.Header) (err error) {
-	return d.deliver(id, d.bodyCh, &bodyPack{id, transactions, uncles}, bodyInMeter, bodyDropMeter)
+	return d.deliver(id, d.bodyCh, &bodyPack{peerID: id, transactions: transactions, uncles: uncles}, bodyInMeter, bodyDropMeter)
 }
 
 // DeliverReceipts injects a new batch of receipts received from a remote node.
 func (d *Downloader) DeliverReceipts(id string, receipts [][]*types.Receipt) (err error) {
-	return d.deliver(id, d.receiptCh, &receiptPack{id, receipts}, receiptInMeter, receiptDropMeter)
+	return d.deliver(id, d.receiptCh, &receiptPack{peerID: id, receipts: receipts}, receiptInMeter, receiptDropMeter)
 }
 
 // DeliverNodeData injects a new batch of node state data received from a remote node.

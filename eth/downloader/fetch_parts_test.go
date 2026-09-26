@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -65,7 +66,7 @@ func TestFetchPartsRequestErrorDoesNotPanic(t *testing.T) {
 		},
 		func(*peerConnection) int { return 1 },
 		func() ([]*peerConnection, int) { return []*peerConnection{peer}, 1 },
-		func(p *peerConnection, accepted int) {
+		func(p *peerConnection, accepted int, _ time.Duration) {
 			if p != peer || accepted != 0 {
 				t.Fatalf("idled unexpected peer or accepted count")
 			}

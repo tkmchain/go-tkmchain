@@ -88,18 +88,27 @@ func (p *peerConnection) Reset() {
 // UpdateHeaderRate updates the peer's estimated header retrieval throughput with
 // the current measurement.
 func (p *peerConnection) UpdateHeaderRate(delivered int, elapsed time.Duration) {
+	if elapsed <= 0 {
+		elapsed = time.Second
+	}
 	p.rates.Update(eth.BlockHeadersMsg, elapsed, delivered)
 }
 
 // UpdateBodyRate updates the peer's estimated body retrieval throughput with the
 // current measurement.
 func (p *peerConnection) UpdateBodyRate(delivered int, elapsed time.Duration) {
+	if elapsed <= 0 {
+		elapsed = time.Second
+	}
 	p.rates.Update(eth.BlockBodiesMsg, elapsed, delivered)
 }
 
 // UpdateReceiptRate updates the peer's estimated receipt retrieval throughput
 // with the current measurement.
 func (p *peerConnection) UpdateReceiptRate(delivered int, elapsed time.Duration) {
+	if elapsed <= 0 {
+		elapsed = time.Second
+	}
 	p.rates.Update(eth.ReceiptsMsg, elapsed, delivered)
 }
 
@@ -163,9 +172,15 @@ func (p *peerConnection) FetchReceipts(req *fetchRequest) error {
 	return err
 }
 
-func (p *peerConnection) SetHeadersIdle(int)  {}
-func (p *peerConnection) SetBodiesIdle(int)   {}
-func (p *peerConnection) SetReceiptsIdle(int) {}
+func (p *peerConnection) SetHeadersIdle(delivered int, elapsed time.Duration) {
+	p.UpdateHeaderRate(delivered, elapsed)
+}
+func (p *peerConnection) SetBodiesIdle(delivered int, elapsed time.Duration) {
+	p.UpdateBodyRate(delivered, elapsed)
+}
+func (p *peerConnection) SetReceiptsIdle(delivered int, elapsed time.Duration) {
+	p.UpdateReceiptRate(delivered, elapsed)
+}
 func (p *peerConnection) SetNodeDataIdle(int) {}
 
 func (p *peerConnection) NodeDataCapacity(targetRTT time.Duration) int {
