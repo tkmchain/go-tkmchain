@@ -687,6 +687,14 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 
 		// PERMANENTLY BAN for invalid chain - log at debug level to reduce noise
 		if err == errInvalidChain || err == errInvalidAncestor {
+			// A transport EOF can cancel header/body processing and surface as
+			// errInvalidChain after the peer has already been unregistered. Do not
+			// turn that transient disconnect into a year-long ban; keep the ban for
+			// peers that are still registered when validation fails.
+			if d.peers == nil || d.peers.Peer(id) == nil {
+				log.Debug("Skipping invalid-chain ban for disconnected peer", "peer", id[:8], "err", err)
+				return err
+			}
 			// Only log the ban at warn level once
 			log.Warn("Peer banned for invalid chain", "peer", id[:8], "duration", "365 days")
 			d.banPeer(id, 365*24*time.Hour) // 1 year ban (effectively permanent)
