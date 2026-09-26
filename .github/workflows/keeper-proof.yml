@@ -1,6 +1,14 @@
 name: Keeper proof artifact
 
 on:
+  push:
+    branches:
+      - v1.21.3
+    paths:
+      - .github/workflows/keeper-proof.yml
+      - zk/zkevm/build_keeper.sh
+      - zk/zkevm/keeper-host/**
+      - cmd/keeper/**
   workflow_dispatch:
     inputs:
       payload_path:
