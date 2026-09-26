@@ -1,21 +1,14 @@
 version: 2
 
 updates:
-  # Keep both Go modules current. The keeper is released as a separate
-  # executable but shares the root module through a local replace directive.
+  # The keeper is built from the root module so its dependencies are covered
+  # by the root scan and cannot drift into a separate self-dependency graph.
   - package-ecosystem: gomod
     directory: "/"
     schedule:
       interval: daily
     open-pull-requests-limit: 10
     versioning-strategy: increase
-  - package-ecosystem: gomod
-    directory: "/cmd/keeper"
-    schedule:
-      interval: daily
-    open-pull-requests-limit: 5
-    versioning-strategy: increase
-
   - package-ecosystem: npm
     directory: "/internal/gui/wallet-engine"
     schedule:
