@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -22,6 +23,17 @@ func RequireRegisteredStamp(ctx context.Context, rpc RPC, recipient PaymentPaylo
 	}
 	if !stamp.Registered || stamp.Owner != recipient.Owner || stamp.Commitment != recipient.Stamp.Commitment {
 		return errors.New("address stamp is not confirmed on this chain; register the original private stamp and wait for confirmation before sending")
+	}
+	return nil
+}
+
+func RequireRegisteredAddress(ctx context.Context, rpc RPC, address common.Address) error {
+	var stamp core.AntarticalStampStatus
+	if err := rpc.CallContext(ctx, &stamp, "tkmprivacy_antarticalStamp", address); err != nil {
+		return err
+	}
+	if !stamp.Registered {
+		return errors.New("withdrawal recipient address is not stamped on this chain")
 	}
 	return nil
 }

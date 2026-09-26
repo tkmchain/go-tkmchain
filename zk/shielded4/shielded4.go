@@ -12,12 +12,14 @@ import (
 )
 
 const (
-	MerkleDepth  = shielded3.MerkleDepth
-	OutputSlots  = shielded3.OutputSlots
-	InputSlots   = shielded3.InputSlots
-	AssetTKM     = shielded3.AssetTKM
-	MaxSendTKM   = shielded3.MaxSendTKM
-	MaxProofSize = shielded3.MaxProofSize
+	MerkleDepth     = shielded3.MerkleDepth
+	OutputSlots     = shielded3.OutputSlots
+	InputSlots      = shielded3.InputSlots
+	AssetTKM        = shielded3.AssetTKM
+	AssetPTKM       = shielded3.AssetPTKM
+	AssetWrappedTKM = shielded3.AssetWrappedTKM
+	MaxSendTKM      = shielded3.MaxSendTKM
+	MaxProofSize    = shielded3.MaxProofSize
 )
 
 type Digest = shielded3.Digest
@@ -40,6 +42,7 @@ func AmountFromBig(v *big.Int) (Amount, error) { return shielded3.AmountFromBig(
 func GenerateSecret() (Digest, error)          { return shielded3.GenerateSecret() }
 func DigestFromBytes(b []byte) (Digest, error) { return shielded3.DigestFromBytes(b) }
 func ValidProofEncoding(proof []byte) bool     { return shielded3.ValidProofEncoding(proof) }
+func IsSupportedAsset(assetID uint64) bool     { return shielded3.IsSupportedAsset(assetID) }
 
 // NativeBackend is deliberately a distinct type so callers cannot silently
 // fall back to the Shield3 verifier when constructing or checking Shield4.

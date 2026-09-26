@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/ethereum/go-ethereum/zk/shielded4"
 )
 
@@ -21,11 +22,23 @@ func BuildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to P
 	return buildV4(ctx, rpc, seed, identity, []Payment{{to, amount}}, deposit, nil)
 }
 
+func BuildV4Asset(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, to PaymentPayload, amount *big.Int, deposit bool) (*types.Transaction, error) {
+	return buildV4Asset(ctx, rpc, seed, identity, []Payment{{to, amount}}, deposit, nil, assetID)
+}
+
+func BuildV4AssetWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, recipient common.Address, amount *big.Int) (*types.Transaction, error) {
+	return buildV4AssetWithWithdrawal(ctx, rpc, seed, identity, nil, false, nil, assetID, &WithdrawalRequest{Recipient: recipient, Amount: amount})
+}
+
 // BuildV4Batch constructs one Shield4 spend with up to three payments. Inputs
 // are selected from the shared Shield3/Shield4 note tree, so the resulting
 // proof has one full-chain anchor and one linkability tag.
 func BuildV4Batch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment) (*types.Transaction, error) {
 	return buildV4(ctx, rpc, seed, identity, payments, false, nil)
+}
+
+func BuildV4AssetBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, payments []Payment) (*types.Transaction, error) {
+	return buildV4Asset(ctx, rpc, seed, identity, payments, false, nil, assetID)
 }
 
 // BuildV4Relayed constructs a Shield4 spend authorized for a relay sponsor.
@@ -40,9 +53,37 @@ func BuildV4RelayedBatch(ctx context.Context, rpc RPC, seed []byte, identity *Id
 }
 
 func buildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
-	amount, err := validatePayments(identity, payments)
-	if err != nil {
-		return nil, err
+	return buildV4AssetWithWithdrawal(ctx, rpc, seed, identity, payments, deposit, relay, shielded3.AssetTKM, nil)
+}
+
+func buildV4Asset(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64) (*types.Transaction, error) {
+	return buildV4AssetWithWithdrawal(ctx, rpc, seed, identity, payments, deposit, relay, assetID, nil)
+}
+
+func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest) (*types.Transaction, error) {
+	assetID = shielded3.NormalizeAssetID(assetID)
+	if !shielded3.IsSupportedAsset(assetID) {
+		return nil, errors.New("unsupported shielded asset")
+	}
+	var amount *big.Int
+	var err error
+	if withdrawal != nil {
+		if deposit || assetID != shielded3.AssetPTKM || withdrawal.Amount == nil || withdrawal.Amount.Sign() <= 0 || withdrawal.Amount.Cmp(shielded4.MaxSendWei()) > 0 || withdrawal.Recipient == (common.Address{}) {
+			return nil, errors.New("invalid wrapped private TKM withdrawal")
+		}
+		if err := RequireRegisteredAddress(ctx, rpc, withdrawal.Recipient); err != nil {
+			return nil, err
+		}
+		if identity == nil || identity.Stamp == nil {
+			return nil, errors.New("create the private stamp first")
+		}
+		amount = new(big.Int)
+		payments = nil
+	} else {
+		amount, err = validatePayments(identity, payments)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if deposit && len(payments) != 1 {
 		return nil, errors.New("shielding requires exactly one destination")
@@ -109,13 +150,26 @@ func buildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paym
 	}
 	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), gasPrice)
 	sponsor := new(big.Int)
-	if !deposit && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
+	if assetID == shielded3.AssetPTKM && relay != nil {
+		return nil, errors.New("wrapped private TKM requires the sender to pay public gas")
+	}
+	if !deposit && assetID == shielded3.AssetPTKM && (*big.Int)(&balance).Cmp(maxGas) < 0 {
+		return nil, errors.New("public balance cannot cover gas for wrapped private TKM")
+	}
+	if !deposit && assetID != shielded3.AssetPTKM && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
 		sponsor.Set(maxGas)
 	}
 	required := new(big.Int).Add(amount, sponsor)
+	if withdrawal != nil {
+		required.Add(required, withdrawal.Amount)
+	}
 	witness := shielded4.SpendWitness{SpendingSecret: identity.SpendingSecret}
 	change := new(big.Int)
-	envelope := &core.ShieldedV4Transaction{Version: 4, Deposit: deposit, WithdrawalValue: new(big.Int), GasSponsorValue: sponsor}
+	envelope := &core.ShieldedV4Transaction{Version: 4, Deposit: deposit, AssetID: assetID, WithdrawalValue: new(big.Int), GasSponsorValue: sponsor}
+	if withdrawal != nil {
+		envelope.WithdrawalRecipient = withdrawal.Recipient
+		envelope.WithdrawalValue.Set(withdrawal.Amount)
+	}
 	if deposit {
 		if (*big.Int)(&balance).Cmp(new(big.Int).Add(amount, maxGas)) < 0 {
 			return nil, errors.New("public balance cannot cover shielding and gas")
@@ -129,7 +183,7 @@ func buildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paym
 	} else {
 		view := identity.ViewKey()
 		defer view.Clear()
-		scan, err := Scan(ctx, rpc, view)
+		scan, err := ScanAsset(ctx, rpc, view, assetID)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +264,7 @@ func buildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paym
 			return nil, err
 		}
 		witness.Outputs[slot] = shielded4.OutputOpening{Owner: recipient.Owner, Randomness: random, Value: limbs}
-		commitment, err := NoteCommitment(identity.ChainID, Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address})
+		commitment, err := NoteCommitment(identity.ChainID, Note{AssetID: assetID, Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address})
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +273,7 @@ func buildV4(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paym
 		if err != nil {
 			return nil, err
 		}
-		note := Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
+		note := Note{AssetID: assetID, Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
 		envelope.Outputs[slot].Commitment = commitment
 		envelope.Outputs[slot].OneTimeKey = common.CopyBytes(oneTimeKey)
 		plain, err := json.Marshal(note)

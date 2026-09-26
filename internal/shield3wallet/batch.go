@@ -62,6 +62,10 @@ func validatePayments(identity *Identity, payments []Payment) (*big.Int, error) 
 func BuildBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment) (*types.Transaction, error) {
 	return build(ctx, rpc, seed, identity, payments, false, nil)
 }
+
+func BuildAssetBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, payments []Payment) (*types.Transaction, error) {
+	return buildAsset(ctx, rpc, seed, identity, payments, false, nil, assetID)
+}
 func BuildRelayedBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, offer *RelayOffer) (*types.Transaction, error) {
 	return build(ctx, rpc, seed, identity, payments, false, offer)
 }

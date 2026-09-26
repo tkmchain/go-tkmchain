@@ -23,6 +23,9 @@ type RPC interface {
 	CallContext(context.Context, any, string, ...any) error
 }
 type Note struct {
+	// AssetID is authenticated by the commitment and defaults to native TKM
+	// when omitted in legacy encrypted notes.
+	AssetID    uint64           `json:"assetId,omitempty"`
 	Owner      shielded3.Digest `json:"owner"`
 	Randomness shielded3.Digest `json:"randomness"`
 	ValueWei   string           `json:"valueWei"`
@@ -65,6 +68,7 @@ type ViewKey struct {
 	Incoming     hexutil.Bytes     `json:"incoming"`
 	Outgoing     hexutil.Bytes     `json:"outgoing,omitempty"`
 	NullifierKey *shielded3.Digest `json:"nullifierKey,omitempty"`
+	AssetID      uint64            `json:"assetId,omitempty"`
 }
 
 func (i *Identity) ScopedViewKey(scope string) (ViewKey, error) {
@@ -95,6 +99,9 @@ func (v *ViewKey) Clear() {
 func (v ViewKey) validate() error {
 	if v.Version != 2 || v.ChainID == 0 || v.Owner == (shielded3.Digest{}) {
 		return errors.New("invalid or obsolete Shield3 viewing key; re-export a scoped key")
+	}
+	if !shielded3.IsSupportedAsset(v.AssetID) {
+		return errors.New("unsupported shielded asset viewing key")
 	}
 	switch v.Scope {
 	case "incoming":
@@ -147,7 +154,11 @@ func noteWords(chainID uint64, n Note, domain uint64) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	words := []uint64{domain, uint64(uint32(chainID)), chainID >> 32, shielded3.AssetTKM, 0}
+	assetID := shielded3.NormalizeAssetID(n.AssetID)
+	if !shielded3.IsSupportedAsset(assetID) {
+		return nil, errors.New("unsupported shielded asset")
+	}
+	words := []uint64{domain, uint64(uint32(chainID)), chainID >> 32, assetID, 0}
 	words = append(words, n.Owner[:]...)
 	if domain == 3002 {
 		for _, limb := range amount {
@@ -206,6 +217,22 @@ func newPaymentTag() ([]byte, error) {
 // Scanning needs viewing keys only; note ownership still requires the separate
 // spending-secret preimage in the proof. Incoming scans never query spends.
 func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
+	return ScanAsset(ctx, rpc, view, shielded3.AssetTKM)
+}
+
+// ScanAsset scans only notes whose authenticated commitment belongs to the
+// requested asset.  The encrypted note itself carries the asset ID, so an RPC
+// cannot make a TKM note appear as pTKM (or vice versa).
+func ScanAsset(ctx context.Context, rpc RPC, view ViewKey, assetID uint64) (ScanResult, error) {
+	assetID = shielded3.NormalizeAssetID(assetID)
+	if !shielded3.IsSupportedAsset(assetID) {
+		return ScanResult{}, errors.New("unsupported shielded asset")
+	}
+	view.AssetID = assetID
+	return scanAsset(ctx, rpc, view, assetID)
+}
+
+func scanAsset(ctx context.Context, rpc RPC, view ViewKey, assetID uint64) (ScanResult, error) {
 	result := ScanResult{BalanceWei: "0", Notes: make([]OwnedNote, 0)}
 	if err := view.validate(); err != nil {
 		return result, err
@@ -286,7 +313,7 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 					clear(plain)
 					commitment, commitmentErr := NoteCommitment(view.ChainID, note)
 					value, valueErr := parseAmount(note.ValueWei)
-					if err == nil && commitmentErr == nil && commitment == out.Commitment && valueErr == nil && value.Sign() > 0 && note.Owner != view.Owner {
+					if err == nil && commitmentErr == nil && commitment == out.Commitment && valueErr == nil && value.Sign() > 0 && note.Owner != view.Owner && shielded3.NormalizeAssetID(note.AssetID) == assetID {
 						result.History = append(result.History, HistoryEntry{Direction: "outgoing", Note: note, Commitment: commitment, TransactionHash: out.TransactionHash})
 					}
 				}
@@ -301,7 +328,7 @@ func Scan(ctx context.Context, rpc RPC, view ViewKey) (ScanResult, error) {
 			var note Note
 			err = json.Unmarshal(plain, &note)
 			clear(plain)
-			if err != nil || note.Owner != view.Owner {
+			if err != nil || note.Owner != view.Owner || shielded3.NormalizeAssetID(note.AssetID) != assetID {
 				continue
 			}
 			commitment, err := NoteCommitment(view.ChainID, note)
@@ -370,10 +397,56 @@ func Build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to Pay
 	return build(ctx, rpc, seed, identity, []Payment{{to, amount}}, deposit, nil)
 }
 
+// BuildAsset constructs a Shield3 transaction for a registered shielded
+// asset. AssetPTKM is the wrapped private TKM unit; its public deposit is the
+// mint operation and its private withdrawal is the burn operation.
+func BuildAsset(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, to PaymentPayload, amount *big.Int, deposit bool) (*types.Transaction, error) {
+	return buildAsset(ctx, rpc, seed, identity, []Payment{{to, amount}}, deposit, nil, assetID)
+}
+
+// WithdrawalRequest burns private units and releases the same amount of
+// public TKM to a stamped address. It is intentionally limited to pTKM.
+type WithdrawalRequest struct {
+	Recipient common.Address
+	Amount    *big.Int
+}
+
+func BuildAssetWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, recipient common.Address, amount *big.Int) (*types.Transaction, error) {
+	return buildAssetWithWithdrawal(ctx, rpc, seed, identity, nil, false, nil, assetID, &WithdrawalRequest{Recipient: recipient, Amount: amount})
+}
+
 func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
-	amount, err := validatePayments(identity, payments)
-	if err != nil {
-		return nil, err
+	return buildAssetWithWithdrawal(ctx, rpc, seed, identity, payments, deposit, relay, shielded3.AssetTKM, nil)
+}
+
+func buildAsset(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64) (*types.Transaction, error) {
+	return buildAssetWithWithdrawal(ctx, rpc, seed, identity, payments, deposit, relay, assetID, nil)
+}
+
+func buildAssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest) (*types.Transaction, error) {
+	assetID = shielded3.NormalizeAssetID(assetID)
+	if !shielded3.IsSupportedAsset(assetID) {
+		return nil, errors.New("unsupported shielded asset")
+	}
+	var amount *big.Int
+	var err error
+	if withdrawal != nil {
+		if deposit || assetID != shielded3.AssetPTKM || withdrawal.Amount == nil || withdrawal.Amount.Sign() <= 0 || withdrawal.Amount.Cmp(shielded3.MaxSendWei()) > 0 || withdrawal.Recipient == (common.Address{}) {
+			return nil, errors.New("invalid wrapped private TKM withdrawal")
+		}
+		if err := RequireRegisteredAddress(ctx, rpc, withdrawal.Recipient); err != nil {
+			return nil, err
+		}
+		if identity == nil || identity.Stamp == nil {
+			return nil, errors.New("create the private stamp first")
+		}
+		amount = new(big.Int)
+		payments = nil
+	} else {
+		amount, err = validatePayments(identity, payments)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if deposit && len(payments) != 1 {
 		return nil, errors.New("shielding requires exactly one destination")
@@ -440,13 +513,26 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paymen
 	}
 	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), gasPrice)
 	sponsor := new(big.Int)
-	if !deposit && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
+	if assetID == shielded3.AssetPTKM && relay != nil {
+		return nil, errors.New("wrapped private TKM requires the sender to pay public gas")
+	}
+	if !deposit && assetID == shielded3.AssetPTKM && (*big.Int)(&balance).Cmp(maxGas) < 0 {
+		return nil, errors.New("public balance cannot cover gas for wrapped private TKM")
+	}
+	if !deposit && assetID != shielded3.AssetPTKM && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
 		sponsor.Set(maxGas)
 	}
 	required := new(big.Int).Add(amount, sponsor)
+	if withdrawal != nil {
+		required.Add(required, withdrawal.Amount)
+	}
 	witness := shielded3.SpendWitness{SpendingSecret: identity.SpendingSecret}
 	change := new(big.Int)
-	envelope := &core.ShieldedV3Transaction{Version: 3, Deposit: deposit, WithdrawalValue: new(big.Int), GasSponsorValue: sponsor}
+	envelope := &core.ShieldedV3Transaction{Version: 3, Deposit: deposit, AssetID: assetID, WithdrawalValue: new(big.Int), GasSponsorValue: sponsor}
+	if withdrawal != nil {
+		envelope.WithdrawalRecipient = withdrawal.Recipient
+		envelope.WithdrawalValue.Set(withdrawal.Amount)
+	}
 	if deposit {
 		if (*big.Int)(&balance).Cmp(new(big.Int).Add(amount, maxGas)) < 0 {
 			return nil, errors.New("public balance cannot cover shielding and gas")
@@ -460,7 +546,7 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paymen
 	} else {
 		view := identity.ViewKey()
 		defer view.Clear()
-		scan, err := Scan(ctx, rpc, view)
+		scan, err := ScanAsset(ctx, rpc, view, assetID)
 		if err != nil {
 			return nil, err
 		}
@@ -541,7 +627,7 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paymen
 			return nil, err
 		}
 		witness.Outputs[slot] = shielded3.OutputOpening{Owner: recipient.Owner, Randomness: random, Value: limbs}
-		commitment, err := NoteCommitment(identity.ChainID, Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address})
+		commitment, err := NoteCommitment(identity.ChainID, Note{AssetID: assetID, Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address})
 		if err != nil {
 			return nil, err
 		}
@@ -550,7 +636,7 @@ func build(ctx context.Context, rpc RPC, seed []byte, identity *Identity, paymen
 		if err != nil {
 			return nil, err
 		}
-		note := Note{Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
+		note := Note{AssetID: assetID, Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
 		envelope.Outputs[slot].Commitment = commitment
 		envelope.Outputs[slot].OneTimeKey = common.CopyBytes(oneTimeKey)
 		plain, err := json.Marshal(note)

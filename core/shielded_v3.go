@@ -51,6 +51,16 @@ type ShieldedV3Transaction struct {
 	InputCount           uint64                                     `rlp:"optional"`
 	Relayed              bool                                       `rlp:"optional"`
 	ValidUntil           uint64                                     `rlp:"optional"`
+	// AssetID is optional for wire compatibility; zero means native TKM.
+	// Non-zero IDs are bound into the native proof statement and state domain.
+	AssetID uint64 `rlp:"optional"`
+}
+
+func shieldedV3AssetID(e *ShieldedV3Transaction) uint64 {
+	if e == nil {
+		return shielded3.AssetTKM
+	}
+	return shielded3.NormalizeAssetID(e.AssetID)
 }
 
 // ShieldedV3Nullifiers returns exactly the active, distinct nullifiers. A zero
@@ -172,6 +182,9 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if e == nil || e.Version != 3 {
 		return fail("expected Shield3 envelope version 3")
 	}
+	if !shielded3.IsSupportedAsset(e.AssetID) {
+		return fail("unsupported Shield3 asset ID")
+	}
 	if e.WithdrawalValue == nil || e.GasSponsorValue == nil || e.WithdrawalValue.Sign() < 0 || e.GasSponsorValue.Sign() < 0 {
 		return fail("invalid Shield3 public values")
 	}
@@ -208,6 +221,9 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	}
 	if e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) > 0 {
 		return fail("Shield3 gas sponsorship exceeds transaction gas cost")
+	}
+	if shieldedV3AssetID(e) == shielded3.AssetPTKM && e.GasSponsorValue.Sign() != 0 {
+		return fail("wrapped private TKM cannot sponsor public gas")
 	}
 	seen := make(map[shielded3.Digest]bool)
 	seenOneTime := make(map[string]bool)
@@ -247,6 +263,9 @@ func ShieldedV3Statement(tx *types.Transaction, e *ShieldedV3Transaction) (shiel
 	if tx == nil || e == nil || e.WithdrawalValue == nil || e.GasSponsorValue == nil || !tx.ChainId().IsUint64() {
 		return shielded3.Statement{}, ErrInvalidShieldedTx
 	}
+	if !shielded3.IsSupportedAsset(e.AssetID) {
+		return shielded3.Statement{}, fmt.Errorf("%w: unsupported Shield3 asset ID", ErrInvalidShieldedTx)
+	}
 	value := new(big.Int).Add(e.WithdrawalValue, e.GasSponsorValue)
 	if e.Deposit {
 		value = tx.Value()
@@ -263,7 +282,7 @@ func ShieldedV3Statement(tx *types.Transaction, e *ShieldedV3Transaction) (shiel
 	if err != nil {
 		return shielded3.Statement{}, err
 	}
-	s := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shielded3.AssetTKM, PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit}
+	s := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shieldedV3AssetID(e), PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit}
 	s.InputCount = uint32(e.InputCount)
 	s.AdditionalNullifiers = e.AdditionalNullifiers
 	for i := range e.Outputs {
@@ -294,6 +313,7 @@ func ValidateShieldedV3Proof(tx *types.Transaction) error {
 	return nil
 }
 func validateShieldedV3State(st *state.StateDB, tx *types.Transaction, e *ShieldedV3Transaction) error {
+	assetID := shieldedV3AssetID(e)
 	// Processing precedes normal value transfer. The reserved pool must remain
 	// code-free so execution cannot revert a funded deposit after note creation.
 	if st.GetCodeSize(params.ShieldedPoolAddress) != 0 {
@@ -311,7 +331,7 @@ func validateShieldedV3State(st *state.StateDB, tx *types.Transaction, e *Shield
 	}
 	if !e.Deposit {
 		for _, n := range nullifiers {
-			if ShieldedV3NullifierTransaction(st, n) != (common.Hash{}) {
+			if ShieldedV3NullifierTransactionForAsset(st, assetID, n) != (common.Hash{}) {
 				return fmt.Errorf("%w: Shield3 nullifier already spent", ErrInvalidShieldedTx)
 			}
 		}
@@ -320,12 +340,25 @@ func validateShieldedV3State(st *state.StateDB, tx *types.Transaction, e *Shield
 		}
 	}
 	for _, out := range e.Outputs {
-		if st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("commitment", out.Commitment.Bytes())) != (common.Hash{}) {
+		if st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "commitment", out.Commitment.Bytes())) != (common.Hash{}) {
 			return fmt.Errorf("%w: Shield3 commitment already exists", ErrInvalidShieldedTx)
 		}
 	}
+	if assetID == shielded3.AssetPTKM {
+		supply := shieldedV3AssetSupply(st, assetID)
+		if st.GetBalance(params.ShieldedPoolAddress).ToBig().Cmp(supply) < 0 {
+			return fmt.Errorf("%w: wrapped TKM backing reserve is undercollateralized", ErrInvalidShieldedTx)
+		}
+		if e.Deposit {
+			if new(big.Int).Add(supply, tx.Value()).BitLen() > 256 {
+				return fmt.Errorf("%w: wrapped TKM supply overflow", ErrInvalidShieldedTx)
+			}
+		} else if supply.Cmp(e.WithdrawalValue) < 0 {
+			return fmt.Errorf("%w: wrapped TKM supply is below withdrawal", ErrInvalidShieldedTx)
+		}
+	}
 	release := new(big.Int).Add(e.WithdrawalValue, e.GasSponsorValue)
-	if release.BitLen() > 256 || st.GetBalance(params.ShieldedPoolAddress).Cmp(uint256.MustFromBig(release)) < 0 {
+	if release.BitLen() > 256 || shieldedV3SpendablePoolReserve(st, assetID).Cmp(release) < 0 {
 		return fmt.Errorf("%w: insufficient shielded pool reserve", ErrInvalidShieldedTx)
 	}
 	if ShieldedV3NextIndex(st) >= (uint64(1)<<shielded3.MerkleDepth)-3 {
@@ -345,8 +378,9 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 	if err != nil {
 		return err
 	}
+	assetID := shieldedV3AssetID(e)
 	for _, n := range nullifiers {
-		if _, ok := seen[ShieldedV3StateSlot("block-nullifier", n.Bytes())]; ok {
+		if _, ok := seen[ShieldedV3StateSlotForAsset(assetID, "block-nullifier", n.Bytes())]; ok {
 			return fmt.Errorf("%w: duplicate Shield3 nullifier in block", ErrInvalidShieldedTx)
 		}
 	}
@@ -368,11 +402,20 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 			st.RevertToSnapshot(snapshot)
 			return err
 		}
-		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("commitment", out.Commitment.Bytes()), tx.Hash())
+		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "commitment", out.Commitment.Bytes()), tx.Hash())
 	}
 	for _, n := range nullifiers {
-		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("nullifier", n.Bytes()), tx.Hash())
-		seen[ShieldedV3StateSlot("block-nullifier", n.Bytes())] = struct{}{}
+		st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "nullifier", n.Bytes()), tx.Hash())
+		seen[ShieldedV3StateSlotForAsset(assetID, "block-nullifier", n.Bytes())] = struct{}{}
+	}
+	if assetID == shielded3.AssetPTKM {
+		supply := shieldedV3AssetSupply(st, assetID)
+		if e.Deposit {
+			supply.Add(supply, tx.Value())
+		} else {
+			supply.Sub(supply, e.WithdrawalValue)
+		}
+		setShieldedV3AssetSupply(st, assetID, supply)
 	}
 	for _, release := range []struct {
 		to    common.Address

@@ -10,7 +10,30 @@ import (
 	"math/big"
 )
 
-const AssetTKM uint64 = 1
+// Asset identifiers are part of every Shield3/Shield4 public statement and
+// therefore part of the proof relation.  AssetTKM is the legacy native TKM
+// note asset.  AssetPTKM is the 1:1 wrapped private TKM unit: its supply is
+// minted by a public Shield3/Shield4 deposit and burned by a withdrawal.
+const (
+	AssetTKM  uint64 = 1
+	AssetPTKM uint64 = 2
+	// AssetWrappedTKM is a descriptive alias for callers that do not use the
+	// wallet symbol.
+	AssetWrappedTKM uint64 = AssetPTKM
+)
+
+func NormalizeAssetID(assetID uint64) uint64 {
+	if assetID == 0 {
+		return AssetTKM
+	}
+	return assetID
+}
+
+func IsSupportedAsset(assetID uint64) bool {
+	assetID = NormalizeAssetID(assetID)
+	return assetID == AssetTKM || assetID == AssetPTKM
+}
+
 const MaxSendTKM uint64 = 5_000_000
 const protocolMagicV4 = "TKMS4STK"
 

@@ -50,6 +50,15 @@ type ShieldedV4Transaction struct {
 	InputCount           uint64                                     `rlp:"optional"`
 	Relayed              bool                                       `rlp:"optional"`
 	ValidUntil           uint64                                     `rlp:"optional"`
+	// AssetID is optional for wire compatibility; zero means native TKM.
+	AssetID uint64 `rlp:"optional"`
+}
+
+func shieldedV4AssetID(e *ShieldedV4Transaction) uint64 {
+	if e == nil {
+		return shielded3.AssetTKM
+	}
+	return shielded3.NormalizeAssetID(e.AssetID)
 }
 
 func HasShieldedV4Prefix(data []byte) bool { return bytes.HasPrefix(data, []byte(ShieldedV4Magic)) }
@@ -159,6 +168,9 @@ func shieldedV4Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if e == nil || e.Version != 4 {
 		return fail("expected envelope version 4")
 	}
+	if !shielded3.IsSupportedAsset(e.AssetID) {
+		return fail("unsupported Shield4 asset ID")
+	}
 	if e.WithdrawalValue == nil || e.GasSponsorValue == nil || e.WithdrawalValue.Sign() < 0 || e.GasSponsorValue.Sign() < 0 {
 		return fail("invalid public values")
 	}
@@ -192,6 +204,9 @@ func shieldedV4Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	}
 	if e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) > 0 {
 		return fail("gas sponsorship exceeds transaction gas cost")
+	}
+	if shieldedV4AssetID(e) == shielded3.AssetPTKM && e.GasSponsorValue.Sign() != 0 {
+		return fail("wrapped private TKM cannot sponsor public gas")
 	}
 	seen := make(map[shielded4.Digest]bool)
 	seenOneTime := make(map[string]bool)
@@ -229,6 +244,9 @@ func ShieldedV4Statement(tx *types.Transaction, e *ShieldedV4Transaction) (shiel
 	if tx == nil || e == nil || e.WithdrawalValue == nil || e.GasSponsorValue == nil || !tx.ChainId().IsUint64() {
 		return shielded4.Statement{}, ErrInvalidShieldedTx
 	}
+	if !shielded3.IsSupportedAsset(e.AssetID) {
+		return shielded4.Statement{}, fmt.Errorf("%w: unsupported Shield4 asset ID", ErrInvalidShieldedTx)
+	}
 	inputCount := e.InputCount
 	if !e.Deposit && inputCount == 0 {
 		inputCount = 1
@@ -252,7 +270,7 @@ func ShieldedV4Statement(tx *types.Transaction, e *ShieldedV4Transaction) (shiel
 	if err != nil {
 		return shielded4.Statement{}, err
 	}
-	base := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shielded4.AssetTKM, PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit, InputCount: uint32(inputCount), AdditionalNullifiers: e.AdditionalNullifiers}
+	base := shielded3.Statement{ChainID: tx.ChainId().Uint64(), AssetID: shieldedV4AssetID(e), PublicValue: amount, GasSponsor: sponsor, Intent: intent, Anchor: e.Anchor, Nullifier: e.Nullifier, StampRoot: e.StampRoot, Deposit: e.Deposit, InputCount: uint32(inputCount), AdditionalNullifiers: e.AdditionalNullifiers}
 	for i := range e.Outputs {
 		base.Outputs[i] = e.Outputs[i].Commitment
 		key, err := shielded4.DigestFromBytes(e.Outputs[i].OneTimeKey)

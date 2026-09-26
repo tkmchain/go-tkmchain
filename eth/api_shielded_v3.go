@@ -12,18 +12,26 @@ import (
 )
 
 type ShieldedV3Status struct {
-	Active         bool            `json:"active"`
-	NativeVerifier bool            `json:"nativeVerifier"`
-	ActivationTime *hexutil.Uint64 `json:"activationTime"`
-	MaxSendWei     string          `json:"maxSendWei"`
-	MaxRecipients  uint64          `json:"maxRecipients"`
-	ViewKeyVersion uint64          `json:"viewKeyVersion"`
-	MaxInputs      uint64          `json:"maxInputs"`
-	MaxSendTKM     uint64          `json:"maxSendTKM"`
+	Active          bool            `json:"active"`
+	NativeVerifier  bool            `json:"nativeVerifier"`
+	ActivationTime  *hexutil.Uint64 `json:"activationTime"`
+	MaxSendWei      string          `json:"maxSendWei"`
+	MaxRecipients   uint64          `json:"maxRecipients"`
+	ViewKeyVersion  uint64          `json:"viewKeyVersion"`
+	MaxInputs       uint64          `json:"maxInputs"`
+	MaxSendTKM      uint64          `json:"maxSendTKM"`
+	SupportedAssets []uint64        `json:"supportedAssets"`
+}
+
+type ShieldedAssetSupply struct {
+	AssetID        uint64         `json:"assetId"`
+	Symbol         string         `json:"symbol"`
+	TotalSupplyWei string         `json:"totalSupplyWei"`
+	BackingPool    common.Address `json:"backingPool"`
 }
 
 func (api *PrivacyAPI) ShieldedV3Status() ShieldedV3Status {
-	status := ShieldedV3Status{MaxRecipients: shielded3.OutputSlots - 1, ViewKeyVersion: 2, MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM}
+	status := ShieldedV3Status{MaxRecipients: shielded3.OutputSlots - 1, ViewKeyVersion: 2, MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM, SupportedAssets: []uint64{shielded3.AssetTKM, shielded3.AssetPTKM}}
 	if api == nil || api.e == nil || api.e.blockchain == nil {
 		return status
 	}
@@ -35,6 +43,21 @@ func (api *PrivacyAPI) ShieldedV3Status() ShieldedV3Status {
 	head := api.e.blockchain.CurrentBlock()
 	status.Active = head != nil && cfg.IsAntartical(head.Number, head.Time) && cfg.IsPrivacyCommitments(head.Number, head.Time)
 	return status
+}
+
+// ShieldedV3AssetSupply exposes only the public conservation counter. It does
+// not reveal any note, owner, amount, or nullifier; individual balances remain
+// available only through the holder's viewing key.
+func (api *PrivacyAPI) ShieldedV3AssetSupply(assetID hexutil.Uint64) (ShieldedAssetSupply, error) {
+	normalized := shielded3.NormalizeAssetID(uint64(assetID))
+	if normalized != shielded3.AssetPTKM {
+		return ShieldedAssetSupply{}, fmt.Errorf("asset %d has no wrapped private supply counter", normalized)
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return ShieldedAssetSupply{}, err
+	}
+	return ShieldedAssetSupply{AssetID: normalized, Symbol: "pTKM", TotalSupplyWei: core.ShieldedV3AssetSupply(st, normalized).String(), BackingPool: params.ShieldedPoolAddress}, nil
 }
 func (api *PrivacyAPI) ShieldedV3Path(commitment shielded3.Digest) (core.ShieldedV3Path, error) {
 	if _, err := shielded3.DigestFromBytes(commitment.Bytes()); err != nil {
@@ -54,7 +77,12 @@ func (api *PrivacyAPI) ShieldedV3Nullifier(nullifier shielded3.Digest) (common.H
 	if err != nil {
 		return common.Hash{}, err
 	}
-	return core.ShieldedV3NullifierTransaction(st, nullifier), nil
+	for _, assetID := range []uint64{shielded3.AssetTKM, shielded3.AssetPTKM} {
+		if hash := core.ShieldedV3NullifierTransactionForAsset(st, assetID, nullifier); hash != (common.Hash{}) {
+			return hash, nil
+		}
+	}
+	return common.Hash{}, nil
 }
 
 type ShieldedV3OutputStatus struct {
@@ -66,6 +94,7 @@ type ShieldedV3OutputStatus struct {
 	Incoming        hexutil.Bytes    `json:"incoming"`
 	Outgoing        hexutil.Bytes    `json:"outgoing"`
 	Stamp           hexutil.Bytes    `json:"stamp"`
+	AssetID         uint64           `json:"assetId"`
 }
 
 // Scan data comes exclusively from canonical blocks; no plaintext amount,
@@ -111,7 +140,7 @@ func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]S
 					if len(result) >= 512 {
 						return nil, fmt.Errorf("Shield3 scan exceeds 512 outputs; reduce the block range")
 					}
-					result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp)})
+					result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp), v4.AssetID})
 				}
 				continue
 			}
@@ -119,7 +148,7 @@ func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]S
 				if len(result) >= 512 {
 					return nil, fmt.Errorf("Shield3 scan exceeds 512 outputs; reduce the block range")
 				}
-				result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp)})
+				result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp), e.AssetID})
 			}
 		}
 		if number == ^uint64(0) {

@@ -41,3 +41,33 @@ encrypted calldata alone is not a valid substitute.
 
 Nodes built without the native verifier fail closed and reject private TVM
 proofs.
+
+## Wrapped private TKM (`pTKM`)
+
+Shield3 and Shield4 also carry an authenticated `AssetID`. `1` is native TKM;
+`2` is `pTKM`, a one-to-one wrapped private unit. The token is not an EVM
+contract with a public `balanceOf` mapping. Its balances are encrypted notes,
+and the existing native proof relation enforces exact 256-bit conservation,
+input nullifiers, output commitments, one-time keys, and stamped recipients.
+
+The consensus rules are:
+
+* A `pTKM` deposit is a public-TKM transfer to the shielded pool. It mints the
+  same amount into the pTKM supply counter.
+* Shield3/Shield4 pTKM transfers do not change supply. The asset ID is in the
+  proof statement and in every note commitment/nullifier, so a TKM note cannot
+  be replayed as pTKM.
+* A pTKM withdrawal is a private spend with a stamped public recipient. It
+  burns the hidden amount and releases the same amount of public TKM from the
+  pool. Public gas sponsorship is disabled for pTKM; gas is paid by the PQ
+  sender so the backing reserve cannot be confused with token value.
+* Supply, commitment, nullifier, and Shield4 link-tag slots use an asset domain.
+  The native TKM namespace remains unchanged for historical compatibility.
+  Native releases cannot consume the public TKM reserved for outstanding
+  pTKM supply.
+
+The read-only RPC `tkmprivacy_shieldedV3AssetSupply(2)` returns the public pTKM
+conservation counter and backing pool address. It does not reveal any note or
+holder balance. Wallet callers use `BuildAsset`/`BuildV4Asset`,
+`BuildAssetBatch`/`BuildV4AssetBatch`, and the corresponding withdrawal builders
+with `zk/shielded3.AssetPTKM`.

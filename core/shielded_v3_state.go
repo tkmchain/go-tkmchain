@@ -4,9 +4,11 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
+	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
@@ -16,6 +18,24 @@ import (
 func ShieldedV3StateSlot(role string, data []byte) common.Hash {
 	h := sha512.New()
 	h.Write([]byte("TKM_SHIELD3_STATE_V1/" + role + "/"))
+	h.Write(data)
+	return common.BytesToHash(h.Sum(nil))
+}
+
+// ShieldedV3StateSlotForAsset keeps replay and supply state separate for each
+// shielded asset.  Native TKM retains the historical slots so existing
+// mainnet notes remain readable; wrapped assets use an explicit asset domain.
+func ShieldedV3StateSlotForAsset(assetID uint64, role string, data []byte) common.Hash {
+	assetID = shielded3.NormalizeAssetID(assetID)
+	if assetID == shielded3.AssetTKM {
+		return ShieldedV3StateSlot(role, data)
+	}
+	h := sha512.New()
+	h.Write([]byte("TKM_SHIELD3_STATE_ASSET_V1/"))
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], assetID)
+	h.Write(encoded[:])
+	h.Write([]byte("/" + role + "/"))
 	h.Write(data)
 	return common.BytesToHash(h.Sum(nil))
 }
@@ -40,6 +60,41 @@ func ShieldedV3NextIndex(st shieldedStateReader) uint64 {
 }
 func ShieldedV3NullifierTransaction(st shieldedStateReader, n shielded3.Digest) common.Hash {
 	return st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("nullifier", n.Bytes()))
+}
+
+func ShieldedV3NullifierTransactionForAsset(st shieldedStateReader, assetID uint64, n shielded3.Digest) common.Hash {
+	return st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "nullifier", n.Bytes()))
+}
+
+func shieldedV3AssetSupply(st shieldedStateReader, assetID uint64) *big.Int {
+	return new(big.Int).SetBytes(st.GetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "supply", nil)).Bytes())
+}
+
+func setShieldedV3AssetSupply(st shieldedStateWriter, assetID uint64, supply *big.Int) {
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlotForAsset(assetID, "supply", nil), common.BytesToHash(supply.Bytes()))
+}
+
+// ShieldedV3AssetSupply returns the consensus supply counter for a shielded
+// asset. Native TKM has no wrapped counter; AssetPTKM is minted and burned by
+// Shield3/Shield4 deposits and withdrawals.
+func ShieldedV3AssetSupply(st shieldedStateReader, assetID uint64) *big.Int {
+	return shieldedV3AssetSupply(st, assetID)
+}
+
+// shieldedV3SpendablePoolReserve protects the native TKM backing pTKM from
+// being consumed by a native-TKM withdrawal or gas sponsor. A pTKM burn may
+// consume the backing amount it burns; all other shielded releases can only
+// spend the excess reserve.
+func shieldedV3SpendablePoolReserve(st *state.StateDB, assetID uint64) *big.Int {
+	reserve := st.GetBalance(params.ShieldedPoolAddress).ToBig()
+	if shielded3.NormalizeAssetID(assetID) == shielded3.AssetPTKM {
+		return reserve
+	}
+	protected := shieldedV3AssetSupply(st, shielded3.AssetPTKM)
+	if reserve.Cmp(protected) <= 0 {
+		return new(big.Int)
+	}
+	return reserve.Sub(reserve, protected)
 }
 
 var v3ZeroCache struct {
