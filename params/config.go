@@ -811,6 +811,15 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		time *uint64
 	}{
 		{"shanghaiTime", c.ShanghaiTime},
+		{"edaTime", c.EDATime},
+		{"kyotoTime", c.KyotoTime},
+		{"phoneTime", c.PhoneTime},
+		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
+		{"quantumResistantTime", c.QuantumResistantTime},
+		{"pqMigrationRecoveryTime", c.PQMigrationRecoveryTime},
+		// Cancun/Antartical activates blob gas after the existing TKM
+		// timestamp forks. Keep the validation sequence chronological so an
+		// EDA-at-genesis configuration remains valid.
 		{"cancunTime", c.CancunTime},
 		{"pragueTime", c.PragueTime},
 		{"osakaTime", c.OsakaTime},
@@ -821,12 +830,6 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"bpo5Time", c.BPO5Time},
 		{"amsterdamTime", c.AmsterdamTime},
 		{"ubtTime", c.UBTTime},
-		{"edaTime", c.EDATime},
-		{"kyotoTime", c.KyotoTime},
-		{"phoneTime", c.PhoneTime},
-		{"privacyCommitmentTime", c.PrivacyCommitmentTime},
-		{"quantumResistantTime", c.QuantumResistantTime},
-		{"pqMigrationRecoveryTime", c.PQMigrationRecoveryTime},
 		{"antarticalTime", c.AntarticalTime},
 	}
 	lastName = ""
