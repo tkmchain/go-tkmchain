@@ -121,6 +121,6 @@ PY
 
 (cd "${repo_root}" && \
   GOTOOLCHAIN=local GOOS=linux GOARCH=mipsle GOMIPS=softfloat \
-    "${goroot}/bin/go" build -a -p "${build_parallelism}" -mod=mod -modfile "${modfile}" -tags ziren -trimpath -overlay "${overlay_json}" \
+    "${goroot}/bin/go" build -p "${build_parallelism}" -mod=mod -modfile "${modfile}" -tags ziren -trimpath -overlay "${overlay_json}" \
     -o "${output}" ./cmd/keeper)
 printf 'keeper guest: %s\n' "${output}"
