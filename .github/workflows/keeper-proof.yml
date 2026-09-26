@@ -65,6 +65,7 @@ jobs:
           PAYLOAD_PATH: ${{ inputs.payload_path }}
           PAYLOAD_URL: ${{ inputs.payload_url }}
         run: |
+          PAYLOAD_PATH="${PAYLOAD_PATH:-cmd/keeper/1192c3_witness.rlp}"
           gcc_include="$(gcc -print-file-name=include)"
           test -d "$gcc_include"
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I${gcc_include}" >> "$GITHUB_ENV"
