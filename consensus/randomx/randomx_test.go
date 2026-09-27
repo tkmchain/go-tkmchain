@@ -91,6 +91,26 @@ func TestVerifySealRejectsEmptyRandomXSealFieldsFromStrictCutoff(t *testing.T) {
 	}
 }
 
+func TestVerifySealRejectsEmptyMixDigestOnAllNetworkProfiles(t *testing.T) {
+	rx := &RandomX{}
+	header := &types.Header{
+		Number:     new(big.Int).SetUint64(44425),
+		Difficulty: new(big.Int).Set(GenesisDifficulty),
+		Nonce:      types.EncodeNonce(1),
+	}
+	for name, config := range map[string]*params.ChainConfig{
+		"mainnet": params.MainnetChainConfig,
+		"testnet": params.TestChainConfig,
+		"egypt":   params.EgyptChainConfig,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := rx.VerifySeal(verifySealTestChain{config: config}, header); err == nil || !strings.Contains(err.Error(), "empty mix digest") {
+				t.Fatalf("zero mix digest accepted on %s: %v", name, err)
+			}
+		})
+	}
+}
+
 func TestValidStoredMixDigestAcceptsBlock2450ProofValue(t *testing.T) {
 	rx := &RandomX{}
 	difficulty := new(big.Int).SetUint64(0x4a554)

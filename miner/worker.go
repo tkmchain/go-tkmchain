@@ -716,7 +716,11 @@ func (w *worker) persistSealedTask(sealhash common.Hash, task *task, block *type
 	}
 	config := w.chain.Config()
 	moneroProof := config != nil && config.IsRandomXMonero(header.Number)
-	if !moneroProof && (header.MixDigest == (common.Hash{}) || header.Nonce == (types.BlockNonce{})) {
+	// A zero mix digest is never a valid RandomX proof.  Keep this check
+	// independent of the proof format (including Monero-style blocks) so a
+	// fallback miner or an external submitter can never create an unsealed
+	// canonical block on mainnet, Egypt, or any test network.
+	if header.MixDigest == (common.Hash{}) || (!moneroProof && header.Nonce == (types.BlockNonce{})) {
 		log.Warn("Dropping unsealed RandomX block", "number", block.Number(), "hash", hash, "nonce", header.Nonce, "mixDigest", header.MixDigest)
 		return false
 	}

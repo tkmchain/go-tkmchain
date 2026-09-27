@@ -154,6 +154,12 @@ func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 	if header == nil || header.Number == nil {
 		return consensus.ErrInvalidNumber
 	}
+	// The fallback build cannot recompute RandomX, but it must never accept
+	// an empty proof.  Otherwise a node built without the native verifier
+	// could mine or relay zero-mix blocks that native nodes correctly reject.
+	if header.Number.Sign() > 0 && header.MixDigest == (common.Hash{}) {
+		return fmt.Errorf("invalid proof: empty mix digest")
+	}
 	if rx != nil && rx.fail > 0 && header.Number.Uint64() == rx.fail {
 		return fmt.Errorf("invalid fake randomx header %d", rx.fail)
 	}
@@ -208,11 +214,7 @@ func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 }
 
 func (rx *RandomX) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	select {
-	case results <- block:
-	case <-stop:
-	}
-	return nil
+	return errors.New("randomx native mining unavailable; refusing to emit an unsealed block")
 }
 
 func (rx *RandomX) SealHash(header *types.Header) common.Hash { return header.Hash() }
