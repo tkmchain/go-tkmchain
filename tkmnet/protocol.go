@@ -110,9 +110,16 @@ func Build(options BuildOptions, payload []byte) ([]byte, error) {
 		}
 	}
 	if options.Expires == 0 {
-		options.Expires = uint64(time.Now().Add(10 * time.Minute).Unix())
+		seconds, err := unixSeconds(time.Now().Add(10 * time.Minute))
+		if err != nil {
+			return nil, err
+		}
+		options.Expires = seconds
 	}
-	now := uint64(time.Now().Unix())
+	now, err := unixSeconds(time.Now())
+	if err != nil {
+		return nil, err
+	}
 	if options.Expires <= now || options.Expires-now > uint64(maxLifetime/time.Second) {
 		return nil, errors.New("tkmnet: expiry is outside the permitted lifetime")
 	}
@@ -131,7 +138,10 @@ func Build(options BuildOptions, payload []byte) ([]byte, error) {
 		return nil, err
 	}
 	plain := make([]byte, PayloadPlainSize)
-	binary.BigEndian.PutUint16(plain[:2], uint16(len(payload)))
+	if uint64(len(payload)) > uint64(^uint16(0)) {
+		return nil, errors.New("tkmnet: payload length does not fit packet framing")
+	}
+	binary.BigEndian.PutUint16(plain[:2], uint16(len(payload))) // #nosec G115 -- payload length is checked against uint16 maximum above
 	copy(plain[2:], payload)
 	payloadCipher := aead.Seal(nil, payloadNonce[:], plain, payloadAAD(header))
 
@@ -193,7 +203,10 @@ func OpenLayer(packet []byte, privateKey *mlkem.DecapsulationKey1024, hopIndex u
 	if hopIndex >= MaxHops || header.hopIndex != hopIndex {
 		return route, errors.New("tkmnet: packet is addressed to a different hop")
 	}
-	now := uint64(time.Now().Unix())
+	now, err := unixSeconds(time.Now())
+	if err != nil {
+		return route, err
+	}
 	if header.expires <= now {
 		return route, errors.New("tkmnet: packet expired")
 	}
@@ -333,11 +346,17 @@ func payloadAAD(header []byte) []byte {
 }
 
 func layerAAD(header []byte, index int) []byte {
+	if index < 0 || index > 255 {
+		panic("tkmnet: invalid layer index")
+	}
 	aad := payloadAAD(header)
 	return append(aad, byte(index))
 }
 
 func deriveHopKey(shared, header []byte, index int) []byte {
+	if index < 0 || index > 255 {
+		panic("tkmnet: invalid layer index")
+	}
 	info := []byte("TKMNET_MLKEM1024_HOP_KEY_V1")
 	info = append(info, byte(index))
 	// The hop index is mutable routing metadata. It must not change the key
@@ -371,4 +390,12 @@ func clearBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+func unixSeconds(value time.Time) (uint64, error) {
+	seconds := value.Unix()
+	if seconds <= 0 {
+		return 0, errors.New("tkmnet: clock is before the Unix epoch")
+	}
+	return uint64(seconds), nil
 }

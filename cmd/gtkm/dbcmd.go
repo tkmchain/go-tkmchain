@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"os/signal"
@@ -278,18 +279,27 @@ func removeDB(ctx *cli.Context) error {
 // removeFolder deletes all files (not folders) inside the directory 'dir' (but
 // not files in subfolders).
 func removeFolder(dir string) {
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		// If we're at the top level folder, recurse into
-		if path == dir {
-			return nil
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		log.Warn("Unable to open database folder for cleanup", "path", dir, "err", err)
+		return
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		log.Warn("Unable to enumerate database folder for cleanup", "path", dir, "err", err)
+		return
+	}
+	for _, entry := range entries {
+		// Delete only files in this directory. Root.Remove keeps the operation
+		// beneath the opened directory and avoids filepath.Walk symlink races.
+		if entry.IsDir() {
+			continue
 		}
-		// Delete all the files, but not subfolders
-		if !info.IsDir() {
-			os.Remove(path)
-			return nil
+		if err := root.Remove(entry.Name()); err != nil {
+			log.Warn("Unable to remove database file", "path", filepath.Join(dir, entry.Name()), "err", err)
 		}
-		return filepath.SkipDir
-	})
+	}
 }
 
 // confirmAndRemoveDB prompts the user for a last confirmation and removes the

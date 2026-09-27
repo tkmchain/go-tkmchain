@@ -31,7 +31,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// Downloads are verified before they are installed, but the response still
+// needs a hard bound so a compromised mirror cannot exhaust builder memory or
+// disk. The limit is intentionally larger than the biggest supported era
+// archive while remaining finite.
+const maxDownloadSize int64 = 8 << 30
 
 // ChecksumDB keeps file checksums and tool versions.
 type ChecksumDB struct {
@@ -97,7 +104,7 @@ func ParseChecksums(input []byte) (*ChecksumDB, error) {
 			case strings.HasPrefix(content, "https://") || strings.HasPrefix(content, "http://"):
 				// URL comments define the URL where the following files are found. Here
 				// we keep track of the last found urlEntry and attach it to each file later.
-				u, err := url.Parse(content)
+				u, err := validateDownloadURL(content)
 				if err != nil {
 					return nil, fmt.Errorf("line %d: invalid URL: %v", lineNum, err)
 				}
@@ -109,6 +116,17 @@ func ParseChecksums(input []byte) (*ChecksumDB, error) {
 			fields := strings.Fields(line)
 			if len(fields) != 2 {
 				return nil, fmt.Errorf("line %d: invalid number of space-separated fields (%d)", lineNum, len(fields))
+			}
+			if len(fields[0]) != sha256.Size*2 {
+				return nil, fmt.Errorf("line %d: invalid SHA-256 digest", lineNum)
+			}
+			if _, err := hex.DecodeString(fields[0]); err != nil {
+				return nil, fmt.Errorf("line %d: invalid SHA-256 digest: %v", lineNum, err)
+			}
+			// Checksum records are file names, never paths. Keeping this invariant
+			// prevents a malformed manifest from escaping the download directory.
+			if fields[1] == "." || fields[1] == ".." || filepath.Base(fields[1]) != fields[1] {
+				return nil, fmt.Errorf("line %d: checksum entry must be a base filename", lineNum)
 			}
 			csdb.hashes = append(csdb.hashes, hashEntry{fields[0], fields[1], lastURL})
 		}
@@ -175,10 +193,19 @@ func (db *ChecksumDB) DownloadFileFromKnownURL(dstPath string) error {
 
 // DownloadFile downloads a file and verifies its checksum.
 func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
+	parsed, err := validateDownloadURL(url)
+	if err != nil {
+		return err
+	}
 	basename := filepath.Base(dstPath)
 	hash := db.findHash(basename)
 	if hash == "" {
 		return fmt.Errorf("no known hash for file %q", basename)
+	}
+	if info, err := os.Lstat(dstPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("download destination must not be a symlink")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	// Shortcut if already downloaded.
 	if err := verifyHash(dstPath, hash); err == nil {
@@ -189,7 +216,25 @@ func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
 	}
 
 	fmt.Printf("downloading from %s\n", url)
-	resp, err := http.Get(url)
+	client := &http.Client{
+		Transport: http.DefaultTransport.(*http.Transport).Clone(),
+		Timeout:   30 * time.Minute,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			// Never follow a redirect to a different scheme or a URL carrying
+			// credentials. This prevents a mirror from turning a verified-file
+			// download into an arbitrary request.
+			if _, err := validateDownloadURL(req.URL.String()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	client.Transport.(*http.Transport).Proxy = nil
+	request, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return fmt.Errorf("download request: %w", err)
+	}
+	resp, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("download error: %v", err)
 	}
@@ -197,35 +242,59 @@ func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download error: status %d", resp.StatusCode)
 	}
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+	if resp.ContentLength > maxDownloadSize {
+		return fmt.Errorf("download error: response exceeds %d bytes", maxDownloadSize)
+	}
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
 		return err
 	}
-
-	// Download to a temporary file.
-	tmpfile := dstPath + ".tmp"
-	fd, err := os.OpenFile(tmpfile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// Download to an exclusive, private temporary file in the destination
+	// directory. A predictable .tmp path permits races between concurrent
+	// builders and can make a verified file point at attacker-controlled data.
+	fd, err := os.CreateTemp(filepath.Dir(dstPath), "."+basename+".tmp-*")
 	if err != nil {
 		return err
 	}
-	var dst io.WriteCloser = fd
+	tmpfile := fd.Name()
+	defer os.Remove(tmpfile)
+	var dst io.Writer = fd
 	if resp.ContentLength > 0 {
 		dst = newDownloadWriter(fd, resp.ContentLength)
 	}
-	if _, err = io.Copy(dst, resp.Body); err != nil {
-		dst.Close()
-		os.Remove(tmpfile)
+	if _, err = io.Copy(dst, io.LimitReader(resp.Body, maxDownloadSize+1)); err != nil {
+		_ = fd.Close()
 		return err
 	}
-	if err = dst.Close(); err != nil {
-		os.Remove(tmpfile)
+	if info, statErr := fd.Stat(); statErr != nil {
+		_ = fd.Close()
+		return statErr
+	} else if info.Size() > maxDownloadSize {
+		_ = fd.Close()
+		return fmt.Errorf("download error: response exceeds %d bytes", maxDownloadSize)
+	}
+	if closer, ok := dst.(io.Closer); ok {
+		if err = closer.Close(); err != nil {
+			return err
+		}
+	} else if err = fd.Close(); err != nil {
 		return err
 	}
 	if err := verifyHash(tmpfile, hash); err != nil {
-		os.Remove(tmpfile)
 		return err
 	}
 	// It's valid, rename to dstPath to complete the download.
 	return os.Rename(tmpfile, dstPath)
+}
+
+func validateDownloadURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return nil, errors.New("download URL must be an http(s) URL without credentials or fragments")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return nil, errors.New("download URL must use http or https")
+	}
+	return u, nil
 }
 
 // findHash returns the known hash of a file.

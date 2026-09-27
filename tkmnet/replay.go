@@ -35,7 +35,8 @@ func NewReplayCache(maxEntries int, ttl time.Duration) (*ReplayCache, error) {
 // before. expires is the packet's Unix expiry and is checked independently of
 // the cache TTL.
 func (c *ReplayCache) Accept(circuitID [CircuitIDSize]byte, sequence, expires uint64, now time.Time) error {
-	if c == nil || sequence == 0 || expires <= uint64(now.Unix()) {
+	seconds, err := unixSeconds(now)
+	if c == nil || sequence == 0 || err != nil || expires <= seconds {
 		return errors.New("tkmnet: invalid replay identity or expiry")
 	}
 	key := [CircuitIDSize + 8]byte{}

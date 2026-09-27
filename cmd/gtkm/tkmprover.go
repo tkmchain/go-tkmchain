@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,8 +90,13 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 			return nil, fmt.Errorf("find shielded-payout-prover: %w (build it with make production or pass --tkmprover.bin)", err)
 		}
 	}
+	if err := validateTkmProverExecutable(binary); err != nil {
+		return nil, err
+	}
 
-	cmd := exec.Command(binary, "--config", config)
+	// The executable is resolved and permission-checked before this direct
+	// exec. No shell is involved, so config contents cannot become arguments.
+	cmd := exec.Command(binary, "--config", config) // #nosec G204 -- validated executable and fixed arguments
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -103,7 +109,7 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 type tkmProverConfig struct {
 	Listen               string `json:"listen"`
 	AllowedOrigin        string `json:"allowedOrigin"`
-	BearerToken          string `json:"bearerToken"`
+	BearerToken          string `json:"bearerToken"` // #nosec G117 -- generated random token is stored in the private 0600 prover config
 	NodeRPC              string `json:"nodeRPC"`
 	KeystoreDir          string `json:"keystoreDir"`
 	SignerAddress        string `json:"signerAddress"`
@@ -137,7 +143,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		if cfg.SignMode == "" {
 			cfg.SignMode = "proof-only"
 		}
-		encoded, err := json.MarshalIndent(cfg, "", "  ")
+		encoded, err := json.MarshalIndent(cfg, "", "  ") // #nosec G117 -- bearer token is generated locally and written to a private config
 		if err != nil {
 			return err
 		}
@@ -146,7 +152,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		}
 		if cfg.ProvingKeyPath == "" {
 			cfg.ProvingKeyPath = filepath.Join(filepath.Dir(configPath), "proving.key")
-			encoded, err = json.MarshalIndent(cfg, "", "  ")
+			encoded, err = json.MarshalIndent(cfg, "", "  ") // #nosec G117 -- bearer token is generated locally and written to a private config
 			if err != nil {
 				return err
 			}
@@ -156,7 +162,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		}
 		if cfg.ProvingKeyV2Path == "" {
 			cfg.ProvingKeyV2Path = filepath.Join(filepath.Dir(configPath), "proving-v2.key")
-			encoded, err = json.MarshalIndent(cfg, "", "  ")
+			encoded, err = json.MarshalIndent(cfg, "", "  ") // #nosec G117 -- bearer token is generated locally and written to a private config
 			if err != nil {
 				return err
 			}
@@ -204,7 +210,7 @@ func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
 		}
 	}
 	cfg := tkmProverConfig{Listen: "127.0.0.1:8787", AllowedOrigin: "https://wallet.tkmchain.site", BearerToken: hex.EncodeToString(bearer), NodeRPC: nodeRPC, SignMode: "proof-only", ProvingKeyPath: pkPath, ProvingKeyV2Path: pkV2Path, NotesPath: filepath.Join(dataDir, "notes.json"), RequestsPath: filepath.Join(dataDir, "requests.json"), GasLimit: 3000000, SubmitSync: false, ReceiptTimeoutMs: 20000}
-	encoded, err := json.MarshalIndent(cfg, "", "  ")
+	encoded, err := json.MarshalIndent(cfg, "", "  ") // #nosec G117 -- bearer token is generated locally and written to a private config
 	if err != nil {
 		return err
 	}
@@ -243,6 +249,9 @@ func ensureTkmProvingKeyV2(ctx *cli.Context, path string) error {
 	if keyURL == "" {
 		return fmt.Errorf("matching V2 shielded proving key is unavailable at %q and --%s is empty", path, tkmProverV2KeyURLFlag.Name)
 	}
+	if err := validateTkmProvingKeyURL(keyURL); err != nil {
+		return err
+	}
 	return downloadTkmProvingKey(ctx.Context, path, keyURL, tkmProvingKeyV2SHA256, tkmProvingKeyMaxSize)
 }
 
@@ -254,7 +263,33 @@ func ensureTkmProvingKey(ctx *cli.Context, path string) error {
 	if keyURL == "" {
 		return fmt.Errorf("matching shielded proving key is unavailable at %q and --%s is empty", path, tkmProverKeyURLFlag.Name)
 	}
+	if err := validateTkmProvingKeyURL(keyURL); err != nil {
+		return err
+	}
 	return downloadTkmProvingKey(ctx.Context, path, keyURL, tkmProvingKeySHA256, tkmProvingKeyMaxSize)
+}
+
+func validateTkmProverExecutable(path string) error {
+	if path == "" {
+		return errors.New("shielded-payout-prover executable is not configured")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve shielded-payout-prover executable: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+		return fmt.Errorf("shielded-payout-prover is not an executable regular file: %s", abs)
+	}
+	return nil
+}
+
+func validateTkmProvingKeyURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("shielded proving-key URL must be an HTTPS URL without credentials, queries, or fragments")
+	}
+	return nil
 }
 
 func downloadTkmProvingKey(ctx context.Context, path, keyURL, expectedSHA256 string, maxSize int64) error {
@@ -266,7 +301,24 @@ func downloadTkmProvingKey(ctx context.Context, path, keyURL, expectedSHA256 str
 	if err != nil {
 		return fmt.Errorf("create proving-key request: %w", err)
 	}
-	client := &http.Client{Timeout: 10 * time.Minute}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Minute,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			if err := validateTkmProvingKeyURL(req.URL.String()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	defer transport.CloseIdleConnections()
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("proving-key destination must not be a symlink")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("download proving key: %w", err)

@@ -17,14 +17,22 @@
 package gui
 
 import (
+	"context"
+	urlpkg "net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/log"
 )
 
 // openExternal opens the given URL in the platform default browser.
 func openExternal(url string) {
+	parsed, err := urlpkg.Parse(strings.TrimSpace(url))
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		log.Info("Dashboard available at", "url", url)
+		return
+	}
 	var cmdName string
 	var args []string
 	switch runtime.GOOS {
@@ -41,7 +49,15 @@ func openExternal(url string) {
 		log.Info("Dashboard available at", "url", url)
 		return
 	}
-	if err := exec.Command(cmdName, args...).Start(); err != nil {
+	validArgs := (runtime.GOOS == "linux" || runtime.GOOS == "darwin") && len(args) == 1 && args[0] == parsed.String()
+	if runtime.GOOS == "windows" {
+		validArgs = len(args) == 2 && args[0] == "url.dll,FileProtocolHandler" && args[1] == parsed.String()
+	}
+	if cmdName == "" || !validArgs {
+		log.Info("Dashboard available at", "url", url)
+		return
+	}
+	if err := exec.CommandContext(context.Background(), cmdName, args...).Start(); err != nil { // #nosec G204 -- fixed platform opener and validated dashboard URL
 		log.Info("Could not open your default browser automatically; open the dashboard manually.", "url", url)
 		return
 	}

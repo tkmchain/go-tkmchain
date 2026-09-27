@@ -26,7 +26,7 @@ type Chunk struct {
 }
 
 func EncodeChunk(chunk Chunk) ([]byte, error) {
-	if chunk.Count == 0 || chunk.Index >= chunk.Count || len(chunk.Data) > MaxChunkData {
+	if chunk.Count == 0 || chunk.Index >= chunk.Count || len(chunk.Data) > MaxChunkData || uint64(len(chunk.Data)) > uint64(^uint16(0)) {
 		return nil, errors.New("tkmnet: invalid transfer chunk")
 	}
 	encoded := make([]byte, MaxPayload)
@@ -35,7 +35,7 @@ func EncodeChunk(chunk Chunk) ([]byte, error) {
 	copy(encoded[5:21], chunk.TransferID[:])
 	binary.BigEndian.PutUint32(encoded[21:25], chunk.Index)
 	binary.BigEndian.PutUint32(encoded[25:29], chunk.Count)
-	binary.BigEndian.PutUint16(encoded[29:31], uint16(len(chunk.Data)))
+	binary.BigEndian.PutUint16(encoded[29:31], uint16(len(chunk.Data))) // #nosec G115 -- bounded by MaxChunkData and uint16 maximum above
 	copy(encoded[31:], chunk.Data)
 	return encoded, nil
 }
@@ -85,7 +85,10 @@ func SplitTransfer(data []byte) ([]Chunk, error) {
 		}
 		chunkData := make([]byte, end-start)
 		copy(chunkData, data[start:end])
-		chunks[i] = Chunk{TransferID: id, Index: uint32(i), Count: uint32(count), Data: chunkData}
+		if uint64(i) > uint64(^uint32(0)) || uint64(count) > uint64(^uint32(0)) {
+			return nil, errors.New("tkmnet: transfer has too many chunks")
+		}
+		chunks[i] = Chunk{TransferID: id, Index: uint32(i), Count: uint32(count), Data: chunkData} // #nosec G115 -- i and count are bounded above
 	}
 	return chunks, nil
 }
@@ -97,7 +100,8 @@ func AssembleTransfer(chunks []Chunk) ([]byte, error) {
 		return nil, errors.New("tkmnet: invalid transfer chunk count")
 	}
 	first := chunks[0]
-	if first.Count != uint32(len(chunks)) {
+	chunkCount := uint64(len(chunks))
+	if chunkCount > uint64(^uint32(0)) || uint64(first.Count) != chunkCount {
 		return nil, errors.New("tkmnet: incomplete transfer")
 	}
 	ordered := make([][]byte, len(chunks))

@@ -255,7 +255,12 @@ func (s *Service) log(message string, args ...any) {
 }
 
 func loadOrCreateRelayKey(path string) (*mlkem.DecapsulationKey1024, error) {
-	if data, err := os.ReadFile(path); err == nil {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("tkmnet: relay key path must not be a symlink")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("tkmnet: inspect relay key path: %w", err)
+	}
+	if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- path is an operator-configured private key location and symlinks are rejected above
 		key, err := mlkem.NewDecapsulationKey1024(data)
 		if err != nil {
 			return nil, fmt.Errorf("tkmnet: invalid relay key: %w", err)

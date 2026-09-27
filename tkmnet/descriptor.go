@@ -41,13 +41,19 @@ func (d Descriptor) signingBytes() ([]byte, error) {
 	buf.WriteString("TKMNET_DESCRIPTOR_V1")
 	buf.WriteByte(d.Version)
 	buf.Write(d.ID[:])
-	buf.WriteByte(byte(len(onion)))
+	if len(onion) > 255 {
+		return nil, errors.New("tkmnet: onion hostname is too long")
+	}
+	buf.WriteByte(byte(len(onion))) // #nosec G115 -- onion length is checked against uint8 maximum above
 	buf.WriteString(onion)
 	var length [2]byte
-	binary.BigEndian.PutUint16(length[:], uint16(len(d.PublicKey)))
+	if uint64(len(d.PublicKey)) > uint64(^uint16(0)) || uint64(len(d.SigningPublicKey)) > uint64(^uint16(0)) {
+		return nil, errors.New("tkmnet: relay key is too long")
+	}
+	binary.BigEndian.PutUint16(length[:], uint16(len(d.PublicKey))) // #nosec G115 -- public key length is checked above
 	buf.Write(length[:])
 	buf.Write(d.PublicKey)
-	binary.BigEndian.PutUint16(length[:], uint16(len(d.SigningPublicKey)))
+	binary.BigEndian.PutUint16(length[:], uint16(len(d.SigningPublicKey))) // #nosec G115 -- signing key length is checked above
 	buf.Write(length[:])
 	buf.Write(d.SigningPublicKey)
 	var expiry [8]byte
@@ -82,7 +88,8 @@ func (d Descriptor) Verify(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if d.Expires <= uint64(now.Unix()) || d.Expires-uint64(now.Unix()) > uint64(maxLifetime/time.Second) {
+	seconds, err := unixSeconds(now)
+	if err != nil || d.Expires <= seconds || d.Expires-seconds > uint64(maxLifetime/time.Second) {
 		return errors.New("tkmnet: relay descriptor is expired or too far in the future")
 	}
 	wantID := relayIDDigest(d.PublicKey)

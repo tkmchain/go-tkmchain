@@ -695,7 +695,7 @@ func dumpConfig(ctx *cli.Context) error {
 
         dump := os.Stdout
         if ctx.NArg() > 0 {
-                dump, err = os.OpenFile(ctx.Args().Get(0), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+                dump, err = os.OpenFile(ctx.Args().Get(0), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
                 if err != nil {
                         return err
                 }

@@ -419,7 +419,15 @@ func (p *Prover) Serve() error {
 	mux.HandleFunc("/build-deposit", p.handleBuildDeposit)
 	mux.HandleFunc("/build-transfer", p.handleBuildTransfer)
 	mux.HandleFunc("/build-withdrawal", p.handleBuildWithdrawal)
-	server := &http.Server{Addr: p.cfg.Listen, Handler: p.corsHandler(mux), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{
+		Addr:              p.cfg.Listen,
+		Handler:           p.corsHandler(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Minute,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	log.Printf("shielded payout prover listening on %s", p.cfg.Listen)
 	return server.ListenAndServe()
 }

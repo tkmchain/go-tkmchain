@@ -196,7 +196,18 @@ func (g *GUI) listen() error {
 	mux.HandleFunc("/healthz", g.handleHealth)
 	mux.Handle("/", g.handleAssets())
 
-	g.server = &http.Server{Handler: mux}
+	// Keep the loopback dashboard resistant to slow-header and idle-connection
+	// exhaustion. Proof requests have a longer write budget, but every socket
+	// still has explicit bounds instead of inheriting net/http's unlimited
+	// defaults.
+	g.server = &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Minute,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	go g.server.Serve(ln)
 	return nil
 }
@@ -289,9 +300,17 @@ func (g *GUI) handleRPC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20+1))
 	if err != nil {
+		if strings.Contains(err.Error(), "request body too large") {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if len(body) > 32<<20 {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -302,6 +321,10 @@ func (g *GUI) handleRPC(w http.ResponseWriter, r *http.Request) {
 		var batch []jsonRPCRequest
 		if err := json.Unmarshal(body, &batch); err != nil {
 			http.Error(w, "invalid batch", http.StatusBadRequest)
+			return
+		}
+		if len(batch) == 0 || len(batch) > 1000 {
+			http.Error(w, "invalid batch size", http.StatusBadRequest)
 			return
 		}
 		for _, req := range batch {

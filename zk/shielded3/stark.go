@@ -469,13 +469,15 @@ func (b *STARKBackend) run(ctx context.Context, operation string, input []byte, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	command := exec.CommandContext(ctx, b.executable, operation)
+	// The executable is resolved and permission-checked by NewSTARKBackend;
+	// operation is an internal fixed selector and never shell-interpreted.
+	command := exec.CommandContext(ctx, b.executable, operation) // #nosec G204
 	command.Stdin = bytes.NewReader(input)
 	output := &boundedOutput{remaining: limit}
 	diagnostic := &boundedOutput{remaining: 4096}
 	command.Stdout = output
 	command.Stderr = diagnostic
-	if err := command.Run(); err != nil {
+	if err := command.Run(); err != nil { // #nosec G204 -- executable is validated as a regular file; operation is fixed
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

@@ -1,11 +1,15 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,21 +36,35 @@ func (g *GUI) handleProver(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Local proof builder is still being set up. Try again shortly."}`, 503)
 		return
 	}
-	host, _, err := net.SplitHostPort(cfg.Listen)
-	if err != nil || (host != "127.0.0.1" && host != "::1" && host != "localhost") {
+	endpoint, err := loopbackProverEndpoint(cfg.Listen)
+	if err != nil {
 		http.Error(w, `{"error":"Proof builder must listen on loopback"}`, 503)
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, 4<<20)
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, "http://"+cfg.Listen+path, body)
+	// Keep the request URL constant. The configured endpoint is used only by
+	// the pinned dialer below, so it cannot flow into URL parsing or redirects.
+	reqURL := url.URL{Scheme: "http", Host: "127.0.0.1", Path: path}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, reqURL.String(), body)
 	if err != nil {
 		http.Error(w, `{"error":"invalid proof request"}`, 400)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.BearerToken)
-	client := &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	res, err := client.Do(req)
+	// Pin the connection to the validated loopback IP. Resolving a hostname
+	// during the request would reintroduce DNS rebinding and turn this proxy
+	// into an SSRF primitive even though the configuration was checked above.
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, endpoint)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req) // #nosec G704 -- transport is pinned to a validated numeric loopback endpoint
 	if err != nil {
 		http.Error(w, `{"error":"Local proof builder is unavailable or still loading. Try again shortly."}`, 503)
 		return
@@ -54,5 +72,26 @@ func (g *GUI) handleProver(w http.ResponseWriter, r *http.Request) {
 	defer res.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(res.StatusCode)
-	io.Copy(w, io.LimitReader(res.Body, 8<<20))
+	if _, err := io.Copy(w, io.LimitReader(res.Body, 8<<20)); err != nil {
+		return
+	}
+}
+
+// loopbackProverEndpoint accepts only numeric loopback addresses and a valid
+// TCP port. In particular, localhost is intentionally rejected because its
+// DNS answer can change between validation and connection.
+func loopbackProverEndpoint(listen string) (string, error) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(listen))
+	if err != nil || host == "" || strings.Contains(host, "%") {
+		return "", errors.New("invalid loopback prover endpoint")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return "", errors.New("prover endpoint is not loopback")
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || n == 0 {
+		return "", errors.New("invalid prover endpoint port")
+	}
+	return net.JoinHostPort(ip.String(), strconv.FormatUint(n, 10)), nil
 }

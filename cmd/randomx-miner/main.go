@@ -52,7 +52,7 @@ func (s *MiningServer) setupHTTPServer() {
 	router.HandleFunc("/submitwork", s.handleSubmitWork).Methods("POST")
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
 	port := os.Getenv("RPC_PORT")
@@ -61,8 +61,13 @@ func (s *MiningServer) setupHTTPServer() {
 	}
 
 	s.httpServer = &http.Server{
-		Addr:    ":" + port,
-		Handler: router,
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    8 << 10,
 	}
 }
 
@@ -79,7 +84,7 @@ func (s *MiningServer) handleGetWork(w http.ResponseWriter, r *http.Request) {
 		"id":     1,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, response)
 }
 
 func (s *MiningServer) handleSubmitWork(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +92,9 @@ func (s *MiningServer) handleSubmitWork(w http.ResponseWriter, r *http.Request) 
 		Params []string `json:"params"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -99,7 +106,7 @@ func (s *MiningServer) handleSubmitWork(w http.ResponseWriter, r *http.Request) 
 
 	valid, err := s.engine.SubmitWork(req.Params[0], req.Params[1], req.Params[2])
 	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, map[string]interface{}{
 			"result": false,
 			"error":  err.Error(),
 			"id":     1,
@@ -107,7 +114,7 @@ func (s *MiningServer) handleSubmitWork(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"result": valid,
 		"error":  nil,
 		"id":     1,
@@ -159,11 +166,16 @@ func (s *MiningServer) Start() error {
 
 func (s *MiningServer) mineWorker(workerID int, results chan<- *types.Block, stop <-chan struct{}) {
 	log.Info("Worker started", "worker", workerID)
+	seconds := time.Now().Unix()
+	if seconds <= 0 {
+		log.Error("Worker clock is before the Unix epoch", "worker", workerID)
+		return
+	}
 
 	header := &types.Header{
 		Number:     common.Big1,
 		Difficulty: randomx.GenesisDifficulty,
-		Time:       uint64(time.Now().Unix()),
+		Time:       uint64(seconds),
 		Coinbase:   s.coinbase,
 		Extra:      []byte(fmt.Sprintf("RandomX Miner %d", workerID)),
 	}
@@ -191,10 +203,17 @@ func (s *MiningServer) mineWorker(workerID int, results chan<- *types.Block, sto
 
 func (s *MiningServer) Stop() error {
 	if s.httpServer != nil {
-		s.httpServer.Close()
+		if err := s.httpServer.Close(); err != nil && err != http.ErrServerClosed {
+			return err
+		}
 	}
-	s.engine.Close()
-	return nil
+	return s.engine.Close()
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Debug("Unable to write miner JSON response", "error", err)
+	}
 }
 
 func main() {
@@ -208,7 +227,10 @@ func main() {
 	soloMining := os.Getenv("SOLO_MINE") == "true"
 	threads := 2
 	if t := os.Getenv("THREADS"); t != "" {
-		fmt.Sscanf(t, "%d", &threads)
+		if _, err := fmt.Sscanf(t, "%d", &threads); err != nil || threads < 1 || threads > 256 {
+			log.Error("Invalid THREADS value", "value", t)
+			os.Exit(1)
+		}
 	}
 
 	server, err := NewMiningServer(common.HexToAddress(coinbaseHex), threads, soloMining)
