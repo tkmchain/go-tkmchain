@@ -61,7 +61,7 @@ export CC="$NDK_BIN/aarch64-linux-android${NDK_API}-clang"
 export CXX="$NDK_BIN/aarch64-linux-android${NDK_API}-clang++"
 export CGO_CFLAGS="-I$RX_SRC_DIR"
 export CGO_LDFLAGS="-L$RX_BUILD -lrandomx -static-libstdc++ -lm -ldl -llog"
-SHIELD3_RUST_TARGET=aarch64-linux-android "$ROOT/scripts/shield3-build.sh"
+SHIELD4_RUST_TARGET=aarch64-linux-android "$ROOT/scripts/shield4-build.sh"
 (cd "$ROOT" && go build -tags "randomx,shield3,urfave_cli_no_docs" -o "$NATIVE_DIR/libgtkm.so" ./cmd/gtkm)
 chmod 0755 "$NATIVE_DIR/libgtkm.so"
 file --brief "$NATIVE_DIR/libgtkm.so"

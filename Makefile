@@ -899,17 +899,27 @@ cross-build:
 	@echo "Note: These builds do NOT include RandomX support."
 	@echo "Output directory: $(CROSS_OUTPUT_DIR)"
 
-.PHONY: shield3-host shield3-windows shield3-linux-arm64 shield3-linux-arm
-shield3-host:
-	./scripts/shield3-build.sh
+.PHONY: shield4-host shield4-windows shield4-linux-arm64 shield4-linux-arm shield3-host shield3-windows shield3-linux-arm64 shield3-linux-arm
+shield4-host:
+	./scripts/shield4-build.sh
+shield3-host: shield4-host
 shield3-windows:
-	GOOS=windows CC=$(MINGW64_CC) SHIELD3_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield3-build.sh
+	GOOS=windows CC=$(MINGW64_CC) SHIELD4_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield4-build.sh
 
 shield3-linux-arm64:
-	CC=$(AARCH64_CC) SHIELD3_RUST_TARGET=aarch64-unknown-linux-gnu ./scripts/shield3-build.sh
+	CC=$(AARCH64_CC) SHIELD4_RUST_TARGET=aarch64-unknown-linux-gnu ./scripts/shield4-build.sh
 
 shield3-linux-arm:
-	CC=$(ARM_CC) SHIELD3_RUST_TARGET=armv7-unknown-linux-gnueabihf ./scripts/shield3-build.sh
+	CC=$(ARM_CC) SHIELD4_RUST_TARGET=armv7-unknown-linux-gnueabihf ./scripts/shield4-build.sh
+
+shield4-windows:
+	GOOS=windows CC=$(MINGW64_CC) SHIELD4_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield4-build.sh
+
+shield4-linux-arm64:
+	CC=$(AARCH64_CC) SHIELD4_RUST_TARGET=aarch64-unknown-linux-gnu ./scripts/shield4-build.sh
+
+shield4-linux-arm:
+	CC=$(ARM_CC) SHIELD4_RUST_TARGET=armv7-unknown-linux-gnueabihf ./scripts/shield4-build.sh
 
 #? shield3-relay: Build the shared Shield3 relay with its native verifier.
 .PHONY: shield3-relay

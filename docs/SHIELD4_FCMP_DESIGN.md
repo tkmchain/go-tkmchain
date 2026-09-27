@@ -56,3 +56,48 @@ status, and direct, batch, and relayed wallet constructors are wired in the
 source tree. Every release must rebuild the static library and run the native
 proof vectors, reorg tests, and wallet end-to-end tests together so a partially
 deployed node cannot accept a proof that other nodes cannot reproduce.
+
+### Native artifact build and release checks
+
+The Shield4 native claim program is compiled from
+`zk/shielded3/stark/Cargo.toml`. The crate name and archive filename retain
+the Shield3 compatibility name (`libtkm_shield3_stark.a`) because the Go cgo
+bridge is shared, but the archive contains the frozen `TKMS4STK` operations:
+
+```text
+8  verify Shield4 proof
+9  prove Shield4 witness
+10 derive the Shield4 link tag
+```
+
+Use `scripts/shield4-build.sh` for every target. It builds the locked release
+crate, places the archive at the deterministic path used by
+`zk/shielded3/native_cgo.go`, and fails if the exported `tkm_shield3_call`
+entry point is missing. Cross builds select the target with
+`SHIELD4_RUST_TARGET`:
+
+```bash
+./scripts/shield4-build.sh                                      # host
+CC=aarch64-linux-gnu-gcc SHIELD4_RUST_TARGET=aarch64-unknown-linux-gnu \
+  ./scripts/shield4-build.sh                                    # Linux arm64
+CC=arm-linux-gnueabihf-gcc SHIELD4_RUST_TARGET=armv7-unknown-linux-gnueabihf \
+  ./scripts/shield4-build.sh                                    # Linux armv7
+SHIELD4_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield4-build.sh
+SHIELD4_RUST_TARGET=aarch64-linux-android ./scripts/shield4-build.sh
+```
+
+`make gtkm`, the Windows GUI, Linux ARM releases, and `android/build.sh` all
+invoke this check before linking. The release workflow therefore cannot
+publish a binary that was built without its platform-specific Shield4 archive.
+On a host with the archive available, run the complete wallet rehearsal:
+
+```bash
+go test -tags shield3 -timeout 45m ./internal/shield3wallet \
+  -run '^TestShield4MultiNodeRehearsal$'
+```
+
+That test creates and replicates deposits, builds a multi-input Shield4
+payment, exercises relay review and replay rejection, performs a withdrawal
+and its replay check, and rejects a reorged scan head. Rust unit tests cover
+the native Shield4 proof vectors and cross-domain rejection; the release CI
+runs both suites after rebuilding the archive.

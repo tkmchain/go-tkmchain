@@ -78,6 +78,7 @@ jobs:
       - name: Build and package Linux or macOS binaries
         if: runner.os != 'Windows'
         run: |
+          ./scripts/shield4-build.sh
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
@@ -91,6 +92,7 @@ jobs:
           export PATH="$(cygpath -u "$GO_BIN"):$(cygpath -u "$USERPROFILE")/.cargo/bin:$PATH"
           export CC=gcc CXX=g++
           go version
+          SHIELD4_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield4-build.sh
 
           # RandomX is C++, so the ordinary host link flags would leave gtkm.exe
           # dependent on MSYS2's libstdc++-6.dll (and usually libwinpthread).
@@ -206,6 +208,7 @@ jobs:
 
       - name: Build and package portable Linux binaries
         run: |
+          ./scripts/shield4-build.sh
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"
@@ -302,7 +305,7 @@ jobs:
           # Build the architecture-specific Rust static library explicitly. The
           # Go cgo package links this exact path, so fail here with a useful
           # diagnostic instead of waiting for clang to report a missing file.
-          CC="$ARM_CC" SHIELD3_RUST_TARGET="$ARM_RUST_TARGET" ./scripts/shield3-build.sh
+          CC="$ARM_CC" SHIELD4_RUST_TARGET="$ARM_RUST_TARGET" ./scripts/shield4-build.sh
           native_lib="zk/shielded3/stark/target/$ARM_RUST_TARGET/release/libtkm_shield3_stark.a"
           test -s "$native_lib"
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default \
@@ -371,6 +374,7 @@ jobs:
           npm run build --prefix internal/gui/wallet-engine
           python3 build/wallet-signing/windows-metadata.py --publisher TKMChain --version "${RELEASE_TAG#v}"
           make randomx-windows
+          CC=x86_64-w64-mingw32-gcc-posix SHIELD4_RUST_TARGET=x86_64-pc-windows-gnu ./scripts/shield4-build.sh
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm-gui-windows
           GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc-posix CGO_LDFLAGS='-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic' go build -tags shield3 -trimpath -ldflags='-s -w' -o build/bin/shielded-payout-prover.exe ./cmd/shielded-payout-prover
           archive="TKM-Wallet-${RELEASE_TAG}-windows-x64"

@@ -20,6 +20,7 @@ on:
       - 'cmd/shield3-relay/**'
       - 'internal/gui/**'
       - 'scripts/shield3-build.sh'
+      - 'scripts/shield4-build.sh'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/shield3-crypto.yml'
@@ -42,6 +43,7 @@ on:
       - 'cmd/shield3-relay/**'
       - 'internal/gui/**'
       - 'scripts/shield3-build.sh'
+      - 'scripts/shield4-build.sh'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/shield3-crypto.yml'
@@ -97,11 +99,15 @@ jobs:
           cargo +1.89.0 clippy --release --locked --manifest-path zk/shielded3/stark/Cargo.toml --all-targets -- -D warnings
       - name: Generate and verify real STARK proofs
         run: cargo +1.89.0 test --release --locked --manifest-path zk/shielded3/stark/Cargo.toml -- --test-threads=1
-      - name: Build native verifier
-        run: cargo +1.89.0 build --release --locked --manifest-path zk/shielded3/stark/Cargo.toml
+      - name: Build and validate native Shield4 verifier
+        run: ./scripts/shield4-build.sh
       - name: Verify Go and native interoperability
         run: |
           go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./zk/shielded4 ./internal/shield3wallet ./accounts/keystore ./internal/gui
+          # This rehearsal uses the rebuilt native archive and covers wallet
+          # construction, multi-input spends, relay replay protection,
+          # withdrawal replay protection, and a reorged scan head.
+          go test -timeout 45m -tags shield3 ./internal/shield3wallet -run '^TestShield4MultiNodeRehearsal$'
           go test -tags shield3 ./core ./eth ./internal/ethapi ./cmd/shielded-payout-prover -run "Shielded|Shield3|Stamped"
           go test -race -tags shield3 ./internal/shield3relay ./cmd/shield3-relay
           go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay
