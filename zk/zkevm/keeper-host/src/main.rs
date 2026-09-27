@@ -1,10 +1,55 @@
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
+use zkm_sdk::provers::ProofOpts;
 use zkm_sdk::{
-    utils, HashableKey, ProverClient, ZKMProofWithPublicValues, ZKMStdin, ZKMVerifyingKey,
+    utils, HashableKey, ProverClient, ZKMContext, ZKMProofKind, ZKMProofWithPublicValues, ZKMStdin,
+    ZKMVerifyingKey,
 };
+use zkm_stark::{ZKMCoreOpts, ZKMProverOpts};
+
+/// Parse a positive bounded prover setting. CI can tune recursion without
+/// changing the proof protocol or recompiling the guest.
+fn prover_setting(name: &str, default: usize, max: usize) -> usize {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0 && *value <= max)
+        .unwrap_or(default)
+}
+
+/// Build conservative recursion options for hosted runners. Ziren's default
+/// recursion configuration uses two 2M-cycle proving workers, which can exceed
+/// the memory envelope of a standard GitHub runner and result in an external
+/// runner cancellation. A single bounded worker is deterministic and produces
+/// the same proof format; it only trades memory for proving time.
+fn keeper_prover_opts() -> ZKMProverOpts {
+    let mut core_opts = ZKMCoreOpts::default();
+    let mut recursion_opts = ZKMCoreOpts::recursion();
+    recursion_opts.shard_size = prover_setting("KEEPER_RECURSION_SHARD_SIZE", 1 << 20, 1 << 21);
+    recursion_opts.shard_batch_size = prover_setting("KEEPER_RECURSION_SHARD_BATCH_SIZE", 1, 8);
+    recursion_opts.trace_gen_workers = prover_setting("KEEPER_RECURSION_TRACE_GEN_WORKERS", 1, 8);
+    recursion_opts.records_and_traces_channel_capacity =
+        prover_setting("KEEPER_RECURSION_RECORDS_CHANNEL_CAPACITY", 1, 128);
+    recursion_opts.checkpoints_channel_capacity =
+        prover_setting("KEEPER_RECURSION_CHECKPOINTS_CHANNEL_CAPACITY", 8, 128);
+
+    // Keep core proving bounded as well when a runner supplies an explicit
+    // value. The default remains Ziren's memory-aware setting.
+    if let Ok(value) = env::var("KEEPER_CORE_SHARD_SIZE") {
+        if let Ok(value) = value.parse::<usize>() {
+            if (1 << 15..=1 << 21).contains(&value) {
+                core_opts.shard_size = value;
+            }
+        }
+    }
+
+    ZKMProverOpts {
+        core_opts,
+        recursion_opts,
+    }
+}
 
 /// Generates and locally verifies a Ziren STARK proof for the complete
 /// stateless go-tkmchain EVM execution guest.
@@ -232,10 +277,23 @@ fn main() -> Result<()> {
     );
 
     let (pk, vk) = client.setup(&elf);
+    // Use the low-level prover entry point so the recursion settings can be
+    // bounded on hosted runners. The public proof format and verification
+    // path are unchanged from `Prove::compressed().run()`.
     let proof = client
-        .prove(&pk, stdin)
-        .compressed()
-        .run()
+        .prover
+        .prove_impl(
+            &pk,
+            stdin,
+            ProofOpts {
+                zkm_prover_opts: keeper_prover_opts(),
+                timeout: None,
+            },
+            ZKMContext::default(),
+            ZKMProofKind::Compressed,
+            None,
+        )
+        .map(|(proof, _cycles)| proof)
         .context("generate keeper STARK proof")?;
 
     // Verify before writing anything that can be consumed by another tool.

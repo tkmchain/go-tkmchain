@@ -3552,6 +3552,7 @@ dependencies = [
  "clap",
  "sha2",
  "zkm-sdk",
+ "zkm-stark",
 ]
 
 [[package]]

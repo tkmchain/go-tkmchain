@@ -31,3 +31,7 @@ sha2 = "0.10"
 # `network` feature pulls an unused HTTP/TLS/ethers stack (including older
 # rustls and h2 releases), so keep the dependency surface local-only.
 zkm-sdk = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b", package = "zkm-sdk", default-features = false }
+# The host uses the low-level prover entry point so it can bound recursive
+# proving on memory-constrained CI runners. Keep this pinned to the exact
+# Ziren revision used by zkm-sdk so all option types remain identical.
+zkm-stark = { git = "https://github.com/ProjectZKM/Ziren", rev = "89a2b745b5c24b533bb06aa6e52e7adacd923b8b", package = "zkm-stark" }

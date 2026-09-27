@@ -41,18 +41,31 @@ permissions:
 jobs:
   prove:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    # Compressed recursion is CPU-bound and can take several hours on a
+    # hosted runner. The prover itself is bounded below so this timeout is a
+    # safety ceiling rather than a source of mid-proof cancellation.
+    timeout-minutes: 720
     env:
-      GOMAXPROCS: '2'
-      TKM_KEEPER_BUILD_PARALLELISM: '2'
+      GOMAXPROCS: '1'
+      TKM_KEEPER_BUILD_PARALLELISM: '1'
       # Keep the CPU prover within the memory envelope of a hosted runner.
       # Ziren reads these values when constructing its default prover options.
-      RAYON_NUM_THREADS: '2'
+      RAYON_NUM_THREADS: '1'
       SHARD_SIZE: '524288'
       SHARD_BATCH_SIZE: '1'
       TRACE_GEN_WORKERS: '1'
       RECORDS_AND_TRACES_CHANNEL_CAPACITY: '1'
-      CHECKPOINTS_CHANNEL_CAPACITY: '32'
+      CHECKPOINTS_CHANNEL_CAPACITY: '8'
+      # The keeper host applies these to Ziren's recursive compressor. The
+      # upstream defaults use two 2M-cycle workers, which can exceed the
+      # memory envelope of a standard GitHub runner.
+      KEEPER_RECURSION_SHARD_SIZE: '1048576'
+      KEEPER_RECURSION_SHARD_BATCH_SIZE: '1'
+      KEEPER_RECURSION_TRACE_GEN_WORKERS: '1'
+      KEEPER_RECURSION_RECORDS_CHANNEL_CAPACITY: '1'
+      KEEPER_RECURSION_CHECKPOINTS_CHANNEL_CAPACITY: '8'
+      KEEPER_CORE_SHARD_SIZE: '524288'
+      RUST_BACKTRACE: '1'
       RUST_LOG: info
     steps:
       - name: Check out source
@@ -128,24 +141,41 @@ jobs:
       - name: Fetch locked Rust dependencies
         run: cargo +nightly-2025-08-17 fetch --locked --manifest-path zk/zkevm/keeper-host/Cargo.toml
 
+      - name: Record runner resources
+        run: |
+          set -euxo pipefail
+          nproc
+          free -h
+          df -h .
+
       - name: Generate compressed proof and verifying key
         run: |
+          set -o pipefail
           rm -f keeper-proof.bin keeper-vk.bin
-          # GitHub cancels silent long-running steps. Keep a heartbeat while
-          # compressed recursion is running so cancellation is distinguishable
-          # from an actual prover failure.
+          # Keep a heartbeat and retain /usr/bin/time output so an external
+          # runner cancellation can be distinguished from a prover failure.
           (while sleep 30; do
             echo "keeper compressed proof still running ($(date -u +%H:%M:%S))"
           done) &
           heartbeat=$!
           trap 'kill "$heartbeat" 2>/dev/null || true' EXIT
           BINDGEN_EXTRA_CLANG_ARGS="$BINDGEN_EXTRA_CLANG_ARGS" \
+            /usr/bin/time -v \
             cargo +nightly-2025-08-17 run --release --offline --locked \
               --manifest-path zk/zkevm/keeper-host/Cargo.toml -- \
               --elf "$PWD/build/keeper-mipsle" \
               --input "$PWD/build/keeper-input.rlp" \
               --proof "$PWD/keeper-proof.bin" \
-              --vk "$PWD/keeper-vk.bin"
+              --vk "$PWD/keeper-vk.bin" 2>&1 | tee keeper-prover.log
+
+      - name: Upload keeper prover diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keeper-prover-diagnostics-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: keeper-prover.log
 
       - name: Verify generated proof artifact
         run: |
