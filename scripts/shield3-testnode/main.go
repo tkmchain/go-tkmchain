@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,7 @@ type txResult struct {
 type report struct {
 	StartedUTC       string            `json:"startedUTC"`
 	FinishedUTC      string            `json:"finishedUTC"`
+	Network          string            `json:"network"`
 	FinalHeight      uint64            `json:"finalHeight"`
 	RelayBroadcasts  int64             `json:"relayBroadcasts"`
 	ChainID          uint64            `json:"chainId"`
@@ -95,6 +97,7 @@ func main() {
 }
 func run() (err error) {
 	output := flag.String("output", "", "new directory for private test-chain data and public evidence; must not exist")
+	network := flag.String("network", "egypt", "isolated network profile to rehearse: egypt or mainnet")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
@@ -113,7 +116,20 @@ func run() (err error) {
 		return fmt.Errorf("fresh test directory: %w", e)
 	}
 	fmt.Println("TEST evidence directory", dir)
-	rep := report{StartedUTC: time.Now().UTC().Format(time.RFC3339), ChainID: 8980, Balances: map[string]string{}}
+	networkName := strings.ToLower(strings.TrimSpace(*network))
+	var chain params.ChainConfig
+	var chainID uint64
+	switch networkName {
+	case "egypt":
+		chain = *params.EgyptChainConfig
+		chainID = 8980
+	case "mainnet":
+		chain = *params.MainnetChainConfig
+		chainID = 8979
+	default:
+		return fmt.Errorf("unsupported network %q (want egypt or mainnet)", *network)
+	}
+	rep := report{StartedUTC: time.Now().UTC().Format(time.RFC3339), Network: networkName, ChainID: chainID, Balances: map[string]string{}}
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("%v", p)
@@ -144,7 +160,6 @@ func run() (err error) {
 	}
 	a, b, c := actors[0].Identity, actors[1].Identity, actors[2].Identity
 	fmt.Printf("TEST wallets sender=%s recipient=%s operator=%s\n", a.Address, b.Address, c.Address)
-	chain := *params.MainnetChainConfig
 	chain.ChainID = big.NewInt(int64(rep.ChainID))
 	zero := new(uint64)
 	chain.AntarticalTime = zero
@@ -167,7 +182,7 @@ func run() (err error) {
 	genesis := &core.Genesis{Config: &chain, Timestamp: uint64(time.Now().Unix() - 10), GasLimit: 30_000_000, Difficulty: big.NewInt(1), BaseFee: big.NewInt(1), Alloc: types.GenesisAlloc{}}
 	save(filepath.Join(dir, "genesis.json"), genesis)
 	nc := node.DefaultConfig
-	nc.Name = "shield3-live-test"
+	nc.Name = "shield3-live-test-" + networkName
 	nc.DataDir = filepath.Join(dir, "node")
 	nc.IPCPath = ""
 	nc.HTTPHost = "127.0.0.1"
@@ -220,6 +235,17 @@ func run() (err error) {
 		panic("Shield3 unavailable")
 	}
 	rep.Checks = append(rep.Checks, "Antartical active with native verifier")
+	// The production miner deliberately waits for a sync peer on Mainnet.
+	// This runner uses a fresh, isolated genesis with no peers, so start the
+	// miner directly for the Mainnet profile without changing that production
+	// readiness rule. Egypt keeps the normal StartMining path.
+	startMining := func() {
+		if networkName == "mainnet" {
+			backend.Miner().Start(a.Address)
+			return
+		}
+		must(backend.StartMining())
+	}
 	for _, actor := range actors {
 		var starting hexutil.Big
 		must(client.CallContext(ctx, &starting, "eth_getBalance", actor.Identity.Address, "latest"))
@@ -227,7 +253,7 @@ func run() (err error) {
 			panic("test wallet was prefunded")
 		}
 	}
-	must(backend.StartMining())
+	startMining()
 	defer backend.StopMining()
 	deadline := time.Now().Add(90 * time.Second)
 	for backend.BlockChain().CurrentBlock().Number.Uint64() < 3 {
@@ -278,7 +304,7 @@ func run() (err error) {
 			panic("broadcast hash mismatch")
 		}
 		fmt.Printf("TEST submitted %s %s (%d bytes)\n", label, hash, len(raw))
-		must(backend.StartMining())
+		startMining()
 		defer backend.StopMining()
 		var receipt *types.Receipt
 		deadline := time.Now().Add(120 * time.Second)

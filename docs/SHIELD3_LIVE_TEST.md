@@ -166,8 +166,34 @@ build tools installed:
 make gtkm
 GOFLAGS=-p=2 GOMEMLIMIT=768MiB go build -tags randomx,cgo,shield3 \
   -o ./build/bin/shield3-testnode ./scripts/shield3-testnode
-RAYON_NUM_THREADS=2 GOMEMLIMIT=768MiB ./build/bin/shield3-testnode
+RAYON_NUM_THREADS=2 GOMEMLIMIT=768MiB ./build/bin/shield3-testnode --network egypt
 ```
+
+The runner accepts `--network egypt` (chain ID 8980) or `--network mainnet`
+(chain ID 8979). Both profiles use a fresh isolated genesis with Antartical
+enabled so the private transaction path can be exercised before the public
+Mainnet activation timestamp. The Mainnet profile starts its isolated miner
+directly because production Mainnet correctly waits for a synchronization peer;
+this does not change production mining readiness.
+
+The final dual-profile rehearsal on 2026-09-27 completed both profiles:
+
+| Profile | Chain ID | Final height | Relay broadcasts | Result |
+| --- | ---: | ---: | ---: | --- |
+| Egypt | 8980 | 12 | 1 | passed |
+| Mainnet | 8979 | 12 | 1 | passed |
+
+Each report records real nonzero RandomX mix digests, a shielded deposit,
+multi-input relay payment, exact retry after relay restart, replay rejection,
+and rejection of a mutated zero mix digest. The native Shield4 multi-node
+rehearsal additionally passed the withdrawal, replay, and reorg cases:
+
+```sh
+go test -tags shield3 -run '^TestShield4MultiNodeRehearsal$' \
+  -count=1 -timeout 45m ./internal/shield3wallet
+```
+
+The run completed successfully in 402.858 seconds.
 
 The default creates a new private `/tmp/tkm-shield3-live-*` directory. To choose
 an output path, pass `--output /path/to/a/new-directory`; its parent must exist
