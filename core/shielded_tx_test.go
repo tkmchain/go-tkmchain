@@ -98,6 +98,18 @@ func testShieldedPQTkmTx(t *testing.T, envelope *ShieldedTransaction, algorithm 
 	})
 }
 
+// legacyEgyptShieldedConfig keeps the Egypt privacy commitment rules active
+// while placing the Antartical transition after these legacy V1 processing
+// tests. Egypt activates Antartical at genesis in production; these tests are
+// specifically asserting the pre-Antartical verifier, nullifier, and deposit
+// paths and must not bypass the consensus gate in the implementation.
+func legacyEgyptShieldedConfig() *params.ChainConfig {
+	config := *params.EgyptChainConfig
+	activation := params.MainnetAntarticalTime
+	config.AntarticalTime = &activation
+	return &config
+}
+
 func markShieldedRootKnown(statedb *state.StateDB, root common.Hash) {
 	statedb.SetState(params.ShieldedPoolAddress, ShieldedMerkleRootSlot(root), common.BigToHash(big.NewInt(1)))
 }
@@ -340,7 +352,7 @@ func TestProcessShieldedSpendUsesIntentHashForProofContext(t *testing.T) {
 		}
 		return nil
 	}))
-	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+	if err := processShieldedTransaction(legacyEgyptShieldedConfig(), big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -354,7 +366,7 @@ func TestProcessShieldedSpendRequiresVerifier(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 1)
 	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	tx := testShieldedTx(t, envelope, new(big.Int))
-	err = processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
+	err = processShieldedTransaction(legacyEgyptShieldedConfig(), big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
 	if !errors.Is(err, ErrInvalidShieldedTx) {
 		t.Fatalf("processShieldedTransaction error = %v, want invalid shielded tx", err)
 	}
@@ -564,7 +576,7 @@ func TestProcessShieldedSpendStoresNullifierAndCommitment(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 1)
 	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	tx := testShieldedTx(t, envelope, new(big.Int))
-	err = processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
+	err = processShieldedTransaction(legacyEgyptShieldedConfig(), big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +619,7 @@ func TestProcessShieldedWithdrawalReleasesProvenPublicValue(t *testing.T) {
 	markShieldedRootKnown(statedb, envelope.Spends[0].Anchor)
 	statedb.AddBalance(params.ShieldedPoolAddress, uint256.NewInt(10), tracing.BalanceChangeUnspecified)
 	tx := testShieldedTx(t, envelope, new(big.Int))
-	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+	if err := processShieldedTransaction(legacyEgyptShieldedConfig(), big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
 		t.Fatal(err)
 	}
 	if got := statedb.GetBalance(params.ShieldedPoolAddress); !got.Eq(uint256.NewInt(3)) {
@@ -719,7 +731,7 @@ func TestProcessShieldedDepositStoresCommitmentAndMerklePath(t *testing.T) {
 	envelope := testShieldedEnvelope(t, 0)
 	envelope.Spends = append(envelope.Spends, ShieldedSpend{Proof: []byte("deposit-proof")})
 	tx := testShieldedTx(t, envelope, big.NewInt(7))
-	if err := processShieldedTransaction(params.EgyptChainConfig, big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
+	if err := processShieldedTransaction(legacyEgyptShieldedConfig(), big.NewInt(1), 0, statedb, tx, make(map[common.Hash]struct{})); err != nil {
 		t.Fatal(err)
 	}
 	if got := statedb.GetState(params.ShieldedPoolAddress, shieldedNullifierSlot(common.Hash{})); got != (common.Hash{}) {
