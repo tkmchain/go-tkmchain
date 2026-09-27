@@ -670,7 +670,11 @@ func (it *differenceIterator) NodeBlob() []byte {
 }
 
 func (it *differenceIterator) AddResolver(resolver NodeResolver) {
-	panic("not implemented")
+	// Both iterators may need to resolve hashed nodes while comparing their
+	// paths. Forward the resolver to each source so difference iteration works
+	// with stateless witnesses as well as with the persistent database.
+	it.a.AddResolver(resolver)
+	it.b.AddResolver(resolver)
 }
 
 func (it *differenceIterator) Next(bool) bool {
@@ -785,7 +789,9 @@ func (it *unionIterator) NodeBlob() []byte {
 }
 
 func (it *unionIterator) AddResolver(resolver NodeResolver) {
-	panic("not implemented")
+	for _, item := range *it.items {
+		item.AddResolver(resolver)
+	}
 }
 
 // Next returns the next node in the union of tries being iterated over.

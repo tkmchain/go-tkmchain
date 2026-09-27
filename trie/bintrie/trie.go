@@ -19,6 +19,7 @@ package bintrie
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -331,7 +332,7 @@ func (t *BinaryTrie) Commit(_ bool) (common.Hash, *trienode.NodeSet) {
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration
 // starts at the key after the given start key.
 func (t *BinaryTrie) NodeIterator(startKey []byte) (trie.NodeIterator, error) {
-	return newBinaryNodeIterator(t, nil)
+	return newBinaryNodeIterator(t, startKey)
 }
 
 // Prove constructs a Merkle proof for key. The result contains all encoded nodes
@@ -342,7 +343,58 @@ func (t *BinaryTrie) NodeIterator(startKey []byte) (trie.NodeIterator, error) {
 // nodes of the longest existing prefix of the key (at least the root), ending
 // with the node that proves the absence of the key.
 func (t *BinaryTrie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
-	panic("not implemented")
+	if len(key) != HashSize {
+		return fmt.Errorf("binary trie proof key must be %d bytes, got %d", HashSize, len(key))
+	}
+	if proofDb == nil {
+		return errors.New("binary trie proof writer is nil")
+	}
+	if t.store.root.IsEmpty() {
+		return nil
+	}
+
+	// Resolve the queried branch once. This allows proofs to work for tries
+	// opened from grouped on-disk nodes while keeping all unrelated branches
+	// lazy and untouched.
+	if _, err := t.GetWithHashedKey(key); err != nil {
+		return err
+	}
+
+	ref := t.store.root
+	for {
+		switch ref.Kind() {
+		case kindInternal:
+			node := t.store.getInternal(ref.Index())
+			if err := putBinaryProofNode(proofDb, t.store.computeHash(ref), t.store.serializeNode(ref, t.groupDepth)); err != nil {
+				return err
+			}
+			if int(node.depth) >= len(key)*8 {
+				return errors.New("binary trie proof reached an invalid depth")
+			}
+			bit := key[node.depth/8] >> (7 - (node.depth % 8)) & 1
+			if bit == 0 {
+				ref = node.left
+			} else {
+				ref = node.right
+			}
+		case kindStem:
+			return putBinaryProofNode(proofDb, t.store.computeHash(ref), t.store.serializeNode(ref, t.groupDepth))
+		case kindHashed:
+			return fmt.Errorf("binary trie proof encountered unresolved node %x", t.store.getHashed(ref.Index()).Hash())
+		case kindEmpty:
+			// The collected path proves non-membership.
+			return nil
+		default:
+			return fmt.Errorf("binary trie proof encountered invalid node kind %d", ref.Kind())
+		}
+	}
+}
+
+func putBinaryProofNode(proofDb ethdb.KeyValueWriter, hash common.Hash, blob []byte) error {
+	if len(blob) == 0 {
+		return errors.New("binary trie proof node is empty")
+	}
+	return proofDb.Put(hash[:], blob)
 }
 
 // Copy creates a deep copy of the trie.

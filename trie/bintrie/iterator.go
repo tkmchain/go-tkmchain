@@ -17,6 +17,7 @@
 package bintrie
 
 import (
+	"bytes"
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -31,25 +32,43 @@ type binaryNodeIteratorState struct {
 }
 
 type binaryNodeIterator struct {
-	trie    *BinaryTrie
-	store   *nodeStore
-	current nodeRef
-	lastErr error
+	trie     *BinaryTrie
+	store    *nodeStore
+	current  nodeRef
+	lastErr  error
+	start    []byte
+	resolver trie.NodeResolver
 
 	stack []binaryNodeIteratorState
 }
 
-func newBinaryNodeIterator(t *BinaryTrie, _ []byte) (trie.NodeIterator, error) {
+func newBinaryNodeIterator(t *BinaryTrie, start []byte) (trie.NodeIterator, error) {
 	if t.Hash() == zero {
 		return &binaryNodeIterator{trie: t, store: t.store, lastErr: errIteratorEnd}, nil
 	}
 	it := &binaryNodeIterator{trie: t, store: t.store, current: t.store.root}
+	if len(start) > 0 {
+		it.start = append([]byte(nil), start...)
+	}
 	return it, nil
 }
 
 // Next moves the iterator to the next node. If descend is false, children of
 // the current node are skipped.
 func (it *binaryNodeIterator) Next(descend bool) bool {
+	for it.next(descend) {
+		// Internal nodes before the lower bound are retained for witness
+		// traversal. The key/value iterator only observes leaves.
+		if len(it.start) == 0 || !it.Leaf() || bytes.Compare(it.LeafKey(), it.start) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// next performs one raw pre-order step. Keeping this separate from Next lets
+// the lower-bound filter advance without reapplying it to traversal state.
+func (it *binaryNodeIterator) next(descend bool) bool {
 	if it.lastErr == errIteratorEnd {
 		return false
 	}
@@ -75,7 +94,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 			it.stack = it.stack[:len(it.stack)-1]
 			it.current = it.stack[len(it.stack)-1].Node
 			it.stack[len(it.stack)-1].Index++
-			return it.Next(true)
+			return it.next(true)
 		}
 
 		// Recurse into both children.
@@ -83,7 +102,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 			if !node.left.IsEmpty() {
 				it.stack = append(it.stack, binaryNodeIteratorState{Node: node.left})
 				it.current = node.left
-				return it.Next(descend)
+				return it.next(descend)
 			}
 			context.Index++
 		}
@@ -92,7 +111,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 			if !node.right.IsEmpty() {
 				it.stack = append(it.stack, binaryNodeIteratorState{Node: node.right})
 				it.current = node.right
-				return it.Next(descend)
+				return it.next(descend)
 			}
 			context.Index++
 		}
@@ -105,7 +124,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 		it.stack = it.stack[:len(it.stack)-1]
 		it.current = it.stack[len(it.stack)-1].Node
 		it.stack[len(it.stack)-1].Index++
-		return it.Next(descend)
+		return it.next(descend)
 
 	case kindStem:
 		// Look for the next non-empty value in this stem.
@@ -125,7 +144,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 		it.stack = it.stack[:len(it.stack)-1]
 		it.current = it.stack[len(it.stack)-1].Node
 		it.stack[len(it.stack)-1].Index++
-		return it.Next(descend)
+		return it.next(descend)
 
 	case kindHashed:
 		// Resolve the hashed node from disk, then rewire the parent to point at the
@@ -135,7 +154,14 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 			return false
 		}
 		hn := it.store.getHashed(it.current.Index())
-		data, err := it.trie.nodeResolver(it.Path(), hn.Hash())
+		var data []byte
+		var err error
+		if it.resolver != nil {
+			data = it.resolver(common.Hash{}, it.Path(), hn.Hash())
+		}
+		if data == nil {
+			data, err = it.trie.nodeResolver(it.Path(), hn.Hash())
+		}
 		if err != nil {
 			it.lastErr = err
 			return false
@@ -157,7 +183,7 @@ func (it *binaryNodeIterator) Next(descend bool) bool {
 			parentNode.right = resolved
 		}
 		it.store.freeHashedNode(oldHashedIdx)
-		return it.Next(descend)
+		return it.next(descend)
 
 	case kindEmpty:
 		return false
@@ -291,7 +317,8 @@ func (it *binaryNodeIterator) LeafProof() [][]byte {
 	return proof
 }
 
-// AddResolver is a no-op (satisfies the NodeIterator interface).
-func (it *binaryNodeIterator) AddResolver(trie.NodeResolver) {
-	// Not implemented, but should not panic
+// AddResolver supplies an optional stateless witness resolver. The resolver is
+// consulted before the backing database when resolving child groups.
+func (it *binaryNodeIterator) AddResolver(resolver trie.NodeResolver) {
+	it.resolver = resolver
 }

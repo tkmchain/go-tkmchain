@@ -249,3 +249,33 @@ func TestIteratorNodeCount(t *testing.T) {
 		t.Fatalf("expected 3 total nodes, got %d", total)
 	}
 }
+
+// TestIteratorStartKey verifies that the lower bound is exclusive, matching
+// the NodeIterator contract used by snapshot and state-diff consumers.
+func TestIteratorStartKey(t *testing.T) {
+	keys := []common.Hash{
+		common.HexToHash("01"),
+		common.HexToHash("02"),
+		common.HexToHash("80"),
+	}
+	entries := make([][2]common.Hash, len(keys))
+	for i, key := range keys {
+		entries[i] = [2]common.Hash{key, oneKey}
+	}
+	tr := makeTrie(t, entries)
+	it, err := tr.NodeIterator(keys[1][:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	kv := trie.NewIterator(it)
+	var got []common.Hash
+	for kv.Next() {
+		got = append(got, common.BytesToHash(kv.Key))
+	}
+	if kv.Err != nil {
+		t.Fatalf("iterator error: %v", kv.Err)
+	}
+	if len(got) != 1 || got[0] != keys[2] {
+		t.Fatalf("unexpected keys after start: got %x, want %x", got, keys[2])
+	}
+}

@@ -62,8 +62,10 @@ func (t *TransitionTrie) Overlay() *bintrie.BinaryTrie {
 // GetKey returns the sha3 preimage of a hashed key that was previously used
 // to store a value.
 func (t *TransitionTrie) GetKey(key []byte) []byte {
-	if key := t.overlay.GetKey(key); key != nil {
-		return key
+	if t.overlay != nil {
+		if key := t.overlay.GetKey(key); key != nil {
+			return key
+		}
 	}
 	if t.base != nil {
 		return t.base.GetKey(key)
@@ -74,18 +76,31 @@ func (t *TransitionTrie) GetKey(key []byte) []byte {
 // GetStorage returns the value for key stored in the trie. The value bytes must
 // not be modified by the caller.
 func (t *TransitionTrie) GetStorage(addr common.Address, key []byte) ([]byte, error) {
-	val, err := t.overlay.GetStorage(addr, key)
+	if t.overlay != nil {
+		val, err := t.overlay.GetStorage(addr, key)
+		if err != nil {
+			return nil, fmt.Errorf("get storage from overlay: %w", err)
+		}
+		if len(val) != 0 {
+			return val, nil
+		}
+	}
+	if t.base == nil {
+		return nil, nil
+	}
+	val, err := t.base.GetStorage(addr, key)
 	if err != nil {
-		return nil, fmt.Errorf("get storage from overlay: %s", err)
+		return nil, fmt.Errorf("get storage from base: %w", err)
 	}
-	if len(val) != 0 {
-		return val, nil
+	// Materialise a base read in the overlay. Besides avoiding a second MPT
+	// lookup, this is necessary for a stateless transition: all values read
+	// from the base trie must be represented in the resulting binary trie.
+	if t.overlay != nil && len(val) != 0 {
+		if err := t.overlay.UpdateStorage(addr, key, val); err != nil {
+			return nil, fmt.Errorf("cache storage in overlay: %w", err)
+		}
 	}
-	if t.base != nil {
-		// TODO also insert value into overlay
-		return t.base.GetStorage(addr, key)
-	}
-	return nil, nil
+	return val, nil
 }
 
 // PrefetchStorage attempts to resolve specific storage slots from the database
@@ -188,7 +203,13 @@ func (t *TransitionTrie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSe
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration
 // starts at the key after the given start key.
 func (t *TransitionTrie) NodeIterator(startKey []byte) (trie.NodeIterator, error) {
-	panic("not implemented") // TODO: Implement
+	if t.overlay != nil {
+		return t.overlay.NodeIterator(startKey)
+	}
+	if t.base != nil {
+		return t.base.NodeIterator(startKey)
+	}
+	return nil, fmt.Errorf("transition trie has no underlying trie")
 }
 
 // Prove constructs a Merkle proof for key. The result contains all encoded nodes
@@ -199,7 +220,20 @@ func (t *TransitionTrie) NodeIterator(startKey []byte) (trie.NodeIterator, error
 // nodes of the longest existing prefix of the key (at least the root), ending
 // with the node that proves the absence of the key.
 func (t *TransitionTrie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
-	panic("not implemented") // TODO: Implement
+	if proofDb == nil {
+		return fmt.Errorf("transition trie proof writer is nil")
+	}
+	if t.overlay != nil {
+		// The transition root is the binary overlay root. A base-trie proof
+		// cannot be mixed into it because MPT and binary-trie nodes have
+		// different encodings and hash functions, so always prove against the
+		// authoritative overlay (including its non-membership path).
+		return t.overlay.Prove(key, proofDb)
+	}
+	if t.base != nil {
+		return t.base.Prove(key, proofDb)
+	}
+	return fmt.Errorf("transition trie has no underlying trie")
 }
 
 // IsUBT returns true if the trie is verkle-tree based
@@ -210,10 +244,11 @@ func (t *TransitionTrie) IsUBT() bool {
 
 // UpdateStem updates a group of values, given the stem they are using. If
 // a value already exists, it is overwritten.
-// TODO: This is Verkle-specific and requires access to private fields.
-// Not currently used in the codebase.
 func (t *TransitionTrie) UpdateStem(key []byte, values [][]byte) error {
-	panic("UpdateStem is not implemented for TransitionTrie")
+	if t.overlay == nil {
+		return fmt.Errorf("transition trie has no binary overlay")
+	}
+	return t.overlay.UpdateStem(key, values)
 }
 
 // Copy creates a deep copy of the transition trie.
@@ -233,5 +268,19 @@ func (t *TransitionTrie) UpdateContractCode(addr common.Address, codeHash common
 
 // Witness returns a set containing all trie nodes that have been accessed.
 func (t *TransitionTrie) Witness() map[string][]byte {
-	panic("not implemented")
+	result := make(map[string][]byte)
+	if t.base != nil {
+		for key, value := range t.base.Witness() {
+			result[key] = append([]byte(nil), value...)
+		}
+	}
+	if t.overlay != nil {
+		for key, value := range t.overlay.Witness() {
+			result[key] = append([]byte(nil), value...)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
