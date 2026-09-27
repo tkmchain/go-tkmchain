@@ -1,0 +1,82 @@
+name: Keeper guest build
+
+on:
+  push:
+    branches:
+      - v1.21.3
+    paths:
+      - 'cmd/keeper/**'
+      - 'zk/zkevm/build_keeper.sh'
+      - 'zk/zkevm/go-overlay/**'
+      - 'zk/zkevm/keeper-host/**'
+      - '.github/workflows/keeper-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build keeper guest and host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GOMAXPROCS: '2'
+      TKM_KEEPER_BUILD_PARALLELISM: '2'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install pinned Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-08-17
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            zk/zkevm/keeper-host/target
+          key: keeper-build-${{ runner.os }}-${{ hashFiles('zk/zkevm/keeper-host/Cargo.toml', 'zk/zkevm/keeper-host/Cargo.lock') }}
+          restore-keys: |
+            keeper-build-${{ runner.os }}-
+
+      - name: Install keeper build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang libclang-dev llvm protobuf-compiler python3
+          echo 'PROTOC=/usr/bin/protoc' >> "$GITHUB_ENV"
+
+      - name: Configure bindgen
+        run: |
+          gcc_include="$(gcc -print-file-name=include)"
+          test -d "$gcc_include"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${gcc_include}" >> "$GITHUB_ENV"
+
+      - name: Build keeper guest ELF
+        run: zk/zkevm/build_keeper.sh build/keeper-mipsle
+
+      - name: Fetch locked Rust dependencies
+        run: cargo +nightly-2025-08-17 fetch --locked --manifest-path zk/zkevm/keeper-host/Cargo.toml
+
+      - name: Run keeper host tests
+        run: |
+          cargo +nightly-2025-08-17 test --release --offline --locked \
+            --manifest-path zk/zkevm/keeper-host/Cargo.toml
+
+      - name: Upload keeper guest
+        uses: actions/upload-artifact@v4
+        with:
+          name: keeper-guest-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: build/keeper-mipsle
