@@ -198,3 +198,30 @@ func TestOnionOnlyConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOnionOnlyConfigurationIsFailClosed(t *testing.T) {
+	node, err := New(&Config{
+		OnionOnly:      true,
+		P2PSOCKS5Proxy: "socks5://127.0.0.1:9050",
+		P2P:            p2p.Config{ListenAddr: ":39003", OnionHostname: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"},
+		HTTPHost:       "127.0.0.1",
+		WSHost:         "127.0.0.1",
+		AuthAddr:       "127.0.0.1",
+		DataDir:        t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer node.Close()
+
+	config := node.Config()
+	if config.P2P.ListenAddr != "127.0.0.1:39003" {
+		t.Fatalf("onion-only listen address = %q, want loopback", config.P2P.ListenAddr)
+	}
+	if config.P2P.DiscAddr != "" || config.P2P.NAT != nil || !config.P2P.NoDiscovery || config.P2P.DiscoveryV4 || config.P2P.DiscoveryV5 {
+		t.Fatalf("onion-only discovery/NAT was not disabled: disc=%q nat=%v nodiscover=%v v4=%v v5=%v", config.P2P.DiscAddr, config.P2P.NAT, config.P2P.NoDiscovery, config.P2P.DiscoveryV4, config.P2P.DiscoveryV5)
+	}
+	if config.P2P.OnionHostname != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion" {
+		t.Fatalf("onion hostname = %q", config.P2P.OnionHostname)
+	}
+}

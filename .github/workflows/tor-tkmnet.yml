@@ -1,0 +1,51 @@
+name: Tor and TKMNet checks
+
+on:
+  push:
+    branches: [master, v1.21.3, artartical]
+    paths:
+      - 'p2p/**'
+      - 'node/**'
+      - 'tkmnet/**'
+      - 'params/**'
+      - 'cmd/gtkm/**'
+      - 'scripts/tor-tkmnet-rehearsal.sh'
+      - 'docs/TOR_TKMNET_REHEARSAL.md'
+      - '.github/workflows/tor-tkmnet.yml'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    paths:
+      - 'p2p/**'
+      - 'node/**'
+      - 'tkmnet/**'
+      - 'params/**'
+      - 'cmd/gtkm/**'
+      - 'scripts/tor-tkmnet-rehearsal.sh'
+      - 'docs/TOR_TKMNET_REHEARSAL.md'
+      - '.github/workflows/tor-tkmnet.yml'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    name: Onion transport and TKMNet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check rehearsal script syntax
+        run: bash -n scripts/tor-tkmnet-rehearsal.sh
+      - name: Run fail-closed transport and activation tests
+        run: >-
+          go test ./p2p ./node ./tkmnet ./params ./cmd/gtkm
+          -run 'Test(OnionSOCKS5DialerRoutesAndRejects|OnionOnlyConfigurationIsFailClosed|ServiceOpensFinalPayload|ServiceLifecycle|TkmnetActivationFollowsCanonicalHead|TkmnetRequiredForkSchedule|AntarticalForkSchedule)'
+          -count=1

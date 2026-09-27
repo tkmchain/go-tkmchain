@@ -48,6 +48,7 @@ import (
         "github.com/ethereum/go-ethereum/log"
         "github.com/ethereum/go-ethereum/metrics"
         "github.com/ethereum/go-ethereum/node"
+        "github.com/ethereum/go-ethereum/params"
         "github.com/ethereum/go-ethereum/tkmnet"
         "github.com/naoina/toml"
         "github.com/urfave/cli/v2"
@@ -393,20 +394,17 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 // relay on from the active chain head while keeping it optional before the
 // fork. TKMNet itself only listens on loopback; Tor publishes that listener.
 func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ethereum) {
-	required := false
-	if backend != nil && backend.BlockChain() != nil {
-		chain := backend.BlockChain()
-		head := chain.CurrentHeader()
-		if head != nil && chain.Config() != nil {
-			required = chain.Config().IsTkmnetRequired(head.Number, head.Time)
-		}
-	}
-	if required {
-		if !cfg.Tkmnet.Enabled {
-			log.Info("Antartical requires TKMNet; enabling the relay")
-		}
-		cfg.Tkmnet.Enabled = true
-	}
+        required := false
+        if backend != nil && backend.BlockChain() != nil {
+                chain := backend.BlockChain()
+                head := chain.CurrentHeader()
+                if head != nil {
+                        required = tkmnetRequiredAt(chain.Config(), head.Number, head.Time)
+                }
+        }
+        if enableTkmnetAtFork(&cfg.Tkmnet, required) {
+                log.Info("Antartical requires TKMNet; enabling the relay")
+        }
 	if !cfg.Tkmnet.Enabled {
 		return
 	}
@@ -428,7 +426,26 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 		utils.Fatalf("Failed to configure tkmnet: %v", err)
 	}
 	stack.RegisterLifecycle(relay)
-	log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID(), "required", required)
+        log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID(), "required", required)
+}
+
+// tkmnetRequiredAt is the single startup decision used by gtkm. It evaluates
+// the canonical head timestamp, so a wall-clock change cannot enable the
+// relay early or leave it disabled after the Antartical fork.
+func tkmnetRequiredAt(config *params.ChainConfig, number *big.Int, timestamp uint64) bool {
+        return config != nil && number != nil && config.IsTkmnetRequired(number, timestamp)
+}
+
+// enableTkmnetAtFork turns on the relay only when the consensus gate is active.
+// Keeping this mutation in one helper makes the pre-fork optional behavior and
+// the post-fork automatic behavior explicit and testable.
+func enableTkmnetAtFork(config *tkmnetConfig, required bool) bool {
+        if config == nil || !required {
+                return false
+        }
+        wasDisabled := !config.Enabled
+        config.Enabled = true
+        return wasDisabled
 }
 
 // constructs the disclaimer text block which will be printed in the logs upon

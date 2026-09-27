@@ -37,3 +37,13 @@ TKMNet becomes a required node service at the Antartical hardfork. Before the
 fork, operators may leave it disabled or enable it explicitly. Once the
 canonical head reaches Antartical, `gtkm` enables the relay automatically and
 fails startup if the loopback relay cannot be constructed.
+
+## Production rehearsal
+
+Run [`scripts/tor-tkmnet-rehearsal.sh`](../scripts/tor-tkmnet-rehearsal.sh)
+on a node with Tor and the onion-published pool to verify the complete path:
+onion enode advertisement, peer connectivity, EVM and RandomX RPCs, pool HTTP,
+Stratum subscribe/authorize, TKMNet lifecycle, and the Antartical activation
+gate. The command is read-only and refuses clearnet RPC or pool endpoints. See
+[`docs/TOR_TKMNET_REHEARSAL.md`](../docs/TOR_TKMNET_REHEARSAL.md) for setup and
+environment overrides.
