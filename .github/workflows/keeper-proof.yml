@@ -1,10 +1,21 @@
 name: Keeper proof artifact
 
 on:
+  push:
+    branches:
+      - v1.21.3
+    paths:
+      - '2_payload.rlp'
+      - 'cmd/keeper/**'
+      - 'cmd/keeperpayload/**'
+      - 'zk/zkevm/build_keeper.sh'
+      - 'zk/zkevm/go-overlay/**'
+      - 'zk/zkevm/keeper-host/**'
+      - '.github/workflows/keeper-proof.yml'
   workflow_dispatch:
     inputs:
       payload_path:
-        description: Repository-relative complete Payload RLP for block 44423
+        description: Repository-relative complete Payload RLP
         required: false
         default: 2_payload.rlp
         type: string
@@ -21,7 +32,7 @@ on:
       block_number:
         description: Expected block height in the payload
         required: false
-        default: '44423'
+        default: '2'
         type: string
 
 permissions:
@@ -70,10 +81,10 @@ jobs:
 
       - name: Configure bindgen and payload
         env:
-          PAYLOAD_PATH: ${{ inputs.payload_path }}
-          PAYLOAD_URL: ${{ inputs.payload_url }}
-          EXPECTED_CHAIN_ID: ${{ inputs.chain_id }}
-          EXPECTED_BLOCK_NUMBER: ${{ inputs.block_number }}
+          PAYLOAD_PATH: ${{ inputs.payload_path || '2_payload.rlp' }}
+          PAYLOAD_URL: ${{ inputs.payload_url || '' }}
+          EXPECTED_CHAIN_ID: ${{ inputs.chain_id || '8979' }}
+          EXPECTED_BLOCK_NUMBER: ${{ inputs.block_number || '2' }}
         run: |
           gcc_include="$(gcc -print-file-name=include)"
           test -d "$gcc_include"
