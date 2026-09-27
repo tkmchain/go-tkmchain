@@ -17,12 +17,12 @@ modify an existing chain database or wallet.
 ## Install the latest release
 
 Set `TKM_VERSION` when installing a different release. The default below is
-`v1.21.29`.
+`v1.21.40`.
 
 ```bash
 set -eu
 
-version="${TKM_VERSION:-v1.21.29}"
+version="${TKM_VERSION:-v1.21.40}"
 arch="$(dpkg --print-architecture)"
 
 case "$arch" in
@@ -54,7 +54,7 @@ Every release includes `SHA256SUMS`. Verify the package before installing it
 when the release is being deployed to a validator or production wallet:
 
 ```bash
-version="${TKM_VERSION:-v1.21.29}"
+version="${TKM_VERSION:-v1.21.40}"
 arch="$(dpkg --print-architecture)"
 package="tkmchain_${version#v}_${arch}.deb"
 
