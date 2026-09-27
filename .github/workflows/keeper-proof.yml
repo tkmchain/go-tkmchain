@@ -45,6 +45,15 @@ jobs:
     env:
       GOMAXPROCS: '2'
       TKM_KEEPER_BUILD_PARALLELISM: '2'
+      # Keep the CPU prover within the memory envelope of a hosted runner.
+      # Ziren reads these values when constructing its default prover options.
+      RAYON_NUM_THREADS: '2'
+      SHARD_SIZE: '524288'
+      SHARD_BATCH_SIZE: '1'
+      TRACE_GEN_WORKERS: '1'
+      RECORDS_AND_TRACES_CHANNEL_CAPACITY: '1'
+      CHECKPOINTS_CHANNEL_CAPACITY: '32'
+      RUST_LOG: info
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -122,6 +131,14 @@ jobs:
       - name: Generate compressed proof and verifying key
         run: |
           rm -f keeper-proof.bin keeper-vk.bin
+          # GitHub cancels silent long-running steps. Keep a heartbeat while
+          # compressed recursion is running so cancellation is distinguishable
+          # from an actual prover failure.
+          (while sleep 30; do
+            echo "keeper compressed proof still running ($(date -u +%H:%M:%S))"
+          done) &
+          heartbeat=$!
+          trap 'kill "$heartbeat" 2>/dev/null || true' EXIT
           BINDGEN_EXTRA_CLANG_ARGS="$BINDGEN_EXTRA_CLANG_ARGS" \
             cargo +nightly-2025-08-17 run --release --offline --locked \
               --manifest-path zk/zkevm/keeper-host/Cargo.toml -- \
