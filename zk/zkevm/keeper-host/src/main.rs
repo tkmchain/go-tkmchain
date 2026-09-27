@@ -1,8 +1,10 @@
 use anyhow::{bail, ensure, Context, Result};
-use sha2::{Digest, Sha256};
 use clap::Parser;
+use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
-use zkm_sdk::{utils, HashableKey, ProverClient, ZKMProofWithPublicValues, ZKMStdin, ZKMVerifyingKey};
+use zkm_sdk::{
+    utils, HashableKey, ProverClient, ZKMProofWithPublicValues, ZKMStdin, ZKMVerifyingKey,
+};
 
 /// Generates and locally verifies a Ziren STARK proof for the complete
 /// stateless go-tkmchain EVM execution guest.
@@ -108,7 +110,9 @@ fn verify_statement(
     proof: &ZKMProofWithPublicValues,
     expected: Option<&ExpectedStatement>,
 ) -> Result<()> {
-    let Some(expected) = expected else { return Ok(()) };
+    let Some(expected) = expected else {
+        return Ok(());
+    };
     let actual = proof.public_values.as_ref();
     // Ziren's guest runtime hashes every Commit payload and exposes the final
     // SHA-256 digest as the proof public value. Compare that digest rather than
@@ -134,6 +138,53 @@ fn encode_hex(bytes: &[u8]) -> String {
     output
 }
 
+/// Encode a byte slice exactly as the Go zkVM runtime's `SerializeData` does.
+///
+/// The guest calls `zkvm_runtime.Read[[]byte]`, whose wire format is an
+/// unsigned little-endian 64-bit byte length followed by the bytes.  Using
+/// `ZKMStdin::write` here happened to produce the same representation with
+/// the currently pinned bincode version, but it couples the consensus input
+/// protocol to a Rust serializer configuration.  Writing the bytes
+/// explicitly keeps the host and guest contracts stable across dependency
+/// updates and prevents an RLP payload from being decoded with the wrong
+/// offset (the source of the misleading ChainID decode error).
+fn encode_guest_bytes(input: &[u8]) -> Result<Vec<u8>> {
+    let length = u64::try_from(input.len()).context("keeper payload is too large")?;
+    let mut encoded = Vec::with_capacity(8 + input.len());
+    encoded.extend_from_slice(&length.to_le_bytes());
+    encoded.extend_from_slice(input);
+    Ok(encoded)
+}
+
+fn validate_payload_prefix(input: &[u8]) -> Result<()> {
+    ensure!(!input.is_empty(), "keeper payload is empty");
+    ensure!(input[0] >= 0xc0, "keeper payload must be an RLP list");
+
+    // The first field is ChainID.  It must be an RLP scalar, never another
+    // list.  This catches a stale guest ELF or a double-wrapped payload before
+    // invoking the prover and reports the actual boundary problem.
+    let list_payload_offset = if input[0] <= 0xf7 {
+        1usize
+    } else {
+        let length_of_length = usize::from(input[0] - 0xf7);
+        ensure!(length_of_length > 0, "invalid keeper RLP list prefix");
+        ensure!(
+            input.len() > length_of_length,
+            "truncated keeper RLP list prefix"
+        );
+        1 + length_of_length
+    };
+    ensure!(
+        input.len() > list_payload_offset,
+        "keeper RLP list has no fields"
+    );
+    ensure!(
+        input[list_payload_offset] < 0xc0,
+        "keeper payload ChainID is not the first scalar field"
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     utils::setup_logger();
     let args = Args::parse();
@@ -144,8 +195,11 @@ fn main() -> Result<()> {
             .with_context(|| format!("load proof {}", proof_path.display()))?;
         let vk_bytes = fs::read(&args.vk)
             .with_context(|| format!("read verifying key {}", args.vk.display()))?;
-        let vk: ZKMVerifyingKey = bincode::deserialize(&vk_bytes).context("decode verifying key")?;
-        client.verify(&proof, &vk).context("verify keeper STARK proof")?;
+        let vk: ZKMVerifyingKey =
+            bincode::deserialize(&vk_bytes).context("decode verifying key")?;
+        client
+            .verify(&proof, &vk)
+            .context("verify keeper STARK proof")?;
         verify_statement(&proof, expected.as_ref())?;
         println!("valid=true");
         println!("program_vk={}", vk.bytes32());
@@ -155,19 +209,27 @@ fn main() -> Result<()> {
 
     let elf_path = args.elf.context("--elf is required when proving")?;
     let input_path = args.input.context("--input is required when proving")?;
-    let elf = fs::read(&elf_path).with_context(|| format!("read guest ELF {}", elf_path.display()))?;
-    let input = fs::read(&input_path).with_context(|| format!("read payload {}", input_path.display()))?;
+    let elf =
+        fs::read(&elf_path).with_context(|| format!("read guest ELF {}", elf_path.display()))?;
+    let input =
+        fs::read(&input_path).with_context(|| format!("read payload {}", input_path.display()))?;
+    validate_payload_prefix(&input)
+        .with_context(|| format!("validate payload {}", input_path.display()))?;
 
     let mut stdin = ZKMStdin::new();
-    // getpayload_ziren.go reads []byte, so the host must serialize a byte
-    // slice rather than writing the raw RLP directly.
-    stdin.write(&input);
+    // getpayload_ziren.go reads []byte.  Write the Go runtime's explicit
+    // length-prefixed byte-slice representation, rather than raw RLP.
+    let guest_input = encode_guest_bytes(&input)?;
+    stdin.write_slice(&guest_input);
 
     let (_, report) = client
         .execute(&elf, &stdin)
         .run()
         .context("execute keeper guest")?;
-    eprintln!("keeper execution cycles: {}", report.total_instruction_count());
+    eprintln!(
+        "keeper execution cycles: {}",
+        report.total_instruction_count()
+    );
 
     let (pk, vk) = client.setup(&elf);
     let proof = client
@@ -177,13 +239,18 @@ fn main() -> Result<()> {
         .context("generate keeper STARK proof")?;
 
     // Verify before writing anything that can be consumed by another tool.
-    client.verify(&proof, &vk).context("verify keeper STARK proof")?;
+    client
+        .verify(&proof, &vk)
+        .context("verify keeper STARK proof")?;
     verify_statement(&proof, expected.as_ref())?;
     proof
         .save(&args.proof)
         .with_context(|| format!("write proof {}", args.proof.display()))?;
-    fs::write(&args.vk, bincode::serialize(&vk).context("encode verifying key")?)
-        .with_context(|| format!("write verifying key {}", args.vk.display()))?;
+    fs::write(
+        &args.vk,
+        bincode::serialize(&vk).context("encode verifying key")?,
+    )
+    .with_context(|| format!("write verifying key {}", args.vk.display()))?;
 
     println!("proof_file={}", args.proof.display());
     println!("vk_file={}", args.vk.display());
@@ -192,7 +259,30 @@ fn main() -> Result<()> {
     // Round-trip the serialized artifact and verify it again. This catches
     // proof-file truncation and serialization mismatches before publication.
     let loaded = ZKMProofWithPublicValues::load(&args.proof).context("reload proof")?;
-    client.verify(&loaded, &vk).context("verify reloaded proof")?;
+    client
+        .verify(&loaded, &vk)
+        .context("verify reloaded proof")?;
     verify_statement(&loaded, expected.as_ref())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guest_byte_encoding_matches_go_runtime() {
+        let input = b"keeper-payload";
+        let expected = bincode::serialize(&input.as_slice()).expect("bincode serialization");
+        assert_eq!(encode_guest_bytes(input).expect("guest encoding"), expected);
+    }
+
+    #[test]
+    fn payload_prefix_requires_scalar_chain_id() {
+        // A minimal list containing the scalar chain ID 8979.
+        assert!(validate_payload_prefix(&[0xc3, 0x82, 0x23, 0x13]).is_ok());
+        // A nested list in the ChainID position is the malformed layout that
+        // previously reached the guest and produced the confusing RLP error.
+        assert!(validate_payload_prefix(&[0xc3, 0xc2, 0x23, 0x13]).is_err());
+    }
 }
