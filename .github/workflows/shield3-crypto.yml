@@ -61,6 +61,10 @@ jobs:
       TKM_SHIELD3_STARK_BIN: ${{ github.workspace }}/zk/shielded3/stark/target/release/tkm-shield3-stark
       CARGO_BUILD_JOBS: '2'
       RAYON_NUM_THREADS: '2'
+      # Use the public module mirror first, then fall back to the source on
+      # transient proxy or DNS failures. The retry step below makes the
+      # dependency download (including golang.org/x/text) deterministic.
+      GOPROXY: 'https://proxy.golang.org|direct'
     steps:
       - uses: actions/checkout@v4
       - name: Prepare test directories
@@ -69,6 +73,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Warm Go module cache with retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if go mod download; then
+              exit 0
+            fi
+            if [[ "$attempt" == 5 ]]; then
+              echo 'Go module download failed after five attempts.' >&2
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Go module download failed; retrying in ${delay}s (attempt $((attempt + 1))/5)..." >&2
+            sleep "$delay"
+          done
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.89.0 --profile minimal --component rustfmt --component clippy
       - name: Check Rust formatting and lint
