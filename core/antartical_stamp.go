@@ -201,6 +201,15 @@ func ValidateAntarticalStampState(st shieldedStateReader, from common.Address, t
 		}
 		return nil
 	}
+	if HasAddressVotePrefix(data) {
+		if to == nil || *to != params.ShieldedPoolAddress || value.Sign() != 0 {
+			return errors.New("illegal value transfer disguised as address vote")
+		}
+		return ValidateAddressVoteState(st, from, data)
+	}
+	if IsAddressSuspended(st, from) {
+		return fmt.Errorf("%w: sender %s", ErrAddressSuspended, from)
+	}
 	if !IsAntarticalStamped(st, from) {
 		return fmt.Errorf("%w: sender %s", ErrUnstampedAddress, from)
 	}

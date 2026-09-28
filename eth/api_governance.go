@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -63,6 +64,15 @@ type GovernanceDisclosure struct {
 	MainKing       common.Address `json:"mainKing"`
 	Signature      hexutil.Bytes  `json:"signature"`
 	CreatedAt      hexutil.Uint64 `json:"createdAt"`
+}
+
+// AddressVoteStatus is the canonical, state-backed address suspension view.
+// Vote reasons remain available in the signed vote transactions themselves.
+type AddressVoteStatus struct {
+	Address     common.Address `json:"address"`
+	ActiveVotes hexutil.Uint64 `json:"activeVotes"`
+	Threshold   hexutil.Uint64 `json:"threshold"`
+	Suspended   bool           `json:"suspended"`
 }
 
 func NewGovernanceAPI(e *Ethereum) *GovernanceAPI {
@@ -126,6 +136,25 @@ func (api *GovernanceAPI) LatestDisclosure(kind string) (GovernanceDisclosure, e
 
 func (api *GovernanceAPI) VerifyDisclosure(id hexutil.Uint64) (bool, error) {
 	return api.service.VerifyDisclosure(uint64(id))
+}
+
+// GetAddressVoteStatus reads address-vote state at the canonical head. It is
+// intentionally read-only: only a mined vote or caller-owned unvote can change
+// the status through consensus processing.
+func (api *GovernanceAPI) GetAddressVoteStatus(address common.Address) (AddressVoteStatus, error) {
+	if api == nil || api.service == nil || api.service.eth == nil || api.service.eth.blockchain == nil {
+		return AddressVoteStatus{}, errors.New("blockchain is not available")
+	}
+	head := api.service.eth.blockchain.CurrentBlock()
+	if head == nil {
+		return AddressVoteStatus{}, errors.New("chain head is not available")
+	}
+	statedb, err := api.service.eth.blockchain.StateAt(head)
+	if err != nil {
+		return AddressVoteStatus{}, err
+	}
+	status := core.GetAddressVoteStatus(statedb, address)
+	return AddressVoteStatus{Address: status.Address, ActiveVotes: hexutil.Uint64(status.ActiveVotes), Threshold: hexutil.Uint64(status.Threshold), Suspended: status.Suspended}, nil
 }
 
 func (svc *GovernanceService) PublishDisclosure(kind string, title string, version uint64, contentHash common.Hash, uri string, previousHash common.Hash, timestamp uint64, anchorTx common.Hash, signature []byte) (GovernanceDisclosure, error) {

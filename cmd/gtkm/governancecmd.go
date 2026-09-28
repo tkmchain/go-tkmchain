@@ -11,7 +11,10 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/urfave/cli/v2"
 )
 
@@ -70,6 +73,25 @@ var (
 		Usage: "maximum records to list",
 		Value: 100,
 	}
+	govVoteAddressFlag = &cli.StringFlag{
+		Name:     "address",
+		Usage:    "address to vote on or unvote",
+		Required: true,
+	}
+	govVoteReasonFlag = &cli.StringFlag{
+		Name:  "reason",
+		Usage: "public reason for a vote (required for vote, omitted for unvote)",
+	}
+	govVoteFromFlag = &cli.StringFlag{
+		Name:     "from",
+		Usage:    "stamped ML-DSA-87 account that casts the vote",
+		Required: true,
+	}
+	govVoteGasFlag = &cli.Uint64Flag{
+		Name:  "gas",
+		Usage: "gas limit for the vote transaction",
+		Value: 100000,
+	}
 
 	governanceRPCFlags = []cli.Flag{utils.DataDirFlag, utils.HttpHeaderFlag}
 
@@ -116,6 +138,27 @@ are stored through the tkmgov RPC namespace.`,
 				ArgsUsage: "[endpoint]",
 				Flags:     append(governanceRPCFlags, govIDFlag),
 				Action:    governanceVerify,
+			},
+			{
+				Name:      "vote",
+				Usage:     "cast a public, stamped-owner address suspension vote",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(governanceRPCFlags, govVoteAddressFlag, govVoteReasonFlag, govVoteFromFlag, govVoteGasFlag),
+				Action:    governanceVote,
+			},
+			{
+				Name:      "unvote",
+				Usage:     "remove your own address suspension vote",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(governanceRPCFlags, govVoteAddressFlag, govVoteFromFlag, govVoteGasFlag),
+				Action:    governanceUnvote,
+			},
+			{
+				Name:      "status",
+				Usage:     "show the canonical address-vote count and suspension status",
+				ArgsUsage: "[endpoint]",
+				Flags:     append(governanceRPCFlags, govVoteAddressFlag),
+				Action:    governanceVoteStatus,
 			},
 		},
 	}
@@ -238,6 +281,73 @@ func governanceVerify(ctx *cli.Context) error {
 		return err
 	}
 	return tkmPhonePrintJSON(map[string]any{"id": id, "valid": ok})
+}
+
+func governanceVote(ctx *cli.Context) error {
+	return governanceSubmitVote(ctx, false)
+}
+
+func governanceUnvote(ctx *cli.Context) error {
+	if ctx.String(govVoteReasonFlag.Name) != "" {
+		return errors.New("--reason is only valid with governance vote")
+	}
+	return governanceSubmitVote(ctx, true)
+}
+
+func governanceSubmitVote(ctx *cli.Context, unvote bool) error {
+	target := common.HexToAddress(ctx.String(govVoteAddressFlag.Name))
+	if !common.IsHexAddress(ctx.String(govVoteAddressFlag.Name)) || target == (common.Address{}) || target == params.ShieldedPoolAddress {
+		return errors.New("--address must be a non-zero, non-reserved 20-byte address")
+	}
+	reason := ctx.String(govVoteReasonFlag.Name)
+	if !unvote && reason == "" {
+		return errors.New("--reason is required for a vote")
+	}
+	data, err := core.EncodeAddressVote(&core.AddressVote{Version: core.AddressVoteVersion, Unvote: unvote, Target: target, Reason: reason})
+	if err != nil {
+		return err
+	}
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	from := common.HexToAddress(ctx.String(govVoteFromFlag.Name))
+	if !common.IsHexAddress(ctx.String(govVoteFromFlag.Name)) || from == (common.Address{}) {
+		return errors.New("--from must be a non-zero 20-byte address")
+	}
+	passphrase := utils.GetPassPhrase("Account password", false)
+	defer clearWalletBytes([]byte(passphrase))
+	txArgs := map[string]interface{}{
+		"from":  from,
+		"to":    params.ShieldedPoolAddress,
+		"type":  hexutil.Uint64(types.PQTkmTxType),
+		"value": hexutil.Uint64(0),
+		"gas":   hexutil.Uint64(ctx.Uint64(govVoteGasFlag.Name)),
+		"data":  hexutil.Bytes(data),
+	}
+	var hash common.Hash
+	if err := client.CallContext(context.Background(), &hash, "tkm_sendTransactionWithPassphrase", txArgs, passphrase); err != nil {
+		return err
+	}
+	return tkmPhonePrintJSON(map[string]interface{}{"hash": hash, "target": target, "unvote": unvote, "reason": reason})
+}
+
+func governanceVoteStatus(ctx *cli.Context) error {
+	address := common.HexToAddress(ctx.String(govVoteAddressFlag.Name))
+	if !common.IsHexAddress(ctx.String(govVoteAddressFlag.Name)) || address == (common.Address{}) {
+		return errors.New("--address must be a non-zero 20-byte address")
+	}
+	client, err := tkmPhoneDial(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	var status json.RawMessage
+	if err := client.CallContext(context.Background(), &status, "tkmgov_getAddressVoteStatus", address); err != nil {
+		return err
+	}
+	return tkmPhonePrintJSON(status)
 }
 
 func governanceBuildHashView(ctx *cli.Context, client interface {

@@ -40,6 +40,9 @@ func ValidatePrivateExecutionPolicy(config *params.ChainConfig, number *big.Int,
 	if tx.Type() == types.PQTkmTxType && HasAntarticalStampPrefix(tx.Data()) {
 		return ValidateAntarticalStampBasics(config, number, blockTime, tx)
 	}
+	if tx.Type() == types.PQTkmTxType && HasAddressVotePrefix(tx.Data()) {
+		return ValidateAddressVoteBasics(config, number, blockTime, tx)
+	}
 	return validatePrivateExecutionFields(config, number, blockTime, tx.Type(), tx.To(), tx.Value(), tx.Data(), types.IsBlockRewardTx(tx))
 }
 
@@ -62,6 +65,11 @@ func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int,
 		// Stamp registration is a consensus protocol envelope rather than a
 		// transparent EVM/TVM call. The full transaction path validates its
 		// stateless shape and ownership proof before applying registry state.
+		return nil
+	}
+	if HasAddressVotePrefix(data) {
+		// The full transaction path validates the target, reason, stamp owner,
+		// and one-vote-per-owner state before applying the vote.
 		return nil
 	}
 	if HasShieldedV3Prefix(data) || HasShieldedV4Prefix(data) {

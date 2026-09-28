@@ -132,6 +132,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 			spanEnd(&err)
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+		if config.IsAntartical(blockNumber, header.Time) && HasAddressVotePrefix(tx.Data()) {
+			if err := ProcessAddressVote(statedb, msg.From, tx.Data(), tx.Hash()); err != nil {
+				return nil, fmt.Errorf("could not apply address vote tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		spanEnd(nil)

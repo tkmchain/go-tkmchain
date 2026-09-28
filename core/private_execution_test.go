@@ -46,6 +46,17 @@ func TestPrivateExecutionPolicyAllowsOnlyShieldedEnvelopes(t *testing.T) {
 	}
 }
 
+func TestPrivateExecutionPolicyAllowsAddressVoteEnvelope(t *testing.T) {
+	data, err := EncodeAddressVote(&AddressVote{Version: AddressVoteVersion, Target: common.HexToAddress("0x1234"), Reason: "fraud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := types.NewTx(&types.PQTkmTx{ChainID: params.MainnetChainConfig.ChainID, Nonce: 1, To: &params.ShieldedPoolAddress, Value: new(big.Int), Gas: 100_000, GasTipCap: big.NewInt(1), GasFeeCap: big.NewInt(1), Data: data})
+	if err := ValidatePrivateExecutionPolicy(params.MainnetChainConfig, big.NewInt(1), params.MainnetAntarticalTime, tx); err != nil {
+		t.Fatalf("address vote rejected: %v", err)
+	}
+}
+
 func TestPrivateExecutionPolicyRejectsUnwrappedProtocolEnvelopes(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"stamp":       []byte(AntarticalStampMagic),
