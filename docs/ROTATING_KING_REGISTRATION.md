@@ -57,11 +57,12 @@ the normal transaction remains subject to the chain's state-transition rules.
 
 ## Deterministic consensus rules
 
-The consensus manager's `RegisterKingAt` method validates the Antartical
-policy:
+The consensus manager's `RegisterKingAt` method validates the active policy;
+the stake threshold is 50,000 TKM before Antartical and 100,000 TKM at
+activation:
 
 1. a non-zero address;
-2. a non-negative balance at least equal to the 100,000-TKM minimum;
+2. a non-negative balance at least equal to the active fork's minimum;
 3. no duplicate address;
 4. a two-block activation delay with overflow rejection; and
 5. a deterministic registration commitment containing the address, stake,
