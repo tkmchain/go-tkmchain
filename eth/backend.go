@@ -1674,6 +1674,9 @@ func (s *Ethereum) Start() error {
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
 	s.transactionBucket.start()
+	if err := s.governanceService().StartVoteSync(); err != nil {
+		return fmt.Errorf("start governance vote sync: %w", err)
+	}
 
 	log.Info("Tkmchain backend started with RandomX consensus")
 	return nil
@@ -1802,6 +1805,9 @@ func (s *Ethereum) Stop() error {
 	s.discmix.Close()
 	s.dropper.Stop()
 	s.handler.Stop()
+	if s.governanceSvc != nil {
+		s.governanceSvc.StopVoteSync()
+	}
 
 	ch := make(chan struct{})
 	s.closeFilterMaps <- ch

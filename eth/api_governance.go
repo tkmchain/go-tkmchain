@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -43,6 +44,11 @@ type GovernanceService struct {
 	nextID   uint64
 	records  map[uint64]GovernanceDisclosure
 	byHash   map[common.Hash]uint64
+	voteMu   sync.Mutex
+	voteSub  event.Subscription
+	voteQuit chan struct{}
+	voteWG   sync.WaitGroup
+	voteSnap governanceVoteSnapshot
 }
 
 type governanceSnapshot struct {
@@ -155,6 +161,26 @@ func (api *GovernanceAPI) GetAddressVoteStatus(address common.Address) (AddressV
 	}
 	status := core.GetAddressVoteStatus(statedb, address)
 	return AddressVoteStatus{Address: status.Address, ActiveVotes: hexutil.Uint64(status.ActiveVotes), Threshold: hexutil.Uint64(status.Threshold), Suspended: status.Suspended}, nil
+}
+
+// ListAddressVotes returns the block-derived local audit projection. Consensus
+// status must be obtained from GetAddressVoteStatus; this list is for reasons,
+// voter identities, and block/transaction references.
+func (api *GovernanceAPI) ListAddressVotes(address *common.Address) []GovernanceAddressVote {
+	if api == nil || api.service == nil {
+		return nil
+	}
+	all := api.service.AddressVoteJournal()
+	if address == nil {
+		return all
+	}
+	out := make([]GovernanceAddressVote, 0, len(all))
+	for _, vote := range all {
+		if vote.Target == *address {
+			out = append(out, vote)
+		}
+	}
+	return out
 }
 
 func (svc *GovernanceService) PublishDisclosure(kind string, title string, version uint64, contentHash common.Hash, uri string, previousHash common.Hash, timestamp uint64, anchorTx common.Hash, signature []byte) (GovernanceDisclosure, error) {
