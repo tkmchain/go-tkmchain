@@ -224,6 +224,14 @@ func TestEmailVMMessagesPersistAsIndividualDatabaseRecords(t *testing.T) {
 	if len(svc.dirtyMessages) != 0 {
 		t.Fatal("saved messages remained dirty")
 	}
+	if ok, err := db.Has(emailVMStateKey); err != nil || !ok {
+		t.Fatalf("chain index state was not persisted: present=%v err=%v", ok, err)
+	}
+	if ok, err := db.Has(emailVMLegacyStateKey); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Fatal("legacy filesystem-style state key remains after save")
+	}
 
 	reloaded := &EmailVMService{db: db}
 	reloaded.resetLocked()

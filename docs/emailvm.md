@@ -311,16 +311,22 @@ plaintext email content.
 ## Canonical state and reorgs
 
 Every upgraded node reconstructs the first canonical `@tkm` claimant, domain,
-mailbox, key, and encrypted-message
-state by scanning canonical `TKMSHIELD1` transactions for the EmailVM marker.
-The local index is cached in the chain database and mirrored at:
+mailbox, key, and encrypted-message state by scanning canonical `TKMSHIELD1`
+transactions for the EmailVM marker. The encrypted action and ciphertext in
+the canonical block body are the EmailVM database; there is no separate mail
+server database and no plaintext mailbox database.
 
-```text
-~/.tkmchain/gtkm/emailvm/state.json
-```
+GTKm stores only a rebuildable materialized index in its chain database under
+the `tkm-emailvm-chain-index-v3` key and `tkm-emailvm-message-v1/` records. The
+index is an RPC pagination cache, never the source of truth. A node can delete
+these records and reconstruct them from block bodies. The old standalone
+`emailvm/state.json` mirror is no longer written; existing v2 records migrate
+in place.
 
 The indexed block hash is checked before extending the index. A detected reorg
-discards the cache and deterministically rebuilds from canonical blocks.
+discards the materialized index and deterministically rebuilds it from the new
+canonical chain. This makes mailbox ownership, keys, message IDs, payment
+installments, and pagination agree across nodes after restart or reorg.
 
 This design does **not** require a consensus hardfork or a new Groth16 ceremony:
 it uses an existing proof-bound opaque shielded metadata field. Nodes without

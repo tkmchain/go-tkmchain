@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -40,8 +38,11 @@ const (
 )
 
 var (
-	emailVMActionMagic                 = []byte("TKMEMAILVM1")
-	emailVMStateKey                    = []byte("tkm-emailvm-state-v2")
+	emailVMActionMagic = []byte("TKMEMAILVM1")
+	// The chain database stores only a rebuildable materialized index. The
+	// canonical EmailVM records are the shielded actions in block bodies.
+	emailVMStateKey                    = []byte("tkm-emailvm-chain-index-v3")
+	emailVMLegacyStateKey              = []byte("tkm-emailvm-state-v2")
 	emailVMMessagePrefix               = []byte("tkm-emailvm-message-v1/")
 	emailVMLegacyDomainRegistrationFee = new(big.Int).Mul(big.NewInt(30_000), big.NewInt(params.Ether))
 	emailVMLegacySubscriberUnitFee     = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
@@ -60,7 +61,6 @@ type EmailVMService struct {
 	superTx       common.Hash
 	superBlock    uint64
 	db            ethdb.KeyValueStore
-	dir           string
 	initialized   bool
 	indexed       uint64
 	indexedHash   common.Hash
@@ -253,8 +253,8 @@ func (s *Ethereum) emailVMService() *EmailVMService {
 	return s.emailService
 }
 
-func newEmailVMService(e *Ethereum, db ethdb.KeyValueStore, dir string) *EmailVMService {
-	svc := &EmailVMService{eth: e, db: db, dir: dir}
+func newEmailVMService(e *Ethereum, db ethdb.KeyValueStore, _ string) *EmailVMService {
+	svc := &EmailVMService{eth: e, db: db}
 	svc.resetLocked()
 	if err := svc.loadLocked(); err != nil {
 		// The canonical chain remains the source of truth, so a corrupt optional
@@ -1106,7 +1106,7 @@ func (svc *EmailVMService) status() (EmailVMStatus, error) {
 	if svc.superAddress != (common.Address{}) {
 		domainCount++
 	}
-	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Registrations: hexutil.Uint64(len(svc.registry)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-emailvm-registry-v1", MessageStore: "keyvalue-v1", PageLimit: 100, SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
+	status := EmailVMStatus{Ready: true, IndexedBlock: hexutil.Uint64(svc.indexed), IndexedHash: svc.indexedHash, Domains: hexutil.Uint64(domainCount), Mailboxes: hexutil.Uint64(len(svc.mailboxes)), Registrations: hexutil.Uint64(len(svc.registry)), Messages: hexutil.Uint64(len(svc.messages)), Pending: hexutil.Uint64(len(svc.pending)), Protocol: "shielded-emailvm-registry-v1", MessageStore: "canonical-chain-index-v3", PageLimit: 100, SuperAddress: svc.superAddress, SuperClaimed: svc.superAddress != (common.Address{}), SuperTx: svc.superTx, SuperBlock: hexutil.Uint64(svc.superBlock)}
 	if svc.eth != nil && svc.eth.blockchain != nil {
 		if head := svc.eth.blockchain.CurrentBlock(); head != nil {
 			status.HeadBlock, status.HeadHash = hexutil.Uint64(head.Number.Uint64()), head.Hash()
@@ -1269,8 +1269,16 @@ func (svc *EmailVMService) loadLocked() error {
 		return nil
 	}
 	data, err := svc.db.Get(emailVMStateKey)
+	legacy := false
 	if err != nil || len(data) == 0 {
-		return nil
+		// Upgrade the old materialized index in place. It is never treated as
+		// canonical data: sync() checks its block anchor before extending it,
+		// and a reorg discards the cache and replays block records.
+		data, err = svc.db.Get(emailVMLegacyStateKey)
+		legacy = err == nil && len(data) > 0
+		if err != nil || len(data) == 0 {
+			return nil
+		}
 	}
 	var snapshot emailVMSnapshot
 	if err := json.Unmarshal(data, &snapshot); err != nil {
@@ -1285,6 +1293,9 @@ func (svc *EmailVMService) loadLocked() error {
 	}
 	if snapshot.Keys != nil {
 		svc.keys = snapshot.Keys
+	}
+	if snapshot.Registry != nil {
+		svc.registry = snapshot.Registry
 	}
 	if snapshot.Messages != nil {
 		for id, message := range snapshot.Messages {
@@ -1313,6 +1324,13 @@ func (svc *EmailVMService) loadLocked() error {
 	}
 	svc.rebuildMessageIndexesLocked()
 	svc.ensureRegistryLocked()
+	if legacy {
+		// saveLocked writes the v3 chain-index key and removes the obsolete
+		// snapshot key after the in-memory migration succeeds.
+		if err := svc.saveLocked(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1350,17 +1368,20 @@ func (svc *EmailVMService) saveLocked() error {
 		}
 		clear(svc.dirtyMessages)
 	}
-	if svc.dir == "" {
+	if svc.db == nil {
 		return nil
 	}
-	if err := os.MkdirAll(svc.dir, 0700); err != nil {
+	// There is intentionally no second filesystem database. The canonical
+	// shielded EmailVM actions live in block bodies; this chain-database record
+	// is only a disposable materialized index for fast RPC pagination.
+	if exists, err := svc.db.Has(emailVMLegacyStateKey); err != nil {
 		return err
+	} else if exists {
+		if err := svc.db.Delete(emailVMLegacyStateKey); err != nil {
+			return err
+		}
 	}
-	tmp, path := filepath.Join(svc.dir, "state.json.tmp"), filepath.Join(svc.dir, "state.json")
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return nil
 }
 
 func emailVMMessageKey(id common.Hash) []byte {
