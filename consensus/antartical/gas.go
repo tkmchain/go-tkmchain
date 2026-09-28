@@ -15,7 +15,7 @@ type GasVector struct {
 }
 
 func (g GasVector) Add(other GasVector) GasVector {
-	return GasVector{g.Execution + other.Execution, g.StateRead + other.StateRead, g.StateWrite + other.StateWrite, g.Blob + other.Blob}
+	return GasVector{saturatingAdd(g.Execution, other.Execution), saturatingAdd(g.StateRead, other.StateRead), saturatingAdd(g.StateWrite, other.StateWrite), saturatingAdd(g.Blob, other.Blob)}
 }
 
 func (g GasVector) Fits(limit GasVector) bool {
@@ -26,9 +26,19 @@ func (g GasVector) Charge(limit *GasVector, amount GasVector) error {
 	if limit == nil {
 		return ErrGasDimensionExceeded
 	}
+	if g.Execution > ^uint64(0)-amount.Execution || g.StateRead > ^uint64(0)-amount.StateRead || g.StateWrite > ^uint64(0)-amount.StateWrite || g.Blob > ^uint64(0)-amount.Blob {
+		return ErrGasDimensionExceeded
+	}
 	next := g.Add(amount)
 	if !next.Fits(*limit) {
 		return ErrGasDimensionExceeded
 	}
 	return nil
+}
+
+func saturatingAdd(a, b uint64) uint64 {
+	if a > ^uint64(0)-b {
+		return ^uint64(0)
+	}
+	return a + b
 }

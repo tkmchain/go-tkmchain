@@ -104,7 +104,7 @@ func TestCompareEngines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.Register(testEngine{"revm", out}); err != nil {
+	if err := registry.RegisterConformant(testEngine{"revm", out}, []ExecutionInput{input}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := registry.Get("revm"); !ok {
@@ -115,5 +115,8 @@ func TestCompareEngines(t *testing.T) {
 	}
 	if err := CompareEngines(testEngine{"go", out}, testEngine{"evmone", ExecutionOutput{}}, input); err != ErrExecutionEngineMismatch {
 		t.Fatalf("mismatch error = %v", err)
+	}
+	if err := registry.RegisterConformant(testEngine{"evmone", ExecutionOutput{}}, []ExecutionInput{input}); err != ErrExecutionEngineNotConformant {
+		t.Fatalf("non-conformant engine registration error = %v", err)
 	}
 }

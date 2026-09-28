@@ -69,6 +69,25 @@ differential check, and zkEVM execution-claim binding. The JSON output reports
 which catalog entries are marked `consensusReady`; a gate being active in the
 rehearsal does not promote an unfinished implementation to consensus.
 
+The profile portion of the same output additionally verifies:
+
+- chain- and contract-bound typed transaction signatures, including ML-DSA-87;
+- an executable token policy commitment bound to manifest capabilities, with
+  mint, burn, pause, royalty, and shielded operation checks;
+- the order-independent asset registry root carried in a versioned header-extra
+  suffix;
+- a Shield3/Shield4 asset-ID and token-ID nullifier binding;
+- independent EVM, TVM, proof, and blob gas dimensions with overflow rejection;
+- deterministic parallel conflict waves and receipt-index metadata;
+- the canonical sorted stateless witness commitment and a quorum finality
+  light-client verification path; and
+- alternate-engine admission through differential conformance vectors.
+
+The rehearsal is intentionally isolated and deterministic. It does not deploy
+EUSD to a live node, modify `~/.tkmchain`, or replace the historical receipt
+RLP/witness encoding. Those wire-format changes require a coordinated network
+upgrade; preserving the old encoding here prevents accidental chain splits.
+
 The zkEVM fields validate the claim and witness commitments used by the proof
 pipeline. Full STARK proving still requires the pinned Rust/Ziren toolchain and
 a real block payload and witness; this command deliberately does not mutate a

@@ -21,6 +21,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm/program"
 	"github.com/ethereum/go-ethereum/core/vm/runtime"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -254,37 +255,198 @@ func call(sig string, args ...[]byte) []byte {
 }
 
 type result struct {
-	Network                   string         `json:"network"`
-	ChainID                   string         `json:"chainId"`
-	TokenName                 string         `json:"tokenName"`
-	TokenSymbol               string         `json:"tokenSymbol"`
-	TokenDecimals             uint8          `json:"tokenDecimals"`
-	TokenStandard             string         `json:"tokenStandard"`
-	TokenAddress              string         `json:"tokenAddress"`
-	TokenRuntimeHash          string         `json:"tokenRuntimeHash"`
-	TokenManifestHash         string         `json:"tokenManifestHash"`
-	TokenAssetID              string         `json:"tokenAssetId"`
-	TokenPrecompileAssetID    string         `json:"tokenPrecompileAssetId"`
-	TokenManifestVerified     bool           `json:"tokenManifestVerified"`
-	TokenBalance              string         `json:"tokenBalance"`
-	TokenBalanceAfterTransfer string         `json:"tokenBalanceAfterTransfer"`
-	TransferRecipient         string         `json:"transferRecipient"`
-	TransferAmount            string         `json:"transferAmount"`
-	RecipientBalance          string         `json:"recipientBalance"`
-	TransferGasUsed           uint64         `json:"transferGasUsed"`
-	TokenTotalSupply          string         `json:"tokenTotalSupply"`
-	CounterAddress            string         `json:"counterAddress"`
-	CounterRuntimeHash        string         `json:"counterRuntimeHash"`
-	CounterValue              string         `json:"counterValue"`
-	TokenDeployGas            uint64         `json:"tokenDeployGas"`
-	CounterDeployGas          uint64         `json:"counterDeployGas"`
-	FeatureChecks             []featureCheck `json:"featureChecks"`
-	ProtocolChecks            []string       `json:"protocolChecks"`
-	PrivacyChecks             []string       `json:"privacyChecks"`
-	Shield3Gas                uint64         `json:"shield3Gas"`
-	Shield4Gas                uint64         `json:"shield4Gas"`
-	ZKEVMClaim                string         `json:"zkevmClaim"`
-	StateWitnessCommit        string         `json:"stateWitnessCommitment"`
+	Network                    string         `json:"network"`
+	ChainID                    string         `json:"chainId"`
+	TokenName                  string         `json:"tokenName"`
+	TokenSymbol                string         `json:"tokenSymbol"`
+	TokenDecimals              uint8          `json:"tokenDecimals"`
+	TokenStandard              string         `json:"tokenStandard"`
+	TokenAddress               string         `json:"tokenAddress"`
+	TokenRuntimeHash           string         `json:"tokenRuntimeHash"`
+	TokenManifestHash          string         `json:"tokenManifestHash"`
+	TokenAssetID               string         `json:"tokenAssetId"`
+	TokenPrecompileAssetID     string         `json:"tokenPrecompileAssetId"`
+	TokenManifestVerified      bool           `json:"tokenManifestVerified"`
+	TokenBalance               string         `json:"tokenBalance"`
+	TokenBalanceAfterTransfer  string         `json:"tokenBalanceAfterTransfer"`
+	TransferRecipient          string         `json:"transferRecipient"`
+	TransferAmount             string         `json:"transferAmount"`
+	RecipientBalance           string         `json:"recipientBalance"`
+	TransferGasUsed            uint64         `json:"transferGasUsed"`
+	TokenTotalSupply           string         `json:"tokenTotalSupply"`
+	CounterAddress             string         `json:"counterAddress"`
+	CounterRuntimeHash         string         `json:"counterRuntimeHash"`
+	CounterValue               string         `json:"counterValue"`
+	TokenDeployGas             uint64         `json:"tokenDeployGas"`
+	CounterDeployGas           uint64         `json:"counterDeployGas"`
+	FeatureChecks              []featureCheck `json:"featureChecks"`
+	ProtocolChecks             []string       `json:"protocolChecks"`
+	ProfileChecks              []string       `json:"profileChecks"`
+	AssetRegistryRoot          string         `json:"assetRegistryRoot"`
+	ShieldedAssetBinding       string         `json:"shieldedAssetBinding"`
+	CanonicalWitnessCommitment string         `json:"canonicalWitnessCommitment"`
+	LightClientBlockHash       string         `json:"lightClientBlockHash"`
+	ConflictTranscript         string         `json:"conflictTranscript"`
+	ReceiptTranscript          string         `json:"receiptTranscript"`
+	PrivacyChecks              []string       `json:"privacyChecks"`
+	Shield3Gas                 uint64         `json:"shield3Gas"`
+	Shield4Gas                 uint64         `json:"shield4Gas"`
+	ZKEVMClaim                 string         `json:"zkevmClaim"`
+	StateWitnessCommit         string         `json:"stateWitnessCommitment"`
+}
+
+type profileOutput struct {
+	Checks                     []string
+	TypedDomainDigest          common.Hash
+	AssetRegistryRoot          common.Hash
+	ShieldedAssetBinding       common.Hash
+	CanonicalWitnessCommitment common.Hash
+	LightClientBlockHash       common.Hash
+	ConflictTranscript         common.Hash
+	ReceiptTranscript          common.Hash
+}
+
+func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash common.Hash, tokenOwner common.Address) profileOutput {
+	result := profileOutput{}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		panic(fmt.Errorf("profile key: %w", err))
+	}
+	domain := antartical.TypedTransactionDomain{ChainID: new(big.Int).Set(chainID), Contract: common.HexToAddress("0x100"), Type: 1}
+	digest, err := domain.Digest([]byte("EUSD transfer"))
+	if err != nil {
+		panic(fmt.Errorf("typed transaction domain: %w", err))
+	}
+	signature, err := crypto.Sign(digest.Bytes(), key)
+	if err != nil {
+		panic(fmt.Errorf("typed transaction signature: %w", err))
+	}
+	typed := antartical.TypedTransaction{Sender: crypto.PubkeyToAddress(key.PublicKey), Domain: domain, Payload: []byte("EUSD transfer"), Signature: signature}
+	if err := typed.Verify(); err != nil {
+		panic(fmt.Errorf("typed transaction verification: %w", err))
+	}
+	result.TypedDomainDigest = digest
+	result.Checks = append(result.Checks, "chain-and-contract-bound-typed-signature")
+
+	seed := make([]byte, pqcrypto.MLDSA87SeedSize)
+	seed[0] = 9
+	pqKey, err := pqcrypto.NewMLDSA87FromSeed(seed)
+	if err != nil {
+		panic(fmt.Errorf("profile ML-DSA key: %w", err))
+	}
+	pqPublic := pqcrypto.PublicKeyBytes(pqKey)
+	pqSender, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, pqPublic)
+	if err != nil {
+		panic(fmt.Errorf("profile ML-DSA address: %w", err))
+	}
+	pqDomain := antartical.TypedTransactionDomain{ChainID: new(big.Int).Set(chainID), Contract: common.HexToAddress("0x101"), Type: 2}
+	pqDigest, err := pqDomain.Digest([]byte("EUSD shield"))
+	if err != nil {
+		panic(fmt.Errorf("PQ typed transaction domain: %w", err))
+	}
+	pqSignature, err := pqcrypto.SignMLDSA87(pqKey, pqDigest[:])
+	if err != nil || (antartical.TypedTransaction{Sender: pqSender, Domain: pqDomain, Payload: []byte("EUSD shield"), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqPublic, Signature: pqSignature}).Verify() != nil {
+		panic(fmt.Errorf("PQ typed transaction verification: %w", err))
+	}
+	result.Checks = append(result.Checks, "post-quantum-sender-policy")
+
+	policy := antartical.TokenPolicy{AssetID: assetID, Admin: tokenOwner, Flags: tkmasset.FlagMintable | tkmasset.FlagBurnable | tkmasset.FlagPausable | tkmasset.FlagRoyalty | tkmasset.FlagShielded, MaxSupply: big.NewInt(1_000_000), RoyaltyBPS: 25, RoyaltyRecipient: common.HexToAddress("0x4")}
+	policyHash, err := policy.Commitment()
+	if err != nil {
+		panic(fmt.Errorf("token policy commitment: %w", err))
+	}
+	policyManifest := tkmasset.Manifest{Kind: tkmasset.KindFungible, ChainID: new(big.Int).Set(chainID), Flags: policy.Flags, PolicyHash: policyHash, Name: "Egypt policy fixture", Symbol: "EPOL", MetadataURI: "ipfs://tkm/egypt/policy"}
+	if err := policy.ValidateManifest(policyManifest); err != nil {
+		panic(fmt.Errorf("token policy manifest binding: %w", err))
+	}
+	result.Checks = append(result.Checks, "token-policy-manifest-binding")
+	state := antartical.TokenState{}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenMint, Actor: tokenOwner, To: tokenOwner, Amount: big.NewInt(1000)}); err != nil {
+		panic(fmt.Errorf("token mint policy: %w", err))
+	}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenTransfer, Actor: tokenOwner, From: tokenOwner, To: common.HexToAddress("0x3"), Amount: big.NewInt(100)}); err != nil {
+		panic(fmt.Errorf("token royalty policy: %w", err))
+	}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenPause, Actor: tokenOwner}); err != nil {
+		panic(fmt.Errorf("token pause policy: %w", err))
+	}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenUnpause, Actor: tokenOwner}); err != nil {
+		panic(fmt.Errorf("token unpause policy: %w", err))
+	}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenBurn, Actor: tokenOwner, From: tokenOwner, Amount: big.NewInt(10)}); err != nil {
+		panic(fmt.Errorf("token burn policy: %w", err))
+	}
+	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenShield, Actor: tokenOwner, Amount: big.NewInt(1)}); err != nil {
+		panic(fmt.Errorf("token shield policy: %w", err))
+	}
+	result.Checks = append(result.Checks, "mint-burn-pause-royalty-shield-policy")
+
+	registryRoot, err := antartical.AssetRegistryCommitment([]antartical.AssetRegistryEntry{{AssetID: assetID, ManifestHash: manifestHash, RuntimeCodeHash: runtimeHash}})
+	if err != nil {
+		panic(fmt.Errorf("asset registry commitment: %w", err))
+	}
+	extra := antartical.AttachAssetRegistryCommitment([]byte("egypt-header"), registryRoot)
+	if got, found, err := antartical.AssetRegistryCommitmentFromHeaderExtra(extra); err != nil || !found || got != registryRoot {
+		panic(fmt.Errorf("asset registry header commitment: found=%t got=%s want=%s err=%v", found, got, registryRoot, err))
+	}
+	result.AssetRegistryRoot = registryRoot
+	result.Checks = append(result.Checks, "canonical-asset-registry-header-commitment")
+
+	tokenID := common.HexToHash("0x1234")
+	nullifier := common.HexToHash("0x5678")
+	result.ShieldedAssetBinding = antartical.ShieldedAssetNullifierBinding(chainID.Uint64(), assetID, tokenID, nullifier)
+	if err := antartical.ValidateShieldedAssetNullifierBinding(chainID.Uint64(), assetID, tokenID, nullifier, result.ShieldedAssetBinding); err != nil {
+		panic(fmt.Errorf("shielded asset binding: %w", err))
+	}
+	result.Checks = append(result.Checks, "shield3-shield4-asset-nullifier-binding")
+
+	limit := antartical.ProtocolGasVector{EVM: 100, TVM: 100, Proof: 100, Blob: 100}
+	used := antartical.ProtocolGasVector{}
+	charge := antartical.ProtocolGasVector{EVM: 10, TVM: 20, Proof: 30, Blob: 4}
+	if err := used.Charge(&limit, charge); err != nil || !used.Add(charge).Fits(limit) {
+		panic(fmt.Errorf("protocol gas vector: %w", err))
+	}
+	result.Checks = append(result.Checks, "evm-tvm-proof-blob-gas-accounting")
+
+	access := []antartical.AccessSet{{Reads: []common.Address{common.HexToAddress("0x1")}}, {Reads: []common.Address{common.HexToAddress("0x2")}}, {Unknown: true}}
+	transcript := antartical.NewConflictTranscript(access)
+	result.ConflictTranscript, err = transcript.Commitment()
+	if err != nil {
+		panic(fmt.Errorf("conflict transcript: %w", err))
+	}
+	receiptMetadata, err := transcript.ReceiptMetadata(0)
+	if err != nil || !receiptMetadata.Verify(transcript, 0) {
+		panic(fmt.Errorf("receipt transcript: %w", err))
+	}
+	result.ReceiptTranscript = receiptMetadata.Commitment
+	result.Checks = append(result.Checks, "deterministic-parallel-conflict-transcript")
+
+	witness := antartical.StateWitness{Root: common.HexToHash("0x1"), Nodes: [][]byte{{3}, {1}, {2}}}
+	result.CanonicalWitnessCommitment, err = witness.CanonicalCommitment()
+	if err != nil || !witness.VerifyCanonical(result.CanonicalWitnessCommitment) {
+		panic(fmt.Errorf("canonical stateless witness: %w", err))
+	}
+	result.Checks = append(result.Checks, "canonical-verkle-stateless-witness")
+	blockHash := crypto.Keccak256Hash([]byte("egypt-antartical-profile-block"), chainID.Bytes(), assetID[:])
+	finalityDigest, err := antartical.LightClientFinalityDigest(chainID, blockHash)
+	if err != nil {
+		panic(fmt.Errorf("light-client finality digest: %w", err))
+	}
+	lightClientSignature, err := crypto.Sign(finalityDigest.Bytes(), key)
+	if err != nil {
+		panic(fmt.Errorf("light-client finality signature: %w", err))
+	}
+	proof := antartical.StatelessLightClientProof{
+		ChainID: chainID, BlockNumber: 1, BlockHash: blockHash, StateRoot: witness.Root,
+		WitnessCommitment: result.CanonicalWitnessCommitment, Witness: witness,
+		Certificate: antartical.FinalityCertificate{Slot: 1, BlockHash: finalityDigest, CommitteeSize: 1, Signers: []common.Address{crypto.PubkeyToAddress(key.PublicKey)}, PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{lightClientSignature}},
+	}
+	if err := proof.Verify(1, 1); err != nil {
+		panic(fmt.Errorf("stateless light-client proof: %w", err))
+	}
+	result.LightClientBlockHash = blockHash
+	result.Checks = append(result.Checks, "stateless-light-client-finality-path")
+	return result
 }
 
 type featureCheck struct {
@@ -454,7 +616,7 @@ func runProtocolChecks() ([]featureCheck, []string, []string, uint64, uint64, co
 	primary := fixtureEngine{name: "go-evm", out: engineOutput}
 	secondary := fixtureEngine{name: "revm", out: engineOutput}
 	registry, err := antartical.NewEngineRegistry(primary)
-	if err != nil || registry.Register(secondary) != nil || antartical.CompareEngines(primary, secondary, antartical.ExecutionInput{}) != nil {
+	if err != nil || registry.RegisterConformant(secondary, []antartical.ExecutionInput{{}}) != nil {
 		panic("alternative EVM differential execution failed")
 	}
 	claim := antartical.ExecutionClaim{ParentStateRoot: common.HexToHash("0x10"), StateRoot: engineOutput.StateRoot, Transactions: common.HexToHash("0x11"), Receipts: engineOutput.ReceiptsRoot, ProofDigest: engineOutput.ProofDigest}
@@ -521,6 +683,7 @@ func main() {
 	if err != nil || common.BytesToHash(precompileAssetID) != assetID {
 		panic(fmt.Errorf("EUSD precompile identity mismatch: got=%s want=%s err=%v", common.BytesToHash(precompileAssetID), assetID, err))
 	}
+	profile := runProfileChecks(params.EgyptChainConfig.ChainID, assetID, manifestHash, crypto.Keccak256Hash(deployedToken), tokenOwner)
 	amount := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	if _, _, err := runtime.Call(tokenAddress, call("mint(address,uint256)", wordAddress(tokenOwner), wordUint(amount)), cfg); err != nil {
 		panic(fmt.Errorf("mint token: %w", err))
@@ -581,7 +744,7 @@ func main() {
 		TokenAddress: tokenAddress.Hex(), TokenRuntimeHash: crypto.Keccak256Hash(deployedToken).Hex(), TokenManifestHash: manifestHash.Hex(), TokenAssetID: assetID.Hex(), TokenPrecompileAssetID: common.BytesToHash(precompileAssetID).Hex(), TokenManifestVerified: true,
 		TokenBalance: new(big.Int).SetBytes(balance).String(), TokenBalanceAfterTransfer: new(big.Int).SetBytes(balanceAfterTransfer).String(), TransferRecipient: transferRecipient.Hex(), TransferAmount: transferAmount.String(), RecipientBalance: new(big.Int).SetBytes(recipientBalance).String(), TransferGasUsed: cfg.GasLimit - transferGasLeft, TokenTotalSupply: new(big.Int).SetBytes(total).String(),
 		CounterAddress: counterAddress.Hex(), CounterRuntimeHash: crypto.Keccak256Hash(deployedCounter).Hex(), CounterValue: new(big.Int).SetBytes(counterValue).String(), TokenDeployGas: tokenGas, CounterDeployGas: counterGas,
-		FeatureChecks: featureChecks, ProtocolChecks: protocolChecks, PrivacyChecks: privacyChecks, Shield3Gas: shield3Gas, Shield4Gas: shield4Gas,
+		FeatureChecks: featureChecks, ProtocolChecks: protocolChecks, ProfileChecks: profile.Checks, AssetRegistryRoot: profile.AssetRegistryRoot.Hex(), ShieldedAssetBinding: profile.ShieldedAssetBinding.Hex(), CanonicalWitnessCommitment: profile.CanonicalWitnessCommitment.Hex(), LightClientBlockHash: profile.LightClientBlockHash.Hex(), ConflictTranscript: profile.ConflictTranscript.Hex(), ReceiptTranscript: profile.ReceiptTranscript.Hex(), PrivacyChecks: privacyChecks, Shield3Gas: shield3Gas, Shield4Gas: shield4Gas,
 		ZKEVMClaim: claimCommitment.Hex(), StateWitnessCommit: witnessCommitment.Hex(),
 	}
 	enc := json.NewEncoder(os.Stdout)

@@ -239,29 +239,67 @@ on every historical block.
 7. Publish the policy document and metadata URI. Never use a mutable web page
    as the only description of minting, burning, upgrade, or privacy behavior.
 
-## What should be added next to deepen the TKM profile
+## Antartical protocol profile
 
-These are intentionally **not** claimed as active consensus until they have a
-specification, implementation, tests, and an explicit fork gate:
+The requested TKM-specific execution profile is implemented in
+`consensus/antartical/profile.go` and is exercised by the Egypt rehearsal. It
+is activated by the existing Antartical feature gate; Egypt activates that
+gate at genesis, while mainnet uses the configured Antartical timestamp.
 
-- a TKM typed transaction domain with chain-bound, contract-bound signatures;
-- native token policy enforcement for mint, burn, pause, royalty, and shielded
-  capabilities instead of only manifest declarations;
-- a canonical asset registry commitment in block headers for stateless clients;
-- a native Shield3/Shield4 asset interface that binds token IDs to nullifiers;
-- multidimensional gas accounting for EVM, TVM, proof verification, and blob
-  data;
-- deterministic parallel execution with a conflict transcript in receipts;
-- Verkle/stateless witness commitments and a light-client verification path;
-- TKM-specific account abstraction operations that preserve the post-quantum
-  sender policy; and
-- alternate EVM backends only behind differential conformance tests against the
-  canonical interpreter.
+### Typed transactions and account abstraction
 
-Each proposal must preserve replay protection, deterministic gas, state-root
-agreement, and an explicit migration story. A different opcode number or a
-renamed ERC interface alone would create incompatibility without adding useful
-identity.
+`TypedTransactionDomain` hashes the chain ID, receiving contract, operation
+type, and payload. A signature made for one contract or network therefore
+cannot be replayed at another. `TypedTransaction.Verify` supports the legacy
+secp256k1 compatibility path and ML-DSA-87, where the public key is checked
+against the post-quantum sender address. `UserOperation` in `account.go`
+provides the TKM-specific EIP-4337/RIP-7560 operation hash and the same ML-DSA
+sender policy.
+
+### Executable token policy
+
+`TokenPolicy.Commitment` is the canonical policy hash and
+`TokenPolicy.ValidateManifest` requires the manifest's capability bits and
+policy hash to match it. `TokenState.Apply` then enforces administrator-only
+minting, burn authority, pause/unpause, maximum supply, royalty accounting,
+and shielded capability checks. A `mintable` or `shielded` bit by itself is
+never authority. The Egypt test covers every operation and rejects a mutated
+manifest capability set.
+
+### Asset registry and shielded assets
+
+`AssetRegistryCommitment` sorts `(assetID, manifestHash, runtimeCodeHash)`
+records and builds a domain-separated Merkle commitment. The current safe
+integration stores the versioned commitment as a suffix in `Header.Extra`,
+which preserves legacy header RLP decoding while allowing stateless clients to
+extract and verify the root. `ShieldedAssetNullifierBinding` includes chain,
+asset ID, token ID, and nullifier in one domain-separated digest, so a valid
+Shield3/Shield4 proof cannot be retargeted to another token.
+
+### Resource accounting and deterministic execution
+
+`ProtocolGasVector` charges EVM, TVM, proof verification, and blob resources
+independently and rejects counter overflow. `ConflictTranscript` commits the
+canonical optimistic execution waves and access sets. Its
+`ReceiptTranscript` binds that commitment to a receipt index without changing
+the legacy receipt RLP or receipt root before the network-wide receipt-format
+upgrade. The metadata is therefore safe to carry in the fork-specific receipt
+sidecar while old blocks remain replayable.
+
+### Stateless clients and alternate EVMs
+
+`StateWitness.CanonicalCommitment` is the versioned, order-independent witness
+format for the Verkle/stateless path. `StatelessLightClientProof` verifies the
+witness root and commitment together with a quorum finality certificate,
+without opening the full state database. The old witness commitment remains
+available for historical blocks. `EngineRegistry.RegisterConformant` admits an
+alternate EVM implementation only after it matches the canonical interpreter
+on every supplied execution vector; a backend cannot be selected by name alone.
+
+These are consensus primitives and conformance checks, not a claim that a
+Rust/Revm or evmone binary is shipped in every release. A release that adds an
+alternate backend must provide vectors covering state roots, receipts, proof
+digests, gas dimensions, and rejection cases before registering it.
 
 ## Security invariants for clients
 

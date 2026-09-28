@@ -8,6 +8,7 @@ import (
 
 var ErrExecutionEngineMismatch = errors.New("Antartical execution engines produced different results")
 var ErrDuplicateExecutionEngine = errors.New("duplicate Antartical execution engine")
+var ErrExecutionEngineNotConformant = errors.New("Antartical execution engine failed conformance vectors")
 
 // ExecutionInput is the engine-neutral block execution request. All EVM
 // implementations receive the same bytes and roots, which makes differential
@@ -56,6 +57,26 @@ func (r *EngineRegistry) Register(engine ExecutionEngine) error {
 	}
 	r.engines[engine.Name()] = engine
 	return nil
+}
+
+// RegisterConformant admits an alternate backend only after it agrees with
+// the canonical interpreter on every supplied vector. Callers should use this
+// method for Rust/Revm, evmone, or any other implementation that may execute
+// consensus transactions.
+func (r *EngineRegistry) RegisterConformant(engine ExecutionEngine, vectors []ExecutionInput) error {
+	if r == nil || engine == nil {
+		return ErrExecutionEngineNotConformant
+	}
+	canonical, ok := r.Get(r.canonical)
+	if !ok {
+		return ErrExecutionEngineNotConformant
+	}
+	for _, vector := range vectors {
+		if err := CompareEngines(canonical, engine, vector); err != nil {
+			return ErrExecutionEngineNotConformant
+		}
+	}
+	return r.Register(engine)
 }
 
 func (r *EngineRegistry) Get(name string) (ExecutionEngine, bool) {
