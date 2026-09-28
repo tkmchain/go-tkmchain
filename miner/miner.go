@@ -118,8 +118,8 @@ func (miner *Miner) HashRate() uint64 {
 
 // SetExtra sets the extra data field of the block header.
 func (miner *Miner) SetExtra(extra []byte) error {
-	if uint64(len(extra)) > params.AntarticalMaximumExtraDataSize {
-		return fmt.Errorf("extra exceeds max length: %d > %v", len(extra), params.AntarticalMaximumExtraDataSize)
+	if uint64(len(extra)) > params.MaximumExtraDataSize {
+		return fmt.Errorf("extra exceeds max length: %d > %v", len(extra), params.MaximumExtraDataSize)
 	}
 	miner.worker.setExtra(extra)
 	return nil
