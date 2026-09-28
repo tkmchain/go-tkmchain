@@ -68,6 +68,31 @@ The declaration is not authority. For example, `mintable` tells a wallet that
 minting may exist; the contract's access control, policy hash, and runtime code
 still decide whether a particular mint succeeds.
 
+## Egypt EUSD example
+
+The repository includes a six-decimal `EUSD` fixture in
+[`contracts/egypt/EUSD.sol`](../contracts/egypt/EUSD.sol). It uses chain ID
+8980, the `TKM-20` kind, and an issuer-mint policy. The executable rehearsal
+deploys the EVM fixture in an in-memory Egypt state, appends the `TKMASSET`
+trailer, mints 1,000 EUSD, transfers 250 EUSD, and checks that:
+
+- the sender has 750 EUSD and the recipient has 250 EUSD;
+- total supply remains 1,000 EUSD;
+- the runtime trailer parses back to `EUSD`, chain ID 8980, and six decimals;
+- the direct asset-ID calculation equals the Antartical-gated `0x...f3`
+  precompile result; and
+- the output includes the manifest hash, asset ID, runtime hash, and gas used.
+
+Run it with:
+
+```sh
+go run ./cmd/egypt-contract-test
+```
+
+When running a daemon-backed Egypt node, use
+`./scripts/run-egypt.sh`. It selects `--egypt`, refuses the production
+`~/.tkmchain` tree, and defaults to `~/.tkmchain-egypt`.
+
 ## Immutable manifest and asset ID
 
 The deployed runtime code ends with a versioned `TKMASSET` trailer. It commits

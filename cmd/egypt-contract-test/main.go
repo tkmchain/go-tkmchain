@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/tkmasset"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/core/vm/program"
@@ -255,8 +256,16 @@ func call(sig string, args ...[]byte) []byte {
 type result struct {
 	Network                   string         `json:"network"`
 	ChainID                   string         `json:"chainId"`
+	TokenName                 string         `json:"tokenName"`
+	TokenSymbol               string         `json:"tokenSymbol"`
+	TokenDecimals             uint8          `json:"tokenDecimals"`
+	TokenStandard             string         `json:"tokenStandard"`
 	TokenAddress              string         `json:"tokenAddress"`
 	TokenRuntimeHash          string         `json:"tokenRuntimeHash"`
+	TokenManifestHash         string         `json:"tokenManifestHash"`
+	TokenAssetID              string         `json:"tokenAssetId"`
+	TokenPrecompileAssetID    string         `json:"tokenPrecompileAssetId"`
+	TokenManifestVerified     bool           `json:"tokenManifestVerified"`
 	TokenBalance              string         `json:"tokenBalance"`
 	TokenBalanceAfterTransfer string         `json:"tokenBalanceAfterTransfer"`
 	TransferRecipient         string         `json:"transferRecipient"`
@@ -467,12 +476,52 @@ func main() {
 	tokenOwner := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	counterOwner := common.HexToAddress("0x0000000000000000000000000000000000000002")
 	cfg := &runtime.Config{ChainConfig: params.EgyptChainConfig, Origin: tokenOwner, BlockNumber: big.NewInt(1), Time: 1, GasLimit: 12_000_000, GasPrice: big.NewInt(1), Value: new(big.Int)}
-	tokenCode := tokenRuntime()
+	// EUSD is a six-decimal Egypt testnet stablecoin fixture. The manifest is
+	// appended to the runtime code exactly as a deployment tool would append
+	// the result of tkmasset_buildManifest.
+	eusdManifest := tkmasset.Manifest{
+		Kind:        tkmasset.KindFungible,
+		ChainID:     new(big.Int).Set(params.EgyptChainConfig.ChainID),
+		Decimals:    6,
+		Flags:       tkmasset.FlagMintable,
+		PolicyHash:  crypto.Keccak256Hash([]byte("EUSD Egypt policy v1: issuer-minted, six-decimal test asset")),
+		Name:        "Egypt United Dollar",
+		Symbol:      "EUSD",
+		MetadataURI: "ipfs://tkm/eusd/manifest-v1.json",
+	}
+	manifestHash, err := eusdManifest.ManifestHash()
+	if err != nil {
+		panic(fmt.Errorf("hash EUSD manifest: %w", err))
+	}
+	tokenCode, err := tkmasset.AppendTrailer(tokenRuntime(), eusdManifest)
+	if err != nil {
+		panic(fmt.Errorf("append EUSD manifest trailer: %w", err))
+	}
 	deployedToken, tokenAddress, tokenGas, err := runtime.Create(constructor(tokenCode), cfg)
 	if err != nil {
 		panic(fmt.Errorf("deploy token: %w", err))
 	}
-	amount := new(big.Int).Mul(big.NewInt(1000), big.NewInt(params.Ether))
+	parsedManifest, found, err := tkmasset.ParseRuntimeCode(deployedToken)
+	if err != nil || !found || parsedManifest.Symbol != eusdManifest.Symbol || parsedManifest.ChainID.Cmp(eusdManifest.ChainID) != 0 {
+		panic(fmt.Errorf("verify EUSD runtime manifest: found=%t err=%v", found, err))
+	}
+	assetID, err := tkmasset.AssetID(eusdManifest.ChainID, tokenAddress, eusdManifest.Kind, manifestHash)
+	if err != nil {
+		panic(fmt.Errorf("compute EUSD asset ID: %w", err))
+	}
+	precompileInput, err := tkmasset.PrecompileInput(eusdManifest.ChainID, tokenAddress, eusdManifest.Kind, manifestHash)
+	if err != nil {
+		panic(fmt.Errorf("build EUSD precompile input: %w", err))
+	}
+	precompile, ok := vm.ActivePrecompiledContracts(params.Rules{IsCancun: true})[vm.TKMAssetIDPrecompileAddr]
+	if !ok {
+		panic("TKM asset identity precompile is not active in the Antartical EUSD rehearsal")
+	}
+	precompileAssetID, err := precompile.Run(precompileInput)
+	if err != nil || common.BytesToHash(precompileAssetID) != assetID {
+		panic(fmt.Errorf("EUSD precompile identity mismatch: got=%s want=%s err=%v", common.BytesToHash(precompileAssetID), assetID, err))
+	}
+	amount := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	if _, _, err := runtime.Call(tokenAddress, call("mint(address,uint256)", wordAddress(tokenOwner), wordUint(amount)), cfg); err != nil {
 		panic(fmt.Errorf("mint token: %w", err))
 	}
@@ -484,7 +533,7 @@ func main() {
 		panic(fmt.Sprintf("mint balance mismatch: got=%s want=%s", new(big.Int).SetBytes(balance), amount))
 	}
 	transferRecipient := common.HexToAddress("0x0000000000000000000000000000000000000003")
-	transferAmount := new(big.Int).Mul(big.NewInt(250), big.NewInt(params.Ether))
+	transferAmount := new(big.Int).Mul(big.NewInt(250), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	transferOutput, transferGasLeft, err := runtime.Call(tokenAddress, call("transfer(address,uint256)", wordAddress(transferRecipient), wordUint(transferAmount)), cfg)
 	if err != nil {
 		panic(fmt.Errorf("transfer token: %w", err))
@@ -504,7 +553,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("read total supply after transfer: %w", err))
 	}
-	expectedSender := new(big.Int).Mul(big.NewInt(750), big.NewInt(params.Ether))
+	expectedSender := new(big.Int).Mul(big.NewInt(750), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	expectedRecipient := transferAmount
 	if new(big.Int).SetBytes(balanceAfterTransfer).Cmp(expectedSender) != 0 || new(big.Int).SetBytes(recipientBalance).Cmp(expectedRecipient) != 0 || new(big.Int).SetBytes(totalAfterTransfer).Cmp(amount) != 0 {
 		panic(fmt.Sprintf("transfer state mismatch: sender=%s recipient=%s total=%s", new(big.Int).SetBytes(balanceAfterTransfer), new(big.Int).SetBytes(recipientBalance), new(big.Int).SetBytes(totalAfterTransfer)))
@@ -528,7 +577,9 @@ func main() {
 	}
 	out := result{
 		Network: "egypt", ChainID: params.EgyptChainConfig.ChainID.String(),
-		TokenAddress: tokenAddress.Hex(), TokenRuntimeHash: crypto.Keccak256Hash(deployedToken).Hex(), TokenBalance: new(big.Int).SetBytes(balance).String(), TokenBalanceAfterTransfer: new(big.Int).SetBytes(balanceAfterTransfer).String(), TransferRecipient: transferRecipient.Hex(), TransferAmount: transferAmount.String(), RecipientBalance: new(big.Int).SetBytes(recipientBalance).String(), TransferGasUsed: cfg.GasLimit - transferGasLeft, TokenTotalSupply: new(big.Int).SetBytes(total).String(),
+		TokenName: eusdManifest.Name, TokenSymbol: eusdManifest.Symbol, TokenDecimals: eusdManifest.Decimals, TokenStandard: eusdManifest.Kind.Standard(),
+		TokenAddress: tokenAddress.Hex(), TokenRuntimeHash: crypto.Keccak256Hash(deployedToken).Hex(), TokenManifestHash: manifestHash.Hex(), TokenAssetID: assetID.Hex(), TokenPrecompileAssetID: common.BytesToHash(precompileAssetID).Hex(), TokenManifestVerified: true,
+		TokenBalance: new(big.Int).SetBytes(balance).String(), TokenBalanceAfterTransfer: new(big.Int).SetBytes(balanceAfterTransfer).String(), TransferRecipient: transferRecipient.Hex(), TransferAmount: transferAmount.String(), RecipientBalance: new(big.Int).SetBytes(recipientBalance).String(), TransferGasUsed: cfg.GasLimit - transferGasLeft, TokenTotalSupply: new(big.Int).SetBytes(total).String(),
 		CounterAddress: counterAddress.Hex(), CounterRuntimeHash: crypto.Keccak256Hash(deployedCounter).Hex(), CounterValue: new(big.Int).SetBytes(counterValue).String(), TokenDeployGas: tokenGas, CounterDeployGas: counterGas,
 		FeatureChecks: featureChecks, ProtocolChecks: protocolChecks, PrivacyChecks: privacyChecks, Shield3Gas: shield3Gas, Shield4Gas: shield4Gas,
 		ZKEVMClaim: claimCommitment.Hex(), StateWitnessCommit: witnessCommitment.Hex(),
