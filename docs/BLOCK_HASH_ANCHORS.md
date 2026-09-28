@@ -5,6 +5,11 @@ recording canonical block hashes. It is intended to give operators, explorers,
 and external auditors a small, event-indexed sequence they can compare with
 their local chain.
 
+All append methods are gated by the chain's Antartical schedule. Mainnet chain
+8979 activates at `1790812800` (1 October 2026 00:00 UTC); Egypt chain 8980 is
+active from genesis. Unknown chain IDs remain disabled. Calls made before the
+gate revert with `AntarticalInactive`; read-only inspection remains safe.
+
 ## What the contract verifies
 
 The contract accepts writes only from its current `owner`. Before a hash is

@@ -26,6 +26,11 @@ contract TKMBlockHashAnchors {
     error NonContiguousHeight(uint64 expected, uint64 supplied);
     error RangeTooLarge(uint256 length);
     error HeightOverflow();
+    error AntarticalInactive(uint256 chainId, uint256 timestamp);
+
+    uint256 public constant TKM_MAINNET_CHAIN_ID = 8979;
+    uint256 public constant TKM_EGYPT_CHAIN_ID = 8980;
+    uint256 public constant ANTARTICAL_ACTIVATION_TIME = 1790812800; // 2026-10-01 00:00:00 UTC
 
     address public owner;
     bool public initialized;
@@ -51,6 +56,11 @@ contract TKMBlockHashAnchors {
         _;
     }
 
+    modifier antarticalOnly() {
+        if (!antarticalActive()) revert AntarticalInactive(block.chainid, block.timestamp);
+        _;
+    }
+
     constructor(address initialOwner) {
         if (initialOwner == address(0)) revert InvalidOwner();
         owner = initialOwner;
@@ -68,7 +78,7 @@ contract TKMBlockHashAnchors {
     /// @notice Anchor one recent block using the hash supplied by the caller.
     /// @dev The value is checked against the canonical BLOCKHASH opcode before
     /// it is written. Heights must be contiguous after the first anchor.
-    function appendVerified(uint64 height, bytes32 expectedHash) external onlyOwner {
+    function appendVerified(uint64 height, bytes32 expectedHash) external onlyOwner antarticalOnly {
         bytes32 canonicalHash = _canonicalHash(height);
         if (canonicalHash != expectedHash) revert HashMismatch(height, expectedHash, canonicalHash);
         _append(height, canonicalHash);
@@ -76,14 +86,14 @@ contract TKMBlockHashAnchors {
 
     /// @notice Anchor one recent block without requiring the caller to copy its
     /// hash. The contract obtains and verifies the canonical value itself.
-    function appendCanonical(uint64 height) external onlyOwner returns (bytes32 blockHash) {
+    function appendCanonical(uint64 height) external onlyOwner antarticalOnly returns (bytes32 blockHash) {
         blockHash = _canonicalHash(height);
         _append(height, blockHash);
     }
 
     /// @notice Anchor the parent of the block containing this transaction.
     /// This is convenient for an operator that submits one anchor per block.
-    function appendParent() external onlyOwner returns (uint64 height, bytes32 blockHash) {
+    function appendParent() external onlyOwner antarticalOnly returns (uint64 height, bytes32 blockHash) {
         if (block.number == 0 || block.number - 1 > type(uint64).max) revert HeightOverflow();
         height = uint64(block.number - 1);
         blockHash = _canonicalHash(height);
@@ -92,7 +102,7 @@ contract TKMBlockHashAnchors {
 
     /// @notice Append a contiguous recent range. Every element is checked with
     /// BLOCKHASH before any state is changed.
-    function appendVerifiedRange(uint64 startHeight, bytes32[] calldata expectedHashes) external onlyOwner {
+    function appendVerifiedRange(uint64 startHeight, bytes32[] calldata expectedHashes) external onlyOwner antarticalOnly {
         if (expectedHashes.length == 0 || expectedHashes.length > 256) {
             revert RangeTooLarge(expectedHashes.length);
         }
@@ -120,11 +130,20 @@ contract TKMBlockHashAnchors {
     /// @notice Check an anchored hash, or check the live BLOCKHASH window when
     /// the height has not been stored yet.
     function matchesCanonical(uint64 height, bytes32 expectedHash) external view returns (bool) {
+        if (!antarticalActive()) return false;
         if (expectedHash == bytes32(0)) return false;
         bytes32 anchoredHash = _anchors[height];
         if (anchoredHash != bytes32(0)) return anchoredHash == expectedHash;
         if (height >= block.number || block.number - uint256(height) > 256) return false;
         return blockhash(uint256(height)) == expectedHash;
+    }
+
+    /// @notice Whether this deployment is running under the chain's
+    /// Antartical schedule. Egypt activates at genesis; mainnet activates at
+    /// the configured 2026-10-01 timestamp. Unknown chain IDs stay disabled.
+    function antarticalActive() public view returns (bool) {
+        if (block.chainid == TKM_EGYPT_CHAIN_ID) return true;
+        return block.chainid == TKM_MAINNET_CHAIN_ID && block.timestamp >= ANTARTICAL_ACTIVATION_TIME;
     }
 
     function _canonicalHash(uint64 height) private view returns (bytes32 blockHash) {
