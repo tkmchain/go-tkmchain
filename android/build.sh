@@ -85,9 +85,15 @@ case "$BUILD_VARIANT" in
 esac
 echo "==> Building $BUILD_VARIANT APK"
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" > "$SCRIPT_DIR/local.properties"
-"$GRADLE_BIN" --no-daemon -p "$SCRIPT_DIR" "$GRADLE_TASK"
+"$GRADLE_BIN" --no-daemon -p "$SCRIPT_DIR" ":app:$GRADLE_TASK"
 
 APK="$SCRIPT_DIR/app/build/outputs/apk/$BUILD_VARIANT/app-$BUILD_VARIANT.apk"
 echo
 echo "APK: $APK"
 echo "Install: adb install -r $APK   (or copy the file to your phone and open it)"
+
+EMAIL_APK="$SCRIPT_DIR/email/build/outputs/apk/$BUILD_VARIANT/email-$BUILD_VARIANT.apk"
+echo "==> Building standalone TKM Email $BUILD_VARIANT APK"
+"$GRADLE_BIN" --no-daemon -p "$SCRIPT_DIR" ":email:$GRADLE_TASK"
+echo "Email APK: $EMAIL_APK"
+echo "Install: adb install -r $EMAIL_APK"

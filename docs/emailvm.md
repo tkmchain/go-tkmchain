@@ -1,5 +1,23 @@
 # TKM EmailVM and Domain Service
 
+## Standalone applications
+
+Email is distributed as a separate client from TKM Wallet:
+
+- Desktop: `make tkm-email` builds `build/bin/tkm-email`. Running it opens the
+  standalone EmailVM client; use `--url` to select a self-hosted or onion
+  endpoint and `--no-open` to print the URL without launching a browser.
+- Android: `TKM_ANDROID_BUILD_VARIANT=debug ./android/build.sh` also produces
+  `android/email/build/outputs/apk/debug/email-debug.apk`. The application ID
+  is `com.tkmchain.email` and it contains no `gtkm` executable, node service,
+  wallet keystore, or recovery phrase storage.
+
+The email app handles the EmailVM client and local message encryption. Wallet
+operations that spend TKM still require the wallet’s local signer and prover;
+the email app never receives a wallet password or private key. Release builds
+publish `TKM-Email-<version>-android-arm64.apk` beside the wallet APK and add
+`tkm-email` to the desktop archives.
+
 EmailVM is a canonical encrypted-mail index and domain/mailbox registry built
 on TKM shielded transactions. It exposes the `tkmdomain` and `emailvm` JSON-RPC
 namespaces and the `domain` and `emailvm` objects in `gtkm attach`.

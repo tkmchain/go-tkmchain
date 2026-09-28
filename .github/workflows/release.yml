@@ -79,10 +79,10 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           ./scripts/shield4-build.sh
-          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
-          cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
+          cp build/bin/gtkm build/bin/tkm-email build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
 
       - name: Build and package Windows binaries
@@ -100,11 +100,13 @@ jobs:
           # clean Windows installation.
           windows_randomx_ldflags="-Lbuild/_workspace/randomx/build-host -lrandomx -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -lm"
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make HOST_RANDOMX_LDFLAGS="$windows_randomx_ldflags" gtkm
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.Version=$RELEASE_TAG" -o build/bin/tkm-email.exe ./cmd/tkm-email
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default CGO_LDFLAGS="-static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" make shielded-payout-prover
 
           archive="gtkm-${RELEASE_TAG}-windows"
           mkdir -p "release/$archive"
           cp build/bin/gtkm "release/$archive/gtkm.exe"
+          cp build/bin/tkm-email.exe "release/$archive/tkm-email.exe"
           cp build/bin/shielded-payout-prover "release/$archive/shielded-payout-prover.exe"
 
           # Do not publish executables that only work inside the MSYS2 runner.
@@ -209,10 +211,10 @@ jobs:
       - name: Build and package portable Linux binaries
         run: |
           ./scripts/shield4-build.sh
-          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm shielded-payout-prover
+          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"
-          cp build/bin/gtkm build/bin/shielded-payout-prover "release/$archive/"
+          cp build/bin/gtkm build/bin/tkm-email build/bin/shielded-payout-prover "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
           ./packaging/build-deb.sh "$RELEASE_TAG" release amd64
 
@@ -320,10 +322,15 @@ jobs:
             -tags shield3 \
             -o "build/dist/linux/$ARM_OUTPUT_DIR/shielded-payout-prover-linux-$ARM_BINARY_SUFFIX" \
             ./cmd/shielded-payout-prover
+          GOOS=linux GOARCH="$ARM_GOARCH" GOARM="${ARM_GOARM:-}" \
+            go build -trimpath -ldflags="-s -w -X main.Version=$RELEASE_TAG" \
+            -o "build/dist/linux/$ARM_OUTPUT_DIR/tkm-email-linux-$ARM_BINARY_SUFFIX" \
+            ./cmd/tkm-email
 
           archive="gtkm-${RELEASE_TAG}-linux-${ARM_LABEL}"
           mkdir -p "release/$archive"
           cp "build/dist/linux/$ARM_OUTPUT_DIR/gtkm-linux-$ARM_BINARY_SUFFIX" "release/$archive/gtkm"
+          cp "build/dist/linux/$ARM_OUTPUT_DIR/tkm-email-linux-$ARM_BINARY_SUFFIX" "release/$archive/tkm-email"
           cp "build/dist/linux/$ARM_OUTPUT_DIR/shielded-payout-prover-linux-$ARM_BINARY_SUFFIX" \
             "release/$archive/shielded-payout-prover"
 
@@ -497,6 +504,7 @@ jobs:
           mkdir -p release
           apk="release/TKM-Wallet-${RELEASE_TAG}-android-arm64.apk"
           cp android/app/build/outputs/apk/release/app-release.apk "$apk"
+          cp android/email/build/outputs/apk/release/email-release.apk "release/TKM-Email-${RELEASE_TAG}-android-arm64.apk"
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs "$apk"
       - name: Remove signing material
         if: always()

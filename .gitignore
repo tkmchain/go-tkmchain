@@ -28,6 +28,7 @@
 /android/.gradle/
 /android/build/
 /android/app/build/
+/android/email/build/
 /android/local.properties
 /android/.kotlin/
 

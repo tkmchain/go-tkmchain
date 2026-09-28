@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+def signingEnvironment = [
+    store: System.getenv('TKM_ANDROID_KEYSTORE'),
+    alias: System.getenv('TKM_ANDROID_KEY_ALIAS'),
+    storePasswordFile: System.getenv('TKM_ANDROID_STORE_PASSWORD_FILE'),
+    keyPasswordFile: System.getenv('TKM_ANDROID_KEY_PASSWORD_FILE')
+]
+def releaseSigningReady = signingEnvironment.values().every { it != null && !it.trim().isEmpty() }
+def readSigningPassword = { path ->
+    def passwordFile = new File(path)
+    if (!passwordFile.isFile()) throw new GradleException('Signing password file is missing')
+    return passwordFile.getText('UTF-8').replaceFirst(/[\r\n]+$/, '')
+}
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name.toLowerCase().contains('release') } && !releaseSigningReady) {
+        throw new GradleException('Email release signing is not configured. Set the TKM_ANDROID_* signing variables.')
+    }
+}
+
+android {
+    namespace 'com.tkmchain.email'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.tkmchain.email"
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv('TKM_ANDROID_VERSION_CODE') ?: '1')
+        versionName System.getenv('TKM_ANDROID_VERSION_NAME') ?: "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(signingEnvironment.store)
+                keyAlias signingEnvironment.alias
+                storePassword readSigningPassword(signingEnvironment.storePasswordFile)
+                keyPassword readSigningPassword(signingEnvironment.keyPasswordFile)
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

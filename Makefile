@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
+.PHONY: gtkm tkm-email shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
         test lint fmt clean devtools help \
         randomx randomx-clean randomx-install randomx-check \
         randomx-windows randomx-darwin randomx-linux randomx-all \
@@ -85,7 +85,7 @@ DARWIN_ARM64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_ARM64) -lrandomx -lc
 DARWIN_RANDOMX_LDFLAGS = $(DARWIN_AMD64_RANDOMX_LDFLAGS)
 
 # List of all commands to build (skip bootnode if not exists)
-CMDS = gtkm shielded-payout-prover shield3-relay clef devp2p abigen evm rlpdump
+CMDS = gtkm tkm-email shielded-payout-prover shield3-relay clef devp2p abigen evm rlpdump
 # bootnode is optional - add if exists
 ifneq ($(wildcard ./cmd/bootnode),)
 CMDS += bootnode
@@ -139,6 +139,12 @@ gtkm: $(RANDOMX_LIB_HOST) shield3-host
 	CGO_ENABLED=1 CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" CGO_LDFLAGS="$(HOST_RANDOMX_LDFLAGS)" \
 	go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(GOBIN)/gtkm ./cmd/gtkm
 	@echo "✅ Built: $(GOBIN)/gtkm"
+
+#? tkm-email: Build the standalone desktop EmailVM launcher.
+tkm-email:
+	@mkdir -p $(GOBIN)
+	go build $(LDFLAGS) -o $(GOBIN)/tkm-email ./cmd/tkm-email
+	@echo "✅ Built: $(GOBIN)/tkm-email"
 
 #? gtkm-gui: Build gtkm with the native desktop GUI (requires libgtk-3-dev + libwebkit2gtk-4.1-dev).
 gtkm-gui: $(RANDOMX_LIB_HOST) shield3-host
