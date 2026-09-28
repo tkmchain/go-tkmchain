@@ -19,6 +19,7 @@ package miner
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"sync"
@@ -768,6 +769,12 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	state, err := w.chain.StateAt(parent.Header())
 	if err != nil {
 		return err
+	}
+	// Apply consensus-owned predeployments before any transactions are packed.
+	// StateProcessor applies the same transition while importing the block; doing
+	// it here keeps the mined state root byte-for-byte identical to the importer.
+	if err := core.EnsureTKMBlockHashAnchor(state, w.config, header.Number, header.Time, header.ParentHash); err != nil {
+		return fmt.Errorf("failed to apply TKM block-hash anchor predeployment: %w", err)
 	}
 	env := &environment{
 		signer:    types.MakeSigner(w.config, header.Number, header.Time),

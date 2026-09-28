@@ -7,6 +7,16 @@ header. Nodes reject a post-fork header that omits the anchor, names a different
 parent, uses the wrong height, or breaks the rolling commitment. This keeps the
 rule active during import, header sync, mining, and reorganization checks.
 
+The same interface is a deterministic protocol predeployment. At the first
+Antartical state transition, the node installs the contract runtime and records
+the predecessor hash before processing user transactions. The fixed address is
+`0x0000000000000000000000000000000000008979` on both mainnet and Egypt. Egypt
+is active from genesis, so its first mined block creates the predeployment
+without a deployment transaction. Mainnet creates it at its Antartical
+activation block. Miners and importers run the identical transition, keeping
+the state root deterministic and preventing a transparent transaction from
+weakening the privacy gate.
+
 All append methods are gated by the chain's Antartical schedule. Mainnet chain
 8979 activates at `1790812800` (1 October 2026 00:00 UTC); Egypt chain 8980 is
 active from genesis. Unknown chain IDs remain disabled. Calls made before the
@@ -94,3 +104,9 @@ The owner can transfer append authority, but there is no delete, overwrite,
 upgrade, or self-destruct path. A compromised owner can stop future writes or
 submit only hashes that the EVM itself proves; it cannot insert a different
 hash for a recent height.
+
+The consensus predeployment is the authoritative history from activation
+forward. The Solidity append methods remain useful for operator-facing event
+indexing and for networks that intentionally expose the application interface;
+they are not a replacement for the consensus header rule or the automatic state
+transition.

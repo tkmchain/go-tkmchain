@@ -76,6 +76,9 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	if hooks := cfg.Tracer; hooks != nil {
 		tracingStateDB = state.NewHookedState(statedb, hooks)
 	}
+	if err := EnsureTKMBlockHashAnchor(statedb, config, blockNumber, header.Time, header.ParentHash); err != nil {
+		return nil, err
+	}
 
 	// Mutate the block and state according to any hard-fork specs
 	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(block.Number()) == 0 {
