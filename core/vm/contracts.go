@@ -125,6 +125,9 @@ var PrecompiledContractsCancun = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x8}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x9}): &blake2F{},
 	common.BytesToAddress([]byte{0xa}): &kzgPointEvaluation{},
+	// TKM-native asset identity is activated with the TKM Cancun/Antartical
+	// boundary and is unavailable to pre-fork Ethereum execution.
+	TKMAssetIDPrecompileAddr: &tkmAssetIDPrecompile{},
 }
 
 // PrecompiledContractsPrague contains the set of pre-compiled Ethereum
@@ -179,6 +182,7 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 	TVMPrecompileAddr:                   &tvmPrecompileContract{},
 
 	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
+	TKMAssetIDPrecompileAddr:                 &tkmAssetIDPrecompile{},
 }
 
 // PrecompiledContractsP256Verify contains the precompiled Ethereum

@@ -607,6 +607,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewTVMAPI(s.APIBackend),
 		},
 		{
+			Namespace: "tkmasset",
+			Service:   NewTKMAssetAPI(s.APIBackend),
+		},
+		{
 			Namespace: "tkm",
 			Service:   s.downloaderAPI,
 		},
