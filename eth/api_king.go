@@ -22,14 +22,33 @@ type KingAPI struct {
 }
 
 var (
-	// Required stake for rotating king registration. Keep the RPC threshold
-	// tied directly to the consensus policy so the two paths cannot drift.
-	rkRequiredStake = new(big.Int).Set(rotatingking.EligibilityThreshold)
+	// Legacy registrations remain at 50,000 TKM for replay compatibility.
+	rkRequiredStake = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))
+	// Antartical raises the minimum to the consensus threshold at activation.
+	rkAntarticalRequiredStake = new(big.Int).Set(rotatingking.EligibilityThreshold)
 	// Lock period for staked funds (30 days)
 	rkLockPeriod = 30 * 24 * time.Hour
 	// High fee reserved for rotating king registration transactions (1 TKM)
 	rkRegistrationFee = new(big.Int).SetUint64(params.Ether)
 )
+
+func rotatingKingRequiredStakeAt(config *params.ChainConfig, number *big.Int, timestamp uint64) *big.Int {
+	if config != nil && config.IsAntartical(number, timestamp) {
+		return new(big.Int).Set(rkAntarticalRequiredStake)
+	}
+	return new(big.Int).Set(rkRequiredStake)
+}
+
+func (s *Ethereum) rotatingKingRequiredStake() *big.Int {
+	if s == nil || s.blockchain == nil {
+		return new(big.Int).Set(rkRequiredStake)
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return new(big.Int).Set(rkRequiredStake)
+	}
+	return rotatingKingRequiredStakeAt(s.blockchain.Config(), head.Number, head.Time)
+}
 
 type rkLockInfo struct {
 	Hash             common.Hash
@@ -381,7 +400,7 @@ func (api *KingAPI) statusLocked(address common.Address) RKStatus {
 	}
 
 	if locked {
-		status.LockedAmount.Set(rkRequiredStake)
+		status.LockedAmount.Set(api.e.rotatingKingRequiredStake())
 		status.RegistrationFee.Set(rkRegistrationFee)
 	}
 
@@ -414,7 +433,7 @@ func (s *Ethereum) ensureRotatingKingEligible(address common.Address) error {
 		return err
 	}
 	balance := statedb.GetBalance(address).ToBig()
-	required := new(big.Int).Add(rkRequiredStake, rkRegistrationFee)
+	required := new(big.Int).Add(s.rotatingKingRequiredStake(), rkRegistrationFee)
 	if balance.Sign() == 0 {
 		return fmt.Errorf("insufficient balance: address has no balance, need at least %s wei", required.String())
 	}

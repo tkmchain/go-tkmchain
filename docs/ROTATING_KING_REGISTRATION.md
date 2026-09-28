@@ -1,9 +1,10 @@
 # Rotating-king registration
 
 Rotating-king registration is checked against chain state and a block-height
-activation schedule. The RPC path and the consensus manager now use the same
-minimum stake: **100,000 TKM**. A registration also requires the existing
-1-TKM registration fee reserve.
+activation schedule. Existing pre-Antartical registrations keep the legacy
+minimum of **50,000 TKM**. At Antartical activation the minimum becomes
+**100,000 TKM**, matching the consensus manager. A registration also requires
+the existing 1-TKM registration fee reserve.
 
 ## RPC
 
@@ -17,10 +18,11 @@ rk_getKingStats()               inspect the rotation schedule
 ```
 
 `rk_add` rejects the zero address, duplicate registrations, and accounts with
-less than the stake plus fee reserve. The registration is persisted in the
-rotating-king database and announced to peers. Once an account falls below the
-100,000-TKM stake, it is removed from the schedule on the next state check;
-this prevents an underfunded address from continuing to receive king rewards.
+less than the active fork's stake plus fee reserve. The registration is
+persisted in the rotating-king database and announced to peers. Once an
+account falls below the active stake, it is removed from the schedule on the
+next state check; this prevents an underfunded address from continuing to
+receive king rewards.
 
 The RPC registration metadata is a reservation and eligibility record. It is
 not an arbitrary balance mutation performed outside a block. A wallet that
@@ -29,7 +31,8 @@ the normal transaction remains subject to the chain's state-transition rules.
 
 ## Deterministic consensus rules
 
-The consensus manager's `RegisterKingAt` method validates:
+The consensus manager's `RegisterKingAt` method validates the Antartical
+policy:
 
 1. a non-zero address;
 2. a non-negative balance at least equal to the 100,000-TKM minimum;
@@ -53,4 +56,3 @@ go run ./cmd/egypt-contract-test
 
 The JSON output includes `rotatingKingChecks`,
 `rotatingKingRegistration`, and `rotatingKingActivation`.
-

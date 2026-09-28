@@ -36,6 +36,21 @@ func newTestKingAPI(t *testing.T, alloc types.GenesisAlloc) (*KingAPI, *Ethereum
 	return NewKingAPI(eth), eth
 }
 
+func TestRotatingKingStakeActivatesAtAntartical(t *testing.T) {
+	legacy := rotatingKingRequiredStakeAt(params.MainnetChainConfig, big.NewInt(0), params.MainnetAntarticalTime-1)
+	active := rotatingKingRequiredStakeAt(params.MainnetChainConfig, big.NewInt(0), params.MainnetAntarticalTime)
+	if legacy.Cmp(new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))) != 0 {
+		t.Fatalf("legacy rotating-king stake = %s, want 50000 TKM", legacy)
+	}
+	if active.Cmp(new(big.Int).Mul(big.NewInt(100000), big.NewInt(params.Ether))) != 0 {
+		t.Fatalf("Antartical rotating-king stake = %s, want 100000 TKM", active)
+	}
+	egypt := rotatingKingRequiredStakeAt(params.EgyptChainConfig, big.NewInt(0), 0)
+	if egypt.Cmp(active) != 0 {
+		t.Fatalf("Egypt rotating-king stake = %s, want Antartical threshold %s", egypt, active)
+	}
+}
+
 func TestKingAPIAddRejectsIneligibleAddresses(t *testing.T) {
 	eligible := common.HexToAddress("0x0000000000000000000000000000000000000001")
 	underfunded := common.HexToAddress("0x0000000000000000000000000000000000000002")

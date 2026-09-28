@@ -1457,10 +1457,10 @@ func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
 	changed := false
 	filtered := s.kingAddresses[:0]
 	for _, address := range s.kingAddresses {
-		if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
+		if statedb.GetBalance(address).ToBig().Cmp(s.rotatingKingRequiredStake()) < 0 {
 			delete(s.rkLocks, address)
 			changed = true
-			log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
+			log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", s.rotatingKingRequiredStake().String())
 			continue
 		}
 		filtered = append(filtered, address)
