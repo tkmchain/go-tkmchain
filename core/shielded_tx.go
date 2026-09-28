@@ -865,6 +865,11 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 		return new(big.Int)
 	}
 	cost := tx.Cost()
+	if HasAddressVotePrefix(tx.Data()) {
+		// Votes and unvotes carry zero transaction value, but consensus destroys
+		// this additional amount from the stamped voter after execution.
+		cost.Add(cost, AddressVoteBurnWei())
+	}
 	if HasShieldedV4Prefix(tx.Data()) {
 		e, _, err := DecodeShieldedV4Transaction(tx.Data())
 		if err != nil || e.GasSponsorValue == nil {

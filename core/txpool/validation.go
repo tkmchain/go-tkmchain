@@ -331,6 +331,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 				return err
 			}
 		}
+		if core.HasAddressVotePrefix(tx.Data()) {
+			if err := core.ValidateAddressVoteBalance(opts.State, from); err != nil {
+				return err
+			}
+		}
 	}
 	next := opts.State.GetNonce(from)
 	if next > tx.Nonce() {

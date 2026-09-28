@@ -329,6 +329,9 @@ const (
 	// account within the same tx (captured at end of tx).
 	// Note it doesn't account for a self-destruct which appoints itself as recipient.
 	BalanceDecreaseSelfdestructBurn BalanceChangeReason = 14
+	// BalanceDecreaseAddressVoteBurn is destroyed by an Antartical address vote
+	// or unvote. It is never credited to another account.
+	BalanceDecreaseAddressVoteBurn BalanceChangeReason = 16
 
 	// BalanceChangeRevert is emitted when the balance is reverted back to a previous value due to call failure.
 	// It is only emitted when the tracer has opted in to use the journaling wrapper (WrapWithJournal).

@@ -1327,6 +1327,9 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 			if err == nil && core.HasAntarticalStampPrefix(tx.Data()) {
 				err = core.ValidateAntarticalStampRegistrationState(pool.currentState, from, tx.Data(), head.Time)
 			}
+			if err == nil && core.HasAddressVotePrefix(tx.Data()) {
+				err = core.ValidateAddressVoteBalance(pool.currentState, from)
+			}
 		}
 		if err == nil && antartical && core.HasShieldedV4Prefix(tx.Data()) {
 			var e *core.ShieldedV4Transaction

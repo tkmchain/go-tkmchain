@@ -9,11 +9,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
+	"github.com/holiman/uint256"
 )
 
 // Address votes are an Antartical governance envelope. Votes are deliberately
@@ -24,14 +26,45 @@ const (
 	AddressVoteVersion   = uint64(1)
 	AddressVoteThreshold = uint64(15)
 	AddressVoteMaxReason = 160
+	AddressVoteBurnTKM   = uint64(50)
 )
 
 var (
-	ErrAddressVoteAlreadyCast = errors.New("address vote already cast by this stamp owner")
-	ErrAddressVoteNotFound    = errors.New("address vote not found for this stamp owner")
-	ErrAddressVoteSuspended   = errors.New("address already has the address-vote threshold")
-	ErrAddressSuspended       = errors.New("illegal transaction: address is suspended by address votes")
+	ErrAddressVoteAlreadyCast         = errors.New("address vote already cast by this stamp owner")
+	ErrAddressVoteNotFound            = errors.New("address vote not found for this stamp owner")
+	ErrAddressVoteSuspended           = errors.New("address already has the address-vote threshold")
+	ErrAddressVoteInsufficientBalance = errors.New("address vote requires a 50 TKM burn")
+	ErrAddressSuspended               = errors.New("illegal transaction: address is suspended by address votes")
 )
+
+// AddressVoteBurnWei returns the exact amount destroyed for every vote and
+// unvote. Governance transactions carry zero value; this fee is removed from
+// the stamped voter's balance after the transaction executes.
+func AddressVoteBurnWei() *big.Int {
+	return new(big.Int).Mul(new(big.Int).SetUint64(AddressVoteBurnTKM), big.NewInt(params.Ether))
+}
+
+// ValidateAddressVoteBalance ensures a voter can pay the governance burn. The
+// regular transaction balance check still accounts for gas separately.
+func ValidateAddressVoteBalance(st *state.StateDB, voter common.Address) error {
+	if st == nil {
+		return ErrAddressVoteInsufficientBalance
+	}
+	required := AddressVoteBurnWei()
+	balance := st.GetBalance(voter).ToBig()
+	if balance.Cmp(required) < 0 {
+		return fmt.Errorf("%w: balance %s, required %s", ErrAddressVoteInsufficientBalance, balance, required)
+	}
+	return nil
+}
+
+func burnAddressVoteFee(st *state.StateDB, voter common.Address) error {
+	if err := ValidateAddressVoteBalance(st, voter); err != nil {
+		return err
+	}
+	st.SubBalance(voter, uint256.MustFromBig(AddressVoteBurnWei()), tracing.BalanceDecreaseAddressVoteBurn)
+	return nil
+}
 
 // AddressVote is the RLP payload after AddressVoteMagic. Unvote removes only
 // the caller's own vote; no account can erase another voter's record.
@@ -214,6 +247,9 @@ func ProcessAddressVote(st *state.StateDB, from common.Address, data []byte, txH
 		if count == 0 {
 			return errors.New("address vote count underflow")
 		}
+		if err := burnAddressVoteFee(st, from); err != nil {
+			return err
+		}
 		st.SetState(params.ShieldedPoolAddress, activeSlot, common.Hash{})
 		st.SetState(params.ShieldedPoolAddress, reasonSlot, common.Hash{})
 		count--
@@ -225,6 +261,9 @@ func ProcessAddressVote(st *state.StateDB, from common.Address, data []byte, txH
 	}
 	if count >= AddressVoteThreshold {
 		return ErrAddressVoteSuspended
+	}
+	if err := burnAddressVoteFee(st, from); err != nil {
+		return err
 	}
 	st.SetState(params.ShieldedPoolAddress, activeSlot, txHash)
 	st.SetState(params.ShieldedPoolAddress, reasonSlot, crypto.Keccak256Hash([]byte(vote.Reason)))
