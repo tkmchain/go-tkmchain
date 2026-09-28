@@ -2063,11 +2063,14 @@ func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 }
 
 func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
-	if rx.fullFake {
-		return nil
-	}
 	if header.Number == nil {
 		return consensus.ErrInvalidNumber
+	}
+	if err := verifyBlockHashAnchor(chain, header, parents); err != nil {
+		return err
+	}
+	if rx.fullFake {
+		return nil
 	}
 	if header.Number.Sign() == 0 {
 		return nil
@@ -2079,8 +2082,8 @@ func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
 	go func() {
-		for _, header := range headers {
-			err := rx.VerifySeal(chain, header)
+		for i, header := range headers {
+			err := rx.verifyHeader(chain, header, headers[:i])
 			select {
 			case <-abort:
 				return

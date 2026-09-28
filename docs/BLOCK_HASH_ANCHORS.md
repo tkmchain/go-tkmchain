@@ -1,14 +1,38 @@
 # TKMChain block-hash anchors
 
-`contracts/TKMBlockHashAnchors.sol` is an append-only application contract for
-recording canonical block hashes. It is intended to give operators, explorers,
-and external auditors a small, event-indexed sequence they can compare with
-their local chain.
+`contracts/TKMBlockHashAnchors.sol` is the operator-facing append-only
+application interface. The authoritative protection is consensus-native:
+every Antartical RandomX block must carry a valid block-hash anchor in its
+header. Nodes reject a post-fork header that omits the anchor, names a different
+parent, uses the wrong height, or breaks the rolling commitment. This keeps the
+rule active during import, header sync, mining, and reorganization checks.
 
 All append methods are gated by the chain's Antartical schedule. Mainnet chain
 8979 activates at `1790812800` (1 October 2026 00:00 UTC); Egypt chain 8980 is
 active from genesis. Unknown chain IDs remain disabled. Calls made before the
 gate revert with `AntarticalInactive`; read-only inspection remains safe.
+
+## Consensus header envelope
+
+Legacy blocks retain the 32-byte extra-data limit. At Antartical the header
+envelope is versioned to 128 bytes. The final 96 bytes are the fixed
+`TKM_BLOCK_HASH_ANCHOR_V1` suffix:
+
+```text
+domain marker | parent height (uint64) | parent hash | rolling commitment
+```
+
+The rolling commitment is:
+
+```text
+Keccak256("TKM_BLOCK_HASH_ANCHOR_V1", previousRolling, height, parentHash)
+```
+
+The first Antartical block starts from an all-zero previous commitment. Every
+later block must extend the commitment carried by its canonical parent. Existing
+rotating-king or miner metadata remains in the prefix of the envelope. Egypt
+uses the same consensus rule from genesis; its genesis header is the only
+header without a predecessor anchor.
 
 ## What the contract verifies
 
@@ -50,11 +74,15 @@ chain-native historical-hash oracle that supplies a verified header proof before
 backfilling. Do not call a trusted off-chain list “verified” without such a
 proof.
 
-## Reorganizations
+## Reorganizations and limitations
 
-An EVM contract cannot make its own chain state survive a reorganization: a
-reorg that removes the anchor transaction also removes that state. Anchors are
-therefore evidence and detection, not a replacement for consensus finality.
+The header rule makes malformed or conflicting anchor histories invalid to all
+consensus nodes. It does not claim that proof-of-work can mathematically make
+an alternative branch impossible: a sufficiently powerful attacker could
+recompute a valid competing branch. Mandatory checkpoints and future finality
+rules are still required for economic finality. The Solidity state is an
+auditable mirror and cannot survive a reorganization that removes its own
+transaction.
 Operators should:
 
 1. index `BlockHashAnchored` events;

@@ -154,6 +154,9 @@ func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 	if header == nil || header.Number == nil {
 		return consensus.ErrInvalidNumber
 	}
+	if err := verifyBlockHashAnchor(chain, header, nil); err != nil {
+		return err
+	}
 	// The fallback build cannot recompute RandomX, but it must never accept
 	// an empty proof.  Otherwise a node built without the native verifier
 	// could mine or relay zero-mix blocks that native nodes correctly reject.
@@ -171,8 +174,11 @@ func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
 	results := make(chan error, len(headers))
 	go func() {
 		defer close(results)
-		for _, header := range headers {
-			err := rx.VerifyHeader(chain, header)
+		for i, header := range headers {
+			err := verifyBlockHashAnchor(chain, header, headers[:i])
+			if err == nil {
+				err = rx.VerifyHeader(chain, header)
+			}
 			select {
 			case <-abort:
 				return

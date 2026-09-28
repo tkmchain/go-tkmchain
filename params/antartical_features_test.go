@@ -47,6 +47,7 @@ func TestAntarticalRulesExposeAllFeatureGates(t *testing.T) {
 		{"modular precompiles", rules.IsModularPrecompiles},
 		{"deterministic gas", rules.IsDeterministicGas},
 		{"single-slot finality", rules.IsSingleSlotFinality},
+		{"block-hash anchors", rules.IsBlockHashAnchors},
 	}
 	for _, check := range checks {
 		if !check.got {

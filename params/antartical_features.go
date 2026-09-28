@@ -32,6 +32,7 @@ const (
 	FeatureModularPrecompiles  AntarticalFeature = "modular-precompiles"
 	FeatureDeterministicGas    AntarticalFeature = "deterministic-gas"
 	FeatureSingleSlotFinality  AntarticalFeature = "single-slot-finality"
+	FeatureBlockHashAnchors    AntarticalFeature = "block-hash-anchors"
 )
 
 // AntarticalFeatureInfo is the machine-readable activation contract exposed
@@ -69,6 +70,7 @@ var antarticalFeatureInfo = [...]struct {
 	{FeatureModularPrecompiles, "Modular precompiles", false, "consensus/antartical deterministic module registry"},
 	{FeatureDeterministicGas, "Deterministic gas metering", true, "canonical intrinsic and EIP-1559/blob gas rules"},
 	{FeatureSingleSlotFinality, "Single-slot finality", false, "consensus/antartical quorum certificate validation"},
+	{FeatureBlockHashAnchors, "Consensus block-hash anchors", true, "consensus/randomx mandatory rolling parent-hash header commitment"},
 }
 
 // AntarticalFeatureCatalog returns the complete activation catalog. Every

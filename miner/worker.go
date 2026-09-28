@@ -28,6 +28,7 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
@@ -1081,6 +1082,31 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 			} else if bytes.Equal(header.Extra, params.DAOForkBlockExtra) {
 				header.Extra = []byte{} // If miner opposes, don't let it use the reserved extra-data
 			}
+		}
+	}
+	// Antartical makes the block-hash anchor a consensus field. It is added
+	// after all legacy extra-data overrides so DAO/RK metadata remains intact
+	// in the prefix of the enlarged forked envelope.
+	if w.config.IsAntartical(header.Number, header.Time) {
+		previousRolling := common.Hash{}
+		if w.config.IsAntartical(parent.Number, parent.Time) && parent.Number.Sign() > 0 {
+			parentAnchor, ok, err := antartical.BlockHashAnchorFromHeaderExtra(parent.Extra)
+			if err != nil || !ok {
+				log.Error("Cannot extend mining work without valid parent block-hash anchor", "number", parent.Number, "err", err)
+				return
+			}
+			previousRolling = parentAnchor.Rolling
+		}
+		anchor := antartical.BlockHashAnchor{
+			Height:  parent.Number.Uint64(),
+			Hash:    parent.Hash(),
+			Rolling: antartical.BlockHashAnchorCommitment(previousRolling, parent.Number.Uint64(), parent.Hash()),
+		}
+		var err error
+		header.Extra, err = antartical.AttachBlockHashAnchor(header.Extra, anchor)
+		if err != nil {
+			log.Error("Failed to attach Antartical block-hash anchor", "number", header.Number, "err", err)
+			return
 		}
 	}
 	// Could potentially happen if starting to mine in an odd state.

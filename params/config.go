@@ -704,6 +704,7 @@ type Rules struct {
 	IsNativePrivacy, IsStatelessVerkle, IsNativeRandomness, IsNativeOracles bool
 	IsCrossChainStandards, IsEOF, IsModularPrecompiles                      bool
 	IsDeterministicGas, IsSingleSlotFinality                                bool
+	IsBlockHashAnchors                                                      bool
 	IsEIP2929, IsEIP4762                                                    bool
 	// TKMProfileVersion selects the consensus metadata profile. Version zero
 	// is the historical encoding; version one is active exactly at Antartical.
@@ -768,6 +769,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsModularPrecompiles:  c.IsAntarticalFeatureActive(FeatureModularPrecompiles, num, timestamp),
 		IsDeterministicGas:    c.IsAntarticalFeatureActive(FeatureDeterministicGas, num, timestamp),
 		IsSingleSlotFinality:  c.IsAntarticalFeatureActive(FeatureSingleSlotFinality, num, timestamp),
+		IsBlockHashAnchors:    c.IsAntarticalFeatureActive(FeatureBlockHashAnchors, num, timestamp),
 		IsEIP2929:             isEIP2929,
 		IsEIP4762:             isEIP4762,
 		TKMProfileVersion:     profileVersion,
