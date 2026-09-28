@@ -151,10 +151,14 @@ func (rx *RandomX) SubmitWork(nonceHex string, headerHashHex string, mixDigestHe
 func (rx *RandomX) Author(header *types.Header) (common.Address, error) { return header.Coinbase, nil }
 
 func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
+	return rx.verifyHeader(chain, header, nil)
+}
+
+func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	if header == nil || header.Number == nil {
 		return consensus.ErrInvalidNumber
 	}
-	if err := verifyBlockHashAnchor(chain, header, nil); err != nil {
+	if err := verifyBlockHashAnchor(chain, header, parents); err != nil {
 		return err
 	}
 	// The fallback build cannot recompute RandomX, but it must never accept
@@ -175,10 +179,7 @@ func (rx *RandomX) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
 	go func() {
 		defer close(results)
 		for i, header := range headers {
-			err := verifyBlockHashAnchor(chain, header, headers[:i])
-			if err == nil {
-				err = rx.VerifyHeader(chain, header)
-			}
+			err := rx.verifyHeader(chain, header, headers[:i])
 			select {
 			case <-abort:
 				return
