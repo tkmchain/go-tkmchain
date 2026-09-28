@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/rotatingking"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	ethproto "github.com/ethereum/go-ethereum/eth/protocols/eth"
@@ -21,8 +22,9 @@ type KingAPI struct {
 }
 
 var (
-	// Required stake for rotating king registration (50,000 TKM)
-	rkRequiredStake = new(big.Int).Mul(big.NewInt(50000), big.NewInt(params.Ether))
+	// Required stake for rotating king registration. Keep the RPC threshold
+	// tied directly to the consensus policy so the two paths cannot drift.
+	rkRequiredStake = new(big.Int).Set(rotatingking.EligibilityThreshold)
 	// Lock period for staked funds (30 days)
 	rkLockPeriod = 30 * 24 * time.Hour
 	// High fee reserved for rotating king registration transactions (1 TKM)

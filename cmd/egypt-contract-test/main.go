@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/antartical"
+	"github.com/ethereum/go-ethereum/consensus/rotatingking"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/tkmasset"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -293,6 +294,9 @@ type result struct {
 	Shield4Gas                 uint64         `json:"shield4Gas"`
 	ZKEVMClaim                 string         `json:"zkevmClaim"`
 	StateWitnessCommit         string         `json:"stateWitnessCommitment"`
+	RotatingKingChecks         []string       `json:"rotatingKingChecks"`
+	RotatingKingRegistration   string         `json:"rotatingKingRegistration"`
+	RotatingKingActivation     uint64         `json:"rotatingKingActivation"`
 }
 
 type profileOutput struct {
@@ -447,6 +451,65 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 	result.LightClientBlockHash = blockHash
 	result.Checks = append(result.Checks, "stateless-light-client-finality-path")
 	return result
+}
+
+type egyptKingState struct {
+	balances map[common.Address]*big.Int
+	height   uint64
+}
+
+func (s egyptKingState) GetBalance(address common.Address) *big.Int {
+	if balance := s.balances[address]; balance != nil {
+		return new(big.Int).Set(balance)
+	}
+	return new(big.Int)
+}
+
+func (s egyptKingState) GetBlockNumber() uint64 { return s.height }
+
+// runRotatingKingChecks exercises the registration path with Egypt's chain
+// identity. The manager uses block heights only, so this rehearsal is
+// deterministic and does not depend on wall-clock time or a live node.
+func runRotatingKingChecks() (checks []string, registrationHash common.Hash, activationHeight uint64) {
+	mainKing := common.HexToAddress("0x1001")
+	initialKing := common.HexToAddress("0x1002")
+	candidate := common.HexToAddress("0x1003")
+	manager := rotatingking.NewRotatingKingManagerForChain(params.EgyptChainConfig.ChainID, mainKing, []common.Address{initialKing}, 10)
+	if _, err := manager.RegisterKingAt(candidate, 8, new(big.Int).Sub(rotatingking.EligibilityThreshold, big.NewInt(1))); !errors.Is(err, rotatingking.ErrInsufficientStake) {
+		panic(fmt.Errorf("Egypt underfunded rotating-king registration returned %v", err))
+	}
+	registration, err := manager.RegisterKingAt(candidate, 8, rotatingking.EligibilityThreshold)
+	if err != nil {
+		panic(fmt.Errorf("Egypt rotating-king registration: %w", err))
+	}
+	if registration.RegistrationHash == (common.Hash{}) || registration.ActivationHeight != 10 {
+		panic(fmt.Sprintf("Egypt rotating-king registration record = %+v", registration))
+	}
+	if _, err := manager.RegisterKingAt(candidate, 9, rotatingking.EligibilityThreshold); !errors.Is(err, rotatingking.ErrDuplicateRegistration) {
+		panic(fmt.Errorf("Egypt duplicate rotating-king registration returned %v", err))
+	}
+	if got := manager.GetKingAtHeight(9); got != initialKing {
+		panic(fmt.Sprintf("Egypt king before activation = %s, want %s", got.Hex(), initialKing.Hex()))
+	}
+	if got := manager.GetKingAtHeight(10); got != candidate {
+		panic(fmt.Sprintf("Egypt king at activation = %s, want %s", got.Hex(), candidate.Hex()))
+	}
+	state := egyptKingState{height: 10, balances: map[common.Address]*big.Int{
+		initialKing: rotatingking.EligibilityThreshold,
+		candidate:   rotatingking.EligibilityThreshold,
+	}}
+	if err := manager.RotateToNextKing(10, common.HexToHash("0x1004"), state); err != nil {
+		panic(fmt.Errorf("Egypt eligible rotation: %w", err))
+	}
+	if got := manager.GetCurrentKing(); got != candidate {
+		panic(fmt.Sprintf("Egypt current rotating king = %s, want %s", got.Hex(), candidate.Hex()))
+	}
+	return []string{
+		"stake-required-registration",
+		"deterministic-block-activation",
+		"duplicate-registration-rejection",
+		"eligible-rotation-selection",
+	}, registration.RegistrationHash, registration.ActivationHeight
 }
 
 type featureCheck struct {
@@ -688,6 +751,7 @@ func main() {
 		panic(fmt.Sprintf("Egypt TKM profile version is %d, want %d", profileVersion, params.TKMProfileAntarticalVersion))
 	}
 	profile := runProfileChecks(params.EgyptChainConfig.ChainID, assetID, manifestHash, crypto.Keccak256Hash(deployedToken), tokenOwner, profileVersion)
+	rotatingKingChecks, rotatingKingRegistration, rotatingKingActivation := runRotatingKingChecks()
 	amount := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	if _, _, err := runtime.Call(tokenAddress, call("mint(address,uint256)", wordAddress(tokenOwner), wordUint(amount)), cfg); err != nil {
 		panic(fmt.Errorf("mint token: %w", err))
@@ -750,6 +814,7 @@ func main() {
 		CounterAddress: counterAddress.Hex(), CounterRuntimeHash: crypto.Keccak256Hash(deployedCounter).Hex(), CounterValue: new(big.Int).SetBytes(counterValue).String(), TokenDeployGas: tokenGas, CounterDeployGas: counterGas,
 		FeatureChecks: featureChecks, ProtocolChecks: protocolChecks, ProfileChecks: profile.Checks, AssetRegistryRoot: profile.AssetRegistryRoot.Hex(), ShieldedAssetBinding: profile.ShieldedAssetBinding.Hex(), CanonicalWitnessCommitment: profile.CanonicalWitnessCommitment.Hex(), LightClientBlockHash: profile.LightClientBlockHash.Hex(), ConflictTranscript: profile.ConflictTranscript.Hex(), ReceiptTranscript: profile.ReceiptTranscript.Hex(), PrivacyChecks: privacyChecks, Shield3Gas: shield3Gas, Shield4Gas: shield4Gas,
 		ZKEVMClaim: claimCommitment.Hex(), StateWitnessCommit: witnessCommitment.Hex(),
+		RotatingKingChecks: rotatingKingChecks, RotatingKingRegistration: rotatingKingRegistration.Hex(), RotatingKingActivation: rotatingKingActivation,
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

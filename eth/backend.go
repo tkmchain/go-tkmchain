@@ -1298,8 +1298,19 @@ func (s *Ethereum) loadRotatingKingLocks() {
 }
 
 func (s *Ethereum) loadRotatingKingStateLocked() {
-	locks := rawdb.ReadRotatingKingLocks(s.rotatingKingStore())
-	s.kingAddresses = registeredRotatingKingAddresses(rawdb.ReadRotatingKingAddresses(s.rotatingKingStore()), locks)
+	store := s.rotatingKingStore()
+	addresses := rawdb.ReadRotatingKingAddresses(store)
+	locks := rawdb.ReadRotatingKingLocks(store)
+	// Preserve configured or freshly recovered in-memory state until there is
+	// something persisted to replace it. This matters during genesis and for
+	// callers that have assembled the schedule from canonical header metadata.
+	if len(addresses) == 0 && len(locks) == 0 {
+		if s.rkLocks == nil {
+			s.rkLocks = make(map[common.Address]rkLockInfo)
+		}
+		return
+	}
+	s.kingAddresses = registeredRotatingKingAddresses(addresses, locks)
 	s.rkLocks = make(map[common.Address]rkLockInfo)
 	s.loadRotatingKingLocks()
 }
@@ -1431,34 +1442,34 @@ func (s *Ethereum) releaseUnlockedRotatingKingsLocked() bool {
 }
 
 func (s *Ethereum) removeUnderfundedRotatingKingsLocked() bool {
-	/*	if s.blockchain == nil {
-			return false
+	if s.blockchain == nil {
+		return false
+	}
+	head := s.blockchain.CurrentBlock()
+	if head == nil {
+		return false
+	}
+	statedb, err := s.blockchain.StateAt(head)
+	if err != nil {
+		log.Warn("Failed to check rotating king balances", "err", err)
+		return false
+	}
+	changed := false
+	filtered := s.kingAddresses[:0]
+	for _, address := range s.kingAddresses {
+		if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
+			delete(s.rkLocks, address)
+			changed = true
+			log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
+			continue
 		}
-		head := s.blockchain.CurrentBlock()
-		if head == nil {
-			return false
-		}
-		statedb, err := s.blockchain.StateAt(head)
-		if err != nil {
-			log.Warn("Failed to check rotating king balances", "err", err)
-			return false
-		}
-		changed := false
-		filtered := s.kingAddresses[:0]
-		for _, address := range s.kingAddresses {
-			if statedb.GetBalance(address).ToBig().Cmp(rkRequiredStake) < 0 {
-				delete(s.rkLocks, address)
-				changed = true
-				log.Info("Removed underfunded rotating king", "address", address.Hex(), "minimum", rkRequiredStake.String())
-				continue
-			}
-			filtered = append(filtered, address)
-		}
-		if changed {
-			s.kingAddresses = filtered
-			s.persistRotatingKingLocksLocked()
-		}*/
-	return false
+		filtered = append(filtered, address)
+	}
+	if changed {
+		s.kingAddresses = filtered
+		s.persistRotatingKingLocksLocked()
+	}
+	return changed
 }
 
 func (s *Ethereum) persistRotatingKingLocksLocked() {

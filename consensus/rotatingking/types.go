@@ -40,6 +40,7 @@ type MonitoringCategory struct {
 
 // RotatingKingConfig holds configuration for the rotating king system
 type RotatingKingConfig struct {
+	ChainID           *big.Int                  `json:"chainId,omitempty"`
 	RotationInterval  uint64                    `json:"rotationInterval"`
 	RotationOffset    uint64                    `json:"rotationOffset"`
 	KingAddresses     []common.Address          `json:"kingAddresses"`

@@ -34,6 +34,13 @@ type RotatingKingManager struct {
 
 // NewRotatingKingManager creates a new rotating king manager
 func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Address, rotationInterval uint64) *RotatingKingManager {
+	return NewRotatingKingManagerForChain(nil, mainKing, kingAddresses, rotationInterval)
+}
+
+// NewRotatingKingManagerForChain creates a manager whose registration
+// commitments are bound to chainID. This prevents a valid Egypt registration
+// from being replayed on mainnet (or the other way around).
+func NewRotatingKingManagerForChain(chainID *big.Int, mainKing common.Address, kingAddresses []common.Address, rotationInterval uint64) *RotatingKingManager {
 	config := &RotatingKingConfig{
 		RotationInterval:  rotationInterval,
 		RotationOffset:    0,
@@ -41,6 +48,9 @@ func NewRotatingKingManager(mainKing common.Address, kingAddresses []common.Addr
 		ActivationHeights: make(map[common.Address]uint64),
 		ActivationDelay:   2,
 		MinStakeRequired:  new(big.Int).Set(EligibilityThreshold),
+	}
+	if chainID != nil {
+		config.ChainID = new(big.Int).Set(chainID)
 	}
 
 	state := &RotatingKingState{
@@ -176,6 +186,35 @@ func (m *RotatingKingManager) AddKingAddressAt(address common.Address, activatio
 	}
 }
 
+// RegisterKingAt validates and schedules a new rotating king.  Unlike the
+// legacy configuration helper AddKingAddressAt, this method is intended for
+// registrations derived from chain state and therefore enforces the stake and
+// activation-delay rules before mutating the schedule.
+func (m *RotatingKingManager) RegisterKingAt(address common.Address, currentHeight uint64, balance *big.Int) (KingRegistration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := ValidateRegistration(address, balance, currentHeight, m.config.ActivationDelay, m.config.MinStakeRequired); err != nil {
+		return KingRegistration{}, err
+	}
+	for _, existing := range m.config.KingAddresses {
+		if existing == address {
+			return KingRegistration{}, ErrDuplicateRegistration
+		}
+	}
+	activationHeight := currentHeight + m.config.ActivationDelay
+	registration := KingRegistration{
+		Address:          address,
+		Stake:            new(big.Int).Set(balance),
+		AddedHeight:      currentHeight,
+		ActivationHeight: activationHeight,
+		RegistrationHash: RegistrationHashForChain(m.config.ChainID, address, balance, currentHeight, activationHeight),
+	}
+	m.config.KingAddresses = append(m.config.KingAddresses, address)
+	m.config.ActivationHeights[address] = activationHeight
+	return registration, nil
+}
+
 // ShouldRotate checks if rotation should occur at the given block height
 func (m *RotatingKingManager) ShouldRotate(blockHeight uint64) bool {
 	m.mu.RLock()
@@ -203,20 +242,28 @@ func (m *RotatingKingManager) RotateToNextKing(blockHeight uint64, blockHash com
 	newKing := m.config.KingAddresses[newIndex]
 
 	// Check eligibility and find eligible king if needed
+	wasEligible := true
 	if stateProvider != nil {
 		balance := stateProvider.GetBalance(newKing)
-		if balance.Cmp(m.config.MinStakeRequired) < 0 {
+		wasEligible = balance != nil && balance.Cmp(m.config.MinStakeRequired) >= 0
+		if !wasEligible {
+			found := false
 			// Search for eligible king
 			for i := 1; i < len(m.config.KingAddresses); i++ {
 				candidateIndex := (m.state.CurrentKingIndex + i) % len(m.config.KingAddresses)
 				candidate := m.config.KingAddresses[candidateIndex]
 				candidateBalance := stateProvider.GetBalance(candidate)
-				if candidateBalance.Cmp(m.config.MinStakeRequired) >= 0 {
+				if candidateBalance != nil && candidateBalance.Cmp(m.config.MinStakeRequired) >= 0 {
 					newIndex = candidateIndex
 					newKing = candidate
+					wasEligible = true
+					found = true
 					m.logger.Info("Found eligible king", "address", newKing.Hex())
 					break
 				}
+			}
+			if !found {
+				return fmt.Errorf("no eligible rotating king at block %d", blockHeight)
 			}
 		}
 	}
@@ -228,7 +275,7 @@ func (m *RotatingKingManager) RotateToNextKing(blockHeight uint64, blockHash com
 		NewKing:      newKing,
 		Timestamp:    time.Now(),
 		Reward:       big.NewInt(0),
-		WasEligible:  true,
+		WasEligible:  wasEligible,
 	}
 
 	// Update state
