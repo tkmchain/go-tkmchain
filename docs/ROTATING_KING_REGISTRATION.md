@@ -24,6 +24,32 @@ account falls below the active stake, it is removed from the schedule on the
 next state check; this prevents an underfunded address from continuing to
 receive king rewards.
 
+## Interactive wallet
+
+The console wallet provides the same operations without manually constructing
+an RPC request. Start `gtkm` with the intended data directory and then run:
+
+```bash
+./gtkm wallet interactive
+```
+
+Choose **Kings** from the dashboard:
+
+1. Press `r` to register a local account. Select the account, review the
+   active stake requirement and registration fee reserve, then type `REGISTER`.
+2. Press `s` to query one address. Enter either a local account number or a
+   full address to see its registration hash, locked amount, unlock height,
+   added height, and whether it is current or next in the rotation.
+3. The Kings screen automatically lists registrations and recent rotation
+   history below the schedule.
+
+The wallet signs locally through the node's IPC endpoint. It never sends a
+password or private key to `rk_add`. Save the registration hash shown after a
+successful call; it is the chain-bound commitment used to compare the
+registration across nodes. Registration does not create an out-of-band
+balance change: spending the reserved stake makes the account ineligible and
+the consensus manager prunes it on the next state check.
+
 The RPC registration metadata is a reservation and eligibility record. It is
 not an arbitrary balance mutation performed outside a block. A wallet that
 spends the reserved balance therefore becomes ineligible and is pruned, while

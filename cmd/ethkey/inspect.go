@@ -17,13 +17,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
 
@@ -32,6 +36,9 @@ type outputInspect struct {
 	Algorithm  string `json:"algorithm,omitempty"`
 	PublicKey  string
 	PrivateKey string `json:"privateKey,omitempty"`
+	// RecoveryPhrase is populated for PQ keys when --private is explicitly
+	// requested. Raw PQ seeds are never returned by the inspect command.
+	RecoveryPhrase string `json:"recoveryPhrase,omitempty"`
 }
 
 var (
@@ -75,7 +82,10 @@ make sure to use this feature with great caution!`,
 				PublicKey: hex.EncodeToString(pqKey.PublicKey),
 			}
 			if showPrivate {
-				out.PrivateKey = hex.EncodeToString(pqKey.Seed)
+				out.RecoveryPhrase, err = pqSeedRecoveryPhrase(pqKey.Seed)
+				if err != nil {
+					utils.Fatalf("Error encoding PQ recovery phrase: %v", err)
+				}
 			}
 			if ctx.Bool(jsonFlag.Name) {
 				mustPrintJSON(out)
@@ -84,7 +94,7 @@ make sure to use this feature with great caution!`,
 				fmt.Println("Algorithm:     ", out.Algorithm)
 				fmt.Println("Public key:    ", out.PublicKey)
 				if showPrivate {
-					fmt.Println("Private seed:  ", out.PrivateKey)
+					fmt.Println("Recovery phrase:", out.RecoveryPhrase)
 				}
 			}
 			return nil
@@ -117,4 +127,26 @@ make sure to use this feature with great caution!`,
 		}
 		return nil
 	},
+}
+
+func pqSeedRecoveryPhrase(seed []byte) (string, error) {
+	if len(seed) != pqcrypto.MLDSA87SeedSize {
+		return "", fmt.Errorf("invalid ML-DSA-87 seed length %d", len(seed))
+	}
+	phrase, err := bip39.NewMnemonic(seed)
+	if err != nil {
+		return "", err
+	}
+	if len(strings.Fields(phrase)) != 24 {
+		return "", fmt.Errorf("BIP39 returned a recovery phrase that is not 24 words")
+	}
+	recovered, err := bip39.EntropyFromMnemonic(phrase)
+	if err != nil {
+		return "", err
+	}
+	defer clear(recovered)
+	if !bytes.Equal(recovered, seed) {
+		return "", fmt.Errorf("recovery phrase does not reproduce the ML-DSA-87 seed")
+	}
+	return phrase, nil
 }

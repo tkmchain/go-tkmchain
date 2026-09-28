@@ -131,6 +131,15 @@ address: 0x...` and `Shielded payment code: tkmshield2....`. Run `gtkm account
 update 0x...` once to add authenticated shielded metadata to a PQ keyfile made
 by an older release.
 
+When a recovery backup is needed, `ethkey inspect --private` displays a
+standard English BIP39 phrase of 24 words for a PQ keyfile. It deliberately
+does not print the raw hexadecimal seed; the phrase round-trips to the exact
+32-byte ML-DSA-87 seed and must be stored as carefully as the account
+passphrase. The `--private` flag remains an explicit sensitive-data operation.
+To restore a key from that backup, pass the phrase to `ethkey generate
+--pqseed` (or place the phrase in a file); the command accepts both the
+24-word phrase and the legacy 64-character hexadecimal form.
+
 An exchange operator that needs view-only deposit scanning can export the
 matching X25519 key locally without enabling RPC or exposing the ML-DSA seed:
 
@@ -193,10 +202,13 @@ for the new account, review the destination and fee, then type `MIGRATE`.
 The wallet creates an encrypted version 4 ML-DSA-87 keyfile, attaches a
 recipient-bound `TKMPQMIG1` marker, sends the balance less the estimated fee,
 and waits for a successful receipt. Only after canonical confirmation does it
-print the new ML-DSA-87 address and its 32-byte seed in hexadecimal. Save that
-seed and the new account password in separate secure backups. The old ECDSA
-keyfile is never printed, deleted, or overwritten. Cancelling leaves the new
-PQ key encrypted in the keystore but submits no transaction.
+print the new ML-DSA-87 address and a standard English BIP39 recovery phrase of
+24 words. The phrase encodes the exact 32-byte ML-DSA-87 seed and is checked by
+the wallet with a round trip before it is displayed. Save the phrase and the
+new account password in separate secure backups; the raw seed is never logged
+or printed as hexadecimal. The old ECDSA keyfile is never printed, deleted, or
+overwritten. Cancelling leaves the new PQ key encrypted in the keystore but
+submits no transaction.
 
 ## Keystore-Assisted Auto Migration
 

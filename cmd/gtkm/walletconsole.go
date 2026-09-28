@@ -2,9 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	crand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
 
@@ -1120,7 +1121,7 @@ func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keys
 	fmt.Println(walletText("section.migrate", "MIGRATE ECDSA → ML-DSA-87"))
 	fmt.Println("────────────────────────────")
 	fmt.Println("This creates a new ML-DSA-87 account and sends the source balance minus the network fee to it.")
-	fmt.Println("The legacy private key is never printed. The new PQ seed is shown only after the migration transaction is mined successfully.")
+	fmt.Println("The legacy private key is never printed. The new PQ recovery phrase is shown only after the migration transaction is mined successfully.")
 
 	var legacyAccounts []accounts.Account
 	for _, account := range walletAccounts {
@@ -1157,6 +1158,13 @@ func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keys
 	defer clearWalletBytes(migration.PQSeed)
 	if len(migration.PQSeed) != pqcrypto.MLDSA87SeedSize {
 		return errors.New("generated PQ migration seed has an invalid length")
+	}
+	// BIP39 encodes the exact 32-byte ML-DSA seed as a standard 24-word
+	// recovery phrase. Compute it before submission, but do not display it
+	// until the migration receipt is canonical. The raw seed is never logged.
+	pqRecoveryPhrase, err := walletPQSeedMnemonic(migration.PQSeed)
+	if err != nil {
+		return fmt.Errorf("encode generated PQ seed as a recovery phrase: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1227,11 +1235,38 @@ func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keys
 
 	fmt.Println("\n  Migration complete.")
 	fmt.Printf("  New ML-DSA-87 address: %s\n", migration.PQAccount.Address.Hex())
-	fmt.Printf("  New ML-DSA-87 seed (hex, save this securely): %s\n", hex.EncodeToString(migration.PQSeed))
+	fmt.Println("  New ML-DSA-87 recovery phrase (24 words; save exactly):")
+	fmt.Printf("  %s\n", pqRecoveryPhrase)
 	fmt.Printf("  Migration transaction: %s\n", signed.Hash().Hex())
-	fmt.Println("  The seed is displayed once. Keep the new account password and this seed in separate secure backups.")
+	fmt.Println("  The phrase is displayed once. Keep it and the new account password in separate secure backups.")
 	pauseWallet(reader)
 	return nil
+}
+
+// walletPQSeedMnemonic is the user-facing representation of an ML-DSA-87
+// compact seed. ML-DSA-87 seeds are 256 bits, so BIP39 produces exactly 24
+// English words. Check the round trip here to prevent displaying a phrase that
+// does not recover the seed held by the keystore.
+func walletPQSeedMnemonic(seed []byte) (string, error) {
+	if len(seed) != pqcrypto.MLDSA87SeedSize {
+		return "", fmt.Errorf("invalid ML-DSA-87 seed length %d", len(seed))
+	}
+	phrase, err := bip39.NewMnemonic(seed)
+	if err != nil {
+		return "", err
+	}
+	if words := strings.Fields(phrase); len(words) != 24 {
+		return "", fmt.Errorf("BIP39 returned %d words, want 24", len(words))
+	}
+	recovered, err := bip39.EntropyFromMnemonic(phrase)
+	if err != nil {
+		return "", err
+	}
+	if !bytes.Equal(recovered, seed) {
+		return "", errors.New("BIP39 recovery phrase does not reproduce the ML-DSA-87 seed")
+	}
+	clear(recovered)
+	return phrase, nil
 }
 
 func walletMigrationTransaction(chainID *big.Int, nonce uint64, to common.Address, value *big.Int, gas uint64, gasPrice *big.Int, data []byte) *types.Transaction {

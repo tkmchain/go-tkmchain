@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tyler-smith/go-bip39"
 )
 
 const (
@@ -34,4 +36,25 @@ func TestPQGenerateAndInspect(t *testing.T) {
 	inspect.ExpectRegexp(`"algorithm": "ML-DSA-87"`)
 	inspect.ExpectRegexp(`"PublicKey": "[0-9a-f]+"\n}`)
 	inspect.ExpectExit()
+
+	private := runEthkey(t, "inspect", "--passwordfile", passfile, "--private", "--json", keyfile)
+	private.ExpectRegexp(`"recoveryPhrase": "[a-z]+( [a-z]+){23}"`)
+	private.ExpectExit()
+
+	phrase, err := bip39.NewMnemonic(mustDecodeTestPQSeed(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPQSeed(phrase); err != nil {
+		t.Fatalf("loadPQSeed phrase: %v", err)
+	}
+}
+
+func mustDecodeTestPQSeed(t *testing.T) []byte {
+	t.Helper()
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	return seed
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -51,5 +52,22 @@ func TestWalletMigrationTransactionCarriesMarker(t *testing.T) {
 	}
 	if string(tx.Data()) != string(data) {
 		t.Fatalf("migration data = %q, want %q", tx.Data(), data)
+	}
+}
+
+func TestWalletPQSeedMnemonic(t *testing.T) {
+	seed := make([]byte, pqcrypto.MLDSA87SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	phrase, err := walletPQSeedMnemonic(seed)
+	if err != nil {
+		t.Fatalf("walletPQSeedMnemonic: %v", err)
+	}
+	if words := strings.Fields(phrase); len(words) != 24 {
+		t.Fatalf("phrase has %d words, want 24", len(words))
+	}
+	if _, err := walletPQSeedMnemonic(seed[:pqcrypto.MLDSA87SeedSize-1]); err == nil {
+		t.Fatal("expected invalid seed length to be rejected")
 	}
 }

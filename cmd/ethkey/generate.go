@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
+	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
 
@@ -53,7 +54,7 @@ var (
 	}
 	pqSeedFlag = &cli.StringFlag{
 		Name:  "pqseed",
-		Usage: "hex encoded 32-byte ML-DSA-87 seed, or a file containing it",
+		Usage: "32-byte ML-DSA-87 seed as hex, a 24-word BIP39 phrase, or a file containing either",
 	}
 )
 
@@ -192,11 +193,22 @@ If you want to encrypt an existing private key, it can be specified by setting
 }
 
 func loadPQSeed(seedSpec string) ([]byte, error) {
-	seedHex := strings.TrimSpace(seedSpec)
+	seedText := strings.TrimSpace(seedSpec)
 	if content, err := os.ReadFile(seedSpec); err == nil {
-		seedHex = strings.TrimSpace(string(content))
+		seedText = strings.TrimSpace(string(content))
 	}
-	seedHex = strings.TrimPrefix(seedHex, "0x")
+	if len(strings.Fields(seedText)) == 24 {
+		seed, err := bip39.EntropyFromMnemonic(strings.Join(strings.Fields(seedText), " "))
+		if err != nil {
+			return nil, fmt.Errorf("invalid BIP39 recovery phrase: %w", err)
+		}
+		if len(seed) != 32 {
+			clear(seed)
+			return nil, fmt.Errorf("invalid ML-DSA-87 seed length %d, want 32", len(seed))
+		}
+		return seed, nil
+	}
+	seedHex := strings.TrimPrefix(seedText, "0x")
 	seed, err := hex.DecodeString(seedHex)
 	if err != nil {
 		return nil, err
