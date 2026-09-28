@@ -28,6 +28,12 @@ func TestTypedTransactionDomainBindsChainAndContract(t *testing.T) {
 	if err := tx.Verify(); err != nil {
 		t.Fatalf("secp typed transaction rejected: %v", err)
 	}
+	if err := tx.VerifyAtVersion(LegacyProfileVersion); err != ErrProfileInactive {
+		t.Fatalf("pre-fork typed transaction error = %v", err)
+	}
+	if err := tx.VerifyAtVersion(AntarticalProfileVersion); err != nil {
+		t.Fatalf("active typed transaction rejected: %v", err)
+	}
 	tx.Domain.Contract = common.HexToAddress("0x101")
 	if err := tx.Verify(); err == nil {
 		t.Fatal("contract-bound signature accepted for a different contract")
@@ -85,6 +91,9 @@ func TestTokenPolicyEnforcesCapabilitiesAndRoyalty(t *testing.T) {
 	}
 	manifest.Flags = policy.Flags
 	state := TokenState{}
+	if err := state.ApplyAtVersion(policy, TokenOperation{Kind: TokenMint, Actor: admin, To: issuer, Amount: big.NewInt(1)}, LegacyProfileVersion); err != ErrProfileInactive {
+		t.Fatalf("pre-fork token policy error = %v", err)
+	}
 	if err := state.Apply(policy, TokenOperation{Kind: TokenMint, Actor: admin, To: issuer, Amount: big.NewInt(1000)}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +141,14 @@ func TestAssetRegistryAndHeaderCommitment(t *testing.T) {
 	extra[len(extra)-1] ^= 1
 	if got, _, _ := AssetRegistryCommitmentFromHeaderExtra(extra); got == first {
 		t.Fatal("tampered registry root was accepted")
+	}
+	legacyExtra, err := AttachAssetRegistryCommitmentAtVersion([]byte("header-extra"), first, LegacyProfileVersion)
+	if err != nil || string(legacyExtra) != "header-extra" {
+		t.Fatalf("legacy header metadata changed: %v", err)
+	}
+	activeExtra, err := AttachAssetRegistryCommitmentAtVersion([]byte("header-extra"), first, AntarticalProfileVersion)
+	if err != nil || len(activeExtra) <= len(legacyExtra) {
+		t.Fatalf("active header metadata was not appended: %v", err)
 	}
 }
 
@@ -184,6 +201,12 @@ func TestReceiptTranscriptBindsReceiptIndex(t *testing.T) {
 	if metadata.Verify(transcript, 5) {
 		t.Fatal("receipt transcript accepted for a different receipt index")
 	}
+	if _, err := transcript.ReceiptMetadataAtVersion(4, LegacyProfileVersion); err != ErrProfileInactive {
+		t.Fatalf("pre-fork receipt metadata error = %v", err)
+	}
+	if _, err := transcript.ReceiptMetadataAtVersion(4, AntarticalProfileVersion); err != nil {
+		t.Fatal(err)
+	}
 	transcript.Waves[0][0] = 2
 	if _, err := transcript.Commitment(); err == nil {
 		t.Fatal("non-canonical conflict wave was committed")
@@ -200,6 +223,14 @@ func TestCanonicalStateWitnessCommitmentIsOrderIndependent(t *testing.T) {
 	second, err := b.CanonicalCommitment()
 	if err != nil || first != second || !a.VerifyCanonical(first) {
 		t.Fatalf("canonical witness mismatch: %s %s %v", first, second, err)
+	}
+	legacy, err := a.CommitmentAtVersion(LegacyProfileVersion)
+	if err != nil || legacy == first {
+		t.Fatal("legacy witness did not retain its historical encoding")
+	}
+	active, err := a.CommitmentAtVersion(AntarticalProfileVersion)
+	if err != nil || active != first {
+		t.Fatal("active witness did not select canonical encoding")
 	}
 }
 
@@ -228,6 +259,12 @@ func TestStatelessLightClientProof(t *testing.T) {
 		Certificate: FinalityCertificate{Slot: 42, BlockHash: finalityDigest, CommitteeSize: 1, Signers: []common.Address{crypto.PubkeyToAddress(key.PublicKey)}, PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{signature}},
 	}
 	if err := proof.Verify(1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := proof.VerifyAtVersion(LegacyProfileVersion, 1, 1); err != ErrProfileInactive {
+		t.Fatalf("pre-fork light-client error = %v", err)
+	}
+	if err := proof.VerifyAtVersion(AntarticalProfileVersion, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	proof.Witness.Nodes[0][0] = 4

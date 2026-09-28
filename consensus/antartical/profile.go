@@ -27,7 +27,19 @@ var (
 	ErrInvalidShieldedAssetBind  = errors.New("invalid shielded asset binding")
 	ErrInvalidConflictTranscript = errors.New("invalid execution conflict transcript")
 	ErrInvalidLightClientProof   = errors.New("invalid TKM stateless light-client proof")
+	ErrProfileInactive           = errors.New("Antartical TKM profile is not active")
 )
+
+const (
+	// LegacyProfileVersion preserves pre-Antartical metadata encodings.
+	LegacyProfileVersion uint8 = 0
+	// AntarticalProfileVersion selects the versioned registry, transcript, and
+	// stateless witness metadata. params.Rules.TKMProfileVersion uses the same
+	// values and activates version one at the Antartical timestamp.
+	AntarticalProfileVersion uint8 = 1
+)
+
+func VersionedMetadataActive(version uint8) bool { return version >= AntarticalProfileVersion }
 
 // ReceiptTranscript is fork-integration metadata for an optimistic execution
 // receipt. It is kept outside legacy receipt RLP until a network-wide receipt
@@ -43,6 +55,13 @@ func (t ConflictTranscript) ReceiptMetadata(receiptIndex uint32) (ReceiptTranscr
 		return ReceiptTranscript{}, err
 	}
 	return ReceiptTranscript{ReceiptIndex: receiptIndex, Commitment: commitment}, nil
+}
+
+func (t ConflictTranscript) ReceiptMetadataAtVersion(receiptIndex uint32, version uint8) (ReceiptTranscript, error) {
+	if !VersionedMetadataActive(version) {
+		return ReceiptTranscript{}, ErrProfileInactive
+	}
+	return t.ReceiptMetadata(receiptIndex)
 }
 
 func (m ReceiptTranscript) Verify(t ConflictTranscript, receiptIndex uint32) bool {
@@ -120,6 +139,13 @@ func (tx TypedTransaction) Verify() error {
 		return ErrInvalidTypedDomain
 	}
 	return nil
+}
+
+func (tx TypedTransaction) VerifyAtVersion(version uint8) error {
+	if !VersionedMetadataActive(version) {
+		return ErrProfileInactive
+	}
+	return tx.Verify()
 }
 
 // TokenOperationKind is enforced against a manifest's capability flags.
@@ -279,6 +305,13 @@ func (s *TokenState) Apply(policy TokenPolicy, op TokenOperation) error {
 	return nil
 }
 
+func (s *TokenState) ApplyAtVersion(policy TokenPolicy, op TokenOperation, version uint8) error {
+	if !VersionedMetadataActive(version) {
+		return ErrProfileInactive
+	}
+	return s.Apply(policy, op)
+}
+
 // AssetRegistryEntry is the canonical state-independent registry record.
 type AssetRegistryEntry struct {
 	AssetID         common.Hash
@@ -323,6 +356,16 @@ func AttachAssetRegistryCommitment(extra []byte, root common.Hash) []byte {
 	result := append([]byte(nil), extra...)
 	result = append(result, []byte(assetRegistryExtraMagic)...)
 	return append(result, root[:]...)
+}
+
+// AttachAssetRegistryCommitmentAtVersion leaves historical header metadata
+// untouched before Antartical and appends the versioned registry suffix after
+// activation.
+func AttachAssetRegistryCommitmentAtVersion(extra []byte, root common.Hash, version uint8) ([]byte, error) {
+	if !VersionedMetadataActive(version) {
+		return append([]byte(nil), extra...), nil
+	}
+	return AttachAssetRegistryCommitment(extra, root), nil
 }
 
 func AssetRegistryCommitmentFromHeaderExtra(extra []byte) (common.Hash, bool, error) {

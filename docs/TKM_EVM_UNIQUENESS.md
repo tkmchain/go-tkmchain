@@ -245,6 +245,9 @@ The requested TKM-specific execution profile is implemented in
 `consensus/antartical/profile.go` and is exercised by the Egypt rehearsal. It
 is activated by the existing Antartical feature gate; Egypt activates that
 gate at genesis, while mainnet uses the configured Antartical timestamp.
+`params.Rules.TKMProfileVersion` is `0` before that gate and `1` at or after
+it. The `AtVersion` helpers reject profile operations while version `0` is
+active, so nodes cannot accidentally emit the new metadata early.
 
 ### Typed transactions and account abstraction
 
@@ -272,7 +275,9 @@ manifest capability set.
 records and builds a domain-separated Merkle commitment. The current safe
 integration stores the versioned commitment as a suffix in `Header.Extra`,
 which preserves legacy header RLP decoding while allowing stateless clients to
-extract and verify the root. `ShieldedAssetNullifierBinding` includes chain,
+extract and verify the root. `AttachAssetRegistryCommitmentAtVersion` leaves
+the old header metadata unchanged at profile version `0` and appends the
+versioned suffix at version `1`. `ShieldedAssetNullifierBinding` includes chain,
 asset ID, token ID, and nullifier in one domain-separated digest, so a valid
 Shield3/Shield4 proof cannot be retargeted to another token.
 
@@ -284,15 +289,18 @@ canonical optimistic execution waves and access sets. Its
 `ReceiptTranscript` binds that commitment to a receipt index without changing
 the legacy receipt RLP or receipt root before the network-wide receipt-format
 upgrade. The metadata is therefore safe to carry in the fork-specific receipt
-sidecar while old blocks remain replayable.
+sidecar while old blocks remain replayable. `ReceiptMetadataAtVersion` rejects
+version `0` and emits the sidecar metadata only at version `1`.
 
 ### Stateless clients and alternate EVMs
 
 `StateWitness.CanonicalCommitment` is the versioned, order-independent witness
 format for the Verkle/stateless path. `StatelessLightClientProof` verifies the
 witness root and commitment together with a quorum finality certificate,
-without opening the full state database. The old witness commitment remains
-available for historical blocks. `EngineRegistry.RegisterConformant` admits an
+without opening the full state database. `CommitmentAtVersion` selects the old
+encoding at version `0` and the canonical encoding at version `1`. The old
+witness commitment remains available for historical blocks.
+`EngineRegistry.RegisterConformant` admits an
 alternate EVM implementation only after it matches the canonical interpreter
 on every supplied execution vector; a backend cannot be selected by name alone.
 

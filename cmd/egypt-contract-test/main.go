@@ -306,7 +306,7 @@ type profileOutput struct {
 	ReceiptTranscript          common.Hash
 }
 
-func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash common.Hash, tokenOwner common.Address) profileOutput {
+func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash common.Hash, tokenOwner common.Address, profileVersion uint8) profileOutput {
 	result := profileOutput{}
 	key, err := crypto.GenerateKey()
 	if err != nil {
@@ -322,7 +322,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 		panic(fmt.Errorf("typed transaction signature: %w", err))
 	}
 	typed := antartical.TypedTransaction{Sender: crypto.PubkeyToAddress(key.PublicKey), Domain: domain, Payload: []byte("EUSD transfer"), Signature: signature}
-	if err := typed.Verify(); err != nil {
+	if err := typed.VerifyAtVersion(profileVersion); err != nil {
 		panic(fmt.Errorf("typed transaction verification: %w", err))
 	}
 	result.TypedDomainDigest = digest
@@ -345,7 +345,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 		panic(fmt.Errorf("PQ typed transaction domain: %w", err))
 	}
 	pqSignature, err := pqcrypto.SignMLDSA87(pqKey, pqDigest[:])
-	if err != nil || (antartical.TypedTransaction{Sender: pqSender, Domain: pqDomain, Payload: []byte("EUSD shield"), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqPublic, Signature: pqSignature}).Verify() != nil {
+	if err != nil || (antartical.TypedTransaction{Sender: pqSender, Domain: pqDomain, Payload: []byte("EUSD shield"), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqPublic, Signature: pqSignature}).VerifyAtVersion(profileVersion) != nil {
 		panic(fmt.Errorf("PQ typed transaction verification: %w", err))
 	}
 	result.Checks = append(result.Checks, "post-quantum-sender-policy")
@@ -361,22 +361,22 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 	}
 	result.Checks = append(result.Checks, "token-policy-manifest-binding")
 	state := antartical.TokenState{}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenMint, Actor: tokenOwner, To: tokenOwner, Amount: big.NewInt(1000)}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenMint, Actor: tokenOwner, To: tokenOwner, Amount: big.NewInt(1000)}, profileVersion); err != nil {
 		panic(fmt.Errorf("token mint policy: %w", err))
 	}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenTransfer, Actor: tokenOwner, From: tokenOwner, To: common.HexToAddress("0x3"), Amount: big.NewInt(100)}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenTransfer, Actor: tokenOwner, From: tokenOwner, To: common.HexToAddress("0x3"), Amount: big.NewInt(100)}, profileVersion); err != nil {
 		panic(fmt.Errorf("token royalty policy: %w", err))
 	}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenPause, Actor: tokenOwner}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenPause, Actor: tokenOwner}, profileVersion); err != nil {
 		panic(fmt.Errorf("token pause policy: %w", err))
 	}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenUnpause, Actor: tokenOwner}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenUnpause, Actor: tokenOwner}, profileVersion); err != nil {
 		panic(fmt.Errorf("token unpause policy: %w", err))
 	}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenBurn, Actor: tokenOwner, From: tokenOwner, Amount: big.NewInt(10)}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenBurn, Actor: tokenOwner, From: tokenOwner, Amount: big.NewInt(10)}, profileVersion); err != nil {
 		panic(fmt.Errorf("token burn policy: %w", err))
 	}
-	if err := state.Apply(policy, antartical.TokenOperation{Kind: antartical.TokenShield, Actor: tokenOwner, Amount: big.NewInt(1)}); err != nil {
+	if err := state.ApplyAtVersion(policy, antartical.TokenOperation{Kind: antartical.TokenShield, Actor: tokenOwner, Amount: big.NewInt(1)}, profileVersion); err != nil {
 		panic(fmt.Errorf("token shield policy: %w", err))
 	}
 	result.Checks = append(result.Checks, "mint-burn-pause-royalty-shield-policy")
@@ -385,7 +385,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 	if err != nil {
 		panic(fmt.Errorf("asset registry commitment: %w", err))
 	}
-	extra := antartical.AttachAssetRegistryCommitment([]byte("egypt-header"), registryRoot)
+	extra, err := antartical.AttachAssetRegistryCommitmentAtVersion([]byte("egypt-header"), registryRoot, profileVersion)
 	if got, found, err := antartical.AssetRegistryCommitmentFromHeaderExtra(extra); err != nil || !found || got != registryRoot {
 		panic(fmt.Errorf("asset registry header commitment: found=%t got=%s want=%s err=%v", found, got, registryRoot, err))
 	}
@@ -414,7 +414,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 	if err != nil {
 		panic(fmt.Errorf("conflict transcript: %w", err))
 	}
-	receiptMetadata, err := transcript.ReceiptMetadata(0)
+	receiptMetadata, err := transcript.ReceiptMetadataAtVersion(0, profileVersion)
 	if err != nil || !receiptMetadata.Verify(transcript, 0) {
 		panic(fmt.Errorf("receipt transcript: %w", err))
 	}
@@ -422,7 +422,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 	result.Checks = append(result.Checks, "deterministic-parallel-conflict-transcript")
 
 	witness := antartical.StateWitness{Root: common.HexToHash("0x1"), Nodes: [][]byte{{3}, {1}, {2}}}
-	result.CanonicalWitnessCommitment, err = witness.CanonicalCommitment()
+	result.CanonicalWitnessCommitment, err = witness.CommitmentAtVersion(profileVersion)
 	if err != nil || !witness.VerifyCanonical(result.CanonicalWitnessCommitment) {
 		panic(fmt.Errorf("canonical stateless witness: %w", err))
 	}
@@ -441,7 +441,7 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 		WitnessCommitment: result.CanonicalWitnessCommitment, Witness: witness,
 		Certificate: antartical.FinalityCertificate{Slot: 1, BlockHash: finalityDigest, CommitteeSize: 1, Signers: []common.Address{crypto.PubkeyToAddress(key.PublicKey)}, PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{lightClientSignature}},
 	}
-	if err := proof.Verify(1, 1); err != nil {
+	if err := proof.VerifyAtVersion(profileVersion, 1, 1); err != nil {
 		panic(fmt.Errorf("stateless light-client proof: %w", err))
 	}
 	result.LightClientBlockHash = blockHash
@@ -683,7 +683,11 @@ func main() {
 	if err != nil || common.BytesToHash(precompileAssetID) != assetID {
 		panic(fmt.Errorf("EUSD precompile identity mismatch: got=%s want=%s err=%v", common.BytesToHash(precompileAssetID), assetID, err))
 	}
-	profile := runProfileChecks(params.EgyptChainConfig.ChainID, assetID, manifestHash, crypto.Keccak256Hash(deployedToken), tokenOwner)
+	profileVersion := params.EgyptChainConfig.Rules(big.NewInt(1), false, 1).TKMProfileVersion
+	if profileVersion != params.TKMProfileAntarticalVersion {
+		panic(fmt.Sprintf("Egypt TKM profile version is %d, want %d", profileVersion, params.TKMProfileAntarticalVersion))
+	}
+	profile := runProfileChecks(params.EgyptChainConfig.ChainID, assetID, manifestHash, crypto.Keccak256Hash(deployedToken), tokenOwner, profileVersion)
 	amount := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(eusdManifest.Decimals)), nil))
 	if _, _, err := runtime.Call(tokenAddress, call("mint(address,uint256)", wordAddress(tokenOwner), wordUint(amount)), cfg); err != nil {
 		panic(fmt.Errorf("mint token: %w", err))

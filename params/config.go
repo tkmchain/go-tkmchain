@@ -54,6 +54,12 @@ const (
 	MainnetAntarticalTime uint64 = 1790812800
 	// MainnetRandomXMoneroBlock activates canonical RandomX proof validation.
 	MainnetRandomXMoneroBlock uint64 = 20374
+
+	// TKMProfileLegacyVersion preserves pre-Antartical wire commitments.
+	TKMProfileLegacyVersion uint8 = 0
+	// TKMProfileAntarticalVersion activates the versioned registry, conflict
+	// transcript, and stateless witness metadata at the Antartical gate.
+	TKMProfileAntarticalVersion uint8 = 1
 )
 
 // RandomXConfig is the consensus engine configs for RandomX proof-of-work based sealing.
@@ -699,7 +705,10 @@ type Rules struct {
 	IsCrossChainStandards, IsEOF, IsModularPrecompiles                      bool
 	IsDeterministicGas, IsSingleSlotFinality                                bool
 	IsEIP2929, IsEIP4762                                                    bool
-	IsMerge                                                                 bool // Always false for RandomX
+	// TKMProfileVersion selects the consensus metadata profile. Version zero
+	// is the historical encoding; version one is active exactly at Antartical.
+	TKMProfileVersion uint8
+	IsMerge           bool // Always false for RandomX
 }
 
 // Rules returns the rules for the given block number and timestamp.
@@ -708,6 +717,10 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 	isEIP2929 := c.IsBerlin(num) && !c.IsUBT(num, timestamp)
 	isEIP4762 := c.IsUBT(num, timestamp)
 
+	profileVersion := TKMProfileLegacyVersion
+	if c.IsAntartical(num, timestamp) {
+		profileVersion = TKMProfileAntarticalVersion
+	}
 	return Rules{
 		IsHomestead:           c.IsHomestead(num),
 		IsEIP150:              c.IsEIP150(num),
@@ -757,6 +770,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsSingleSlotFinality:  c.IsAntarticalFeatureActive(FeatureSingleSlotFinality, num, timestamp),
 		IsEIP2929:             isEIP2929,
 		IsEIP4762:             isEIP4762,
+		TKMProfileVersion:     profileVersion,
 		IsMerge:               false, // RandomX chains always use proof-of-work consensus.
 	}
 }

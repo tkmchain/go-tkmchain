@@ -52,6 +52,13 @@ func (p StatelessLightClientProof) Verify(quorumNumerator, quorumDenominator uin
 	return nil
 }
 
+func (p StatelessLightClientProof) VerifyAtVersion(version uint8, quorumNumerator, quorumDenominator uint64) error {
+	if !VersionedMetadataActive(version) {
+		return ErrProfileInactive
+	}
+	return p.Verify(quorumNumerator, quorumDenominator)
+}
+
 // StateWitness is the transport-independent witness used by stateless
 // execution. CanonicalCommitment sorts nodes so peers produce the same root
 // regardless of receive order; Commitment preserves the historical encoding.
@@ -71,6 +78,15 @@ func (w StateWitness) Commitment() (common.Hash, error) {
 func (w StateWitness) Verify(expected common.Hash) bool {
 	commitment, err := w.Commitment()
 	return err == nil && commitment == expected
+}
+
+// CommitmentAtVersion selects the historical witness encoding before
+// Antartical and the canonical sorted encoding after activation.
+func (w StateWitness) CommitmentAtVersion(version uint8) (common.Hash, error) {
+	if VersionedMetadataActive(version) {
+		return w.CanonicalCommitment()
+	}
+	return w.Commitment()
 }
 
 // CanonicalCommitment is the versioned witness format for the new

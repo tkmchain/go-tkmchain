@@ -67,3 +67,18 @@ func TestMainnetBlobGasSharesAntarticalActivation(t *testing.T) {
 		t.Fatal("EIP-4844 blob rules inactive at Antartical")
 	}
 }
+
+func TestTKMProfileVersionSharesAntarticalActivation(t *testing.T) {
+	legacy := RandomXChainConfig.Rules(big.NewInt(0), false, MainnetAntarticalTime-1)
+	if legacy.TKMProfileVersion != TKMProfileLegacyVersion {
+		t.Fatalf("pre-fork TKM profile version = %d, want %d", legacy.TKMProfileVersion, TKMProfileLegacyVersion)
+	}
+	active := RandomXChainConfig.Rules(big.NewInt(0), false, MainnetAntarticalTime)
+	if active.TKMProfileVersion != TKMProfileAntarticalVersion {
+		t.Fatalf("Antartical TKM profile version = %d, want %d", active.TKMProfileVersion, TKMProfileAntarticalVersion)
+	}
+	egypt := EgyptChainConfig.Rules(big.NewInt(0), false, 0)
+	if egypt.TKMProfileVersion != TKMProfileAntarticalVersion {
+		t.Fatalf("Egypt TKM profile version = %d, want %d", egypt.TKMProfileVersion, TKMProfileAntarticalVersion)
+	}
+}

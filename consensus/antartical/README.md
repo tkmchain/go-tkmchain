@@ -39,6 +39,13 @@ primitives in `profile.go`:
 - `EngineRegistry.RegisterConformant` requires every alternate EVM backend to
   match the canonical interpreter on supplied vectors before registration.
 
+`params.Rules.TKMProfileVersion` is the activation selector shared by node
+code: version `0` keeps historical metadata encodings, and version `1` is
+selected at Antartical (genesis on Egypt, the configured timestamp on
+mainnet). The `AtVersion` helpers reject typed transactions, policy updates,
+registry suffixes, receipt transcript sidecars, and canonical witness output
+before version `1`.
+
 All hashes include a protocol domain tag and chain identifiers where applicable.
 The host EVM, zkEVM guest, and private transaction envelopes use these same
 commitments when the Antartical rules are active.
