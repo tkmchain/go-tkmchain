@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm tkm-email shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
+.PHONY: gtkm tkm-email tkm-email-gui shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
         test lint fmt clean devtools help \
         randomx randomx-clean randomx-install randomx-check \
         randomx-windows randomx-darwin randomx-linux randomx-all \
@@ -145,6 +145,14 @@ tkm-email:
 	@mkdir -p $(GOBIN)
 	go build $(LDFLAGS) -o $(GOBIN)/tkm-email ./cmd/tkm-email
 	@echo "✅ Built: $(GOBIN)/tkm-email"
+
+#? tkm-email-gui: Build the standalone EmailVM launcher with a native WebView window.
+#? Requires the webview_go platform dependencies; the browser launcher remains the
+#? portable default for servers and minimal desktop installations.
+tkm-email-gui:
+	@mkdir -p $(GOBIN)
+	go build $(LDFLAGS) -tags emailgui -o $(GOBIN)/tkm-email-gui ./cmd/tkm-email
+	@echo "✅ Built: $(GOBIN)/tkm-email-gui"
 
 #? gtkm-gui: Build gtkm with the native desktop GUI (requires libgtk-3-dev + libwebkit2gtk-4.1-dev).
 gtkm-gui: $(RANDOMX_LIB_HOST) shield3-host

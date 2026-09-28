@@ -6,11 +6,18 @@ Email is distributed as a separate client from TKM Wallet:
 
 - Desktop: `make tkm-email` builds `build/bin/tkm-email`. Running it opens the
   standalone EmailVM client; use `--url` to select a self-hosted or onion
-  endpoint and `--no-open` to print the URL without launching a browser.
+  endpoint and `--no-open` to print the URL without launching a browser. The
+  launcher requires a local Tor SOCKS5 proxy (`--tor-socks5`, default
+  `socks5://127.0.0.1:9050`) and refuses to connect directly. For a native
+  WebView window use `make tkm-email-gui`; the default target opens the same
+  Tor-only loopback bridge in the system browser.
 - Android: `TKM_ANDROID_BUILD_VARIANT=debug ./android/build.sh` also produces
   `android/email/build/outputs/apk/debug/email-debug.apk`. The application ID
   is `com.tkmchain.email` and it contains no `gtkm` executable, node service,
-  wallet keystore, or recovery phrase storage.
+  wallet keystore, or recovery phrase storage. Android starts Orbot, waits for
+  the remote client to answer through SOCKS5, and then serves the WebView from
+  a localhost-only bridge. Cleartext is disabled for external hosts; the only
+  cleartext URL is the loopback bridge.
 
 The email app handles the EmailVM client and local message encryption. Wallet
 operations that spend TKM still require the wallet’s local signer and prover;
@@ -25,6 +32,22 @@ namespaces and the `domain` and `emailvm` objects in `gtkm attach`.
 Private keys, PQ seeds, passphrases, shielded notes, witnesses, and proofs stay
 in the client. The daemon returns action plans; the wallet constructs the
 shielded proof, signs locally, and broadcasts the raw transaction.
+
+## Wallet handoff
+
+An EmailVM client can offer a prepared action to the wallet with:
+
+```text
+tkmwallet://emailvm?payload=<urlencoded-json-plan>
+```
+
+The Android Email app accepts this URI only after validating its size and sends
+it explicitly to `com.tkmchain.node`. The wallet displays a review notice and
+never signs or submits the plan automatically. Payloads must contain only the
+public action plan (recipient, amount, fee, and application data); never place
+seeds, private keys, passwords, note openings, or plaintext messages in the
+URI. Desktop clients can use the same URI when an operating-system wallet
+handler is installed, or copy the plan into the wallet’s Mail screen.
 
 ## Economics
 

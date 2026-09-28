@@ -92,6 +92,7 @@ public class MainActivity extends Activity {
 
         getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE);
         buildUi();
+        handleMailIntent(getIntent());
         if (prepareAssets()) startNode();
     }
 
@@ -744,6 +745,37 @@ public class MainActivity extends Activity {
         setStatusDot(Color.GREEN);
         web.loadUrl(GUI_URL);
     };
+
+    /**
+     * EmailVM can request a wallet review with tkmwallet://emailvm links. The
+     * handoff is deliberately review-only: receiving a plan never signs or
+     * submits a transaction.
+     */
+    private void handleMailIntent(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        android.net.Uri uri = intent.getData();
+        if (!"tkmwallet".equalsIgnoreCase(uri.getScheme())
+                || !"emailvm".equalsIgnoreCase(uri.getHost())) return;
+        String payload = uri.getQueryParameter("payload");
+        if (payload == null || payload.length() == 0 || payload.length() > 64 * 1024) {
+            setStatus("EmailVM handoff rejected: invalid request");
+            return;
+        }
+        appendLog("[wallet] EmailVM action received; review required before signing\n");
+        setStatus("EmailVM action received — review it before signing");
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("EmailVM action received")
+                .setMessage("A mail client prepared a wallet action. Review the recipient, amount, and fees in the wallet before approving it. Nothing has been signed or sent.")
+                .setPositiveButton("Review in wallet", null)
+                .show();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleMailIntent(intent);
+    }
 
     @Override
     public void onBackPressed() {

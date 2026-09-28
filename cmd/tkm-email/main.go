@@ -6,55 +6,47 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"flag"
 	"fmt"
-	"os/exec"
-	"runtime"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 var Version = "dev"
 
-func openURL(url string) error {
-	var command string
-	var args []string
-	switch runtime.GOOS {
-	case "darwin":
-		command, args = "open", []string{url}
-	case "windows":
-		command, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
-	default:
-		command, args = "xdg-open", []string{url}
-	}
-	if _, err := exec.LookPath(command); err != nil {
-		return fmt.Errorf("cannot open a browser (%s is not installed): %w", command, err)
-	}
-	return exec.Command(command, args...).Start()
-}
-
 func main() {
-	url := flag.String("url", "https://mail.tkmchain.site/", "standalone TKM Email URL")
-	noOpen := flag.Bool("no-open", false, "print the URL without opening a browser")
+	remoteURL := flag.String("url", "https://mail.tkmchain.site/", "EmailVM client URL (all traffic is routed through Tor)")
+	socks5 := flag.String("tor-socks5", "socks5://127.0.0.1:9050", "mandatory Tor SOCKS5 proxy")
+	noOpen := flag.Bool("no-open", false, "serve the Tor-only client and print its local URL without opening a window")
 	showVersion := flag.Bool("version", false, "print the launcher version")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(Version)
 		return
 	}
-	if *url == "" {
-		fmt.Println("tkm-email: --url cannot be empty")
-		return
+	proxy, err := newEmailProxy(*remoteURL, *socks5)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tkm-email:", err)
+		os.Exit(2)
 	}
-	fmt.Printf("TKM Email: %s\n", *url)
-	if *noOpen {
-		return
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := proxy.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "tkm-email:", err)
+		os.Exit(1)
 	}
-	if err := openURL(*url); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			fmt.Println("Open this URL in a browser:", *url)
-			return
+	defer proxy.Close()
+
+	localURL := proxy.URL()
+	fmt.Printf("TKM Email (Tor-only): %s\n", localURL)
+	fmt.Printf("Remote EmailVM endpoint: %s\n", *remoteURL)
+	if !*noOpen {
+		if err := runWindow(localURL); err != nil {
+			fmt.Fprintln(os.Stderr, "tkm-email:", err)
+			fmt.Println("Open this local URL manually:", localURL)
 		}
-		fmt.Println("Unable to open the browser:", err)
-		fmt.Println("Open this URL manually:", *url)
 	}
+	<-ctx.Done()
 }
