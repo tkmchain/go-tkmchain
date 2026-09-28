@@ -115,7 +115,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		case "5":
 			showWalletEmail(reader, rpcClient)
 		case "6":
-			showWalletKings(reader, rpcClient)
+			showWalletKings(reader, rpcClient, accounts)
 		case "7":
 			continue
 		case "8":
@@ -161,13 +161,17 @@ type walletEmailStatusView struct {
 }
 
 type walletKingStatusView struct {
-	Address       common.Address `json:"address"`
-	Registered    bool           `json:"registered"`
-	Current       bool           `json:"current"`
-	Next          bool           `json:"next"`
-	LockedAmount  *hexutil.Big   `json:"lockedAmount"`
-	UnlockHeight  uint64         `json:"unlockHeight,omitempty"`
-	TotalReceived *hexutil.Big   `json:"totalReceived"`
+	Address         common.Address `json:"address"`
+	Hash            common.Hash    `json:"hash"`
+	Registered      bool           `json:"registered"`
+	Current         bool           `json:"current"`
+	Next            bool           `json:"next"`
+	LockedAmount    *hexutil.Big   `json:"lockedAmount"`
+	RegistrationFee *hexutil.Big   `json:"registrationFee"`
+	UnlockTime      *time.Time     `json:"unlockTime,omitempty"`
+	UnlockHeight    uint64         `json:"unlockHeight,omitempty"`
+	AddedHeight     uint64         `json:"addedHeight,omitempty"`
+	TotalReceived   *hexutil.Big   `json:"totalReceived"`
 }
 
 type walletKingStatsView struct {
@@ -811,52 +815,164 @@ func showWalletEmail(reader *bufio.Reader, client *rpc.Client) {
 	pauseWallet(reader)
 }
 
-func showWalletKings(reader *bufio.Reader, client *rpc.Client) {
+func showWalletKings(reader *bufio.Reader, client *rpc.Client, walletAccounts []accounts.Account) {
+	for {
+		clearWalletScreen()
+		fmt.Println(walletText("section.kings", "ROTATING KINGS"))
+		fmt.Println("──────────────")
+		ctx, cancel := walletRPCContext()
+		var stats walletKingStatsView
+		statsErr := client.CallContext(ctx, &stats, "rk_getKingStats", nil)
+		cancel()
+		if statsErr != nil {
+			fmt.Printf("  Rotating-king service unavailable: %v\n", statsErr)
+			pauseWallet(reader)
+			return
+		}
+		fmt.Printf("  Current king:       %s\n", stats.CurrentKing.Hex())
+		fmt.Printf("  Next king:          %s\n", stats.NextKing.Hex())
+		fmt.Printf("  Rotation interval:  %d blocks\n", stats.RotationInterval)
+		fmt.Printf("  Current block:      #%d\n", stats.CurrentBlock)
+		fmt.Printf("  Next rotation:      #%d (%d blocks)\n", stats.NextRotationHeight, stats.BlocksUntilRotation)
+		fmt.Printf("  Registered kings:   %d/%d\n", stats.RegisteredKings, stats.TotalKings)
+
+		ctx, cancel = walletRPCContext()
+		var kings []walletKingStatusView
+		listErr := client.CallContext(ctx, &kings, "rk_list")
+		cancel()
+		if listErr == nil && len(kings) > 0 {
+			fmt.Println("\n  Registered schedule:")
+			for _, king := range kings {
+				printWalletKingStatus(king, "    ")
+			}
+		}
+
+		ctx, cancel = walletRPCContext()
+		var history []walletRotationHistoryView
+		if err := client.CallContext(ctx, &history, "rotatingking_getRotationHistory", hexutil.Uint64(5)); err == nil && len(history) > 0 {
+			fmt.Println("\n  Recent rotations:")
+			for _, entry := range history {
+				fmt.Printf("    #%d  %s → %s\n", entry.BlockHeight, entry.PreviousKing.Hex(), entry.NewKing.Hex())
+			}
+		}
+		cancel()
+
+		fmt.Println("\n  r) Register a local account as rotating king")
+		fmt.Println("  s) Query rk_status for an address")
+		fmt.Println("  Enter) Back")
+		action, err := readWalletLine(reader, "Action")
+		if err != nil {
+			return
+		}
+		switch strings.ToLower(strings.TrimSpace(action)) {
+		case "r", "register":
+			if err := registerWalletKing(reader, client, walletAccounts); err != nil {
+				showWalletError(reader, err)
+			}
+		case "s", "status":
+			if err := queryWalletKingStatus(reader, client, walletAccounts); err != nil {
+				showWalletError(reader, err)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func printWalletKingStatus(king walletKingStatusView, indent string) {
+	slot := "standby"
+	if king.Current {
+		slot = "current"
+	} else if king.Next {
+		slot = "next"
+	}
+	line := fmt.Sprintf("%s%-8s %s", indent, slot, king.Address.Hex())
+	if king.LockedAmount != nil {
+		line += "  stake " + formatTKM((*big.Int)(king.LockedAmount))
+	}
+	if king.UnlockHeight != 0 {
+		line += fmt.Sprintf("  unlock #%d", king.UnlockHeight)
+	}
+	fmt.Println(line)
+}
+
+func registerWalletKing(reader *bufio.Reader, client *rpc.Client, walletAccounts []accounts.Account) error {
+	if len(walletAccounts) == 0 {
+		return errors.New("no local accounts available")
+	}
 	clearWalletScreen()
 	fmt.Println(walletText("section.kings", "ROTATING KINGS"))
-	fmt.Println("──────────────")
+	fmt.Println("\n  Registration checks the active stake requirement and fee reserve.")
+	fmt.Println("  The address must remain funded or it will be removed from the schedule.")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n  Register: %s\n", account.Address.Hex())
+	confirm, err := readWalletLine(reader, "Type REGISTER to confirm")
+	if err != nil {
+		return err
+	}
+	if strings.ToUpper(confirm) != "REGISTER" {
+		fmt.Println("  Cancelled. No registration was submitted.")
+		pauseWallet(reader)
+		return nil
+	}
 	ctx, cancel := walletRPCContext()
 	defer cancel()
-
-	var stats walletKingStatsView
-	if err := client.CallContext(ctx, &stats, "rk_getKingStats", nil); err != nil {
-		fmt.Printf("  Rotating-king service unavailable: %v\n", err)
-		pauseWallet(reader)
-		return
+	var status walletKingStatusView
+	if err := client.CallContext(ctx, &status, "rk_add", account.Address); err != nil {
+		return fmt.Errorf("rk_add: %w", err)
 	}
-	fmt.Printf("  Current king:       %s\n", stats.CurrentKing.Hex())
-	fmt.Printf("  Next king:          %s\n", stats.NextKing.Hex())
-	fmt.Printf("  Rotation interval:  %d blocks\n", stats.RotationInterval)
-	fmt.Printf("  Current block:      #%d\n", stats.CurrentBlock)
-	fmt.Printf("  Next rotation:      #%d (%d blocks)\n", stats.NextRotationHeight, stats.BlocksUntilRotation)
-	fmt.Printf("  Registered kings:   %d/%d\n", stats.RegisteredKings, stats.TotalKings)
-
-	var kings []walletKingStatusView
-	if err := client.CallContext(ctx, &kings, "rk_list"); err == nil && len(kings) > 0 {
-		fmt.Println("\n  Registered schedule:")
-		for _, king := range kings {
-			slot := "standby"
-			if king.Current {
-				slot = "current"
-			} else if king.Next {
-				slot = "next"
-			}
-			line := fmt.Sprintf("    %-8s %s", slot, king.Address.Hex())
-			if king.LockedAmount != nil {
-				line += "  stake " + formatTKM((*big.Int)(king.LockedAmount))
-			}
-			fmt.Println(line)
-		}
-	}
-
-	var history []walletRotationHistoryView
-	if err := client.CallContext(ctx, &history, "rotatingking_getRotationHistory", hexutil.Uint64(5)); err == nil && len(history) > 0 {
-		fmt.Println("\n  Recent rotations:")
-		for _, entry := range history {
-			fmt.Printf("    #%d  %s → %s\n", entry.BlockHeight, entry.PreviousKing.Hex(), entry.NewKing.Hex())
-		}
+	fmt.Println("\n  Rotating-king registration accepted.")
+	printWalletKingStatus(status, "  ")
+	if status.Hash != (common.Hash{}) {
+		fmt.Printf("  Registration hash: %s\n", status.Hash.Hex())
 	}
 	pauseWallet(reader)
+	return nil
+}
+
+func queryWalletKingStatus(reader *bufio.Reader, client *rpc.Client, walletAccounts []accounts.Account) error {
+	clearWalletScreen()
+	fmt.Println(walletText("section.kings", "ROTATING KINGS"))
+	fmt.Println("\n  Local accounts:")
+	for i, account := range walletAccounts {
+		fmt.Printf("    %d) %s\n", i+1, account.Address.Hex())
+	}
+	value, err := readWalletLine(reader, "Address or local account number")
+	if err != nil {
+		return err
+	}
+	var address common.Address
+	var index int
+	if _, scanErr := fmt.Sscanf(value, "%d", &index); scanErr == nil && index >= 1 && index <= len(walletAccounts) {
+		address = walletAccounts[index-1].Address
+	} else if common.IsHexAddress(value) {
+		address = common.HexToAddress(value)
+	} else {
+		return errors.New("enter a local account number or hexadecimal address")
+	}
+	ctx, cancel := walletRPCContext()
+	defer cancel()
+	var status walletKingStatusView
+	if err := client.CallContext(ctx, &status, "rk_status", address); err != nil {
+		return fmt.Errorf("rk_status: %w", err)
+	}
+	fmt.Printf("\n  rk_status %s\n", address.Hex())
+	printWalletKingStatus(status, "  ")
+	fmt.Printf("  Registered: %t    Current: %t    Next: %t\n", status.Registered, status.Current, status.Next)
+	if status.RegistrationFee != nil {
+		fmt.Printf("  Fee reserve: %s\n", formatTKM((*big.Int)(status.RegistrationFee)))
+	}
+	if status.AddedHeight != 0 {
+		fmt.Printf("  Added at block: #%d\n", status.AddedHeight)
+	}
+	if status.Hash != (common.Hash{}) {
+		fmt.Printf("  Registration hash: %s\n", status.Hash.Hex())
+	}
+	pauseWallet(reader)
+	return nil
 }
 
 func printWalletHeader(chainID *big.Int, endpoint string) {
