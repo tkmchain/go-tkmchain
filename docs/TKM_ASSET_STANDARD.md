@@ -71,3 +71,6 @@ identity and policy layer. ERC-165-style interface detection can still be used
 inside contracts; the manifest is the chain-level distinction used by wallets
 and explorers.
 
+For the complete profile, deployment checklist, RPC examples, security
+invariants, and future TKM-specific execution proposals, see
+[TKM_EVM_UNIQUENESS.md](TKM_EVM_UNIQUENESS.md).

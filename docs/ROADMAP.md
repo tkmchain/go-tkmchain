@@ -13,7 +13,7 @@ The roadmap is organized around six workstreams:
 1. Consensus and mining: harden RandomX sealing, seed handling, work submission, difficulty adjustment, and block reward finalization.
 2. Governance and rewards: turn Rotating Kings into a reliable operational governance system with clear eligibility, reward accounting, checkpointing, and monitoring duties.
 3. Phone infrastructure: build daemon-owned number issuance, bucket approvals, SIM/device keys, encrypted messaging, WebRTC call signaling, marketplace automation, and explorer visibility.
-4. Developer platform: preserve EVM compatibility while adding TVM deployment helpers, precompile execution, and deterministic native-contract templates.
+4. Developer platform: preserve EVM compatibility while adding the TKM-native asset identity manifest and classifier, TVM deployment helpers, precompile execution, and deterministic native-contract templates.
 5. Node operations: improve builds, releases, observability, external mining, configuration, documentation, and safe RPC defaults.
 6. Security and decentralization: expand tests, audits, generated-code checks, bad-dependency checks, fuzzing, economic simulations, and launch procedures.
 
@@ -198,4 +198,3 @@ The next development cycle should focus on the smallest set of work that turns t
 4. Add chain dashboards and structured metrics for RandomX, rewards, rotations, phone buckets, pending approvals, and RPC health.
 5. Harden TKM Phone wallet automation, explorer views, SIM import/export, encrypted messaging, and call signaling tests.
 6. Run a public testnet with documented incidents, fixes, and measurable stability targets.
-
