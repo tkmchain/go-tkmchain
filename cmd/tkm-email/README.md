@@ -9,6 +9,10 @@ make tkm-email
 ./build/bin/tkm-email
 ```
 
+`make production` builds this launcher alongside `gtkm` and the managed
+shielded prover, so a production build always contains the node and the
+standalone email app together.
+
 The launcher always serves the client through a loopback reverse proxy whose
 upstream dialer is Tor SOCKS5. If Tor is not listening, requests fail with
 `502`; there is no direct-network fallback. Change the SOCKS endpoint only

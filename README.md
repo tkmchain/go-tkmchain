@@ -749,11 +749,15 @@ newDiff = currentDiff * ratio / 100
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://gtkm.tkmchain.site/docs/getting-started/installing-gtkm).
 
-Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. RandomX is compiled with a portable instruction baseline by default; use `RANDOMX_ARCH=native` only for a binary that will run on the same CPU family. You can install them using your favourite package manager. For a validator or wallet RPC server, build only the two runtime programs with stripped debug data and memory-safe compiler parallelism:
+Building `gtkm` requires both a Go (version 1.23 or later) and a C compiler. RandomX is compiled with a portable instruction baseline by default; use `RANDOMX_ARCH=native` only for a binary that will run on the same CPU family. You can install them using your favourite package manager. For a validator or wallet RPC server, build the node, managed prover, and standalone Tor-only EmailVM app with stripped debug data and memory-safe compiler parallelism:
 
 ```shell
 make production
 ```
+
+The resulting files are `build/bin/gtkm`, `build/bin/shielded-payout-prover`,
+and `build/bin/tkm-email`. To build only the email launcher, use `make email`;
+`make all` also includes it.
 
 This reuses an existing RandomX library and Go's build cache. Override
 `GO_BUILD_P=4` only on a machine with more memory. To build the full developer
@@ -1029,8 +1033,9 @@ The go-tkmchain binaries (i.e. all code inside of the `cmd` directory) are licen
 
 ```shell
 # Build
-make production              # Fast server build: gtkm + managed prover
+make production              # gtkm + managed prover + standalone EmailVM app
 make gtkm                    # Build only gtkm
+make email                   # Build only the standalone EmailVM app
 make all                     # Build all tools
 make cross-windows           # Build Windows 64-bit
 make cross-linux             # Build Linux

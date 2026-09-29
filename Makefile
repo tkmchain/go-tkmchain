@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: gtkm tkm-email tkm-email-gui shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
+.PHONY: gtkm tkm-email tkm-email-gui email shielded-payout-prover production production-gtkm production-prover clef devp2p abigen bootnode evm rlpdump all \
         test lint fmt clean devtools help \
         randomx randomx-clean randomx-install randomx-check \
         randomx-windows randomx-darwin randomx-linux randomx-all \
@@ -109,10 +109,10 @@ all: $(CMDS)
 	@echo "�� Output directory: $(GOBIN)"
 	@ls -la $(GOBIN)/* 2>/dev/null || echo "No binaries found."
 
-#? production: Build only the node and its managed shielded prover.
-production: production-gtkm production-prover
-	@echo "✅ Production runtime built successfully!"
-	@ls -lh $(GOBIN)/gtkm $(GOBIN)/shielded-payout-prover
+#? production: Build the node, managed prover, and standalone EmailVM app.
+production: production-gtkm production-prover tkm-email
+	@echo "✅ Production runtime and EmailVM app built successfully!"
+	@ls -lh $(GOBIN)/gtkm $(GOBIN)/shielded-payout-prover $(GOBIN)/tkm-email
 
 production-gtkm: $(RANDOMX_LIB_HOST) shield3-host
 	@echo "Building stripped production gtkm (parallelism $(GO_BUILD_P))..."
@@ -145,6 +145,9 @@ tkm-email:
 	@mkdir -p $(GOBIN)
 	go build $(LDFLAGS) -o $(GOBIN)/tkm-email ./cmd/tkm-email
 	@echo "✅ Built: $(GOBIN)/tkm-email"
+
+#? email: Build only the standalone EmailVM app.
+email: tkm-email
 
 #? tkm-email-gui: Build the standalone EmailVM launcher with a native WebView window.
 #? Requires the webview_go platform dependencies; the browser launcher remains the
