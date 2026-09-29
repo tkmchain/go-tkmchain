@@ -129,9 +129,6 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "debug",
 			Service:   NewDebugAPI(apiBackend),
-		}, {
-			Namespace: "eth",
-			Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
 		},
 	}
 }

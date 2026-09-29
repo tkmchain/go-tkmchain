@@ -454,32 +454,24 @@ func (p *Prover) corsHandler(next http.Handler) http.Handler {
 
 func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
 	noteStatus := p.noteInventoryStatus()
+	ready := p.ready()
+	withdrawalReady := ready && p.pkV2 != nil && p.r1csV2 != nil
 	status := map[string]any{
-		"ok":                     p.ready(),
-		"buildReady":             p.ready(),
-		"withdrawalBuildReady":   p.ready() && p.pkV2 != nil && p.r1csV2 != nil,
-		"payoutReady":            p.ready() && noteStatus.HasSpendableNotes,
-		"listen":                 p.cfg.Listen,
-		"nodeRPC":                p.cfg.NodeRPC,
-		"signMode":               p.cfg.SignMode,
-		"signerAddress":          p.cfg.SignerAddress,
-		"provingKeyPath":         p.cfg.ProvingKeyPath,
-		"provingKeyV2Path":       p.cfg.ProvingKeyV2Path,
-		"notesPath":              p.cfg.NotesPath,
-		"requestsPath":           p.cfg.RequestsPath,
-		"hasProvingKey":          p.pk != nil,
-		"hasProvingKeyV2":        p.pkV2 != nil,
-		"hasRPC":                 p.client != nil,
-		"hasKeystore":            p.ks != nil,
-		"hasSpendableNotes":      noteStatus.HasSpendableNotes,
-		"noteCount":              noteStatus.NoteCount,
-		"availableNoteCount":     noteStatus.AvailableNoteCount,
-		"availableNoteTotalWei":  noteStatus.AvailableNoteTotalWei,
-		"availableNoteMaxWei":    noteStatus.AvailableNoteMaxWei,
-		"availableNoteTotalAntd": noteStatus.AvailableNoteTotalAntd,
-		"availableNoteMaxAntd":   noteStatus.AvailableNoteMaxAntd,
-		"noteInventoryError":     noteStatus.Error,
-		"startupError":           p.startupErr,
+		"ok":                   ready,
+		"buildReady":           ready,
+		"withdrawalBuildReady": withdrawalReady,
+		"payoutReady":          ready && noteStatus.HasSpendableNotes,
+		"hasProvingKey":        p.pk != nil,
+		"hasProvingKeyV2":      p.pkV2 != nil,
+		"hasRPC":               p.client != nil,
+		"hasKeystore":          p.ks != nil,
+		"hasSpendableNotes":    noteStatus.HasSpendableNotes,
+	}
+	// Do not expose filesystem paths, node endpoints, signer addresses, note
+	// inventory, or raw initialization errors through a public health endpoint.
+	// Clients only need a stable readiness message; operators can inspect logs.
+	if !ready {
+		status["startupError"] = "proof builder is not ready"
 	}
 	w.Header().Set("content-type", "application/json")
 	_ = json.NewEncoder(w).Encode(status)

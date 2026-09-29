@@ -329,7 +329,10 @@ type web3API struct {
 
 // ClientVersion returns the node name
 func (s *web3API) ClientVersion() string {
-	return s.stack.Server().Name
+	// Keep the public web3 fingerprint stable and free of build/runtime details.
+	// Detailed node identity remains available through authenticated/admin
+	// interfaces and the local `gtkm version` command.
+	return "TKMChain"
 }
 
 // Sha3 applies the ethereum sha3 implementation on the input.
