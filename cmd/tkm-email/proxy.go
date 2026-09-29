@@ -107,12 +107,11 @@ func (p *emailProxy) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request body is too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	remote := *p.remote
-	basePath := strings.TrimRight(remote.Path, "/")
-	requestPath := "/" + strings.TrimLeft(r.URL.Path, "/")
-	remote.Path = basePath + requestPath
-	remote.RawQuery = r.URL.RawQuery
-	remote.Fragment = ""
+	remote, err := p.upstreamRequest(r.URL.RequestURI())
+	if err != nil {
+		http.Error(w, "invalid upstream request", http.StatusBadRequest)
+		return
+	}
 
 	var body io.Reader
 	if r.Body != nil {
@@ -184,6 +183,30 @@ func (p *emailProxy) localizeLocation(raw string) string {
 		query = "?" + location.RawQuery
 	}
 	return p.origin + "/" + strings.TrimLeft(location.Path, "/") + query
+}
+
+func (p *emailProxy) upstreamRequest(target string) (*url.URL, error) {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return nil, err
+	}
+	path := parsed.Path
+	if path == "" {
+		path = "/"
+	}
+	base := *p.remote
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	if parsed.RawQuery != "" {
+		base.RawQuery = parsed.RawQuery
+	} else if path == "/" {
+		// Keep an app selector on the initial document request. Do not copy it
+		// to assets or RPC calls loaded after the document.
+		base.RawQuery = p.remote.RawQuery
+	} else {
+		base.RawQuery = ""
+	}
+	base.Fragment = ""
+	return &base, nil
 }
 
 func replaceBytes(input, old, replacement []byte) []byte {

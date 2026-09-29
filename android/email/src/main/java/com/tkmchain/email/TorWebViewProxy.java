@@ -189,7 +189,19 @@ final class TorWebViewProxy implements AutoCloseable {
         URL base = new URL(remoteBase);
         String basePath = base.getPath();
         if (!basePath.endsWith("/")) basePath += "/";
-        String path = basePath + target.substring(1);
+        String targetPath = target;
+        String query = null;
+        int queryStart = target.indexOf('?');
+        if (queryStart >= 0) {
+            targetPath = target.substring(0, queryStart);
+            query = target.substring(queryStart + 1);
+        } else if ("/".equals(targetPath)) {
+            // The launcher URL selects the wallet's email tab. Preserve that
+            // query only for the initial document, not for assets or RPC.
+            query = base.getQuery();
+        }
+        String path = basePath + targetPath.substring(1);
+        if (query != null && !query.isEmpty()) path += "?" + query;
         return new URL(base.getProtocol(), base.getHost(), base.getPort(), path);
     }
 

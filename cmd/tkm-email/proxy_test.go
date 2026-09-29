@@ -61,3 +61,31 @@ func TestEmailProxyBindsLoopback(t *testing.T) {
 		t.Fatalf("proxy URL is not loopback-only: %s", proxy.URL())
 	}
 }
+
+func TestEmailProxyPreservesWalletEmailRoute(t *testing.T) {
+	proxy, err := newEmailProxy("https://wallet.tkmchain.site/?app=email", "socks5://127.0.0.1:9050")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := proxy.upstreamRequest("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.RawQuery != "app=email" {
+		t.Fatalf("initial query = %q, want app=email", initial.RawQuery)
+	}
+	asset, err := proxy.upstreamRequest("/assets/index.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asset.RawQuery != "" {
+		t.Fatalf("asset query = %q, want empty", asset.RawQuery)
+	}
+	custom, err := proxy.upstreamRequest("/?cache=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.RawQuery != "cache=1" {
+		t.Fatalf("custom query = %q, want cache=1", custom.RawQuery)
+	}
+}

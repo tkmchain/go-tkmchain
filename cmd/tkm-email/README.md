@@ -13,7 +13,9 @@ make tkm-email
 shielded prover, so a production build always contains the node and the
 standalone email app together.
 
-The launcher always serves the client through a loopback reverse proxy whose
+The default URL is the wallet's email view (`?app=email`), so desktop and
+Android use the same interface and local PQ keyfile login. The launcher always
+serves the client through a loopback reverse proxy whose
 upstream dialer is Tor SOCKS5. If Tor is not listening, requests fail with
 `502`; there is no direct-network fallback. Change the SOCKS endpoint only
 when using a controlled Tor installation:

@@ -27,7 +27,7 @@ import java.net.URL;
 
 /** Standalone EmailVM client. It has no wallet, node, or keystore access. */
 public final class MainActivity extends Activity {
-    private static final String DEFAULT_URL = "https://mail.tkmchain.site/";
+    private static final String DEFAULT_URL = "https://wallet.tkmchain.site/?app=email";
     private static final String ORBOT_PACKAGE = "org.torproject.android";
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
     private static final int[] TOR_SOCKS_PORTS = {9050, 9150};
@@ -132,6 +132,10 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams heroParams = new LinearLayout.LayoutParams(-1, -2);
         heroParams.setMargins(0, 0, 0, dp(10));
         root.addView(hero, heroParams);
+        // The hosted wallet owns the email interface. Keep only the compact
+        // Tor connection chrome above the WebView so Android and desktop show
+        // the same wallet email screen.
+        hero.setVisibility(android.view.View.GONE);
 
         LinearLayout statusPanel = new LinearLayout(this);
         statusPanel.setGravity(Gravity.CENTER_VERTICAL);
