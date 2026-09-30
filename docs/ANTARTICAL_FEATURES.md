@@ -96,3 +96,23 @@ it does not by itself authorize an execution engine, oracle signer, bridge, or
 finality committee. Those components must provide a valid commitment and a
 consensus state transition before their catalog row can be marked
 `ConsensusReady`.
+
+## Antartical block rewards
+
+The Antartical schedule preserves a 200 TKM initial block reward while adding
+the validator share:
+
+| Recipient | Initial share |
+| --- | ---: |
+| Miner | 90 TKM |
+| Selected validator | 70 TKM |
+| Rotating King | 35 TKM |
+| Main King | 5 TKM |
+
+Exactly one selected validator receives the 70 TKM share at each height. Every
+share is halved independently at the existing RandomX halving interval, so the
+total remains 100 TKM after the first halving, 50 TKM after the second, and so
+on. Historical pre-Antartical reward transactions retain their existing
+200-TKM percentage schedule. The selected validator address must come from the
+consensus validator registration set before this schedule can be enforced by
+block validation.
