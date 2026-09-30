@@ -17,7 +17,6 @@
 package state
 
 import (
-	"bytes"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -228,6 +227,7 @@ func (r *ReaderWithBlockLevelAccessList) Account(addr common.Address) (*types.St
 	if err != nil {
 		return nil, err
 	}
+	missing := account == nil
 	if account == nil {
 		account = types.NewEmptyStateAccount()
 	} else {
@@ -235,22 +235,27 @@ func (r *ReaderWithBlockLevelAccessList) Account(addr common.Address) (*types.St
 	}
 	access := r.accountAccess(addr)
 	if access == nil {
-		if account.Nonce == 0 && account.Balance.IsZero() && bytes.Equal(account.CodeHash, types.EmptyCodeHash[:]) && account.Root == types.EmptyRootHash {
+		if missing {
 			// Preserve the underlying reader's non-existent-account result.
-			if original, originalErr := r.Reader.Account(addr); originalErr == nil && original == nil {
-				return nil, nil
-			}
+			return nil, nil
 		}
 		return account, nil
 	}
+	changed := false
 	if balance, ok := latestBalance(access.BalanceChanges, r.TxIndex); ok {
 		account.Balance = balance
+		changed = true
 	}
 	if nonce, ok := latestNonce(access.NonceChanges, r.TxIndex); ok {
 		account.Nonce = nonce
+		changed = true
 	}
 	if code, ok := latestCode(access.CodeChange, r.TxIndex); ok {
 		account.CodeHash = crypto.Keccak256(code)
+		changed = true
+	}
+	if missing && !changed {
+		return nil, nil
 	}
 	return account, nil
 }
