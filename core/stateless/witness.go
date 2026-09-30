@@ -41,6 +41,7 @@ type Witness struct {
 	Headers []*types.Header     // Past headers in reverse order (0=parent, 1=parent's-parent, etc). First *must* be set.
 	Codes   map[string]struct{} // Set of bytecodes ran or accessed
 	State   map[string]struct{} // Set of MPT state trie nodes (account and storage together)
+	Keys    map[string]struct{} // Set of witness key preimages required by the execution
 
 	chain HeaderReader  // Chain reader to convert block hash ops to header proofs
 	stats *WitnessStats // Optional statistics collector
@@ -65,6 +66,7 @@ func NewWitness(context *types.Header, chain HeaderReader, enableStats bool) (*W
 		Headers: headers,
 		Codes:   make(map[string]struct{}),
 		State:   make(map[string]struct{}),
+		Keys:    make(map[string]struct{}),
 		chain:   chain,
 	}
 	if enableStats {
@@ -119,8 +121,25 @@ func (w *Witness) ReportMetrics(blockNumber uint64) {
 	w.stats.ReportMetrics(blockNumber)
 }
 
-func (w *Witness) AddKey() {
-	panic("not yet implemented")
+// AddKey records one or more raw key preimages used while executing the
+// witness. Keys are carried alongside trie nodes because a stateless verifier
+// may need the preimage to reconstruct an account or storage path. The
+// variadic form keeps older callers source-compatible while allowing new
+// callers to add the actual key bytes.
+func (w *Witness) AddKey(keys ...[]byte) {
+	if w == nil || len(keys) == 0 {
+		return
+	}
+	w.lock.Lock()
+	defer w.lock.Unlock()
+	if w.Keys == nil {
+		w.Keys = make(map[string]struct{})
+	}
+	for _, key := range keys {
+		if len(key) != 0 {
+			w.Keys[string(key)] = struct{}{}
+		}
+	}
 }
 
 // Copy deep-copies the witness object.  Witness.Block isn't deep-copied as it
@@ -130,6 +149,7 @@ func (w *Witness) Copy() *Witness {
 		Headers: slices.Clone(w.Headers),
 		Codes:   maps.Clone(w.Codes),
 		State:   maps.Clone(w.State),
+		Keys:    maps.Clone(w.Keys),
 		chain:   w.chain,
 	}
 	if w.stats != nil {
