@@ -16,6 +16,8 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -32,6 +34,7 @@ public final class MainActivity extends Activity {
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
     private static final int[] TOR_SOCKS_PORTS = {9050, 9150};
     private static final long TOR_TIMEOUT_MS = 3 * 60 * 1000L;
+    private static final int KEYFILE_REQUEST = 4101;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private TextView status;
@@ -39,6 +42,7 @@ public final class MainActivity extends Activity {
     private TorWebViewProxy torProxy;
     private Thread torThread;
     private volatile boolean shuttingDown;
+    private ValueCallback<Uri[]> pendingFileCallback;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -162,8 +166,42 @@ public final class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setBuiltInZoomControls(false);
         settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
+        // SAF returns a content:// URI for the user-selected encrypted
+        // keyfile. WebView must be allowed to read that selected document;
+        // navigation to arbitrary content:// URLs is still blocked below.
+        settings.setAllowContentAccess(true);
         web.setBackgroundColor(Color.rgb(11, 15, 23));
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                              FileChooserParams chooserParams) {
+                if (pendingFileCallback != null) {
+                    pendingFileCallback.onReceiveValue(null);
+                }
+                pendingFileCallback = callback;
+                Intent picker;
+                try {
+                    picker = chooserParams.createIntent();
+                } catch (RuntimeException error) {
+                    pendingFileCallback = null;
+                    callback.onReceiveValue(null);
+                    setStatus("Unable to open the keyfile picker.");
+                    return true;
+                }
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                if (picker.getType() == null || picker.getType().isEmpty()) {
+                    picker.setType("*/*");
+                }
+                try {
+                    startActivityForResult(picker, KEYFILE_REQUEST);
+                } catch (RuntimeException error) {
+                    pendingFileCallback = null;
+                    callback.onReceiveValue(null);
+                    setStatus("No document picker is available on this device.");
+                }
+                return true;
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -301,6 +339,31 @@ public final class MainActivity extends Activity {
         return true;
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != KEYFILE_REQUEST) return;
+        ValueCallback<Uri[]> callback = pendingFileCallback;
+        pendingFileCallback = null;
+        if (callback == null) return;
+        Uri[] result = resultCode == RESULT_OK && data != null
+                ? WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+                : null;
+        if (result != null) {
+            for (Uri uri : result) {
+                try {
+                    int flags = data.getFlags() &
+                            (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    if (flags != 0) getContentResolver().takePersistableUriPermission(uri, flags);
+                } catch (SecurityException ignored) {
+                    // Some providers grant a one-shot URI only; WebView can
+                    // still read it for the active chooser request.
+                }
+            }
+        }
+        callback.onReceiveValue(result);
+    }
+
     private void stopTorClient() {
         if (torThread != null) torThread.interrupt();
         torThread = null;
@@ -315,6 +378,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         shuttingDown = true;
+        if (pendingFileCallback != null) {
+            pendingFileCallback.onReceiveValue(null);
+            pendingFileCallback = null;
+        }
         stopTorClient();
         super.onDestroy();
     }

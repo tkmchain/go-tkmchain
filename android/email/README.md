@@ -27,3 +27,11 @@ transfers. The hosted client performs local message encryption and requires the 
 TKM/Tor network path. The URL is a build-time constant in `MainActivity.java`
 so production builds can point to a different authenticated EmailVM endpoint
 without sharing wallet credentials.
+
+## Encrypted keyfile login
+
+Tap **Choose encrypted keyfile** in the hosted login screen. The Android app
+opens the system document picker and passes the selected `content://` document
+to the WebView through the standard file-input callback. A canceled selection
+clears the pending callback, and no direct filesystem path or recovery phrase
+is stored by the app.
