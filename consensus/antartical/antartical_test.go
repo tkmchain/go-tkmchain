@@ -33,6 +33,14 @@ func TestUserOperationSignature(t *testing.T) {
 	if err := op.VerifySignature(big.NewInt(8979), common.HexToAddress("0x100")); err != nil {
 		t.Fatal(err)
 	}
+	encoded, err := op.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeUserOperation(encoded)
+	if err != nil || decoded.Sender != op.Sender || decoded.Nonce.Cmp(op.Nonce) != 0 {
+		t.Fatalf("user operation envelope round trip failed: %v", err)
+	}
 }
 
 func TestBuildExecutionWaves(t *testing.T) {

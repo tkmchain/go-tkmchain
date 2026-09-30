@@ -32,3 +32,27 @@ func (m CrossChainMessage) Hash() (common.Hash, error) {
 }
 
 func (m CrossChainMessage) ReplayKey() (common.Hash, error) { return m.Hash() }
+
+// SignedCrossChainMessage is the consensus envelope used by a bridge or
+// light-client relay. The unsigned message remains useful for deriving the
+// replay key, while this wrapper binds authorization to both chain IDs.
+type SignedCrossChainMessage struct {
+	Message   CrossChainMessage
+	Signer    common.Address
+	Signature []byte
+}
+
+func (m SignedCrossChainMessage) Verify() error {
+	if m.Signer == (common.Address{}) || len(m.Signature) != crypto.SignatureLength {
+		return ErrInvalidCrossChainMessage
+	}
+	digest, err := m.Message.Hash()
+	if err != nil {
+		return err
+	}
+	pub, err := crypto.SigToPub(digest.Bytes(), m.Signature)
+	if err != nil || crypto.PubkeyToAddress(*pub) != m.Signer {
+		return ErrInvalidCrossChainMessage
+	}
+	return nil
+}

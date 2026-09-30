@@ -1,9 +1,13 @@
 package antartical
 
 import (
+	"bytes"
 	"errors"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var ErrExecutionEngineMismatch = errors.New("Antartical execution engines produced different results")
@@ -85,6 +89,52 @@ func (r *EngineRegistry) Get(name string) (ExecutionEngine, bool) {
 	}
 	engine, ok := r.engines[name]
 	return engine, ok
+}
+
+func (r *EngineRegistry) Canonical() (ExecutionEngine, bool) {
+	if r == nil {
+		return nil, false
+	}
+	return r.Get(r.canonical)
+}
+
+// Commitment records the set of admitted execution engines. Alternate
+// implementations are descriptive only until RegisterConformant has compared
+// them against the canonical engine; callers should commit this value in the
+// Antartical metadata rather than selecting an engine by local preference.
+func (r *EngineRegistry) Commitment() (common.Hash, error) {
+	if r == nil || r.canonical == "" {
+		return common.Hash{}, ErrExecutionEngineMismatch
+	}
+	names := make([]string, 0, len(r.engines))
+	for name := range r.engines {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([][]byte, 0, len(names))
+	for _, name := range names {
+		if _, ok := r.engines[name]; !ok {
+			return common.Hash{}, ErrExecutionEngineMismatch
+		}
+		entries = append(entries, []byte(name))
+	}
+	blob, err := rlp.EncodeToBytes([]interface{}{[]byte("TKM_EXECUTION_ENGINES_V1"), r.canonical, entries})
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return crypto.Keccak256Hash(blob), nil
+}
+
+func (r *EngineRegistry) ConformantNames() []string {
+	if r == nil {
+		return nil
+	}
+	names := make([]string, 0, len(r.engines))
+	for name := range r.engines {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool { return bytes.Compare([]byte(names[i]), []byte(names[j])) < 0 })
+	return names
 }
 
 // CompareEngines runs two implementations against the same input and checks

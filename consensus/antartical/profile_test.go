@@ -191,6 +191,53 @@ func TestConflictTranscriptIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestHeaderMetadataRoundTripAndCommitment(t *testing.T) {
+	metadata := NewHeaderMetadata(ProtocolGasVector{EVM: 1_000_000, TVM: 500_000, Proof: 250_000, Blob: 131_072})
+	metadata.AssetRegistry = common.HexToHash("0x01")
+	encoded, err := metadata.Encode()
+	if err != nil {
+		t.Fatalf("encode metadata: %v", err)
+	}
+	decoded, err := DecodeHeaderMetadata(encoded)
+	if err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	a, err := metadata.Commitment()
+	if err != nil {
+		t.Fatalf("commit metadata: %v", err)
+	}
+	b, err := decoded.Commitment()
+	if err != nil || a != b {
+		t.Fatalf("metadata commitment changed across round trip: %x %x (%v)", a, b, err)
+	}
+	extra, err := AttachHeaderMetadata([]byte("legacy"), metadata)
+	if err != nil {
+		t.Fatalf("attach metadata: %v", err)
+	}
+	got, found, err := HeaderMetadataFromExtra(extra)
+	if err != nil || !found {
+		t.Fatalf("extract metadata: found=%v err=%v", found, err)
+	}
+	if got.GasLimits != metadata.GasLimits {
+		t.Fatalf("gas limits changed: %#v %#v", got.GasLimits, metadata.GasLimits)
+	}
+	anchor := BlockHashAnchor{Height: 1, Hash: common.HexToHash("0x22"), Rolling: common.HexToHash("0x33")}
+	anchored, err := AttachBlockHashAnchor([]byte("legacy"), anchor)
+	if err != nil {
+		t.Fatalf("attach anchor: %v", err)
+	}
+	anchored, err = AttachHeaderMetadata(anchored, metadata)
+	if err != nil {
+		t.Fatalf("attach metadata before anchor: %v", err)
+	}
+	if _, found, err := HeaderMetadataFromExtra(anchored); err != nil || !found {
+		t.Fatalf("extract metadata before anchor: found=%v err=%v", found, err)
+	}
+	if _, found, err := BlockHashAnchorFromHeaderExtra(anchored); err != nil || !found {
+		t.Fatalf("extract anchor after metadata: found=%v err=%v", found, err)
+	}
+}
+
 func TestReceiptTranscriptBindsReceiptIndex(t *testing.T) {
 	access := []AccessSet{{Reads: []common.Address{common.HexToAddress("0x1")}}, {Reads: []common.Address{common.HexToAddress("0x2")}}}
 	transcript := NewConflictTranscript(access)

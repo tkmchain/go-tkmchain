@@ -72,3 +72,27 @@ The deterministic primitives are implemented in `consensus/antartical`:
 The block processor currently uses the canonical Go EVM and RandomX engine;
 the Antartical primitives provide the shared transition and differential-test
 surface for the Rust/Revm/evmone adapters.
+
+## Versioned header metadata
+
+`consensus/antartical.HeaderMetadata` is the canonical metadata envelope for
+the new profile. It is encoded as:
+
+```
+TKM_ANTARTICAL_META_V1 || uint32_be(rlp_length) || rlp(version, gas_limits, commitments)
+```
+
+`gas_limits` contains independent EVM, TVM, proof-verification, and blob
+ceilings. The commitments cover the canonical state witness, asset registry,
+optimistic conflict transcript, randomness, oracle round, cross-chain message
+set, modular precompile registry, and finality certificate. Empty domains use
+domain-separated empty commitments rather than zero values. The metadata is
+appended before the existing RandomX block-hash-anchor suffix, so the legacy
+header and receipt RLP encodings remain unchanged. `BlockValidator` rejects a
+malformed metadata record on any block and legacy blocks remain decodable.
+
+This envelope is the wire-format foundation for the remaining activation work;
+it does not by itself authorize an execution engine, oracle signer, bridge, or
+finality committee. Those components must provide a valid commitment and a
+consensus state transition before their catalog row can be marked
+`ConsensusReady`.

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -148,6 +149,22 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	if err != nil {
 		return nil, err
 	}
+	var conflictTranscript common.Hash
+	if config.IsAntartical(blockNumber, header.Time) {
+		if len(block.Transactions()) == 0 {
+			conflictTranscript = antartical.EmptyCommitment("conflict-transcript")
+		} else {
+			access := make([]antartical.AccessSet, len(block.Transactions()))
+			for i, tx := range block.Transactions() {
+				access[i] = antartical.AccessSetForTransaction(tx)
+			}
+			transcript := antartical.NewConflictTranscript(access)
+			conflictTranscript, err = transcript.Commitment()
+			if err != nil {
+				return nil, fmt.Errorf("could not commit Antartical conflict transcript: %w", err)
+			}
+		}
+	}
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards).
 	if finalizer, ok := p.chain.Engine().(interface {
@@ -155,20 +172,22 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	}); ok {
 		if finalizer.FinalizeKyotoEmptyBlockForRoot(p.chain, header, statedb, block.Body(), header.Root, config.IsEIP158(header.Number)) {
 			return &ProcessResult{
-				Receipts: receipts,
-				Requests: requests,
-				Logs:     allLogs,
-				GasUsed:  gp.Used(),
+				Receipts:           receipts,
+				Requests:           requests,
+				Logs:               allLogs,
+				GasUsed:            gp.Used(),
+				ConflictTranscript: conflictTranscript,
 			}, nil
 		}
 	}
 	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body())
 
 	return &ProcessResult{
-		Receipts: receipts,
-		Requests: requests,
-		Logs:     allLogs,
-		GasUsed:  gp.Used(),
+		Receipts:           receipts,
+		Requests:           requests,
+		Logs:               allLogs,
+		GasUsed:            gp.Used(),
+		ConflictTranscript: conflictTranscript,
 	}, nil
 }
 

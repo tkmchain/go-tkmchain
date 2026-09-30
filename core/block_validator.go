@@ -20,7 +20,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
@@ -61,6 +63,12 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	// Header validity is known at this point. Here we verify that uncles, transactions
 	// and withdrawals given in the block body match the header.
 	header := block.Header()
+	// Validate the optional Antartical metadata envelope whenever it is
+	// present. Legacy headers remain valid, while malformed versioned metadata
+	// can never be relayed as an apparently valid block.
+	if _, found, err := antartical.HeaderMetadataFromExtra(header.Extra); found && err != nil {
+		return fmt.Errorf("invalid Antartical header metadata: %w", err)
+	}
 	if err := v.bc.engine.VerifyUncles(v.bc, block); err != nil {
 		return err
 	}
@@ -128,8 +136,20 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 		return errors.New("nil ProcessResult value")
 	}
 	header := block.Header()
+	metadata, metadataFound, metadataErr := antartical.HeaderMetadataFromExtra(header.Extra)
+	if metadataErr != nil {
+		return fmt.Errorf("invalid Antartical header metadata: %w", metadataErr)
+	}
 	if block.GasUsed() != res.GasUsed {
 		return fmt.Errorf("invalid gas used (remote: %d local: %d)", block.GasUsed(), res.GasUsed)
+	}
+	if metadataFound {
+		if metadata.GasLimits.EVM < res.GasUsed {
+			return fmt.Errorf("Antartical EVM gas limit exceeded (limit: %d used: %d)", metadata.GasLimits.EVM, res.GasUsed)
+		}
+		if res.ConflictTranscript != (common.Hash{}) && metadata.ConflictTranscript != res.ConflictTranscript {
+			return fmt.Errorf("Antartical conflict transcript mismatch (header: %s local: %s)", metadata.ConflictTranscript, res.ConflictTranscript)
+		}
 	}
 	// Validate the received block's bloom with the one derived from the generated receipts.
 	// For valid blocks this should always validate to true.
