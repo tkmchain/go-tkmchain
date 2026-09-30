@@ -85,7 +85,14 @@ func TestEmailProxyPreservesWalletEmailRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom.RawQuery != "cache=1" {
-		t.Fatalf("custom query = %q, want cache=1", custom.RawQuery)
+	if custom.RawQuery != "app=email&cache=1" {
+		t.Fatalf("custom query = %q, want app=email&cache=1", custom.RawQuery)
+	}
+	fullWallet, err := proxy.upstreamRequest("/?app=wallet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fullWallet.RawQuery != "app=email" {
+		t.Fatalf("full-wallet query = %q, want app=email", fullWallet.RawQuery)
 	}
 }

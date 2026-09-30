@@ -1,8 +1,8 @@
 // Copyright 2026 The TKMChain Authors
 //
 // TKM Email is a small desktop launcher for the wallet's EmailVM interface.
-// It deliberately does not start a node or open a keystore: mail keys and
-// shielded payment signing stay in the wallet or in the hosted mail client.
+// It deliberately exposes only email actions: it does not start a node, open
+// a wallet UI, or provide phone, send, or receive controls.
 package main
 
 import (
@@ -40,7 +40,7 @@ func main() {
 	defer proxy.Close()
 
 	localURL := proxy.URL()
-	fmt.Printf("TKM Email (Tor-only): %s\n", localURL)
+	fmt.Printf("TKM Email (Tor-only, email-only): %s\n", localURL)
 	fmt.Printf("Remote EmailVM endpoint: %s\n", *remoteURL)
 	if !*noOpen {
 		if err := runWindow(localURL); err != nil {

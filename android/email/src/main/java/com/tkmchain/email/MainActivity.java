@@ -32,7 +32,6 @@ public final class MainActivity extends Activity {
     private static final String ORBOT_START_ACTION = "org.torproject.android.intent.action.START";
     private static final int[] TOR_SOCKS_PORTS = {9050, 9150};
     private static final long TOR_TIMEOUT_MS = 3 * 60 * 1000L;
-    private static final String WALLET_PACKAGE = "com.tkmchain.node";
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private TextView status;
@@ -122,7 +121,7 @@ public final class MainActivity extends Activity {
         headline.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         headline.setPadding(0, dp(7), 0, dp(5));
         TextView copy = new TextView(this);
-        copy.setText("Encrypted locally, registered on TKMChain, and transported through Tor. Signing stays in TKM Wallet.");
+        copy.setText("Encrypted locally, registered on TKMChain, and transported through Tor. Email actions stay in this app.");
         copy.setTextColor(Color.rgb(182, 194, 207));
         copy.setTextSize(12);
         copy.setLineSpacing(2, 1.1f);
@@ -183,7 +182,7 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                status.setText("TKM Email · Tor-only transport · review wallet actions before signing");
+                status.setText("TKM Email · Tor-only transport · email section only");
             }
 
             @Override
@@ -289,7 +288,7 @@ public final class MainActivity extends Activity {
     private boolean routeUrl(Uri uri) {
         if (uri == null) return true;
         if ("tkmwallet".equalsIgnoreCase(uri.getScheme())) {
-            handoffToWallet(uri);
+            setStatus("Wallet send and receive actions are disabled in TKM Email. Use the email section only.");
             return true;
         }
         if (torProxy == null) return true;
@@ -300,22 +299,6 @@ public final class MainActivity extends Activity {
         if (uri.getQuery() != null) path += "?" + uri.getQuery();
         web.loadUrl(torProxy.localUrl(path));
         return true;
-    }
-
-    private void handoffToWallet(Uri uri) {
-        try {
-            String payload = uri.getQueryParameter("payload");
-            if (payload == null || payload.length() > 64 * 1024) {
-                setStatus("Wallet handoff rejected: invalid EmailVM request");
-                return;
-            }
-            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-            intent.setPackage(WALLET_PACKAGE);
-            startActivity(intent);
-            setStatus("EmailVM action sent to TKM Wallet for review");
-        } catch (RuntimeException e) {
-            setStatus("Install TKM Wallet to review this EmailVM action");
-        }
     }
 
     private void stopTorClient() {

@@ -34,6 +34,11 @@ func newEmailProxy(rawRemote, rawSOCKS5 string) (*emailProxy, error) {
 	if err != nil || (remote.Scheme != "https" && remote.Scheme != "http") || remote.Host == "" {
 		return nil, errors.New("EmailVM URL must be an absolute http(s) URL")
 	}
+	// The standalone launcher can never be used to open the full wallet. Force
+	// the shared frontend into its email-only mode even for custom endpoints.
+	remoteQuery := remote.Query()
+	remoteQuery.Set("app", "email")
+	remote.RawQuery = remoteQuery.Encode()
 	socks, err := url.Parse(strings.TrimSpace(rawSOCKS5))
 	if err != nil || socks.Scheme != "socks5" || socks.Hostname() == "" || socks.Port() == "" || socks.User != nil || socks.RawQuery != "" || socks.Fragment != "" {
 		return nil, errors.New("Tor proxy must be a plain socks5://host:port URL")
@@ -196,12 +201,15 @@ func (p *emailProxy) upstreamRequest(target string) (*url.URL, error) {
 	}
 	base := *p.remote
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(path, "/")
-	if parsed.RawQuery != "" {
+	if path == "/" {
+		query := parsed.Query()
+		if parsed.RawQuery == "" {
+			query = p.remote.Query()
+		}
+		query.Set("app", "email")
+		base.RawQuery = query.Encode()
+	} else if parsed.RawQuery != "" {
 		base.RawQuery = parsed.RawQuery
-	} else if path == "/" {
-		// Keep an app selector on the initial document request. Do not copy it
-		// to assets or RPC calls loaded after the document.
-		base.RawQuery = p.remote.RawQuery
 	} else {
 		base.RawQuery = ""
 	}
