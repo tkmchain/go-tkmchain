@@ -104,8 +104,10 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 
 	// Iterate over and process the individual transactions
 	seenShieldedNullifiers := make(map[common.Hash]struct{})
+	sawRewardTail := false
 	for i, tx := range block.Transactions() {
 		if types.IsBlockRewardTx(tx) {
+			sawRewardTail = true
 			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used(), statedb)
 			if err != nil {
 				return nil, err
@@ -154,6 +156,15 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		spanEnd(nil)
+	}
+	if config.IsAntartical(blockNumber, header.Time) {
+		active, err := ActiveValidatorRecords(statedb, blockNumber.Uint64())
+		if err != nil {
+			return nil, err
+		}
+		if len(active) > 0 && !sawRewardTail {
+			return nil, fmt.Errorf("active validator set requires a validated reward transaction tail")
+		}
 	}
 	requests, err := postExecution(ctx, config, block, allLogs, evm)
 	if err != nil {
