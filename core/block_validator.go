@@ -151,6 +151,42 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 			return fmt.Errorf("Antartical conflict transcript mismatch (header: %s local: %s)", metadata.ConflictTranscript, res.ConflictTranscript)
 		}
 	}
+	if cert, found, err := antartical.DecodeFinalityCertificateFromHeaderExtra(header.Extra); err != nil {
+		return fmt.Errorf("invalid Antartical finality certificate: %w", err)
+	} else if found {
+		if cert.Slot != block.NumberU64() {
+			return fmt.Errorf("Antartical finality slot mismatch (certificate: %d block: %d)", cert.Slot, block.NumberU64())
+		}
+		digest, err := antartical.HeaderFinalityDigest(v.config.ChainID, header)
+		if err != nil || cert.BlockHash != digest {
+			return fmt.Errorf("Antartical finality digest mismatch")
+		}
+		active, err := ActiveValidatorRecords(statedb, block.NumberU64())
+		if err != nil || len(active) == 0 {
+			return fmt.Errorf("Antartical finality certificate has no active validator committee")
+		}
+		committee := make(map[common.Address]struct{}, len(active))
+		for _, validator := range active {
+			committee[validator.Address] = struct{}{}
+		}
+		if cert.CommitteeSize != uint64(len(active)) {
+			return fmt.Errorf("Antartical finality committee size mismatch (certificate: %d state: %d)", cert.CommitteeSize, len(active))
+		}
+		for _, signer := range cert.Signers {
+			if _, ok := committee[signer]; !ok {
+				return fmt.Errorf("Antartical finality signer %s is not an active validator", signer)
+			}
+		}
+		if err := cert.Verify(2, 3); err != nil {
+			return fmt.Errorf("Antartical finality quorum: %w", err)
+		}
+		if metadataFound {
+			commitment, err := antartical.FinalityCertificateCommitment(cert)
+			if err != nil || metadata.Finality != commitment {
+				return fmt.Errorf("Antartical finality metadata commitment mismatch")
+			}
+		}
+	}
 	// Validate the received block's bloom with the one derived from the generated receipts.
 	// For valid blocks this should always validate to true.
 	//

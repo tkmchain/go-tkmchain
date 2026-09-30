@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -93,6 +94,42 @@ func TestOracleCrossChainAndFinality(t *testing.T) {
 	cert := FinalityCertificate{Slot: 1, BlockHash: blockHash, Signers: []common.Address{obs.Signer}, PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{sig}}
 	if err := cert.Verify(1, 1); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFinalityCertificateHeaderEnvelope(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := &types.Header{Number: big.NewInt(7), Time: 42, ParentHash: common.HexToHash("0x1234"), Extra: []byte("producer")}
+	digest, err := HeaderFinalityDigest(big.NewInt(8980), header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := crypto.Sign(digest.Bytes(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := FinalityCertificate{
+		Slot: 7, BlockHash: digest, CommitteeSize: 1,
+		Signers:    []common.Address{crypto.PubkeyToAddress(key.PublicKey)},
+		PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{signature},
+	}
+	withCertificate, err := AttachFinalityCertificate(header.Extra, certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, found, err := DecodeFinalityCertificateFromHeaderExtra(withCertificate)
+	if err != nil || !found || decoded.Slot != certificate.Slot {
+		t.Fatalf("certificate envelope decode failed: found=%v err=%v", found, err)
+	}
+	stripped, found, err := FinalityCertificateFromHeaderExtra(withCertificate)
+	if err != nil || !found || string(stripped) != string(header.Extra) {
+		t.Fatalf("certificate envelope stripping failed: found=%v err=%v", found, err)
+	}
+	if _, found, err := DecodeFinalityCertificateFromHeaderExtra(append(withCertificate, withCertificate...)); !found || err == nil {
+		t.Fatal("accepted duplicate finality certificates")
 	}
 }
 
