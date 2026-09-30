@@ -187,6 +187,13 @@ func processPrivateTVM(config *params.ChainConfig, number *big.Int, blockTime ui
 	return nil
 }
 
+// ProcessPrivateTVMForMiner mirrors the state-processor hook for locally
+// constructed blocks. Keeping the implementation private prevents callers
+// from bypassing the Antartical activation and envelope checks.
+func ProcessPrivateTVMForMiner(config *params.ChainConfig, number *big.Int, blockTime uint64, st *state.StateDB, tx *types.Transaction) error {
+	return processPrivateTVM(config, number, blockTime, st, tx)
+}
+
 func PrivateTVMGasData(data []byte) ([]byte, uint64, error) {
 	e, ok, err := DecodePrivateTVMTransaction(data)
 	if err != nil || !ok {

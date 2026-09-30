@@ -197,8 +197,12 @@ var (
 )
 
 var (
-	SystemAddress             = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
-	ShieldedPoolAddress       = common.HexToAddress("0x0000000000000000000000000000000000000f7")
+	SystemAddress       = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+	ShieldedPoolAddress = common.HexToAddress("0x0000000000000000000000000000000000000f7")
+	// TKMEntryPointAddress is the canonical native account-abstraction entry
+	// point. It is reserved by consensus after Antartical; a normal contract
+	// deployment at this address is rejected by the state transition.
+	TKMEntryPointAddress      = common.HexToAddress("0x0000000000000000000000000000000000004337")
 	BeaconRootsAddress        = common.HexToAddress("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02")
 	BeaconRootsCode           = common.FromHex("")
 	HistoryStorageAddress     = common.HexToAddress("0x0000F90827F1C53a10cb7A02335B175320002935")

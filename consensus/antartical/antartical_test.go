@@ -52,6 +52,21 @@ func TestBuildExecutionWaves(t *testing.T) {
 	}
 }
 
+func TestExecuteOptimisticRunsAndRetriesDeterministically(t *testing.T) {
+	a, b := common.HexToAddress("0x1"), common.HexToAddress("0x2")
+	items := []int{1, 2, 3}
+	access := []AccessSet{{Reads: []common.Address{a}}, {Reads: []common.Address{b}}, {Unknown: true}}
+	results, transcript, err := ExecuteOptimistic(items, access, func(_ int, item int) (int, AccessSet, error) {
+		return item * 2, access[item-1], nil
+	})
+	if err != nil || len(results) != len(items) || results[0] != 2 || results[1] != 4 || results[2] != 6 {
+		t.Fatalf("optimistic execution failed: results=%v err=%v", results, err)
+	}
+	if err := transcript.Validate(); err != nil {
+		t.Fatalf("invalid conflict transcript: %v", err)
+	}
+}
+
 func TestGasWitnessAndEOF(t *testing.T) {
 	var used GasVector
 	limit := GasVector{Execution: 10, StateRead: 5, StateWrite: 5, Blob: 2}

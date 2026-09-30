@@ -138,6 +138,31 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 			spanEnd(&err)
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+		if config.IsAntartical(blockNumber, header.Time) && HasAccountAbstractionPrefix(tx.Data()) {
+			// The outer PQ transaction is only the authenticated relay envelope;
+			// the operation itself is executed by the reserved native entry point.
+			// Charge its verification/call budget from the same block gas pool so
+			// it cannot bypass the block limit.
+			used, aaErr := ProcessAccountAbstraction(config, blockNumber, header.Time, statedb, evm, gp, tx, msg.From)
+			if aaErr != nil {
+				spanEnd(&aaErr)
+				return nil, fmt.Errorf("could not apply account-abstraction tx %d [%v]: %w", i, tx.Hash().Hex(), aaErr)
+			}
+			receipt.GasUsed += used
+			receipt.CumulativeGasUsed += used
+		}
+		if config.IsAntartical(blockNumber, header.Time) && HasOracleObservationPrefix(tx.Data()) {
+			if err := ProcessOracleTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
+				spanEnd(&err)
+				return nil, fmt.Errorf("could not apply oracle transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
+		if config.IsAntartical(blockNumber, header.Time) && HasCrossChainMessagePrefix(tx.Data()) {
+			if err := ProcessCrossChainTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
+				spanEnd(&err)
+				return nil, fmt.Errorf("could not apply cross-chain transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
 		if config.IsAntartical(blockNumber, header.Time) && HasAddressVotePrefix(tx.Data()) {
 			if err := ProcessAddressVote(statedb, msg.From, tx.Data(), tx.Hash()); err != nil {
 				return nil, fmt.Errorf("could not apply address vote tx %d [%v]: %w", i, tx.Hash().Hex(), err)

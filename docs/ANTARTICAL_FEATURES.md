@@ -9,21 +9,21 @@ local command-line switch.
 
 | Capability | Antartical gate | Current implementation | Consensus status |
 | --- | --- | --- | --- |
-| Native account abstraction (EIP-4337/RIP-7560) | `IsAccountAbstraction` | Smart-account operation hashing, owner/session authorization APIs | EntryPoint/UserOperation execution still needs a consensus transaction format and deployed code |
-| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | Canonical serial executor remains the reference result | Requires conflict scheduler plus serial equivalence tests before consensus use |
-| Alternative EVMs (Rust EVM/Revm/evmone) | `IsAlternativeEVM` | The Go EVM remains canonical | Alternative engines must pass byte-for-byte state/receipt differential vectors |
+| Native account abstraction (EIP-4337/RIP-7560) | `IsAccountAbstraction` | `TKM-AA-ENTRYPOINT-V1` relay envelope, nonce state, factory/paymaster EVM validation, and canonical execution | The native envelope is implemented; deployment/factory policy remains chain configuration work |
+| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | `ExecuteOptimistic` runs canonical waves concurrently, validates dynamic conflicts, and retries serially | StateDB commit integration remains gated until isolated state snapshots are available |
+| Alternative EVMs (Rust EVM/Revm/evmone) | `IsAlternativeEVM` | Strict process adapter plus `RegisterConformant` differential admission | No external backend is selected unless it passes canonical vectors |
 | Formal verification tooling | `IsFormalVerification` | Execution witness recovery and zkEVM guest/prover host | Proof artifacts and machine-checked invariants are tooling until accepted by consensus |
 | Multidimensional gas | `IsMultidimensionalGas` | Feature gate and existing gas accounting | Requires header commitment and transaction encoding for every new dimension |
 | EIP-4844 blobs | `IsBlobGas` | Existing Cancun blob transactions, blob pool, and blob base fee | **Ready**; Cancun is activated at Antartical on mainnet |
 | Native privacy (zkEVM/private transactions) | `IsNativePrivacy` | Shield3/Shield4, private EVM/TVM envelopes, and zkEVM execution witness path | **Ready for the implemented envelope formats** |
 | Stateless clients (Verkle) | `IsStatelessVerkle` | Verkle transition storage, witness costs, and state-history recovery | Full Verkle state commitment and network witness protocol still required |
 | Native randomness | `IsNativeRandomness` | RandomX mix digest remains the current consensus randomness source | A new beacon/randomness commitment must be specified before replacing it |
-| Native oracles | `IsNativeOracles` | No consensus oracle feed is installed | Needs signed, replay-protected feed format and quorum rules |
-| Cross-chain standards | `IsCrossChainStandards` | No bridge messages are accepted by consensus | Needs a replay-protected message envelope and finality proof rules |
+| Native oracles | `IsNativeOracles` | Signed `TKM-ORACLE-ENVELOPE-V1` observations persist monotonic feed rounds | Feed quorum/committee registration is still required before a value can drive bridge or pricing state |
+| Cross-chain standards | `IsCrossChainStandards` | Destination-bound signed `TKM-XCHAIN-ENVELOPE-V1` messages persist replay keys | The message layer does not release value; a bridge application must consume a finalized commitment |
 | EVM Object Format (EOF) | `IsEOF` | EOF-prefixed runtime code is validated and stored through the Antartical path; legacy code remains replay-compatible | Full EOF opcode-version migration is still separate from container validation |
 | Modular precompiles | `IsModularPrecompiles` | Existing precompiles are statically registered | Requires an address/version registry committed by chain config |
 | Deterministic gas metering | `IsDeterministicGas` | Canonical intrinsic, EIP-1559, and blob gas rules | **Ready for the current transaction formats** |
-| Single-slot finality | `IsSingleSlotFinality` | Versioned header certificate envelope, chain-bound digest, active-set membership, quorum and metadata commitment checks | Certificate production/mandatory proposer integration is still separate from the RandomX proposer |
+| Single-slot finality | `IsSingleSlotFinality` | Versioned header certificate envelope, chain-bound digest, active-set membership, quorum checks, and miner finality-provider hook | Once an active committee exists, blocks without a certificate are rejected and miners require a provider |
 
 The `params.Rules` object exposes all gates, and
 `ChainConfig.AntarticalFeatureCatalog()` gives clients the same machine-readable
@@ -45,19 +45,20 @@ allowlist.
 
 ## Integration requirements before marking the remaining rows ready
 
-1. Add consensus transaction/envelope formats and replay protection for account
-   abstraction and cross-chain messages.
-2. Build a deterministic parallel executor that proves serial equivalence for
-   every conflict set; retain the serial executor as the fallback.
-3. Add Revm/evmone differential vectors and reject any engine result that differs
-   from the canonical Go EVM.
+1. Register factory/paymaster policies for every network and publish the
+   post-quantum account implementation used by the native envelope.
+2. Wire isolated StateDB snapshots into `ExecuteOptimistic`; retain the serial
+   executor as the deterministic fallback for unknown accesses.
+3. Install Revm/evmone binaries and admit them only after canonical vectors
+   pass `RegisterConformant`.
 4. Commit Verkle roots/witnesses in the block header and implement snap/witness
    exchange before stateless mode can be enforced.
 5. Define signed randomness/oracle feeds and modular precompile registries in
    the chain configuration; EOF container validation is now wired into
    contract deployment.
-6. Add proposer-side certificate production and a coordinated migration from
-   RandomX before making single-slot certificates mandatory for every block.
+6. Configure a validator signer implementing `miner.FinalityProvider`; the
+   worker now refuses to seal a post-fork block with an active committee unless
+   it can attach a valid certificate.
 
 The deterministic primitives are implemented in `consensus/antartical`:
 
@@ -65,18 +66,20 @@ The deterministic primitives are implemented in `consensus/antartical`:
 - deterministic optimistic execution waves from access sets;
 - multidimensional gas vectors;
 - state-witness and zk execution claim commitments;
-- signed oracle observations and replay-bound cross-chain messages;
+- signed, monotonic oracle observations and replay-bound cross-chain messages;
 - EOF v1 container validation;
 - modular precompile registration; and
 - signed single-slot finality certificates.
 
 The block processor currently uses the canonical Go EVM and RandomX engine;
 the Antartical primitives provide the shared transition and differential-test
-surface for the Rust/Revm/evmone adapters. When a block carries a finality
-certificate, `BlockValidator` verifies its slot, chain-bound header digest,
-active-validator membership, 2/3 quorum, and metadata commitment. Blocks that
-do not carry a certificate remain valid until proposer-side certificate
-production is deployed network-wide.
+surface for the Rust/Revm/evmone adapters. Account-abstraction, oracle, and
+cross-chain envelopes are applied by both the importer and local miner so their
+state roots match. When a block carries a finality certificate,
+`BlockValidator` verifies its slot, chain-bound header digest, active-validator
+membership, 2/3 quorum, and metadata commitment. Once an active committee is
+present, a missing certificate is rejected and the miner requires a configured
+`FinalityProvider`.
 
 ## Versioned header metadata
 

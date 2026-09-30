@@ -1,11 +1,84 @@
 package antartical
 
 import (
+	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
+
+// OptimisticResult is the result of one speculative transaction execution.
+// The callback must execute against an isolated snapshot and return the
+// accesses it observed. Commit is always performed by the caller in index
+// order, so the same result is produced on every client.
+type OptimisticResult[T any] struct {
+	Index  int
+	Value  T
+	Access AccessSet
+}
+
+// ExecuteOptimistic executes each canonical wave concurrently, validates the
+// dynamic access sets, and retries a conflicting wave serially. This is the
+// Block-STM rule used by Antartical: speculative work is parallel, while
+// conflict resolution and commit order are deterministic. The function does
+// not expose a shared mutable state object; callers provide isolated snapshots
+// in run and commit returned values after this function returns.
+func ExecuteOptimistic[T any](items []T, access []AccessSet, run func(index int, item T) (T, AccessSet, error)) ([]T, ConflictTranscript, error) {
+	if len(items) != len(access) || run == nil {
+		return nil, ConflictTranscript{}, fmt.Errorf("invalid optimistic execution input")
+	}
+	if len(items) == 0 {
+		return []T{}, ConflictTranscript{}, nil
+	}
+	waves := BuildExecutionWaves(access)
+	results := make([]T, len(items))
+	dynamic := make([]AccessSet, len(items))
+	for _, wave := range waves {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var firstErr error
+		for _, index := range wave {
+			index := index
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				value, observed, err := run(index, items[index])
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil && firstErr == nil {
+					firstErr = err
+					return
+				}
+				results[index], dynamic[index] = value, observed
+			}()
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return nil, ConflictTranscript{}, firstErr
+		}
+		conflict := false
+		for i, left := range wave {
+			for _, right := range wave[i+1:] {
+				if dynamic[left].conflicts(dynamic[right]) {
+					conflict = true
+				}
+			}
+		}
+		if conflict {
+			for _, index := range wave {
+				value, observed, err := run(index, items[index])
+				if err != nil {
+					return nil, ConflictTranscript{}, err
+				}
+				results[index], dynamic[index] = value, observed
+			}
+		}
+	}
+	transcript := NewConflictTranscript(dynamic)
+	return results, transcript, nil
+}
 
 // AccessSet is the conservative state-access summary used by the optimistic
 // executor. Unknown accesses are kept serial; known disjoint accesses may be

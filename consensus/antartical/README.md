@@ -5,7 +5,7 @@ Antartical fork. It contains:
 
 - EIP-4337/RIP-7560 UserOperation hashing and secp256k1 or ML-DSA-87
   authorization;
-- optimistic execution wave construction from transaction access sets;
+- optimistic Block-STM wave execution with dynamic conflict retry;
 - multidimensional gas accounting;
 - stateless state-witness and zk execution claim commitments;
 - signed oracle observations and cross-chain replay keys;
@@ -13,6 +13,19 @@ Antartical fork. It contains:
 - versioned modular precompile registration;
 - differential execution engine comparison; and
 - quorum-checked single-slot finality certificates.
+
+The core state transition consumes the corresponding Antartical envelopes:
+`TKM-AA-ENTRYPOINT-V1` is executed through the reserved native entry point,
+`TKM-ORACLE-ENVELOPE-V1` persists monotonic feed rounds and values, and
+`TKM-XCHAIN-ENVELOPE-V1` persists destination-bound replay keys and payloads.
+The miner runs the same envelope transitions as the importer. A configured
+`miner.FinalityProvider` attaches a certificate after execution; once an
+active committee exists, the block validator and miner both reject a missing
+certificate.
+
+`ProcessExecutionEngine` is a strict, time-limited adapter for a separately
+built Revm/evmone process. It is never selected automatically: callers must
+admit it with `EngineRegistry.RegisterConformant`, using canonical vectors.
 
 The profile also includes the Antartical asset and stateless execution
 primitives in `profile.go`:

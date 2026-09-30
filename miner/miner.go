@@ -172,6 +172,19 @@ func (miner *Miner) SetEtherbase(addr common.Address) {
 	}
 }
 
+// SetFinalityProvider installs the validator signer used for mandatory
+// Antartical single-slot finality. A nil provider is accepted before the first
+// validator activates; once a committee is active the worker refuses to seal
+// a block without a certificate.
+func (miner *Miner) SetFinalityProvider(provider FinalityProvider) {
+	miner.worker.mu.Lock()
+	miner.worker.finalityProvider = provider
+	miner.worker.mu.Unlock()
+	if miner.worker.isRunning() {
+		go miner.worker.generateWorkForExternal()
+	}
+}
+
 // ========== METHODS FOR XMRig ==========
 
 // GetWork returns the current mining work for external miners (XMRig).

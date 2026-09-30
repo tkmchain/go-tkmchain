@@ -2,8 +2,14 @@ package antartical
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"os/exec"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -13,6 +19,11 @@ import (
 var ErrExecutionEngineMismatch = errors.New("Antartical execution engines produced different results")
 var ErrDuplicateExecutionEngine = errors.New("duplicate Antartical execution engine")
 var ErrExecutionEngineNotConformant = errors.New("Antartical execution engine failed conformance vectors")
+
+// ErrExecutionEngineUnavailable is returned when an external backend cannot
+// be started. An unavailable backend is never silently selected as consensus
+// canonical.
+var ErrExecutionEngineUnavailable = errors.New("Antartical execution engine unavailable")
 
 // ExecutionInput is the engine-neutral block execution request. All EVM
 // implementations receive the same bytes and roots, which makes differential
@@ -33,6 +44,52 @@ type ExecutionOutput struct {
 type ExecutionEngine interface {
 	Name() string
 	Execute(ExecutionInput) (ExecutionOutput, error)
+}
+
+// ProcessExecutionEngine is the production adapter for Revm/evmone and other
+// independently built interpreters. The child process receives one canonical
+// input argument and must print exactly 96 bytes (state root, receipts root,
+// proof digest) as hexadecimal. It is admitted only through RegisterConformant,
+// so an installed binary cannot change consensus by local preference.
+type ProcessExecutionEngine struct {
+	engineName string
+	path       string
+}
+
+func NewProcessExecutionEngine(name, path string) (*ProcessExecutionEngine, error) {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+		return nil, ErrExecutionEngineUnavailable
+	}
+	return &ProcessExecutionEngine{engineName: name, path: path}, nil
+}
+
+func (e *ProcessExecutionEngine) Name() string { return e.engineName }
+
+func (e *ProcessExecutionEngine) Execute(input ExecutionInput) (ExecutionOutput, error) {
+	if e == nil || e.path == "" {
+		return ExecutionOutput{}, ErrExecutionEngineUnavailable
+	}
+	payload, err := rlp.EncodeToBytes([]interface{}{input.ParentStateRoot, input.BlockHash, input.TransactionsRLP, input.Witness})
+	if err != nil {
+		return ExecutionOutput{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.path, "--tkm-execution-input", "0x"+hex.EncodeToString(payload))
+	stdout, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ExecutionOutput{}, fmt.Errorf("%w: %v", ErrExecutionEngineUnavailable, ctx.Err())
+		}
+		return ExecutionOutput{}, fmt.Errorf("%w: %v", ErrExecutionEngineUnavailable, err)
+	}
+	text := strings.TrimSpace(string(stdout))
+	text = strings.TrimPrefix(text, "0x")
+	decoded, err := hex.DecodeString(text)
+	if err != nil || len(decoded) != 3*common.HashLength {
+		return ExecutionOutput{}, fmt.Errorf("%w: backend returned %d bytes, want %d", ErrExecutionEngineMismatch, len(decoded), 3*common.HashLength)
+	}
+	return ExecutionOutput{StateRoot: common.BytesToHash(decoded[:common.HashLength]), ReceiptsRoot: common.BytesToHash(decoded[common.HashLength : 2*common.HashLength]), ProofDigest: common.BytesToHash(decoded[2*common.HashLength:])}, nil
 }
 
 type EngineRegistry struct {

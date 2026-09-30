@@ -189,6 +189,14 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 				return fmt.Errorf("Antartical finality metadata commitment mismatch")
 			}
 		}
+	} else if v.config != nil && v.config.IsAntarticalFeatureActive(params.FeatureSingleSlotFinality, header.Number, header.Time) && statedb != nil {
+		active, err := ActiveValidatorRecords(statedb, block.NumberU64())
+		if err != nil {
+			return fmt.Errorf("read Antartical validator committee: %w", err)
+		}
+		if len(active) > 0 {
+			return fmt.Errorf("Antartical single-slot finality requires a quorum certificate")
+		}
 	}
 	// Validate the received block's bloom with the one derived from the generated receipts.
 	// For valid blocks this should always validate to true.

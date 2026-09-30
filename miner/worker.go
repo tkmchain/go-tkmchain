@@ -158,6 +158,10 @@ type worker struct {
 	engine consensus.Engine
 	eth    Backend
 	chain  *core.BlockChain
+	// finalityProvider signs the post-execution header digest for an active
+	// validator committee. It is mandatory once validators are active after
+	// Antartical; leaving it nil keeps pre-validator RandomX mining compatible.
+	finalityProvider FinalityProvider
 
 	gasFloor uint64
 	gasCeil  uint64
@@ -214,6 +218,13 @@ type worker struct {
 	skipSealHook func(*task) bool                   // Method to decide whether skipping the sealing.
 	fullTaskHook func()                             // Method to call before pushing the full sealing task.
 	resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
+}
+
+// FinalityProvider supplies the quorum certificate for a completed block.
+// Implementations must select the deterministic active committee from state
+// and return signatures over antartical.HeaderFinalityDigest.
+type FinalityProvider interface {
+	Certificate(chainID *big.Int, header *types.Header, st *state.StateDB) (antartical.FinalityCertificate, error)
 }
 
 func newWorker(config *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, recommit time.Duration, gasFloor, gasCeil uint64, isLocalBlock func(*types.Block) bool) *worker {
@@ -915,6 +926,66 @@ func (w *worker) commitTransaction(tx *types.Transaction, coinbase common.Addres
 		w.current.state.RevertToSnapshot(snap)
 		return nil, err
 	}
+	// Apply the consensus envelopes that StateProcessor applies during block
+	// import as well. Without this mirror, a locally mined block containing a
+	// validator, oracle, cross-chain, or native account-abstraction operation
+	// would have a different state root from every validating peer.
+	sender, senderErr := types.Sender(w.current.signer, tx)
+	if senderErr != nil {
+		w.current.state.RevertToSnapshot(snap)
+		return nil, senderErr
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasAccountAbstractionPrefix(tx.Data()) {
+		used, aaErr := core.ProcessAccountAbstraction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, evm, w.current.gasPool, tx, sender)
+		if aaErr != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, aaErr
+		}
+		receipt.GasUsed += used
+		receipt.CumulativeGasUsed += used
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasOracleObservationPrefix(tx.Data()) {
+		if err := core.ProcessOracleTransaction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx, sender); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasCrossChainMessagePrefix(tx.Data()) {
+		if err := core.ProcessCrossChainTransaction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx, sender); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasPrivateTVMPrefix(tx.Data()) {
+		if err := core.ProcessPrivateTVMForMiner(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasAddressVotePrefix(tx.Data()) {
+		if err := core.ProcessAddressVote(w.current.state, sender, tx.Data(), tx.Hash()); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasValidatorRegistrationPrefix(tx.Data()) {
+		if err := core.ProcessValidatorRegistration(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && core.HasValidatorSlashPrefix(tx.Data()) {
+		if err := core.ProcessValidatorSlash(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && (core.HasValidatorExitPrefix(tx.Data()) || core.HasValidatorWithdrawalPrefix(tx.Data())) {
+		if err := core.ProcessValidatorAction(w.config, w.current.header.Number, w.current.header.Time, w.current.state, tx); err != nil {
+			w.current.state.RevertToSnapshot(snap)
+			return nil, err
+		}
+	}
 	for key := range candidateNullifiers {
 		seenShieldedNullifiers[key] = struct{}{}
 	}
@@ -1222,6 +1293,47 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	body.Transactions, blockReceipts, rewardTxCount = w.rewardBlockBody(w.current.header, body.Transactions, blockReceipts)
 	w.engine.Finalize(w.chain, w.current.header, s, body)
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
+	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && w.config.IsAntarticalFeatureActive(params.FeatureSingleSlotFinality, w.current.header.Number, w.current.header.Time) {
+		active, err := core.ActiveValidatorRecords(s, w.current.header.Number.Uint64())
+		if err != nil {
+			return err
+		}
+		if len(active) > 0 {
+			if w.finalityProvider == nil {
+				return errors.New("Antartical single-slot finality requires a validator finality provider")
+			}
+			certificate, err := w.finalityProvider.Certificate(w.config.ChainID, w.current.header, s)
+			if err != nil {
+				return fmt.Errorf("create Antartical finality certificate: %w", err)
+			}
+			if certificate.Slot == 0 {
+				certificate.Slot = w.current.header.Number.Uint64()
+			}
+			if certificate.Slot != w.current.header.Number.Uint64() || certificate.CommitteeSize != uint64(len(active)) {
+				return fmt.Errorf("invalid Antartical finality certificate committee or slot")
+			}
+			digest, err := antartical.HeaderFinalityDigest(w.config.ChainID, w.current.header)
+			if err != nil || certificate.BlockHash != digest {
+				return fmt.Errorf("invalid Antartical finality certificate header digest")
+			}
+			committee := make(map[common.Address]struct{}, len(active))
+			for _, validator := range active {
+				committee[validator.Address] = struct{}{}
+			}
+			for _, signer := range certificate.Signers {
+				if _, ok := committee[signer]; !ok {
+					return fmt.Errorf("finality signer %s is not an active validator", signer)
+				}
+			}
+			if err := certificate.Verify(2, 3); err != nil {
+				return fmt.Errorf("invalid Antartical finality quorum: %w", err)
+			}
+			w.current.header.Extra, err = antartical.AttachFinalityCertificate(w.current.header.Extra, certificate)
+			if err != nil {
+				return fmt.Errorf("attach Antartical finality certificate: %w", err)
+			}
+		}
+	}
 	block := types.NewBlock(w.current.header, body, blockReceipts, trie.NewStackTrie(nil))
 	// Deep copy receipts here to avoid interaction between different tasks.
 	receipts := make([]*types.Receipt, len(blockReceipts))
