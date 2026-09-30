@@ -77,6 +77,31 @@ func TestExecuteOptimisticRunsAndRetriesDeterministically(t *testing.T) {
 	}
 }
 
+func TestStorageSlotConflicts(t *testing.T) {
+	addr := common.HexToAddress("0x1234")
+	key := common.HexToHash("0x42")
+	read := AccessSet{StorageReads: []StorageAccess{{Address: addr, Key: key}}}
+	write := AccessSet{StorageWrites: []StorageAccess{{Address: addr, Key: key}}}
+	if !read.conflicts(write) || !write.conflicts(read) {
+		t.Fatal("read/write slot accesses did not conflict")
+	}
+	other := AccessSet{StorageReads: []StorageAccess{{Address: addr, Key: common.HexToHash("0x43")}}}
+	if read.conflicts(other) {
+		t.Fatal("independent slot reads conflicted")
+	}
+}
+
+func TestConflictTranscriptCommitsStorageWitnesses(t *testing.T) {
+	access := []AccessSet{{StorageReads: []StorageAccess{{Address: common.HexToAddress("0x1"), Key: common.HexToHash("0x2")}}}}
+	transcript := NewConflictTranscript(access)
+	if err := transcript.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transcript.Commitment(); err != nil {
+		t.Fatalf("slot witness transcript commitment failed: %v", err)
+	}
+}
+
 func TestGasWitnessAndEOF(t *testing.T) {
 	var used GasVector
 	limit := GasVector{Execution: 10, StateRead: 5, StateWrite: 5, Blob: 2}

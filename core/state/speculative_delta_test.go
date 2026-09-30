@@ -51,3 +51,32 @@ func TestDynamicAccessSummary(t *testing.T) {
 		t.Fatalf("unexpected dynamic access summary: reads=%v writes=%v", reads, writes)
 	}
 }
+
+func TestSpeculativeDeltaValidatesSlotReads(t *testing.T) {
+	db := NewDatabaseForTesting()
+	st, err := New(common.Hash{}, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := common.HexToAddress("0x1234")
+	key := common.HexToHash("0x42")
+	value := common.HexToHash("0x99")
+	st.SetBalance(addr, uint256.NewInt(1), tracing.BalanceChangeUnspecified)
+	st.SetState(addr, key, value)
+	st.Finalise(true)
+	st.ResetAccessSummary()
+	if got := st.GetState(addr, key); got != value {
+		t.Fatalf("unexpected slot value: got %s want %s", got, value)
+	}
+	delta, err := st.BuildSpeculativeDelta()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delta.Reads) != 1 || delta.Reads[0].Address != addr || delta.Reads[0].Key != key || delta.Reads[0].Value != (common.Hash{}) {
+		t.Fatalf("missing slot witness: %+v", delta.Reads)
+	}
+	st.SetState(addr, key, common.HexToHash("0xaa"))
+	if err := st.CanApplySpeculativeDelta(delta); err == nil {
+		t.Fatal("accepted a slot witness after the canonical value changed")
+	}
+}

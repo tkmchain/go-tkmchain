@@ -24,6 +24,14 @@ type SpeculativeSlot struct {
 	Value  common.Hash
 }
 
+// SpeculativeRead is a slot-level pre-state witness captured during isolated
+// execution. Reads are checked before any speculative write-set is applied.
+type SpeculativeRead struct {
+	Address common.Address
+	Key     common.Hash
+	Value   common.Hash
+}
+
 // SpeculativeAccount is the write-set of one account. Origin is the account
 // value observed by the speculative execution and Current contains the
 // resulting account metadata. Storage contains only slots touched by the
@@ -42,6 +50,7 @@ type SpeculativeAccount struct {
 // those transactions are required to use the serial executor.
 type SpeculativeDelta struct {
 	Accounts []SpeculativeAccount
+	Reads    []SpeculativeRead
 }
 
 func copyAccount(account *types.StateAccount) *types.StateAccount {
@@ -64,6 +73,11 @@ func (s *StateDB) BuildSpeculativeDelta() (*SpeculativeDelta, error) {
 	// delta directly after using StateDB setters.
 	s.Finalise(true)
 	delta := &SpeculativeDelta{Accounts: make([]SpeculativeAccount, 0, len(s.mutations))}
+	reads, _ := s.StorageAccessSummary()
+	delta.Reads = make([]SpeculativeRead, len(reads))
+	for i, read := range reads {
+		delta.Reads[i] = SpeculativeRead{Address: read.Address, Key: read.Key, Value: read.Value}
+	}
 	for addr, mutation := range s.mutations {
 		if mutation == nil || mutation.isDelete() {
 			return nil, ErrSpeculativeDelta
@@ -116,6 +130,11 @@ func accountsEqual(a, b *types.StateAccount) bool {
 func (s *StateDB) CanApplySpeculativeDelta(delta *SpeculativeDelta) error {
 	if s == nil || delta == nil {
 		return ErrSpeculativeDelta
+	}
+	for _, read := range delta.Reads {
+		if s.GetState(read.Address, read.Key) != read.Value {
+			return ErrSpeculativeDelta
+		}
 	}
 	for _, account := range delta.Accounts {
 		obj := s.getStateObject(account.Address)

@@ -185,6 +185,12 @@ func (s *stateObject) getState(key common.Hash) (common.Hash, common.Hash) {
 func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	// Record slot access regardless of whether the storage slot exists.
 	s.db.stateReadList.AddState(s.address, key)
+	// Preserve the original value for the Antartical slot witness. The first
+	// value observed is the only value that may be validated against the
+	// canonical pre-state.
+	if value, cached := s.originStorage[key]; cached {
+		s.db.recordStorageRead(s.address, key, value)
+	}
 
 	// If we have a pending write or clean cached, return that
 	if value, pending := s.pendingStorage[key]; pending {
@@ -201,6 +207,7 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	//   2) we don't have new values, and can deliver empty response back
 	if _, destructed := s.db.stateObjectsDestruct[s.address]; destructed {
 		s.originStorage[key] = common.Hash{} // track the empty slot as origin value
+		s.db.recordStorageRead(s.address, key, common.Hash{})
 		return common.Hash{}
 	}
 	s.db.StorageLoaded++
@@ -220,6 +227,7 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 		}
 	}
 	s.originStorage[key] = value
+	s.db.recordStorageRead(s.address, key, value)
 	return value
 }
 
@@ -232,6 +240,7 @@ func (s *stateObject) SetState(key, value common.Hash) common.Hash {
 	if prev == value {
 		return prev
 	}
+	s.db.recordStorageWrite(s.address, key, value)
 	// New value is different, update and journal the change
 	s.db.journal.storageChange(s.address, key, prev, origin)
 	s.setState(key, value, origin)

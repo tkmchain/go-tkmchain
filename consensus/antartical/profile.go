@@ -444,11 +444,23 @@ func (t ConflictTranscript) Commitment() (common.Hash, error) {
 	}
 	reads := make([][]common.Address, len(t.Access))
 	writes := make([][]common.Address, len(t.Access))
+	storageReads := make([][]StorageAccess, len(t.Access))
+	storageWrites := make([][]StorageAccess, len(t.Access))
 	unknown := make([]bool, len(t.Access))
+	hasStorage := false
 	for i, set := range t.Access {
 		reads[i], writes[i], unknown[i] = set.Reads, set.Writes, set.Unknown
+		storageReads[i], storageWrites[i] = set.StorageReads, set.StorageWrites
+		hasStorage = hasStorage || len(set.StorageReads) != 0 || len(set.StorageWrites) != 0
 	}
-	blob, err := rlp.EncodeToBytes([]interface{}{[]byte("TKM_CONFLICT_TRANSCRIPT_V1"), t.Waves, reads, writes, unknown})
+	fields := []interface{}{[]byte("TKM_CONFLICT_TRANSCRIPT_V1"), t.Waves, reads, writes, unknown}
+	if hasStorage {
+		// Slot witnesses are versioned separately so pre-Antartical receipt
+		// metadata remains byte-compatible while new transcripts commit their
+		// complete storage access set.
+		fields = []interface{}{[]byte("TKM_CONFLICT_TRANSCRIPT_V2"), t.Waves, reads, writes, unknown, storageReads, storageWrites}
+	}
+	blob, err := rlp.EncodeToBytes(fields)
 	if err != nil {
 		return common.Hash{}, err
 	}

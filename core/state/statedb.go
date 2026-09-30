@@ -139,8 +139,10 @@ type StateDB struct {
 	// optimistic executor to validate contract calls conservatively; storage
 	// slots remain in the StateDB write-set and therefore cannot be merged when
 	// two transactions touch the same account.
-	accessReads  map[common.Address]struct{}
-	accessWrites map[common.Address]struct{}
+	accessReads   map[common.Address]struct{}
+	accessWrites  map[common.Address]struct{}
+	storageReads  map[storageAccess]common.Hash
+	storageWrites map[storageAccess]common.Hash
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
@@ -178,6 +180,20 @@ type StateDB struct {
 	CodeUpdateBytes int // Total bytes of persisted code written
 }
 
+// StorageAccess identifies one canonical storage slot. Value is the value
+// observed from the transaction's pre-state for a read, or the value written
+// by the transaction for a write.
+type StorageAccess struct {
+	Address common.Address
+	Key     common.Hash
+	Value   common.Hash
+}
+
+type storageAccess struct {
+	Address common.Address
+	Key     common.Hash
+}
+
 // New creates a new state from a given trie.
 func New(root common.Hash, db Database) (*StateDB, error) {
 	reader, err := db.Reader(root)
@@ -202,6 +218,8 @@ func NewWithReader(root common.Hash, db Database, reader Reader) (*StateDB, erro
 		journal:              newJournal(),
 		accessReads:          make(map[common.Address]struct{}),
 		accessWrites:         make(map[common.Address]struct{}),
+		storageReads:         make(map[storageAccess]common.Hash),
+		storageWrites:        make(map[storageAccess]common.Hash),
 		accessList:           newAccessList(),
 		transientStorage:     newTransientStorage(),
 	}
@@ -728,6 +746,8 @@ func (s *StateDB) Copy() *StateDB {
 		journal:          s.journal.copy(),
 		accessReads:      maps.Clone(s.accessReads),
 		accessWrites:     maps.Clone(s.accessWrites),
+		storageReads:     maps.Clone(s.storageReads),
+		storageWrites:    maps.Clone(s.storageWrites),
 	}
 	if s.trie != nil {
 		state.trie = mustCopyTrie(s.trie)
@@ -779,6 +799,25 @@ func (s *StateDB) recordWrite(addr common.Address) {
 	s.accessWrites[addr] = struct{}{}
 }
 
+func (s *StateDB) recordStorageRead(addr common.Address, key, value common.Hash) {
+	if s.storageReads == nil {
+		s.storageReads = make(map[storageAccess]common.Hash)
+	}
+	// Keep the first observed value. A transaction may read a slot after a
+	// local write; that must still validate against the transaction pre-state.
+	access := storageAccess{Address: addr, Key: key}
+	if _, exists := s.storageReads[access]; !exists {
+		s.storageReads[access] = value
+	}
+}
+
+func (s *StateDB) recordStorageWrite(addr common.Address, key, value common.Hash) {
+	if s.storageWrites == nil {
+		s.storageWrites = make(map[storageAccess]common.Hash)
+	}
+	s.storageWrites[storageAccess{Address: addr, Key: key}] = value
+}
+
 // ResetAccessSummary starts a fresh dynamic-access window for an isolated
 // transaction. StateDB.Copy intentionally preserves the maps for callers that
 // need a complete execution trace, while the optimistic executor uses this
@@ -789,6 +828,8 @@ func (s *StateDB) ResetAccessSummary() {
 	}
 	s.accessReads = make(map[common.Address]struct{})
 	s.accessWrites = make(map[common.Address]struct{})
+	s.storageReads = make(map[storageAccess]common.Hash)
+	s.storageWrites = make(map[storageAccess]common.Hash)
 }
 
 // AccessSummary returns the deterministic dynamic account-level accesses
@@ -806,6 +847,34 @@ func (s *StateDB) AccessSummary() (reads, writes []common.Address) {
 	}
 	slices.SortFunc(reads, func(a, b common.Address) int { return bytes.Compare(a[:], b[:]) })
 	slices.SortFunc(writes, func(a, b common.Address) int { return bytes.Compare(a[:], b[:]) })
+	return reads, writes
+}
+
+// StorageAccessSummary returns deterministic slot-level witnesses observed by
+// this execution. Read values are always the original pre-state values; write
+// values are the final values observed by the isolated StateDB.
+func (s *StateDB) StorageAccessSummary() (reads, writes []StorageAccess) {
+	if s == nil {
+		return nil, nil
+	}
+	for key, value := range s.storageReads {
+		reads = append(reads, StorageAccess{Address: key.Address, Key: key.Key, Value: value})
+	}
+	for key, value := range s.storageWrites {
+		writes = append(writes, StorageAccess{Address: key.Address, Key: key.Key, Value: value})
+	}
+	slices.SortFunc(reads, func(a, b StorageAccess) int {
+		if cmp := bytes.Compare(a.Address[:], b.Address[:]); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.Key[:], b.Key[:])
+	})
+	slices.SortFunc(writes, func(a, b StorageAccess) int {
+		if cmp := bytes.Compare(a.Address[:], b.Address[:]); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.Key[:], b.Key[:])
+	})
 	return reads, writes
 }
 
@@ -841,26 +910,26 @@ type removedAccountWithBalance struct {
 // before the Finalise.
 func (s *StateDB) LogsForBurnAccounts() []*types.Log {
 	/*	var list []removedAccountWithBalance
-	for addr := range s.journal.dirties {
-		if obj, exist := s.stateObjects[addr]; exist && obj.selfDestructed && !obj.Balance().IsZero() {
-			list = append(list, removedAccountWithBalance{
-				address: obj.address,
-				balance: obj.Balance(),
-			})
+		for addr := range s.journal.dirties {
+			if obj, exist := s.stateObjects[addr]; exist && obj.selfDestructed && !obj.Balance().IsZero() {
+				list = append(list, removedAccountWithBalance{
+					address: obj.address,
+					balance: obj.Balance(),
+				})
+			}
 		}
-	}
-	if list == nil {
-		return nil
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].address.Cmp(list[j].address) < 0
-	})
-	logs := make([]*types.Log, len(list))
-	for i, acct := range list {
-		logs[i] = types.EthBurnLog(acct.address, acct.balance)
-	}
-	return logs */
-        return nil
+		if list == nil {
+			return nil
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].address.Cmp(list[j].address) < 0
+		})
+		logs := make([]*types.Log, len(list))
+		for i, acct := range list {
+			logs[i] = types.EthBurnLog(acct.address, acct.balance)
+		}
+		return logs */
+	return nil
 }
 
 // Finalise finalises the state by removing the destructed objects and clears

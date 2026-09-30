@@ -75,7 +75,16 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 			return speculativeTransaction{}, antartical.AccessSet{}, err
 		}
 		reads, writes := copyState.AccessSummary()
+		storageReads, storageWrites := copyState.StorageAccessSummary()
 		dynamic := antartical.AccessSet{Reads: reads, Writes: writes}
+		dynamic.StorageReads = make([]antartical.StorageAccess, len(storageReads))
+		for i, access := range storageReads {
+			dynamic.StorageReads[i] = antartical.StorageAccess{Address: access.Address, Key: access.Key}
+		}
+		dynamic.StorageWrites = make([]antartical.StorageAccess, len(storageWrites))
+		for i, access := range storageWrites {
+			dynamic.StorageWrites[i] = antartical.StorageAccess{Address: access.Address, Key: access.Key}
+		}
 		if len(dynamic.Reads) == 0 && len(dynamic.Writes) == 0 {
 			dynamic = access[index]
 		}

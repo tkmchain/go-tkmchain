@@ -10,7 +10,7 @@ local command-line switch.
 | Capability | Antartical gate | Current implementation | Consensus status |
 | --- | --- | --- | --- |
 | Native account abstraction (EIP-4337/RIP-7560) | `IsAccountAbstraction` | EIP-4337 packed `getUserOpHash` domain, PQ authorization, nonce state, factory/paymaster validation, and the TKM relay envelope | Hash compatibility is complete; native execution remains a TKM profile until a deployed EntryPoint/account implementation is selected |
-| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | Deterministic waves, isolated StateDB write-sets, pre-state validation, and transaction-order delta commit for code-free transfers | Contract calls, creates, and dynamic storage accesses remain serial for safety |
+| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | Deterministic waves, isolated StateDB write-sets, deterministic account and slot-level read/write witnesses, pre-state validation, and transaction-order delta commit for code-free transfers | Contract calls and creates remain serial until the complete witness is admitted for that execution class |
 | Alternative EVMs (Rust EVM/Revm/evmone) | `IsAlternativeEVM` | Strict process adapters plus `RegisterConformant` differential admission | No Revm/evmone binary is bundled or selected by default; every external binary must pass canonical vectors |
 | Formal verification tooling | `IsFormalVerification` | Execution witness recovery and zkEVM guest/prover host | Proof artifacts and machine-checked invariants are tooling until accepted by consensus |
 | Multidimensional gas | `IsMultidimensionalGas` | Feature gate and existing gas accounting | Requires header commitment and transaction encoding for every new dimension |

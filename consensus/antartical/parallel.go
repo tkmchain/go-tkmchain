@@ -93,9 +93,19 @@ func ExecuteOptimisticResults[T any, R any](items []T, access []AccessSet, run f
 // executor. Unknown accesses are kept serial; known disjoint accesses may be
 // evaluated in one deterministic wave and committed in transaction order.
 type AccessSet struct {
-	Reads   []common.Address
-	Writes  []common.Address
-	Unknown bool
+	Reads         []common.Address
+	Writes        []common.Address
+	StorageReads  []StorageAccess
+	StorageWrites []StorageAccess
+	Unknown       bool
+}
+
+// StorageAccess identifies one account storage slot observed by a speculative
+// execution. Value is not used for conflict scheduling; the state processor
+// validates it against the canonical pre-state before commit.
+type StorageAccess struct {
+	Address common.Address
+	Key     common.Hash
 }
 
 func (a AccessSet) conflicts(b AccessSet) bool {
@@ -108,12 +118,55 @@ func (a AccessSet) conflicts(b AccessSet) bool {
 				return true
 			}
 		}
+		if storageSlotAddressConflicts(x, b.StorageReads) || storageSlotAddressConflicts(x, b.StorageWrites) {
+			return true
+		}
 	}
 	for _, x := range b.Writes {
 		for _, y := range a.Reads {
 			if x == y {
 				return true
 			}
+		}
+		if storageSlotAddressConflicts(x, a.StorageReads) || storageSlotAddressConflicts(x, a.StorageWrites) {
+			return true
+		}
+	}
+	for _, x := range a.StorageWrites {
+		if storageAccessConflicts(x, b.StorageReads) || storageAccessConflicts(x, b.StorageWrites) || accountAddressConflicts(x.Address, b.Reads) || accountAddressConflicts(x.Address, b.Writes) {
+			return true
+		}
+	}
+	for _, x := range b.StorageWrites {
+		if storageAccessConflicts(x, a.StorageReads) || accountAddressConflicts(x.Address, a.Reads) || accountAddressConflicts(x.Address, a.Writes) {
+			return true
+		}
+	}
+	return false
+}
+
+func storageAccessConflicts(access StorageAccess, slots []StorageAccess) bool {
+	for _, slot := range slots {
+		if access.Address == slot.Address && access.Key == slot.Key {
+			return true
+		}
+	}
+	return false
+}
+
+func accountAddressConflicts(address common.Address, accounts []common.Address) bool {
+	for _, account := range accounts {
+		if address == account {
+			return true
+		}
+	}
+	return false
+}
+
+func storageSlotAddressConflicts(address common.Address, slots []StorageAccess) bool {
+	for _, slot := range slots {
+		if address == slot.Address {
+			return true
 		}
 	}
 	return false
