@@ -334,6 +334,13 @@ func TestWalletNotifications(t *testing.T) {
 		}
 	}
 
+	// Force one final synchronous refresh before shutting down the feed. Account
+	// file notifications are asynchronous on platforms without reliable
+	// filesystem events, while direct keystore operations update the cache
+	// immediately. Keeping the subscription open for this refresh prevents a
+	// valid final wallet event from being discarded during unsubscribe.
+	ks.Wallets()
+
 	// Shut down the event collector and check events.
 	sub.Unsubscribe()
 	for ev := range updates {
