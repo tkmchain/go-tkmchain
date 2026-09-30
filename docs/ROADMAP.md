@@ -167,6 +167,17 @@ Objective: make the network launchable and maintainable.
 
 Objective: scale the ecosystem without compromising the consensus base.
 
+### Antartical follow-up TODO
+
+- Complete parallel contract execution with validated account, code,
+  precompile, and slot-level witnesses.
+- Enforce full stateless Verkle consensus with header commitments and witness
+  based synchronization.
+- Bundle reproducible Revm/evmone adapters and require canonical differential
+  conformance before admission.
+- Complete byte-compatible EIP-4337/RIP-7560 EntryPoint, factory, paymaster,
+  fee, replay, and post-quantum account execution.
+
 - Add more Rotating King automation: alerts, dashboards, rotation proofs, reward accounting exports, and historical reports.
 - Expand TKM Phone clients across wallet, mobile, explorer, marketplace, encrypted chat, and call interfaces while keeping daemon-only Main King approvals.
 - Add miner pool support, pool operator documentation, and share-accounting reference integrations.

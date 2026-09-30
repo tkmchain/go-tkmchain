@@ -43,6 +43,25 @@ curl -s http://127.0.0.1:8545 \
 Include `tkmprotocol` in `--http.api` (or `--ws.api`) when using a custom API
 allowlist.
 
+## Post-Antartical TODO
+
+These four protocol upgrades are planned work. They stay behind their own
+consensus gates until the listed acceptance tests pass on Egypt and a multi-node
+rehearsal:
+
+1. **Parallel contract execution** — admit contract calls only after complete
+   account, code, precompile, and slot-level witnesses are validated during
+   speculative commit and reorg/replay tests.
+2. **Full stateless Verkle consensus enforcement** — commit Verkle roots and
+   witnesses in headers, connect `verkle/1` to the stateless synchroniser, and
+   verify blocks without a local state database.
+3. **Bundled Revm/evmone execution** — ship pinned reproducible adapters and
+   require differential conformance against the canonical Go interpreter on
+   every supported platform.
+4. **Complete byte-compatible EIP-4337/RIP-7560 execution** — finish native
+   EntryPoint, factory, paymaster, nonce, fee, replay, and post-quantum account
+   semantics with matching vectors and receipt behavior.
+
 ## Integration requirements before marking the remaining rows ready
 
 1. Register factory/paymaster policies for every network and publish the
