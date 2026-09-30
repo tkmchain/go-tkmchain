@@ -161,6 +161,9 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 		if err != nil || cert.BlockHash != digest {
 			return fmt.Errorf("Antartical finality digest mismatch")
 		}
+		if statedb == nil {
+			return fmt.Errorf("Antartical finality certificate requires validator state")
+		}
 		active, err := ActiveValidatorRecords(statedb, block.NumberU64())
 		if err != nil || len(active) == 0 {
 			return fmt.Errorf("Antartical finality certificate has no active validator committee")
