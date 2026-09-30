@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/tvm"
@@ -637,9 +638,14 @@ func (evm *EVM) initNewContract(contract *Contract, address common.Address) ([]b
 		return ret, err
 	}
 
-	// Reject code starting with 0xEF if EIP-3541 is enabled.
-	if len(ret) >= 1 && ret[0] == 0xEF && evm.chainRules.IsLondon {
-		return ret, ErrInvalidCode
+	// Antartical interprets an EOF-prefixed runtime as the versioned TKM EOF
+	// container. Invalid containers are consensus-invalid; valid containers are
+	// admitted through the new path. Before Antartical, retain EIP-3541's
+	// historical rejection so old blocks and replay behavior stay unchanged.
+	if len(ret) >= 1 && ret[0] == 0xEF {
+		if !evm.chainRules.IsAntartical || antartical.ValidateEOF(ret) != nil {
+			return ret, ErrInvalidCode
+		}
 	}
 
 	if !evm.chainRules.IsEIP4762 {

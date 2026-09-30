@@ -20,10 +20,10 @@ local command-line switch.
 | Native randomness | `IsNativeRandomness` | RandomX mix digest remains the current consensus randomness source | A new beacon/randomness commitment must be specified before replacing it |
 | Native oracles | `IsNativeOracles` | No consensus oracle feed is installed | Needs signed, replay-protected feed format and quorum rules |
 | Cross-chain standards | `IsCrossChainStandards` | No bridge messages are accepted by consensus | Needs a replay-protected message envelope and finality proof rules |
-| EVM Object Format (EOF) | `IsEOF` | Legacy EVM bytecode remains canonical | Requires EOF validation, code storage rules, and opcode versioning |
+| EVM Object Format (EOF) | `IsEOF` | EOF-prefixed runtime code is validated and stored through the Antartical path; legacy code remains replay-compatible | Full EOF opcode-version migration is still separate from container validation |
 | Modular precompiles | `IsModularPrecompiles` | Existing precompiles are statically registered | Requires an address/version registry committed by chain config |
 | Deterministic gas metering | `IsDeterministicGas` | Canonical intrinsic, EIP-1559, and blob gas rules | **Ready for the current transaction formats** |
-| Single-slot finality | `IsSingleSlotFinality` | TKM remains RandomX proof-of-work | Requires a separate validator/finality consensus engine; it cannot be enabled by a flag on PoW |
+| Single-slot finality | `IsSingleSlotFinality` | Versioned header certificate envelope, chain-bound digest, active-set membership, quorum and metadata commitment checks | Certificate production/mandatory proposer integration is still separate from the RandomX proposer |
 
 The `params.Rules` object exposes all gates, and
 `ChainConfig.AntarticalFeatureCatalog()` gives clients the same machine-readable
@@ -53,10 +53,11 @@ allowlist.
    from the canonical Go EVM.
 4. Commit Verkle roots/witnesses in the block header and implement snap/witness
    exchange before stateless mode can be enforced.
-5. Define signed randomness/oracle feeds, EOF validation, and modular precompile
-   registries in the chain configuration.
-6. Specify a validator finality protocol and a migration from RandomX before
-   enabling single-slot finality.
+5. Define signed randomness/oracle feeds and modular precompile registries in
+   the chain configuration; EOF container validation is now wired into
+   contract deployment.
+6. Add proposer-side certificate production and a coordinated migration from
+   RandomX before making single-slot certificates mandatory for every block.
 
 The deterministic primitives are implemented in `consensus/antartical`:
 
@@ -71,7 +72,11 @@ The deterministic primitives are implemented in `consensus/antartical`:
 
 The block processor currently uses the canonical Go EVM and RandomX engine;
 the Antartical primitives provide the shared transition and differential-test
-surface for the Rust/Revm/evmone adapters.
+surface for the Rust/Revm/evmone adapters. When a block carries a finality
+certificate, `BlockValidator` verifies its slot, chain-bound header digest,
+active-validator membership, 2/3 quorum, and metadata commitment. Blocks that
+do not carry a certificate remain valid until proposer-side certificate
+production is deployed network-wide.
 
 ## Versioned header metadata
 
