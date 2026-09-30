@@ -3,7 +3,7 @@
 Antartical validators are consensus state, not an optional EVM contract. A
 validator registers with a PQ transaction (`PQTkmTxType`) carrying the
 `TKMVALREG1` envelope and an ML-DSA-87 public key. The transaction value is the
-1,000,000 TKM bond and the protocol burns a 100 TKM registration fee. The
+500,000 TKM bond and the protocol burns a 100 TKM registration fee. The
 transaction sender, reward address, and ML-DSA public key must derive the same
 post-quantum account address.
 

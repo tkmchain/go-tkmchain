@@ -33,7 +33,7 @@ const (
 	ValidatorActivationDelay    = uint64(720)
 	ValidatorUnbondingPeriod    = uint64(21600)
 	ValidatorMaxSetSize         = uint64(4096)
-	ValidatorBondTKM            = uint64(1_000_000)
+	ValidatorBondTKM            = uint64(500_000)
 	ValidatorRegistrationFeeTKM = uint64(100)
 )
 
