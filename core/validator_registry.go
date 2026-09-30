@@ -29,6 +29,8 @@ import (
 const (
 	ValidatorRegistrationMagic  = "TKMVALREG1"
 	ValidatorSlashMagic         = "TKMVSLASH1"
+	ValidatorExitMagic          = "TKMVALEXIT1"
+	ValidatorWithdrawalMagic    = "TKMVALWD1"
 	ValidatorEnvelopeVersion    = uint64(1)
 	ValidatorActivationDelay    = uint64(720)
 	ValidatorUnbondingPeriod    = uint64(21600)
@@ -111,6 +113,51 @@ type ValidatorSlashEvidence struct {
 	SignatureA []byte
 	SignatureB []byte
 	PublicKey  []byte
+}
+
+// ValidatorAction is the payload for an exit or a bond withdrawal. The
+// validator identity is taken from the PQ transaction sender, so an action
+// cannot be authorized by a different account.
+type ValidatorAction struct{ Version uint64 }
+
+func HasValidatorExitPrefix(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(ValidatorExitMagic))
+}
+func HasValidatorWithdrawalPrefix(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(ValidatorWithdrawalMagic))
+}
+
+func encodeValidatorAction(prefix string, action *ValidatorAction) ([]byte, error) {
+	if action == nil || action.Version != ValidatorEnvelopeVersion {
+		return nil, ErrInvalidShieldedTx
+	}
+	payload, err := rlp.EncodeToBytes(action)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(prefix), payload...), nil
+}
+func decodeValidatorAction(data []byte, prefix string) (*ValidatorAction, error) {
+	if !bytes.HasPrefix(data, []byte(prefix)) || uint64(len(data)) > ShieldedV3MaxTxSize {
+		return nil, ErrInvalidShieldedTx
+	}
+	var action ValidatorAction
+	if err := rlp.DecodeBytes(data[len(prefix):], &action); err != nil || action.Version != ValidatorEnvelopeVersion {
+		return nil, ErrInvalidShieldedTx
+	}
+	return &action, nil
+}
+func EncodeValidatorExit(action *ValidatorAction) ([]byte, error) {
+	return encodeValidatorAction(ValidatorExitMagic, action)
+}
+func EncodeValidatorWithdrawal(action *ValidatorAction) ([]byte, error) {
+	return encodeValidatorAction(ValidatorWithdrawalMagic, action)
+}
+func DecodeValidatorExit(data []byte) (*ValidatorAction, error) {
+	return decodeValidatorAction(data, ValidatorExitMagic)
+}
+func DecodeValidatorWithdrawal(data []byte) (*ValidatorAction, error) {
+	return decodeValidatorAction(data, ValidatorWithdrawalMagic)
 }
 
 func HasValidatorSlashPrefix(data []byte) bool {
@@ -363,7 +410,7 @@ func ValidateValidatorRegistrationState(st shieldedStateReader, from common.Addr
 	if err != nil {
 		return err
 	}
-	if _, err := readValidatorRecord(st, from); err == nil {
+	if existing, err := readValidatorRecord(st, from); err == nil && existing.Stake != nil && existing.Stake.Sign() > 0 {
 		return ErrValidatorAlreadyRegistered
 	}
 	if ValidatorCount(st) >= ValidatorMaxSetSize {
@@ -373,6 +420,48 @@ func ValidateValidatorRegistrationState(st shieldedStateReader, from common.Addr
 		return errors.New("validator activation is too soon")
 	}
 	return nil
+}
+
+func ValidateValidatorActionBasics(config *params.ChainConfig, number *big.Int, time uint64, tx *types.Transaction) error {
+	if config == nil || !config.IsAntartical(number, time) {
+		return ErrValidatorNotActive
+	}
+	if tx == nil || tx.Type() != types.PQTkmTxType || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value().Sign() != 0 || tx.ChainId().Cmp(config.ChainID) != 0 {
+		return errors.New("validator action requires a zero-value PQ transaction to the reserved pool")
+	}
+	algorithm, publicKey, _, ok := tx.PQTkmFields()
+	if !ok || algorithm != pqcrypto.AlgorithmMLDSA87 || len(publicKey) != pqcrypto.MLDSA87PublicKeySize {
+		return errors.New("validator action requires an ML-DSA-87 transaction")
+	}
+	if HasValidatorExitPrefix(tx.Data()) {
+		_, err := DecodeValidatorExit(tx.Data())
+		return err
+	}
+	if HasValidatorWithdrawalPrefix(tx.Data()) {
+		_, err := DecodeValidatorWithdrawal(tx.Data())
+		return err
+	}
+	return ErrInvalidShieldedTx
+}
+
+func ValidateValidatorActionState(st shieldedStateReader, from common.Address, data []byte, height uint64) error {
+	record, err := readValidatorRecord(st, from)
+	if err != nil {
+		return ErrValidatorNotFound
+	}
+	if HasValidatorExitPrefix(data) {
+		if record.Stake == nil || record.Stake.Sign() == 0 || record.ExitHeight != 0 {
+			return errors.New("validator is not active or has already exited")
+		}
+		return nil
+	}
+	if HasValidatorWithdrawalPrefix(data) {
+		if record.Stake == nil || record.Stake.Sign() == 0 || record.ExitHeight == 0 || height < record.ExitHeight+ValidatorUnbondingPeriod {
+			return errors.New("validator bond is still in its unbonding period")
+		}
+		return nil
+	}
+	return ErrInvalidShieldedTx
 }
 
 func ProcessValidatorRegistration(config *params.ChainConfig, number *big.Int, time uint64, st *state.StateDB, tx *types.Transaction) error {
@@ -396,9 +485,49 @@ func ProcessValidatorRegistration(config *params.ChainConfig, number *big.Int, t
 		return err
 	}
 	index := ValidatorCount(st)
+	for i := uint64(0); i < index; i++ {
+		if st.GetState(params.ShieldedPoolAddress, validatorIndexSlot(i)) == common.BytesToHash(from.Bytes()) {
+			return nil
+		}
+	}
 	st.SetState(params.ShieldedPoolAddress, validatorIndexSlot(index), common.BytesToHash(from.Bytes()))
 	st.SetState(params.ShieldedPoolAddress, validatorCountSlot(), uint64Hash(index+1))
 	return nil
+}
+
+func ProcessValidatorAction(config *params.ChainConfig, number *big.Int, time uint64, st *state.StateDB, tx *types.Transaction) error {
+	if err := ValidateValidatorActionBasics(config, number, time, tx); err != nil {
+		return err
+	}
+	from, err := types.Sender(types.MakeSigner(config, number, time), tx)
+	if err != nil {
+		return err
+	}
+	if err := ValidateValidatorActionState(st, from, tx.Data(), number.Uint64()); err != nil {
+		return err
+	}
+	record, err := readValidatorRecord(st, from)
+	if err != nil {
+		return err
+	}
+	_, publicKey, _, ok := tx.PQTkmFields()
+	if !ok || !bytes.Equal(record.PublicKey, publicKey) {
+		return errors.New("validator action public key does not match the registered validator")
+	}
+	if HasValidatorExitPrefix(tx.Data()) {
+		record.ExitHeight = number.Uint64()
+		record.JailedUntil = number.Uint64() + ValidatorUnbondingPeriod
+		return writeValidatorRecord(st, record)
+	}
+	if st.GetBalance(params.ShieldedPoolAddress).ToBig().Cmp(record.Stake) < 0 {
+		return errors.New("validator bond reserve is unavailable for withdrawal")
+	}
+	st.SubBalance(params.ShieldedPoolAddress, uint256.MustFromBig(record.Stake), tracing.BalanceDecreaseSelfdestructBurn)
+	st.AddBalance(from, uint256.MustFromBig(record.Stake), tracing.BalanceIncreaseRewardTransactionFee)
+	record.Stake.SetUint64(0)
+	record.ExitHeight = number.Uint64()
+	record.JailedUntil = number.Uint64()
+	return writeValidatorRecord(st, record)
 }
 
 func ValidateValidatorSlashBasics(config *params.ChainConfig, number *big.Int, time uint64, tx *types.Transaction) error {

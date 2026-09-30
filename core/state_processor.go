@@ -153,6 +153,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 				return nil, fmt.Errorf("could not apply validator slash tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
 		}
+		if config.IsAntartical(blockNumber, header.Time) && (HasValidatorExitPrefix(tx.Data()) || HasValidatorWithdrawalPrefix(tx.Data())) {
+			if err := ProcessValidatorAction(config, blockNumber, header.Time, statedb, tx); err != nil {
+				return nil, fmt.Errorf("could not apply validator action tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		spanEnd(nil)

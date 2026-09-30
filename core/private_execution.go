@@ -49,6 +49,9 @@ func ValidatePrivateExecutionPolicy(config *params.ChainConfig, number *big.Int,
 	if tx.Type() == types.PQTkmTxType && HasValidatorSlashPrefix(tx.Data()) {
 		return ValidateValidatorSlashBasics(config, number, blockTime, tx)
 	}
+	if tx.Type() == types.PQTkmTxType && (HasValidatorExitPrefix(tx.Data()) || HasValidatorWithdrawalPrefix(tx.Data())) {
+		return ValidateValidatorActionBasics(config, number, blockTime, tx)
+	}
 	return validatePrivateExecutionFields(config, number, blockTime, tx.Type(), tx.To(), tx.Value(), tx.Data(), types.IsBlockRewardTx(tx))
 }
 
@@ -78,7 +81,7 @@ func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int,
 		// and one-vote-per-owner state before applying the vote.
 		return nil
 	}
-	if HasValidatorRegistrationPrefix(data) || HasValidatorSlashPrefix(data) {
+	if HasValidatorRegistrationPrefix(data) || HasValidatorSlashPrefix(data) || HasValidatorExitPrefix(data) || HasValidatorWithdrawalPrefix(data) {
 		// Validator envelopes are consensus state transitions. Their complete
 		// stateless shape and state transition are checked by the registry.
 		return nil

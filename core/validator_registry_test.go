@@ -90,3 +90,56 @@ func TestValidatorRegistryActivationAndDeterministicSelection(t *testing.T) {
 		t.Fatal("validator stake was not persisted")
 	}
 }
+
+func TestValidatorExitAndWithdrawalStateMachine(t *testing.T) {
+	st := &validatorTestState{values: make(map[common.Hash]common.Hash)}
+	key, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := pqcrypto.PublicKeyBytes(key)
+	addr, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putValidatorTestRecord(t, st, 0, &ValidatorRecord{
+		Version: 1, Address: addr, PublicKey: pub, RewardAddress: addr,
+		Stake: new(big.Int).Set(ValidatorBondWei()), ActivationHeight: 1,
+	})
+	exit, err := EncodeValidatorExit(&ValidatorAction{Version: ValidatorEnvelopeVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasValidatorExitPrefix(exit) || HasValidatorWithdrawalPrefix(exit) {
+		t.Fatal("validator exit envelope prefix is invalid")
+	}
+	if err := ValidateValidatorActionState(st, addr, exit, 100); err != nil {
+		t.Fatal(err)
+	}
+	record, err := readValidatorRecord(st, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.ExitHeight = 100
+	record.JailedUntil = 100 + ValidatorUnbondingPeriod
+	if err := writeValidatorRecord(st, record); err != nil {
+		t.Fatal(err)
+	}
+	withdrawal, err := EncodeValidatorWithdrawal(&ValidatorAction{Version: ValidatorEnvelopeVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateValidatorActionState(st, addr, withdrawal, 100+ValidatorUnbondingPeriod-1); err == nil {
+		t.Fatal("accepted a withdrawal before the unbonding period elapsed")
+	}
+	if err := ValidateValidatorActionState(st, addr, withdrawal, 100+ValidatorUnbondingPeriod); err != nil {
+		t.Fatal(err)
+	}
+	record.Stake.SetUint64(0)
+	if err := writeValidatorRecord(st, record); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateValidatorActionState(st, addr, withdrawal, 100+ValidatorUnbondingPeriod); err == nil {
+		t.Fatal("accepted a second withdrawal after the bond was cleared")
+	}
+}

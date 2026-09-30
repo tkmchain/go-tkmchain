@@ -1333,6 +1333,9 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 			if err == nil && core.HasValidatorRegistrationPrefix(tx.Data()) {
 				err = core.ValidateValidatorRegistrationState(pool.currentState, from, tx.Data(), head.Number.Uint64())
 			}
+			if err == nil && (core.HasValidatorExitPrefix(tx.Data()) || core.HasValidatorWithdrawalPrefix(tx.Data())) {
+				err = core.ValidateValidatorActionState(pool.currentState, from, tx.Data(), head.Number.Uint64())
+			}
 		}
 		if err == nil && antartical && core.HasShieldedV4Prefix(tx.Data()) {
 			var e *core.ShieldedV4Transaction
