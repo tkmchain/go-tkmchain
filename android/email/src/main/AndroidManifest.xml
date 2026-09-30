@@ -6,7 +6,9 @@
     </queries>
     <application
         android:allowBackup="false"
-        android:label="TKM Email"
+        android:label="EmailVM · private by default"
+        android:icon="@drawable/tkm_king"
+        android:roundIcon="@drawable/tkm_king"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:networkSecurityConfig="@xml/network_security_config"

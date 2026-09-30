@@ -15,11 +15,12 @@ shielded prover, so a production build always contains the node and the
 standalone email app together.
 
 The default URL is the wallet's email-only view (`?app=email`), so desktop and
-Android use the same interface and local PQ keyfile login. The shared view
-keeps the signed-in address and balance visible, but hides wallet transfers,
-shielded send/receive, phone, king, and transaction-history controls. Mailbox,
-domain, and email metadata purchases are accepted only when the displayed
-address has the required TKM balance. The launcher always serves the client
+Android use the same interface and local PQ keyfile login. After login the
+authenticated screen shows only `EmailVM · private by default`; wallet address,
+balance, transfers, shielded send/receive, phone, king, and transaction-history
+controls belong to TKM Wallet. Mailbox, domain, and email metadata purchases
+stay inside the EmailVM flow; wallet management remains in the separate wallet
+app. The launcher always serves the client
 through a loopback reverse proxy whose upstream dialer is Tor SOCKS5. If Tor is not listening, requests fail with
 `502`; there is no direct-network fallback. Change the SOCKS endpoint only
 when using a controlled Tor installation:
