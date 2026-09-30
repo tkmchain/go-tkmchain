@@ -17,11 +17,14 @@
 package state
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/holiman/uint256"
 )
 
 // The EIP27928 reader utilizes a hierarchical architecture to optimize state
@@ -202,6 +205,8 @@ type ReaderWithBlockLevelAccessList struct {
 	TxIndex    int
 }
 
+var _ Reader = (*ReaderWithBlockLevelAccessList)(nil)
+
 // NewReaderWithBlockLevelAccessList constructs a reader for accessing states
 // with the mutations made by transactions prior to txIndex.
 //
@@ -219,29 +224,161 @@ func NewReaderWithBlockLevelAccessList(base Reader, accessList *bal.Construction
 
 // Account implements Reader, returning the account with the specific address.
 func (r *ReaderWithBlockLevelAccessList) Account(addr common.Address) (*types.StateAccount, error) {
-	panic("implement me")
+	account, err := r.Reader.Account(addr)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		account = types.NewEmptyStateAccount()
+	} else {
+		account = account.Copy()
+	}
+	access := r.accountAccess(addr)
+	if access == nil {
+		if account.Nonce == 0 && account.Balance.IsZero() && bytes.Equal(account.CodeHash, types.EmptyCodeHash[:]) && account.Root == types.EmptyRootHash {
+			// Preserve the underlying reader's non-existent-account result.
+			if original, originalErr := r.Reader.Account(addr); originalErr == nil && original == nil {
+				return nil, nil
+			}
+		}
+		return account, nil
+	}
+	if balance, ok := latestBalance(access.BalanceChanges, r.TxIndex); ok {
+		account.Balance = balance
+	}
+	if nonce, ok := latestNonce(access.NonceChanges, r.TxIndex); ok {
+		account.Nonce = nonce
+	}
+	if code, ok := latestCode(access.CodeChange, r.TxIndex); ok {
+		account.CodeHash = crypto.Keccak256(code)
+	}
+	return account, nil
 }
 
 // Storage implements Reader, returning the storage slot with the specific
 // address and slot key.
 func (r *ReaderWithBlockLevelAccessList) Storage(addr common.Address, slot common.Hash) (common.Hash, error) {
-	panic("implement me")
+	value, err := r.Reader.Storage(addr, slot)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	access := r.accountAccess(addr)
+	if access == nil {
+		return value, nil
+	}
+	if writes, ok := access.StorageWrites[slot]; ok {
+		if written, ok := latestStorage(writes, r.TxIndex); ok {
+			return written, nil
+		}
+	}
+	return value, nil
 }
 
 // Has implements Reader, returning the flag indicating whether the contract
 // code with specified address and hash exists or not.
 func (r *ReaderWithBlockLevelAccessList) Has(addr common.Address, codeHash common.Hash) bool {
-	panic("implement me")
+	code, changed := r.latestCode(addr)
+	if changed {
+		return common.BytesToHash(crypto.Keccak256(code)) == codeHash
+	}
+	return r.Reader.Has(addr, codeHash)
 }
 
 // Code implements Reader, returning the contract code with specified address
 // and hash.
-func (r *ReaderWithBlockLevelAccessList) Code(addr common.Address, codeHash common.Hash) ([]byte, error) {
-	panic("implement me")
+func (r *ReaderWithBlockLevelAccessList) Code(addr common.Address, codeHash common.Hash) []byte {
+	if code, changed := r.latestCode(addr); changed {
+		if common.BytesToHash(crypto.Keccak256(code)) != codeHash {
+			return nil
+		}
+		return common.CopyBytes(code)
+	}
+	return common.CopyBytes(r.Reader.Code(addr, codeHash))
 }
 
 // CodeSize implements Reader, returning the contract code size with specified
 // address and hash.
-func (r *ReaderWithBlockLevelAccessList) CodeSize(addr common.Address, codeHash common.Hash) (int, error) {
-	panic("implement me")
+func (r *ReaderWithBlockLevelAccessList) CodeSize(addr common.Address, codeHash common.Hash) int {
+	if code, changed := r.latestCode(addr); changed {
+		if common.BytesToHash(crypto.Keccak256(code)) != codeHash {
+			return 0
+		}
+		return len(code)
+	}
+	return len(r.Reader.Code(addr, codeHash))
+}
+
+func (r *ReaderWithBlockLevelAccessList) accountAccess(addr common.Address) *bal.ConstructionAccountAccess {
+	if r == nil || r.AccessList == nil || r.AccessList.Accounts == nil {
+		return nil
+	}
+	return r.AccessList.Accounts[addr]
+}
+
+func (r *ReaderWithBlockLevelAccessList) latestCode(addr common.Address) ([]byte, bool) {
+	access := r.accountAccess(addr)
+	if access == nil {
+		return nil, false
+	}
+	return latestCode(access.CodeChange, r.TxIndex)
+}
+
+func latestBalance(changes map[uint32]*uint256.Int, txIndex int) (*uint256.Int, bool) {
+	var (
+		value *uint256.Int
+		index uint32
+		found bool
+	)
+	for tx, balance := range changes {
+		if txIndex < 0 || tx >= uint32(txIndex) || (found && tx <= index) {
+			continue
+		}
+		value, index, found = balance.Clone(), tx, true
+	}
+	return value, found
+}
+
+func latestNonce(changes map[uint32]uint64, txIndex int) (uint64, bool) {
+	var (
+		value uint64
+		index uint32
+		found bool
+	)
+	for tx, nonce := range changes {
+		if txIndex < 0 || tx >= uint32(txIndex) || (found && tx <= index) {
+			continue
+		}
+		value, index, found = nonce, tx, true
+	}
+	return value, found
+}
+
+func latestStorage(changes map[uint32]common.Hash, txIndex int) (common.Hash, bool) {
+	var (
+		value common.Hash
+		index uint32
+		found bool
+	)
+	for tx, slot := range changes {
+		if txIndex < 0 || tx >= uint32(txIndex) || (found && tx <= index) {
+			continue
+		}
+		value, index, found = slot, tx, true
+	}
+	return value, found
+}
+
+func latestCode(changes map[uint32][]byte, txIndex int) ([]byte, bool) {
+	var (
+		value []byte
+		index uint32
+		found bool
+	)
+	for tx, code := range changes {
+		if txIndex < 0 || tx >= uint32(txIndex) || (found && tx <= index) {
+			continue
+		}
+		value, index, found = common.CopyBytes(code), tx, true
+	}
+	return value, found
 }

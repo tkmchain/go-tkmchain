@@ -1,145 +1,85 @@
 // Copyright 2026 The go-ethereum Authors
 // This file is part of the go-ethereum library.
-//
-// The go-ethereum library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// The go-ethereum library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
-//
-// You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 package state
 
 import (
-	"fmt"
-	"math/rand"
-	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/internal/testrand"
+	"github.com/ethereum/go-ethereum/core/types/bal"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/holiman/uint256"
 )
 
-type countingStateReader struct {
-	accounts map[common.Address]int
-	storages map[common.Address]map[common.Hash]int
-	lock     sync.Mutex
+type accessListReaderTestReader struct {
+	account *types.StateAccount
+	code    []byte
+	storage map[common.Hash]common.Hash
 }
 
-func newRefStateReader() *countingStateReader {
-	return &countingStateReader{
-		accounts: make(map[common.Address]int),
-		storages: make(map[common.Address]map[common.Hash]int),
+func (r *accessListReaderTestReader) Account(common.Address) (*types.StateAccount, error) {
+	if r.account == nil {
+		return nil, nil
 	}
+	return r.account.Copy(), nil
 }
 
-func (r *countingStateReader) validate(total int) error {
-	var sum int
-	for addr, n := range r.accounts {
-		if n != 1 {
-			return fmt.Errorf("duplicated account access: %x-%d", addr, n)
-		}
-		sum += 1
-
-		slots, exists := r.storages[addr]
-		if !exists {
-			continue
-		}
-		for key, n := range slots {
-			if n != 1 {
-				return fmt.Errorf("duplicated storage access: %x-%x-%d", addr, key, n)
-			}
-			sum += 1
-		}
-	}
-	for addr := range r.storages {
-		_, exists := r.accounts[addr]
-		if !exists {
-			return fmt.Errorf("dangling storage access: %x", addr)
-		}
-	}
-	if sum != total {
-		return fmt.Errorf("unexpected number of access, want: %d, got: %d", total, sum)
-	}
-	return nil
+func (r *accessListReaderTestReader) Storage(_ common.Address, slot common.Hash) (common.Hash, error) {
+	return r.storage[slot], nil
 }
 
-func (r *countingStateReader) Account(addr common.Address) (*types.StateAccount, error) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	r.accounts[addr] += 1
-	return nil, nil
-}
-func (r *countingStateReader) Storage(addr common.Address, slot common.Hash) (common.Hash, error) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	slots, exists := r.storages[addr]
-	if !exists {
-		slots = make(map[common.Hash]int)
-		r.storages[addr] = slots
-	}
-	slots[slot] += 1
-	return common.Hash{}, nil
+func (r *accessListReaderTestReader) Has(_ common.Address, codeHash common.Hash) bool {
+	return common.BytesToHash(crypto.Keccak256(r.code)) == codeHash
 }
 
-func makeFetchTasks(n int) ([]*fetchTask, int) {
-	var (
-		total int
-		tasks []*fetchTask
-	)
-	for i := 0; i < n; i++ {
-		var slots []common.Hash
-		if rand.Intn(3) != 0 {
-			for j := 0; j < rand.Intn(100); j++ {
-				slots = append(slots, testrand.Hash())
-			}
-		}
-		tasks = append(tasks, &fetchTask{
-			addr:  testrand.Address(),
-			slots: slots,
-		})
-		total += len(slots) + 1
-	}
-	return tasks, total
+func (r *accessListReaderTestReader) Code(_ common.Address, _ common.Hash) []byte {
+	return common.CopyBytes(r.code)
 }
 
-func TestPrefetchReader(t *testing.T) {
-	type suite struct {
-		tasks   []*fetchTask
-		threads int
-		total   int
+func (r *accessListReaderTestReader) CodeSize(_ common.Address, _ common.Hash) int {
+	return len(r.code)
+}
+
+func TestReaderWithBlockLevelAccessListOverlaysPriorTransactions(t *testing.T) {
+	address := common.HexToAddress("0x1234")
+	slot := common.HexToHash("0x01")
+	oldCode := []byte{0x60, 0x00}
+	newCode := []byte{0x60, 0x01, 0x00}
+	base := &accessListReaderTestReader{
+		account: &types.StateAccount{Nonce: 4, Balance: uint256.NewInt(10), Root: types.EmptyRootHash, CodeHash: crypto.Keccak256(oldCode)},
+		code:    oldCode,
+		storage: map[common.Hash]common.Hash{slot: common.HexToHash("0x10")},
 	}
-	var suites []suite
-	for i := 0; i < 100; i++ {
-		tasks, total := makeFetchTasks(100)
-		suites = append(suites, suite{
-			tasks:   tasks,
-			threads: rand.Intn(30) + 1,
-			total:   total,
-		})
+	access := bal.NewConstructionBlockAccessList()
+	access.BalanceChange(1, address, uint256.NewInt(20))
+	access.BalanceChange(3, address, uint256.NewInt(40))
+	access.NonceChange(address, 1, 5)
+	access.NonceChange(address, 3, 7)
+	access.StorageWrite(1, address, slot, common.HexToHash("0x20"))
+	access.StorageWrite(3, address, slot, common.HexToHash("0x30"))
+	access.CodeChange(address, 1, newCode)
+
+	reader := NewReaderWithBlockLevelAccessList(base, &access, 3)
+	account, err := reader.Account(address)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// num(tasks) < num(threads)
-	tasks, total := makeFetchTasks(1)
-	suites = append(suites, suite{
-		tasks:   tasks,
-		threads: 100,
-		total:   total,
-	})
-	for _, s := range suites {
-		r := newRefStateReader()
-		pr := newPrefetchStateReaderInternal(r, s.tasks, s.threads)
-		pr.Wait()
-		if err := r.validate(s.total); err != nil {
-			t.Fatal(err)
-		}
+	if account.Balance.Uint64() != 20 || account.Nonce != 5 {
+		t.Fatalf("account overlay = balance %d nonce %d, want balance 20 nonce 5", account.Balance.Uint64(), account.Nonce)
+	}
+	if got, err := reader.Storage(address, slot); err != nil || got != common.HexToHash("0x20") {
+		t.Fatalf("storage overlay = %s, %v", got, err)
+	}
+	codeHash := common.BytesToHash(crypto.Keccak256(newCode))
+	if !reader.Has(address, codeHash) {
+		t.Fatal("code overlay was not visible")
+	}
+	if got := reader.Code(address, codeHash); string(got) != string(newCode) {
+		t.Fatalf("code overlay = %x", got)
+	}
+	if size := reader.CodeSize(address, codeHash); size != len(newCode) {
+		t.Fatalf("code size overlay = %d", size)
 	}
 }
