@@ -57,6 +57,7 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 
 	results, transcript, err := antartical.ExecuteOptimisticResults(txs, access, func(index int, tx *types.Transaction) (speculativeTransaction, antartical.AccessSet, error) {
 		copyState := statedb.Copy()
+		copyState.ResetAccessSummary()
 		copyState.SetTxContext(tx.Hash(), index)
 		message, err := TransactionToMessage(tx, signer, block.BaseFee())
 		if err != nil {
@@ -73,7 +74,12 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 		if err != nil {
 			return speculativeTransaction{}, antartical.AccessSet{}, err
 		}
-		return speculativeTransaction{receipt: receipt, delta: delta, gas: localGas, peakGas: localGas.Used(), gasLimit: tx.Gas()}, access[index], nil
+		reads, writes := copyState.AccessSummary()
+		dynamic := antartical.AccessSet{Reads: reads, Writes: writes}
+		if len(dynamic.Reads) == 0 && len(dynamic.Writes) == 0 {
+			dynamic = access[index]
+		}
+		return speculativeTransaction{receipt: receipt, delta: delta, gas: localGas, peakGas: localGas.Used(), gasLimit: tx.Gas()}, dynamic, nil
 	})
 	if err != nil {
 		return nil, nil, common.Hash{}, false, err

@@ -35,3 +35,19 @@ func TestSpeculativeDeltaRoundTrip(t *testing.T) {
 		t.Fatal("accepted a delta with an already changed account")
 	}
 }
+
+func TestDynamicAccessSummary(t *testing.T) {
+	db := NewDatabaseForTesting()
+	st, err := New(common.Hash{}, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := common.HexToAddress("0x1")
+	write := common.HexToAddress("0x2")
+	st.GetBalance(read)
+	st.SetNonce(write, 1, tracing.NonceChangeUnspecified)
+	reads, writes := st.AccessSummary()
+	if len(reads) == 0 || reads[0] != read || len(writes) == 0 || writes[0] != write {
+		t.Fatalf("unexpected dynamic access summary: reads=%v writes=%v", reads, writes)
+	}
+}

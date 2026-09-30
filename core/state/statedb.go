@@ -18,6 +18,7 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -133,6 +134,14 @@ type StateDB struct {
 	// Transient storage
 	transientStorage transientStorage
 
+	// accessReads/accessWrites are the dynamic account-level access summary for
+	// the current isolated execution. They are used by the Antartical
+	// optimistic executor to validate contract calls conservatively; storage
+	// slots remain in the StateDB write-set and therefore cannot be merged when
+	// two transactions touch the same account.
+	accessReads  map[common.Address]struct{}
+	accessWrites map[common.Address]struct{}
+
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
 	journal *journal
@@ -191,6 +200,8 @@ func NewWithReader(root common.Hash, db Database, reader Reader) (*StateDB, erro
 		logs:                 make(map[common.Hash][]*types.Log),
 		preimages:            make(map[common.Hash][]byte),
 		journal:              newJournal(),
+		accessReads:          make(map[common.Address]struct{}),
+		accessWrites:         make(map[common.Address]struct{}),
 		accessList:           newAccessList(),
 		transientStorage:     newTransientStorage(),
 	}
@@ -446,6 +457,7 @@ func (s *StateDB) HasSelfDestructed(addr common.Address) bool {
 
 // AddBalance adds amount to the account associated with addr.
 func (s *StateDB) AddBalance(addr common.Address, amount *uint256.Int, reason tracing.BalanceChangeReason) uint256.Int {
+	s.recordWrite(addr)
 	stateObject := s.getOrNewStateObject(addr)
 	if stateObject == nil {
 		return uint256.Int{}
@@ -455,6 +467,7 @@ func (s *StateDB) AddBalance(addr common.Address, amount *uint256.Int, reason tr
 
 // SubBalance subtracts amount from the account associated with addr.
 func (s *StateDB) SubBalance(addr common.Address, amount *uint256.Int, reason tracing.BalanceChangeReason) uint256.Int {
+	s.recordWrite(addr)
 	stateObject := s.getOrNewStateObject(addr)
 	if stateObject == nil {
 		return uint256.Int{}
@@ -466,6 +479,7 @@ func (s *StateDB) SubBalance(addr common.Address, amount *uint256.Int, reason tr
 }
 
 func (s *StateDB) SetBalance(addr common.Address, amount *uint256.Int, reason tracing.BalanceChangeReason) {
+	s.recordWrite(addr)
 	stateObject := s.getOrNewStateObject(addr)
 	if stateObject != nil {
 		stateObject.SetBalance(amount)
@@ -473,6 +487,7 @@ func (s *StateDB) SetBalance(addr common.Address, amount *uint256.Int, reason tr
 }
 
 func (s *StateDB) SetNonce(addr common.Address, nonce uint64, reason tracing.NonceChangeReason) {
+	s.recordWrite(addr)
 	stateObject := s.getOrNewStateObject(addr)
 	if stateObject != nil {
 		stateObject.SetNonce(nonce)
@@ -480,6 +495,7 @@ func (s *StateDB) SetNonce(addr common.Address, nonce uint64, reason tracing.Non
 }
 
 func (s *StateDB) SetCode(addr common.Address, code []byte, reason tracing.CodeChangeReason) (prev []byte) {
+	s.recordWrite(addr)
 	stateObject := s.getOrNewStateObject(addr)
 	if stateObject != nil {
 		return stateObject.SetCode(crypto.Keccak256Hash(code), code)
@@ -488,6 +504,7 @@ func (s *StateDB) SetCode(addr common.Address, code []byte, reason tracing.CodeC
 }
 
 func (s *StateDB) SetState(addr common.Address, key, value common.Hash) common.Hash {
+	s.recordWrite(addr)
 	if stateObject := s.getOrNewStateObject(addr); stateObject != nil {
 		return stateObject.SetState(key, value)
 	}
@@ -528,6 +545,7 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 // The account's state object is still available until the state is committed,
 // getStateObject will return a non-nil account after SelfDestruct.
 func (s *StateDB) SelfDestruct(addr common.Address) {
+	s.recordWrite(addr)
 	stateObject := s.getStateObject(addr)
 	if stateObject == nil {
 		return
@@ -588,6 +606,7 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 // getStateObject retrieves a state object given by the address, returning nil if
 // the object is not found or was deleted in this execution context.
 func (s *StateDB) getStateObject(addr common.Address) *stateObject {
+	s.recordRead(addr)
 	// Record state access regardless of whether the account exists.
 	s.stateReadList.AddAccount(addr)
 
@@ -641,6 +660,7 @@ func (s *StateDB) getOrNewStateObject(addr common.Address) *stateObject {
 // createObject creates a new state object. The assumption is held there is no
 // existing account with the given address, otherwise it will be silently overwritten.
 func (s *StateDB) createObject(addr common.Address) *stateObject {
+	s.recordWrite(addr)
 	obj := newObject(s, addr, nil)
 	s.journal.createObject(addr)
 	s.setStateObject(obj)
@@ -706,6 +726,8 @@ func (s *StateDB) Copy() *StateDB {
 		accessList:       s.accessList.Copy(),
 		transientStorage: s.transientStorage.Copy(),
 		journal:          s.journal.copy(),
+		accessReads:      maps.Clone(s.accessReads),
+		accessWrites:     maps.Clone(s.accessWrites),
 	}
 	if s.trie != nil {
 		state.trie = mustCopyTrie(s.trie)
@@ -743,6 +765,50 @@ func (s *StateDB) Copy() *StateDB {
 	return state
 }
 
+func (s *StateDB) recordRead(addr common.Address) {
+	if s.accessReads == nil {
+		s.accessReads = make(map[common.Address]struct{})
+	}
+	s.accessReads[addr] = struct{}{}
+}
+
+func (s *StateDB) recordWrite(addr common.Address) {
+	if s.accessWrites == nil {
+		s.accessWrites = make(map[common.Address]struct{})
+	}
+	s.accessWrites[addr] = struct{}{}
+}
+
+// ResetAccessSummary starts a fresh dynamic-access window for an isolated
+// transaction. StateDB.Copy intentionally preserves the maps for callers that
+// need a complete execution trace, while the optimistic executor uses this
+// method so accesses from the parent snapshot cannot affect conflict ordering.
+func (s *StateDB) ResetAccessSummary() {
+	if s == nil {
+		return
+	}
+	s.accessReads = make(map[common.Address]struct{})
+	s.accessWrites = make(map[common.Address]struct{})
+}
+
+// AccessSummary returns the deterministic dynamic account-level accesses
+// observed by this state execution. It intentionally exposes addresses only;
+// slot-level writes are validated by SpeculativeDelta before commit.
+func (s *StateDB) AccessSummary() (reads, writes []common.Address) {
+	if s == nil {
+		return nil, nil
+	}
+	for addr := range s.accessReads {
+		reads = append(reads, addr)
+	}
+	for addr := range s.accessWrites {
+		writes = append(writes, addr)
+	}
+	slices.SortFunc(reads, func(a, b common.Address) int { return bytes.Compare(a[:], b[:]) })
+	slices.SortFunc(writes, func(a, b common.Address) int { return bytes.Compare(a[:], b[:]) })
+	return reads, writes
+}
+
 // Snapshot returns an identifier for the current revision of the state.
 func (s *StateDB) Snapshot() int {
 	return s.journal.snapshot()
@@ -774,7 +840,7 @@ type removedAccountWithBalance struct {
 // This function should only be invoked at the transaction boundary, specifically
 // before the Finalise.
 func (s *StateDB) LogsForBurnAccounts() []*types.Log {
-/*	var list []removedAccountWithBalance
+	/*	var list []removedAccountWithBalance
 	for addr := range s.journal.dirties {
 		if obj, exist := s.stateObjects[addr]; exist && obj.selfDestructed && !obj.Balance().IsZero() {
 			list = append(list, removedAccountWithBalance{
