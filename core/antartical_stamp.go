@@ -207,6 +207,30 @@ func ValidateAntarticalStampState(st shieldedStateReader, from common.Address, t
 		}
 		return ValidateAddressVoteState(st, from, data)
 	}
+	if HasValidatorRegistrationPrefix(data) {
+		if to == nil || *to != params.ShieldedPoolAddress || value.Cmp(ValidatorBondWei()) != 0 {
+			return errors.New("illegal validator registration value transfer")
+		}
+		if IsAddressSuspended(st, from) {
+			return fmt.Errorf("%w: sender %s", ErrAddressSuspended, from)
+		}
+		if !IsAntarticalStamped(st, from) {
+			return fmt.Errorf("%w: sender %s", ErrUnstampedAddress, from)
+		}
+		return nil
+	}
+	if HasValidatorSlashPrefix(data) {
+		if to == nil || *to != params.ShieldedPoolAddress || value.Sign() != 0 {
+			return errors.New("illegal validator slash value transfer")
+		}
+		if IsAddressSuspended(st, from) {
+			return fmt.Errorf("%w: sender %s", ErrAddressSuspended, from)
+		}
+		if !IsAntarticalStamped(st, from) {
+			return fmt.Errorf("%w: sender %s", ErrUnstampedAddress, from)
+		}
+		return nil
+	}
 	if IsAddressSuspended(st, from) {
 		return fmt.Errorf("%w: sender %s", ErrAddressSuspended, from)
 	}

@@ -242,6 +242,7 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, thread
 		MinMemory:                  config.RandomX.MinMemory,
 		PostQuantumMainKingAddress: config.PostQuantumMainKingAddress,
 		QuantumResistantTime:       config.QuantumResistantTime,
+		AntarticalTime:             config.AntarticalTime,
 	}
 
 	if randomxConfig.EpochLength == 0 {

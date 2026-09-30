@@ -64,6 +64,8 @@ const (
 	BlockRewardRotatingKing
 	// BlockRewardMiner identifies the miner reward transaction.
 	BlockRewardMiner
+	// BlockRewardValidator identifies the selected Antartical validator reward.
+	BlockRewardValidator
 )
 
 // Transaction is an Ethereum transaction.
@@ -101,6 +103,34 @@ func NewBlockRewardTx(blockNumber uint64, kind int, to common.Address, amount *b
 		GasPrice: new(big.Int),
 		Data:     data,
 	})
+}
+
+// NewValidatorRewardTx creates the Antartical validator reward marker. Its
+// nonce uses a four-way domain so it can never collide with the historical
+// three-way reward nonce sequence.
+func NewValidatorRewardTx(blockNumber uint64, to common.Address, amount *big.Int) *Transaction {
+	data := make([]byte, len(blockRewardTxPrefix)+9)
+	copy(data, blockRewardTxPrefix)
+	binary.BigEndian.PutUint64(data[len(blockRewardTxPrefix):], blockNumber)
+	data[len(data)-1] = byte(BlockRewardValidator)
+	if amount == nil {
+		amount = new(big.Int)
+	}
+	return NewTx(&LegacyTx{Nonce: blockNumber*4 + uint64(BlockRewardValidator), To: &to, Value: amount, Gas: 0, GasPrice: new(big.Int), Data: data})
+}
+
+// BlockRewardKind returns the protocol kind encoded in a synthetic reward.
+func BlockRewardKind(tx *Transaction) (int, bool) {
+	if !IsBlockRewardTx(tx) {
+		return -1, false
+	}
+	data := tx.Data()
+	return int(data[len(data)-1]), true
+}
+
+func IsValidatorRewardTx(tx *Transaction) bool {
+	kind, ok := BlockRewardKind(tx)
+	return ok && kind == BlockRewardValidator
 }
 
 // IsBlockRewardTx reports whether tx is a synthetic block reward transaction.

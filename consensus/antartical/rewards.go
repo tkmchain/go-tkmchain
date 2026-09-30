@@ -2,6 +2,12 @@ package antartical
 
 import "math/big"
 
+// DefaultBlocksPerHalving is the four-year halving interval used by the
+// RandomX schedule. Keeping the interval in the Antartical package lets the
+// validator reward verifier use exactly the same integer schedule without a
+// dependency cycle through the RandomX engine.
+const DefaultBlocksPerHalving uint64 = 4 * 365 * 24 * 60 * 60 / 120
+
 // InitialRewardShares are the Antartical fixed per-block shares. The
 // validator share belongs to exactly one selected validator at a height; it
 // is not multiplied by committee size.

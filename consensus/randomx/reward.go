@@ -13,6 +13,7 @@ package randomx
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -37,7 +38,7 @@ var (
 
 	// Block timing constants
 	TargetBlockTimeSeconds uint64 = 120
-	BlocksPerHalving              = uint64(4 * 365 * 24 * 60 * 60 / TargetBlockTimeSeconds) // ~4 years
+	BlocksPerHalving              = antartical.DefaultBlocksPerHalving // ~4 years
 	GenesisTimestamp              = int64(1763731821)
 	MaxHalvings                   = uint64(64)
 )

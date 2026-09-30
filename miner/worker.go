@@ -827,6 +827,11 @@ func (w *worker) rewardBlockBody(header *types.Header, txs []*types.Transaction,
 		return txs, receipts, 0
 	}
 	rewards := provider.RewardTransactions(header, receipts)
+	if w.config != nil && w.config.IsAntartical(header.Number, header.Time) && w.current != nil && w.current.state != nil {
+		if validatorReward, err := core.BuildValidatorRewardTx(w.current.state, header); err == nil {
+			rewards = append(rewards, validatorReward)
+		}
+	}
 	if len(rewards) == 0 {
 		return txs, receipts, 0
 	}

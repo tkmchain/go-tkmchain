@@ -22,6 +22,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -49,6 +50,7 @@ type Config struct {
 	PersistDataset             bool
 	PostQuantumMainKingAddress common.Address
 	QuantumResistantTime       *uint64
+	AntarticalTime             *uint64
 }
 
 type Work struct {
@@ -62,6 +64,7 @@ type Work struct {
 
 type RandomX struct {
 	config *Config
+	chain  consensus.ChainHeaderReader
 	// fullFake is used only by NewFaker in tests and simulated backends. It
 	// lets those generated blocks carry a deterministic non-zero mix digest,
 	// while the normal no-cgo verifier still rejects empty production proofs.
@@ -224,6 +227,7 @@ func (rx *RandomX) VerifyUncles(chain consensus.ChainReader, block *types.Block)
 }
 
 func (rx *RandomX) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
+	rx.chain = chain
 	if header.Number == nil {
 		header.Number = new(big.Int)
 	}
@@ -484,6 +488,16 @@ func (rx *RandomX) mainKingAt(header *types.Header) common.Address {
 	return rx.mainKing
 }
 
+func (rx *RandomX) antarticalActive(header *types.Header) bool {
+	if rx == nil || header == nil || header.Number == nil {
+		return false
+	}
+	if rx.chain != nil && rx.chain.Config() != nil && rx.chain.Config().IsAntartical(header.Number, header.Time) {
+		return true
+	}
+	return rx.config != nil && rx.config.AntarticalTime != nil && header.Time >= *rx.config.AntarticalTime
+}
+
 func rewardKind(tx *types.Transaction) int {
 	data := tx.Data()
 	if len(data) == 0 {
@@ -540,6 +554,12 @@ func (rx *RandomX) RewardTransactions(header *types.Header, receipts []*types.Re
 
 func (rx *RandomX) CompatibleRewardTransactions(header *types.Header, receipts []*types.Receipt) [][]*types.Transaction {
 	canonical := rx.RewardTransactions(header, receipts)
+	if rx.antarticalActive(header) {
+		return [][]*types.Transaction{canonical}
+	}
+	if rx.chain != nil && rx.chain.Config() != nil && rx.chain.Config().IsAntartical(header.Number, header.Time) {
+		return [][]*types.Transaction{canonical}
+	}
 	candidates := [][]*types.Transaction{canonical}
 	for _, candidate := range [][]*types.Transaction{
 		rx.legacyRewardTransactions(header, receipts),
@@ -625,6 +645,36 @@ func (rx *RandomX) rewardMarkerShares(header *types.Header, totalReward *big.Int
 	if totalReward == nil || totalReward.Sign() == 0 {
 		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
 	}
+	if rx.antarticalActive(header) {
+		shares := antartical.RewardSharesAt(blockNumber, antartical.DefaultBlocksPerHalving)
+		mainKingReward.Set(shares.MainKing)
+		rotatingKingReward.Set(shares.Rotating)
+		minerReward.Set(shares.Miner)
+		if mainKing == (common.Address{}) {
+			minerReward.Add(minerReward, mainKingReward)
+			mainKingReward.SetUint64(0)
+		}
+		if rotatingKing == (common.Address{}) {
+			minerReward.Add(minerReward, rotatingKingReward)
+			rotatingKingReward.SetUint64(0)
+		}
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
+	if rx.chain != nil && rx.chain.Config() != nil && rx.chain.Config().IsAntartical(header.Number, header.Time) {
+		shares := antartical.RewardSharesAt(blockNumber, antartical.DefaultBlocksPerHalving)
+		mainKingReward.Set(shares.MainKing)
+		rotatingKingReward.Set(shares.Rotating)
+		minerReward.Set(shares.Miner)
+		if mainKing == (common.Address{}) {
+			minerReward.Add(minerReward, mainKingReward)
+			mainKingReward.SetUint64(0)
+		}
+		if rotatingKing == (common.Address{}) {
+			minerReward.Add(minerReward, rotatingKingReward)
+			rotatingKingReward.SetUint64(0)
+		}
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
 	totalRewardBig := new(big.Int).Set(totalReward)
 	mainKingReward.Mul(totalRewardBig, big.NewInt(10))
 	mainKingReward.Div(mainKingReward, big.NewInt(100))
@@ -704,6 +754,36 @@ func (rx *RandomX) rewardShares(header *types.Header, totalReward *big.Int) (com
 	rotatingKingReward := new(big.Int)
 	minerReward := new(big.Int)
 	if totalReward == nil || totalReward.Sign() == 0 {
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
+	if rx.antarticalActive(header) {
+		shares := antartical.RewardSharesAt(blockNumber, antartical.DefaultBlocksPerHalving)
+		mainKingReward.Set(shares.MainKing)
+		rotatingKingReward.Set(shares.Rotating)
+		minerReward.Set(shares.Miner)
+		if mainKing == (common.Address{}) {
+			minerReward.Add(minerReward, mainKingReward)
+			mainKingReward.SetUint64(0)
+		}
+		if rotatingKing == (common.Address{}) {
+			minerReward.Add(minerReward, rotatingKingReward)
+			rotatingKingReward.SetUint64(0)
+		}
+		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
+	}
+	if rx.chain != nil && rx.chain.Config() != nil && rx.chain.Config().IsAntartical(header.Number, header.Time) {
+		shares := antartical.RewardSharesAt(blockNumber, antartical.DefaultBlocksPerHalving)
+		mainKingReward.Set(shares.MainKing)
+		rotatingKingReward.Set(shares.Rotating)
+		minerReward.Set(shares.Miner)
+		if mainKing == (common.Address{}) {
+			minerReward.Add(minerReward, mainKingReward)
+			mainKingReward.SetUint64(0)
+		}
+		if rotatingKing == (common.Address{}) {
+			minerReward.Add(minerReward, rotatingKingReward)
+			rotatingKingReward.SetUint64(0)
+		}
 		return mainKing, mainKingReward, rotatingKing, rotatingKingReward, miner, minerReward
 	}
 	totalRewardBig := new(big.Int).Set(totalReward)

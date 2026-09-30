@@ -113,6 +113,9 @@ Exactly one selected validator receives the 70 TKM share at each height. Every
 share is halved independently at the existing RandomX halving interval, so the
 total remains 100 TKM after the first halving, 50 TKM after the second, and so
 on. Historical pre-Antartical reward transactions retain their existing
-200-TKM percentage schedule. The selected validator address must come from the
-consensus validator registration set before this schedule can be enforced by
-block validation.
+200-TKM percentage schedule. The selected validator address comes from the
+consensus validator registration set. The registration envelope, activation
+queue, persistent state registry, deterministic selection, slashing evidence,
+and validator reward-marker checks are documented in
+[`ANTARTICAL_VALIDATORS.md`](ANTARTICAL_VALIDATORS.md) and enforced by the
+state processor after Antartical activation.

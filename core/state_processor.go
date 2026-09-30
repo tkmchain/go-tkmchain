@@ -106,7 +106,7 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	seenShieldedNullifiers := make(map[common.Hash]struct{})
 	for i, tx := range block.Transactions() {
 		if types.IsBlockRewardTx(tx) {
-			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used())
+			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used(), statedb)
 			if err != nil {
 				return nil, err
 			}
@@ -139,6 +139,16 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		if config.IsAntartical(blockNumber, header.Time) && HasAddressVotePrefix(tx.Data()) {
 			if err := ProcessAddressVote(statedb, msg.From, tx.Data(), tx.Hash()); err != nil {
 				return nil, fmt.Errorf("could not apply address vote tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
+		if config.IsAntartical(blockNumber, header.Time) && HasValidatorRegistrationPrefix(tx.Data()) {
+			if err := ProcessValidatorRegistration(config, blockNumber, header.Time, statedb, tx); err != nil {
+				return nil, fmt.Errorf("could not apply validator registration tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			}
+		}
+		if config.IsAntartical(blockNumber, header.Time) && HasValidatorSlashPrefix(tx.Data()) {
+			if err := ProcessValidatorSlash(config, blockNumber, header.Time, statedb, tx); err != nil {
+				return nil, fmt.Errorf("could not apply validator slash tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
 		}
 		receipts = append(receipts, receipt)
@@ -199,12 +209,34 @@ type compatibleRewardTransactionProvider interface {
 	CompatibleRewardTransactions(header *types.Header, receipts []*types.Receipt) [][]*types.Transaction
 }
 
-func (p *StateProcessor) processBlockRewardTxs(txs types.Transactions, header *types.Header, receipts []*types.Receipt, cumulativeGas uint64) ([]*types.Receipt, error) {
+func (p *StateProcessor) processBlockRewardTxs(txs types.Transactions, header *types.Header, receipts []*types.Receipt, cumulativeGas uint64, statedb *state.StateDB) ([]*types.Receipt, error) {
 	provider, ok := p.chain.Engine().(rewardTransactionProvider)
 	if !ok {
 		return nil, fmt.Errorf("block reward transactions are not supported by %T", p.chain.Engine())
 	}
-	if p.acceptNoRotatingKingRewardTail(txs) {
+	base := make(types.Transactions, 0, len(txs))
+	validatorRewards := 0
+	for _, tx := range txs {
+		if types.IsValidatorRewardTx(tx) {
+			validatorRewards++
+			if err := ValidateValidatorRewardTransaction(statedb, header, tx); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		base = append(base, tx)
+	}
+	active, err := ActiveValidatorRecords(statedb, header.Number.Uint64())
+	if err != nil {
+		return nil, err
+	}
+	if len(active) > 0 && validatorRewards != 1 {
+		return nil, fmt.Errorf("invalid validator reward count: have %d, want 1", validatorRewards)
+	}
+	if len(active) == 0 && validatorRewards != 0 {
+		return nil, ErrValidatorRewardInvalid
+	}
+	if p.acceptNoRotatingKingRewardTail(base) {
 		return rewardTxReceipts(txs, cumulativeGas), nil
 	}
 	candidates := [][]*types.Transaction{provider.RewardTransactions(header, receipts)}
@@ -214,11 +246,14 @@ func (p *StateProcessor) processBlockRewardTxs(txs types.Transactions, header *t
 	if legacy := p.legacyNoRotatingKingRewardTransactions(header); len(legacy) > 0 {
 		candidates = append(candidates, legacy)
 	}
-	expected, err := matchingRewardTransactions(txs, candidates)
+	expected, err := matchingRewardTransactions(base, candidates)
 	if err != nil {
 		return nil, err
 	}
-	return rewardTxReceipts(txs[:len(expected)], cumulativeGas), nil
+	if len(expected) != len(base) {
+		return nil, fmt.Errorf("invalid base reward transaction count")
+	}
+	return rewardTxReceipts(txs, cumulativeGas), nil
 }
 
 func (p *StateProcessor) acceptNoRotatingKingRewardTail(txs types.Transactions) bool {
