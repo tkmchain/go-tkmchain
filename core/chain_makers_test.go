@@ -54,6 +54,12 @@ func TestGeneratePOSChain(t *testing.T) {
 		gendb = rawdb.NewMemoryDatabase()
 		db    = rawdb.NewMemoryDatabase()
 	)
+	// Activate Prague after genesis so the optional requests field does not
+	// produce an empty parent-beacon element in the genesis header RLP.
+	config.PragueTime = new(uint64)
+	*config.PragueTime = 1
+	config.OsakaTime = new(uint64)
+	*config.OsakaTime = 2
 
 	// init 0xaa with some storage elements
 	storage := make(map[common.Hash]common.Hash)
@@ -118,7 +124,7 @@ func TestGeneratePOSChain(t *testing.T) {
 
 	// Import the chain. This runs all block validation rules.
 	blockchain, _ := NewBlockChain(db, gspec, engine, nil)
-	defer blockchain.Stop()
+	defer stopCanonicalFixture(t, blockchain)
 
 	if i, err := blockchain.InsertChain(genchain); err != nil {
 		t.Fatalf("insert error (block %d): %v\n", genchain[i].NumberU64(), err)
@@ -171,11 +177,17 @@ func TestGeneratePOSChain(t *testing.T) {
 		if got := block.BeaconRoot(); *got != want {
 			t.Fatalf("block %d, wrong parent beacon root: got %s, want %s", i, got, want)
 		}
-		state, _ := blockchain.State()
-		idx := block.Time()%8191 + 8191
-		got := state.GetState(params.BeaconRootsAddress, common.BigToHash(new(big.Int).SetUint64(idx)))
-		if got != want {
-			t.Fatalf("block %d, wrong parent beacon root in state: got %s, want %s", i, got, want)
+		// TKM keeps the EIP-4788 predeploy bytecode optional. When the
+		// predeploy is present, verify that the system call also persisted the
+		// root in its ring buffer; with an empty predeploy there is no storage
+		// transition to assert, while the header root above remains mandatory.
+		if len(params.BeaconRootsCode) != 0 {
+			state, _ := blockchain.State()
+			idx := block.Time()%8191 + 8191
+			got := state.GetState(params.BeaconRootsAddress, common.BigToHash(new(big.Int).SetUint64(idx)))
+			if got != want {
+				t.Fatalf("block %d, wrong parent beacon root in state: got %s, want %s", i, got, want)
+			}
 		}
 	}
 }
@@ -221,19 +233,15 @@ func ExampleGenerateChain() {
 			gen.SetCoinbase(addr3)
 			gen.SetExtra([]byte("yeehaw"))
 		case 3:
-			// Block 4 includes blocks 2 and 3 as uncle headers (with modified extra data).
-			b2 := gen.PrevBlock(1).Header()
-			b2.Extra = []byte("foo")
-			gen.AddUncle(b2)
-			b3 := gen.PrevBlock(2).Header()
-			b3.Extra = []byte("foo")
-			gen.AddUncle(b3)
+			// RandomX rejects uncle headers at consensus, so this compatibility
+			// example keeps block 4 empty instead of importing Ethereum-style
+			// uncles that TKM nodes must reject.
 		}
 	})
 
 	// Import the chain. This runs all block validation rules.
 	blockchain, _ := NewBlockChain(db, gspec, randomx.NewFaker(), DefaultConfig().WithStateScheme(rawdb.HashScheme))
-	defer blockchain.Stop()
+	defer stopCanonicalFixture(nil, blockchain)
 
 	if i, err := blockchain.InsertChain(chain); err != nil {
 		fmt.Printf("insert error (block %d): %v\n", chain[i].NumberU64(), err)
@@ -249,5 +257,5 @@ func ExampleGenerateChain() {
 	// last block: #5
 	// balance of addr1: 989000
 	// balance of addr2: 10000
-	// balance of addr3: 19687500000000001000
+	// balance of addr3: 600000000000000001000
 }

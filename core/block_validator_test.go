@@ -45,8 +45,11 @@ func TestCalcGasLimitRecoversDeploymentGasFloor(t *testing.T) {
 
 func testHeaderVerification(t *testing.T, scheme string) {
 	// Create a simple chain to verify
+	config := *params.TestChainConfig
+	config.RandomXTxBlock = new(big.Int)
+	config.RandomXMoneroBlock = new(big.Int)
 	var (
-		gspec        = &Genesis{Config: params.TestChainConfig}
+		gspec        = &Genesis{Config: &config}
 		_, blocks, _ = GenerateChainWithGenesis(gspec, randomx.NewFaker(), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
@@ -55,8 +58,12 @@ func testHeaderVerification(t *testing.T, scheme string) {
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
 	options := DefaultConfig().WithStateScheme(scheme)
+	// Header verification does not exercise snapshot generation. Disable the
+	// asynchronous snapshot journal so this short-lived fixture can stop
+	// deterministically on all storage schemes.
+	options.SnapshotLimit = 0
 	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, randomx.NewFaker(), options)
-	defer chain.Stop()
+	defer stopCanonicalFixture(t, chain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +90,10 @@ func testHeaderVerification(t *testing.T, scheme string) {
 			}
 			// Make sure no more data is returned
 			select {
-			case result := <-results:
-				t.Fatalf("test %d.%d: unexpected result returned: %v", i, j, result)
+			case result, ok := <-results:
+				if ok {
+					t.Fatalf("test %d.%d: unexpected result returned: %v", i, j, result)
+				}
 			case <-time.After(25 * time.Millisecond):
 			}
 		}
@@ -170,8 +179,10 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		postHeaders[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, engine, nil)
-	defer chain.Stop()
+	options := DefaultConfig()
+	options.SnapshotLimit = 0
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, engine, options)
+	defer stopCanonicalFixture(t, chain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +201,10 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		}
 		// Make sure no more data is returned
 		select {
-		case result := <-results:
-			t.Fatalf("pre-block %d: unexpected result returned: %v", i, result)
+		case result, ok := <-results:
+			if ok {
+				t.Fatalf("pre-block %d: unexpected result returned: %v", i, result)
+			}
 		case <-time.After(25 * time.Millisecond):
 		}
 		chain.InsertChain(preBlocks[i : i+1])
@@ -210,8 +223,10 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		}
 		// Make sure no more data is returned
 		select {
-		case result := <-results:
-			t.Fatalf("post-block %d: unexpected result returned: %v", i, result)
+		case result, ok := <-results:
+			if ok {
+				t.Fatalf("post-block %d: unexpected result returned: %v", i, result)
+			}
 		case <-time.After(25 * time.Millisecond):
 		}
 		chain.InsertBlockWithoutSetHead(context.Background(), postBlocks[i], false)
@@ -238,8 +253,10 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 	}
 	// Make sure no more data is returned
 	select {
-	case result := <-results:
-		t.Fatalf("unexpected result returned: %v", result)
+	case result, ok := <-results:
+		if ok {
+			t.Fatalf("unexpected result returned: %v", result)
+		}
 	case <-time.After(25 * time.Millisecond):
 	}
 }

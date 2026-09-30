@@ -993,7 +993,9 @@ func TestOpenCap(t *testing.T) {
 	storage := t.TempDir()
 
 	os.MkdirAll(filepath.Join(storage, pendingTransactionStore), 0700)
-	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotterEIP7594(testMaxBlobsPerBlock), nil)
+	// The active mainnet profile has not enabled Osaka, so the pool uses the
+	// pre-Osaka shelf format when reopening this fixture.
+	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotter(params.BlobTxMaxBlobs), nil)
 
 	// Insert a few transactions from a few accounts
 	var (
@@ -1015,7 +1017,7 @@ func TestOpenCap(t *testing.T) {
 
 		keep = []common.Address{addr1, addr3}
 		drop = []common.Address{addr2}
-		size = 2 * (txAvgSize + blobSize + uint64(txBlobOverhead))
+		size = uint64(2 * (txAvgSize + blobSize))
 	)
 	store.Put(blob1)
 	store.Put(blob2)
@@ -1024,7 +1026,7 @@ func TestOpenCap(t *testing.T) {
 
 	// Verify pool capping twice: first by reducing the data cap, then restarting
 	// with a high cap to ensure everything was persisted previously
-	for _, datacap := range []uint64{2 * (txAvgSize + blobSize + uint64(txBlobOverhead)), 1000 * (txAvgSize + blobSize + uint64(txBlobOverhead))} {
+	for _, datacap := range []uint64{2 * (txAvgSize + blobSize), 1000 * (txAvgSize + blobSize)} {
 		// Create a blob pool out of the pre-seeded data, but cap it to 2 blob transaction
 		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 		statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
@@ -1032,8 +1034,13 @@ func TestOpenCap(t *testing.T) {
 		statedb.AddBalance(addr3, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
 		statedb.Commit(0, true, false)
 
+		fixtureConfig := *params.MainnetChainConfig
+		fixtureConfig.AntarticalTime = nil
+		fixtureConfig.QuantumResistantTime = nil
+		fixtureConfig.PrivacyCommitmentTime = nil
+		fixtureConfig.PQMigrationRecoveryTime = nil
 		chain := &testBlockChain{
-			config:  params.MainnetChainConfig,
+			config:  &fixtureConfig,
 			basefee: uint256.NewInt(1050),
 			blobfee: uint256.NewInt(105),
 			statedb: statedb,
@@ -1121,7 +1128,7 @@ func TestChangingSlotterSize(t *testing.T) {
 		// Make custom chain config where the max blob count changes based on the loop variable.
 		cancunTime := uint64(0)
 		config := &params.ChainConfig{
-			ChainID:     big.NewInt(1),
+			ChainID:     new(big.Int).Set(params.MainnetChainConfig.ChainID),
 			LondonBlock: big.NewInt(0),
 			BerlinBlock: big.NewInt(0),
 			CancunTime:  &cancunTime,
@@ -1224,7 +1231,7 @@ func TestBillyMigration(t *testing.T) {
 		// Make custom chain config where the max blob count changes based on the loop variable.
 		zero := uint64(0)
 		config := &params.ChainConfig{
-			ChainID:     big.NewInt(1),
+			ChainID:     new(big.Int).Set(params.MainnetChainConfig.ChainID),
 			LondonBlock: big.NewInt(0),
 			BerlinBlock: big.NewInt(0),
 			CancunTime:  &zero,
@@ -1300,7 +1307,7 @@ func TestBlobCountLimit(t *testing.T) {
 	cancunTime := uint64(0)
 	pragueTime := uint64(0)
 	config := &params.ChainConfig{
-		ChainID:     big.NewInt(1),
+		ChainID:     new(big.Int).Set(params.MainnetChainConfig.ChainID),
 		LondonBlock: big.NewInt(0),
 		BerlinBlock: big.NewInt(0),
 		CancunTime:  &cancunTime,
@@ -1753,9 +1760,15 @@ func TestAdd(t *testing.T) {
 		statedb.Commit(0, true, false)
 		store.Close()
 
-		// Create a blob pool out of the pre-seeded dats
+		// Create a blob pool out of the pre-seeded dats. This fixture exercises
+		// transparent blob-pool policy, so keep Antartical privacy gating off.
+		fixtureConfig := *params.MainnetChainConfig
+		fixtureConfig.AntarticalTime = nil
+		fixtureConfig.QuantumResistantTime = nil
+		fixtureConfig.PrivacyCommitmentTime = nil
+		fixtureConfig.PQMigrationRecoveryTime = nil
 		chain := &testBlockChain{
-			config:  params.MainnetChainConfig,
+			config:  &fixtureConfig,
 			basefee: uint256.NewInt(1),
 			blobfee: uint256.NewInt(1),
 			statedb: statedb,
@@ -1877,7 +1890,7 @@ func TestGetBlobs(t *testing.T) {
 	// Make custom chain config where the max blob count changes based on the loop variable.
 	cancunTime := uint64(0)
 	config := &params.ChainConfig{
-		ChainID:     big.NewInt(1),
+		ChainID:     new(big.Int).Set(params.MainnetChainConfig.ChainID),
 		LondonBlock: big.NewInt(0),
 		BerlinBlock: big.NewInt(0),
 		CancunTime:  &cancunTime,

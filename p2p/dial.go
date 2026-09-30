@@ -452,7 +452,14 @@ func (d *dialScheduler) startStaticDials(n int) (started int) {
 // updateStaticPool attempts to move the given static dial back into staticPool.
 func (d *dialScheduler) updateStaticPool(id enode.ID) {
 	task, ok := d.static[id]
-	if ok && task.staticPoolIndex < 0 && d.checkDial(task.dest(), false) == nil {
+	if !ok || task == nil {
+		return
+	}
+	// Keep the dial-history backoff for failed attempts as well as peer
+	// removals. Ignoring it here immediately requeues the same static node,
+	// causing retry storms and making scheduler shutdown wait on a new dial.
+	checkHistory := !task.resolvedByDiscovery
+	if task.staticPoolIndex < 0 && d.checkDial(task.dest(), checkHistory) == nil {
 		d.addToStaticPool(task)
 	}
 }
@@ -555,9 +562,10 @@ type dialTask struct {
 
 	// These fields are private to the task and should not be
 	// accessed by dialScheduler while the task is running.
-	destPtr      atomic.Pointer[enode.Node]
-	lastResolved mclock.AbsTime
-	resolveDelay time.Duration
+	destPtr             atomic.Pointer[enode.Node]
+	lastResolved        mclock.AbsTime
+	resolveDelay        time.Duration
+	resolvedByDiscovery bool
 }
 
 func newDialTask(dest *enode.Node, flags connFlag) *dialTask {
@@ -599,7 +607,13 @@ func (t *dialTask) run(d *dialScheduler) {
 	if err != nil {
 		// For static nodes, resolve one more time if dialing fails.
 		var dialErr *dialError
-		if errors.As(err, &dialErr) && t.isStatic() {
+		// A concrete IP (and especially a Tor onion endpoint) is already the
+		// dial target. Retrying it through discovery after a failed attempt can
+		// enqueue a second dial while the scheduler is still processing the
+		// first failure. Only unresolved, non-onion static nodes need a lookup.
+		dest := t.dest()
+		onion := strings.HasSuffix(strings.ToLower(strings.TrimSuffix(dest.Hostname(), ".")), ".onion")
+		if errors.As(err, &dialErr) && t.isStatic() && !onion && (!dest.IPAddr().IsValid() || t.resolvedByDiscovery) {
 			if t.resolve(d) {
 				t.dial(d, t.dest())
 			}
@@ -641,6 +655,7 @@ func (t *dialTask) resolve(d *dialScheduler) bool {
 	}
 	// The node was found.
 	t.resolveDelay = initialResolveDelay
+	t.resolvedByDiscovery = true
 	t.destPtr.Store(resolved)
 	resAddr, _ := resolved.TCPEndpoint()
 	d.log.Debug("Resolved node", "id", resolved.ID(), "addr", resAddr)

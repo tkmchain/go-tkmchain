@@ -290,6 +290,10 @@ func TestGetModifiedAccounts(t *testing.T) {
 	genBlocks := 1
 	signer := types.HomesteadSigner{}
 	blockChain := newTestBlockChain(t, genBlocks, genesis, func(_ int, b *core.BlockGen) {
+		// RandomX does not credit the zero coinbase. Use a concrete beneficiary
+		// so the debug API also reports the miner account, as this fixture
+		// expects from the historical Ethereum test.
+		b.SetCoinbase(common.Address{0x01})
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei

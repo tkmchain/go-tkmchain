@@ -32,7 +32,9 @@ const (
 // Unexported devp2p protocol lengths from p2p package.
 const (
 	baseProtoLen = 16
-	ethProtoLen  = 18
+	// TKM's eth/71 protocol includes the three extension messages (rotating
+	// king, checkpoints, and phone propagation) after the upstream messages.
+	ethProtoLen  = 21
 	snapProtoLen = 8
 )
 

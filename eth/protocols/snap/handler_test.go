@@ -54,16 +54,16 @@ func makeTestBAL(minSize int) *bal.BlockAccessList {
 // It returns the chain, block hashes, and the stored BAL data.
 func getChainWithBALs(nBlocks int, balSize int) (*core.BlockChain, []common.Hash, []rlp.RawValue) {
 	gspec := &core.Genesis{
-		Config: params.MergedTestChainConfig,
+		Config: params.TestChainConfig,
 	}
-	db := rawdb.NewMemoryDatabase()
 	engine := randomx.NewFaker()
-	_, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, nBlocks, func(i int, gen *core.BlockGen) {})
-	options := &core.BlockChainConfig{
-		StateScheme:   rawdb.PathScheme,
-		TrieTimeLimit: 5 * time.Minute,
-		NoPrefetch:    true,
-	}
+	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, nBlocks, func(i int, gen *core.BlockGen) {})
+	// GenerateChainWithGenesis commits only the genesis block. Open the chain
+	// from that initialized database, then import the generated blocks through
+	// the normal validation path below.
+	options := core.DefaultConfig().WithStateScheme(rawdb.HashScheme)
+	options.TrieTimeLimit = 5 * time.Minute
+	options.NoPrefetch = true
 	bc, err := core.NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		panic(err)
@@ -93,12 +93,25 @@ func getChainWithBALs(nBlocks int, balSize int) (*core.BlockChain, []common.Hash
 	return bc, hashes, bals
 }
 
+// stopSnapFixture stops a protocol fixture without forcing the asynchronous
+// snapshot generator through the production shutdown journal. These tests only
+// inspect protocol responses and do not need to persist snapshot layers.
+func stopSnapFixture(bc *core.BlockChain) {
+	if bc == nil {
+		return
+	}
+	if snapshots := bc.Snapshots(); snapshots != nil {
+		snapshots.Disable()
+	}
+	bc.Stop()
+}
+
 // TestServiceGetAccessListsQuery verifies that known block hashes return the
 // correct BALs with positional correspondence.
 func TestServiceGetAccessListsQuery(t *testing.T) {
 	t.Parallel()
 	bc, hashes, bals := getChainWithBALs(5, 100)
-	defer bc.Stop()
+	defer stopSnapFixture(bc)
 	req := &GetAccessListsPacket{
 		ID:     1,
 		Hashes: hashes,
@@ -127,7 +140,7 @@ func TestServiceGetAccessListsQuery(t *testing.T) {
 func TestServiceGetAccessListsQueryEmpty(t *testing.T) {
 	t.Parallel()
 	bc, hashes, bals := getChainWithBALs(3, 100)
-	defer bc.Stop()
+	defer stopSnapFixture(bc)
 	unknown := common.HexToHash("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 	mixed := []common.Hash{hashes[0], unknown, hashes[1], unknown, hashes[2]}
 	req := &GetAccessListsPacket{
@@ -164,7 +177,7 @@ func TestServiceGetAccessListsQueryCap(t *testing.T) {
 	t.Parallel()
 
 	bc, _, _ := getChainWithBALs(2, 100)
-	defer bc.Stop()
+	defer stopSnapFixture(bc)
 
 	// Create a request with more hashes than the cap
 	hashes := make([]common.Hash, maxAccessListLookups+100)
@@ -195,7 +208,7 @@ func TestServiceGetAccessListsQueryByteLimit(t *testing.T) {
 	balSize := 1024 * 1024
 	nBlocks := 5
 	bc, hashes, _ := getChainWithBALs(nBlocks, balSize)
-	defer bc.Stop()
+	defer stopSnapFixture(bc)
 	req := &GetAccessListsPacket{
 		ID:     0,
 		Hashes: hashes,

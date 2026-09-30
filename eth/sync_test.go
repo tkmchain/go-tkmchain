@@ -27,8 +27,10 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
-// Tests that snap sync is disabled after a successful sync cycle.
-func TestSnapSyncDisabling69(t *testing.T) { testSnapSyncDisabling(t, eth.ETH69, snap.SNAP1) }
+// Tests that snap sync is disabled after a successful sync cycle. The node
+// advertises eth/71 as its current supported capability; using that capability
+// here keeps the snap extension handshake aligned with the production peer set.
+func TestSnapSyncDisabling69(t *testing.T) { testSnapSyncDisabling(t, eth.ETH71, snap.SNAP1) }
 
 // Tests that snap sync gets disabled as soon as a real block is successfully
 // imported into the blockchain.
@@ -55,12 +57,17 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	defer emptyPeerEth.Close()
 	defer fullPeerEth.Close()
 
-	go empty.handler.runEthPeer(emptyPeerEth, func(peer *eth.Peer) error {
-		return eth.Handle((*ethHandler)(empty.handler), peer)
-	})
-	go full.handler.runEthPeer(fullPeerEth, func(peer *eth.Peer) error {
-		return eth.Handle((*ethHandler)(full.handler), peer)
-	})
+	peerErr := make(chan error, 4)
+	go func() {
+		peerErr <- empty.handler.runEthPeer(emptyPeerEth, func(peer *eth.Peer) error {
+			return eth.Handle((*ethHandler)(empty.handler), peer)
+		})
+	}()
+	go func() {
+		peerErr <- full.handler.runEthPeer(fullPeerEth, func(peer *eth.Peer) error {
+			return eth.Handle((*ethHandler)(full.handler), peer)
+		})
+	}()
 
 	emptyPipeSnap, fullPipeSnap := p2p.MsgPipe()
 	defer emptyPipeSnap.Close()
@@ -69,14 +76,38 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	emptyPeerSnap := snap.NewPeer(snapVer, p2p.NewPeer(enode.ID{1}, "", caps), emptyPipeSnap)
 	fullPeerSnap := snap.NewPeer(snapVer, p2p.NewPeer(enode.ID{2}, "", caps), fullPipeSnap)
 
-	go empty.handler.runSnapExtension(emptyPeerSnap, func(peer *snap.Peer) error {
-		return snap.Handle((*snapHandler)(empty.handler), peer)
-	})
-	go full.handler.runSnapExtension(fullPeerSnap, func(peer *snap.Peer) error {
-		return snap.Handle((*snapHandler)(full.handler), peer)
-	})
-	// Wait a bit for the above handlers to start
-	time.Sleep(250 * time.Millisecond)
+	go func() {
+		peerErr <- empty.handler.runSnapExtension(emptyPeerSnap, func(peer *snap.Peer) error {
+			return snap.Handle((*snapHandler)(empty.handler), peer)
+		})
+	}()
+	go func() {
+		peerErr <- full.handler.runSnapExtension(fullPeerSnap, func(peer *snap.Peer) error {
+			return snap.Handle((*snapHandler)(full.handler), peer)
+		})
+	}()
+	// Wait for both protocol handlers to register their peers. Snapshot
+	// generation can make the old fixed 250ms delay racy on slower builders.
+	deadline := time.NewTimer(5 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer deadline.Stop()
+	defer tick.Stop()
+	for empty.handler.peers.len() == 0 || full.handler.peers.len() == 0 {
+		select {
+		case err := <-peerErr:
+			if err != nil {
+				t.Fatalf("protocol handler failed before peer registration: %v", err)
+			}
+		case <-deadline.C:
+			t.Fatalf("protocol peers not registered: empty=%d full=%d", empty.handler.peers.len(), full.handler.peers.len())
+		case <-tick.C:
+		}
+	}
+	// The handler starts its normal best-peer synchronizer as soon as the
+	// connection is registered. Stop that background attempt before invoking
+	// the snap-sync cycle under test, otherwise the two calls race and the
+	// explicit cycle can return downloader busy.
+	empty.handler.downloader.Cancel()
 
 	// Check that snap sync was disabled
 	if err := empty.handler.downloader.RandomXSync(full.chain.CurrentBlock()); err != nil {
@@ -84,15 +115,15 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	}
 	// Snap sync and mode switching happen asynchronously, poll for completion.
 	timeout := time.NewTimer(15 * time.Second)
-	tick := time.NewTicker(100 * time.Millisecond)
+	tickSync := time.NewTicker(100 * time.Millisecond)
 	defer timeout.Stop()
-	defer tick.Stop()
+	defer tickSync.Stop()
 
 	for {
 		select {
 		case <-timeout.C:
 			t.Fatalf("snap sync not disabled after successful synchronisation")
-		case <-tick.C:
+		case <-tickSync.C:
 			if empty.handler.synced.Load() && empty.handler.downloader.ConfigSyncMode() == ethconfig.FullSync {
 				return
 			}

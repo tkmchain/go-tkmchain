@@ -171,6 +171,17 @@ func GetChainConfig(forkString string) (baseConfig *params.ChainConfig, eips []i
 	if baseConfig, ok = Forks[baseName]; !ok {
 		return nil, nil, UnsupportedForkError{baseName}
 	}
+	// TKM's production ChainConfig is RandomX/PoW and therefore keeps IsMerge
+	// false. The generic Ethereum state-transition fixtures still include Paris
+	// and later PoS forks; give those callers an isolated copy with merge rules
+	// enabled so PREVRANDAO and the post-merge difficulty semantics remain
+	// faithful without changing the TKM network configuration.
+	switch baseName {
+	case "Paris", "Merge", "Shanghai", "ParisToShanghaiAtTime15k", "Cancun", "ShanghaiToCancunAtTime15k", "Prague", "CancunToPragueAtTime15k", "Osaka", "PragueToOsakaAtTime15k", "BPO1", "OsakaToBPO1AtTime15k", "BPO2", "BPO1ToBPO2AtTime15k", "BPO3", "BPO2ToBPO3AtTime15k", "BPO4", "BPO3ToBPO4AtTime15k", "Amsterdam", "UBT":
+		copy := *baseConfig
+		copy.MergeOverride = true
+		baseConfig = &copy
+	}
 	for _, eip := range eipsStrings {
 		if eipNum, err := strconv.Atoi(eip); err != nil {
 			return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eip)

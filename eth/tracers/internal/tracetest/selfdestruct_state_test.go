@@ -609,7 +609,7 @@ func TestSelfdestructStateTracer(t *testing.T) {
 			}
 
 			blockchain, block, statedb := setupTestBlockchain(t, tt.genesis, tx, tt.useBeacon)
-			defer blockchain.Stop()
+			defer stopTracerFixture(blockchain)
 
 			tracer := newSelfdestructStateTracer()
 			hookedState := state.NewHookedState(statedb, tracer.Hooks())

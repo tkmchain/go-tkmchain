@@ -42,6 +42,10 @@ func TestReimportMirroredState(t *testing.T) {
 		addr   = crypto.PubkeyToAddress(key.PublicKey)
 		engine = New(params.AllCliqueProtocolChanges.Clique, db)
 		signer = new(types.HomesteadSigner)
+		// This fixture exercises reimport, not snapshot generation. Disable the
+		// asynchronous snapshot worker so each deferred chain shutdown is
+		// deterministic even when several chain instances share the test DB.
+		chainConfig = &core.BlockChainConfig{SnapshotLimit: 0}
 	)
 	genspec := &core.Genesis{
 		Config:    params.AllCliqueProtocolChanges,
@@ -54,7 +58,7 @@ func TestReimportMirroredState(t *testing.T) {
 	copy(genspec.ExtraData[extraVanity:], addr[:])
 
 	// Generate a batch of blocks, each properly signed
-	chain, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), genspec, engine, nil)
+	chain, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), genspec, engine, chainConfig)
 	defer chain.Stop()
 
 	_, blocks, _ := core.GenerateChainWithGenesis(genspec, engine, 3, func(i int, block *core.BlockGen) {
@@ -86,7 +90,7 @@ func TestReimportMirroredState(t *testing.T) {
 	}
 	// Insert the first two blocks and make sure the chain is valid
 	db = rawdb.NewMemoryDatabase()
-	chain, _ = core.NewBlockChain(db, genspec, engine, nil)
+	chain, _ = core.NewBlockChain(db, genspec, engine, chainConfig)
 	defer chain.Stop()
 
 	if _, err := chain.InsertChain(blocks[:2]); err != nil {
@@ -99,7 +103,7 @@ func TestReimportMirroredState(t *testing.T) {
 	// Simulate a crash by creating a new chain on top of the database, without
 	// flushing the dirty states out. Insert the last block, triggering a sidechain
 	// reimport.
-	chain, _ = core.NewBlockChain(db, genspec, engine, nil)
+	chain, _ = core.NewBlockChain(db, genspec, engine, chainConfig)
 	defer chain.Stop()
 
 	if _, err := chain.InsertChain(blocks[2:]); err != nil {

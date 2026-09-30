@@ -142,6 +142,10 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, cancunBlock *big.Int, pe
 		emptyBlobCommit, _ = kzg4844.BlobToCommitment(&emptyBlob)
 		emptyBlobVHash     = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
 	)
+	// These fixtures synthesize forks at small block numbers. Keep the
+	// production RandomX activations out of the ordering checks used here.
+	config.RandomXTxBlock = nil
+	config.RandomXMoneroBlock = nil
 	config.LondonBlock = londonBlock
 	config.ArrowGlacierBlock = londonBlock
 	config.GrayGlacierBlock = londonBlock

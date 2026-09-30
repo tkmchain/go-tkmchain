@@ -26,6 +26,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/utesting"
@@ -133,8 +134,12 @@ func setupGeth(stack *node.Node, dir string) error {
 		return err
 	}
 	backend, err := eth.New(stack, &ethconfig.Config{
-		Genesis:        &chain.genesis,
-		NetworkId:      chain.genesis.Config.ChainID.Uint64(), // 19763
+		Genesis:   &chain.genesis,
+		NetworkId: chain.genesis.Config.ChainID.Uint64(), // 19763
+		// The Hive snap fixtures exercise hash-addressed MPT proofs and retain
+		// historical roots. The production node defaults to path state, so make
+		// the fixture's storage model explicit here.
+		StateScheme:    rawdb.HashScheme,
 		DatabaseCache:  10,
 		TrieCleanCache: 10,
 		TrieDirtyCache: 16,

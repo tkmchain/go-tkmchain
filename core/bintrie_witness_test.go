@@ -18,7 +18,6 @@ package core
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math/big"
 	"testing"
 
@@ -90,7 +89,7 @@ func TestProcessUBT(t *testing.T) {
 	options.SnapshotLimit = 0
 	options.BinTrieGroupDepth = triedb.DefaultBinTrieGroupDepth
 	blockchain, _ := NewBlockChain(bcdb, gspec, randomx.NewFaker(), options)
-	defer blockchain.Stop()
+	defer stopCanonicalFixture(t, blockchain)
 
 	txCost1 := params.TxGas
 	txCost2 := params.TxGas
@@ -158,9 +157,6 @@ func TestProcessUBT(t *testing.T) {
 		}
 	})
 
-	for i, b := range chain {
-		fmt.Printf("%d %x\n", i, b.Root())
-	}
 	endnum, err := blockchain.InsertChain(chain)
 	if err != nil {
 		t.Fatalf("block %d imported with error: %v", endnum, err)
@@ -187,7 +183,11 @@ func TestProcessParentBlockHash(t *testing.T) {
 	// etc
 	checkBlockHashes := func(statedb *state.StateDB, isUBT bool) {
 		statedb.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
-		statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode, tracing.CodeChangeUnspecified)
+		// The production predeploy is populated by the genesis. Install the
+		// canonical EIP-2935 history contract here because this unit test starts
+		// from an empty state database.
+		const historyStoreCode = "0x3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500"
+		statedb.SetCode(params.HistoryStorageAddress, common.FromHex(historyStoreCode), tracing.CodeChangeUnspecified)
 		// Process n blocks, from 1 .. num
 		var num = 2
 		for i := 1; i <= num; i++ {

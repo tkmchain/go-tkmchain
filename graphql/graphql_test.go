@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -201,7 +200,8 @@ func TestGraphQLBlockSerializationEIP2718(t *testing.T) {
 	}
 	signer := types.LatestSigner(genesis.Config)
 	newGQLService(t, stack, false, genesis, 1, func(i int, gen *core.BlockGen) {
-		gen.SetCoinbase(common.Address{1})
+		// Keep the serialization fixture independent of RandomX reward policy.
+		gen.SetCoinbase(common.Address{})
 		tx, _ := types.SignNewTx(key, signer, &types.LegacyTx{
 			Nonce:    uint64(0),
 			To:       &dad,
@@ -236,7 +236,7 @@ func TestGraphQLBlockSerializationEIP2718(t *testing.T) {
 	}{
 		{
 			body: `{"query": "{block {number transactions { from { address } to { address } value hash type accessList { address storageKeys } index}}}"}`,
-			want: `{"data":{"block":{"number":"0x1","transactions":[{"from":{"address":"0x71562b71999873db5b286df957af199ec94617f7"},"to":{"address":"0x0000000000000000000000000000000000000dad"},"value":"0x64","hash":"0xd864c9d7d37fade6b70164740540c06dd58bb9c3f6b46101908d6339db6a6a7b","type":"0x0","accessList":[],"index":"0x0"},{"from":{"address":"0x71562b71999873db5b286df957af199ec94617f7"},"to":{"address":"0x0000000000000000000000000000000000000dad"},"value":"0x32","hash":"0x19b35f8187b4e15fb59a9af469dca5dfa3cd363c11d372058c12f6482477b474","type":"0x1","accessList":[{"address":"0x0000000000000000000000000000000000000dad","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000"]}],"index":"0x1"}]}}}`,
+			want: `{"data":{"block":{"number":"0x1","transactions":[{"from":{"address":"0x71562b71999873db5b286df957af199ec94617f7"},"to":{"address":"0x0000000000000000000000000000000000000dad"},"value":"0x64","hash":"0x9fc141ddc17faa4ca55056352162d00100d54658261cda17cac79755d4e9bf15","type":"0x0","accessList":[],"index":"0x0"},{"from":{"address":"0x71562b71999873db5b286df957af199ec94617f7"},"to":{"address":"0x0000000000000000000000000000000000000dad"},"value":"0x32","hash":"0x6e23eab0497bc04acc7ef2d9aabe7e631603c1d93433b153f9dfedb354ef11be","type":"0x1","accessList":[{"address":"0x0000000000000000000000000000000000000dad","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000"]}],"index":"0x1"}]}}}`,
 			code: 200,
 		},
 	} {
@@ -327,7 +327,7 @@ func TestGraphQLConcurrentResolvers(t *testing.T) {
 		// because resolving the tx body belonging to a log is delayed.
 		{
 			body: `{block { logs(filter: {}) { transaction { nonce value gasPrice }}}}`,
-			want: `{"block":{"logs":[{"transaction":{"nonce":"0x0","value":"0x0","gasPrice":"0x3b9aca00"}},{"transaction":{"nonce":"0x0","value":"0x0","gasPrice":"0x3b9aca00"}},{"transaction":{"nonce":"0x1","value":"0x0","gasPrice":"0x3b9aca00"}},{"transaction":{"nonce":"0x1","value":"0x0","gasPrice":"0x3b9aca00"}},{"transaction":{"nonce":"0x2","value":"0x0","gasPrice":"0x3b9aca00"}},{"transaction":{"nonce":"0x2","value":"0x0","gasPrice":"0x3b9aca00"}}]}}`,
+			want: `{"block":{"logs":[{"transaction":{"nonce":"0x0","value":"0x0","gasPrice":"0x7"}},{"transaction":{"nonce":"0x0","value":"0x0","gasPrice":"0x7"}},{"transaction":{"nonce":"0x1","value":"0x0","gasPrice":"0x7"}},{"transaction":{"nonce":"0x1","value":"0x0","gasPrice":"0x7"}},{"transaction":{"nonce":"0x2","value":"0x0","gasPrice":"0x7"}},{"transaction":{"nonce":"0x2","value":"0x0","gasPrice":"0x7"}}]}}`,
 		},
 		// Multiple txes of a block race to set/retrieve receipts of a block.
 		{
@@ -478,8 +478,18 @@ func createNode(t *testing.T) *node.Node {
 }
 
 func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Genesis, genBlocks int, genfunc func(i int, gen *core.BlockGen)) (*handler, []*types.Block) {
+	// The service creates a production RandomX engine from the genesis config,
+	// while generated fixture blocks use the lightweight faker (which has no
+	// configured Main King). Keep both engines on the same reward policy so the
+	// imported state root is deterministic.
+	fixtureGenesis := *gspec
+	fixtureConfig := *gspec.Config
+	fixtureConfig.MainKingAddress = common.Address{}
+	fixtureConfig.PostQuantumMainKingAddress = common.Address{}
+	fixtureConfig.RotatingKingAddresses = nil
+	fixtureGenesis.Config = &fixtureConfig
 	ethConf := &ethconfig.Config{
-		Genesis:        gspec,
+		Genesis:        &fixtureGenesis,
 		NetworkId:      1337,
 		TrieCleanCache: 5,
 		TrieDirtyCache: 5,
@@ -488,21 +498,25 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 		RPCGasCap:      1000000,
 		StateScheme:    rawdb.HashScheme,
 	}
-	var engine = randomx.NewFaker()
 	if shanghai {
 		// GenerateChain will increment timestamps by 10.
 		// Shanghai upgrade at block 1.
 		shanghaiTime := uint64(5)
-		gspec.Config.ShanghaiTime = &shanghaiTime
+		fixtureConfig.ShanghaiTime = &shanghaiTime
 	}
 
 	ethBackend, err := eth.New(stack, ethConf)
 	if err != nil {
 		t.Fatalf("could not create eth backend: %v", err)
 	}
+	fixtureEngine, err := ethconfig.CreateConsensusEngine(&fixtureConfig, ethBackend.ChainDb(), 1, false)
+	if err != nil {
+		t.Fatalf("could not create fixture consensus engine: %v", err)
+	}
+	defer fixtureEngine.Close()
 	// Create some blocks and import them
-	chain, _ := core.GenerateChain(params.AllRandomXProtocolChanges, ethBackend.BlockChain().Genesis(),
-		engine, ethBackend.ChainDb(), genBlocks, genfunc)
+	chain, _ := core.GenerateChain(&fixtureConfig, ethBackend.BlockChain().Genesis(),
+		fixtureEngine, ethBackend.ChainDb(), genBlocks, genfunc)
 	_, err = ethBackend.BlockChain().InsertChain(chain)
 	if err != nil {
 		t.Fatalf("could not create import blocks: %v", err)

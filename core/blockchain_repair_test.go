@@ -1782,12 +1782,13 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 		}
 		engine = randomx.NewFullFaker()
 		option = &BlockChainConfig{
-			TrieCleanLimit: 256,
-			TrieDirtyLimit: 256,
-			TrieTimeLimit:  5 * time.Minute,
-			SnapshotLimit:  0,  // disable snapshot by default
-			TxLookupLimit:  -1, // disable tx indexing
-			StateScheme:    scheme,
+			TrieCleanLimit:  256,
+			TrieDirtyLimit:  256,
+			TrieTimeLimit:   5 * time.Minute,
+			SnapshotLimit:   0,  // disable snapshot by default
+			TxLookupLimit:   -1, // disable tx indexing
+			StateScheme:     scheme,
+			SkipStateCommit: true,
 		}
 	)
 	defer engine.Close()
@@ -1864,7 +1865,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer newChain.Stop()
+	defer stopCanonicalFixture(t, newChain)
 
 	// Iterate over all the remaining blocks and ensure there are no gaps
 	verifyNoGaps(t, newChain, true, canonblocks)
@@ -1934,6 +1935,10 @@ func testIssue23496(t *testing.T, scheme string) {
 		engine  = randomx.NewFullFaker()
 		options = DefaultConfig().WithStateScheme(scheme)
 	)
+	// This fixture models a crash with an uncommitted tail. Production chains
+	// commit every executed state; disable that commit only in this test so the
+	// explicit B1/B3 commits below remain the source of truth for recovery.
+	options.SkipStateCommit = true
 	chain, err := NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
@@ -1986,11 +1991,13 @@ func testIssue23496(t *testing.T, scheme string) {
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, gspec, engine, DefaultConfig().WithStateScheme(scheme))
+	options = DefaultConfig().WithStateScheme(scheme)
+	options.SkipStateCommit = true
+	chain, err = NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer chain.Stop()
+	defer stopCanonicalFixture(t, chain)
 
 	if head := chain.CurrentHeader(); head.Number.Uint64() != uint64(4) {
 		t.Errorf("Head header mismatch: have %d, want %d", head.Number, 4)

@@ -25,6 +25,11 @@ import (
 )
 
 func TestBlockchain(t *testing.T) {
+	// These fixtures encode Ethereum block headers, Ethash sealing and reward
+	// rules. TKM uses RandomX headers and its own genesis/reward policy; the
+	// TKM consensus coverage lives under core and consensus/randomx.
+	t.Skip("legacy Ethereum blockchain fixtures are not applicable to TKM")
+
 	bt := new(testMatcher)
 
 	// We are running most of GeneralStatetests to tests witness support, even
@@ -82,6 +87,10 @@ func TestBlockchain(t *testing.T) {
 
 // TestExecutionSpecBlocktests runs the test fixtures from execution-spec-tests.
 func TestExecutionSpecBlocktests(t *testing.T) {
+	// Execution-spec blockchain vectors pin Ethereum genesis/header hashes and
+	// fork transition rules. They cannot validate the TKM RandomX consensus.
+	t.Skip("Ethereum execution-spec blockchain fixtures are not applicable to TKM")
+
 	if !common.FileExist(executionSpecBlockchainTestDir) {
 		t.Skipf("directory %s does not exist", executionSpecBlockchainTestDir)
 	}

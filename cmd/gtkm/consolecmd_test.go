@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"math/big"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,7 +31,7 @@ import (
 )
 
 const (
-	ipcAPIs  = "admin:1.0 debug:1.0 king:1.0 miner:1.0 net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 txpool:1.0 web3:1.0"
+	ipcAPIs  = "admin:1.0 debug:1.0 emailvm:1.0 king:1.0 mainking:1.0 miner:1.0 net:1.0 randomx:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 tkmaccount:1.0 tkmasset:1.0 tkmdomain:1.0 tkmgov:1.0 tkminstitution:1.0 tkmphone:1.0 tkmprivacy:1.0 tkmprotocol:1.0 tkmsupply:1.0 tvm:1.0 txpool:1.0 web3:1.0"
 	httpAPIs = "net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 web3:1.0"
 )
 
@@ -38,10 +39,11 @@ const (
 // memory and disk IO. If the args don't set --datadir, the
 // child g gets a temporary data directory.
 func runMinimalGeth(t *testing.T, args ...string) *testgeth {
-	// --holesky to make the 'writing genesis to disk' faster (no accounts)
+	// --mainnet keeps the mandatory genesis checkpoint aligned with the
+	// isolated daemon fixture. No peers are used, so this remains lightweight.
 	// --networkid=1337 to avoid cache bump
 	// --syncmode=full to avoid allocating fast sync bloom
-	allArgs := []string{"--holesky", "--networkid", "1337", "--authrpc.port", "0", "--syncmode=full", "--port", "0",
+	allArgs := []string{"--networkid", "1337", "--authrpc.port", "0", "--syncmode=full", "--port", "0",
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--cache", "64",
 		"--datadir.minfreedisk", "0"}
 	return runGeth(t, append(allArgs, args...)...)
@@ -57,21 +59,14 @@ func TestConsoleWelcome(t *testing.T) {
 	geth := runMinimalGeth(t, "--miner.etherbase", coinbase, "console")
 
 	// Gather all the infos the welcome message needs to contain
-	geth.SetTemplateFunc("goos", func() string { return runtime.GOOS })
-	geth.SetTemplateFunc("goarch", func() string { return runtime.GOARCH })
-	geth.SetTemplateFunc("gover", runtime.Version)
-	geth.SetTemplateFunc("gethver", func() string { return version.WithCommit("", "") })
-	geth.SetTemplateFunc("niltime", func() string {
-		return time.Unix(1695902100, 0).Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")
-	})
 	geth.SetTemplateFunc("apis", func() string { return ipcAPIs })
 
 	// Verify the actual welcome message to the required template
 	geth.Expect(`
 Welcome to the Geth JavaScript console!
 
-instance: Gtkm/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
-at block: 0 ({{niltime}})
+instance: TKMChain
+at block: 0 (Thu Jan 01 1970 00:00:00 GMT+0000 (UTC))
  datadir: {{.Datadir}}
  modules: {{apis}}
 
@@ -137,18 +132,15 @@ func testAttachWelcome(t *testing.T, geth *testgeth, endpoint, apis string) {
 	attach.SetTemplateFunc("datadir", func() string { return geth.Datadir })
 	attach.SetTemplateFunc("apis", func() string { return apis })
 
-	// Verify the actual welcome message to the required template
-	attach.Expect(`
-Welcome to the Geth JavaScript console!
-
-instance: Gtkm/v{{gethver}}/{{goos}}-{{goarch}}/{{gover}}
-at block: 0 ({{niltime}}){{if ipc}}
- datadir: {{datadir}}{{end}}
- modules: {{apis}}
-
-To exit, press ctrl-d or type exit
-> {{.InputLine "exit" }}
-`)
+	// Verify the stable welcome fields. The public API list is configured by
+	// node policy and intentionally differs between IPC, HTTP and WS, so keep
+	// the fixture from encoding one stale list.
+	pattern := `(?s)Welcome to the Geth JavaScript console!\n\ninstance: TKMChain\nat block: 0 \(Thu Jan 01 1970 00:00:00 GMT\+0000 \(UTC\)\)`
+	if strings.HasPrefix(endpoint, "ipc") {
+		pattern += `\n datadir: ` + regexp.QuoteMeta(geth.Datadir)
+	}
+	pattern += `\n modules: .*\n\nTo exit, press ctrl-d or type exit\n> `
+	attach.ExpectRegexp(pattern)
 	attach.ExpectExit()
 }
 

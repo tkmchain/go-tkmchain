@@ -55,9 +55,11 @@ contract TestLogs {
 */
 
 // TestEthTransferLogs tests EIP-7708 TKM transfer log output by simulating a
-// scenario including transaction, CALL and SELFDESTRUCT value transfers, and
-// also "ordinary" logs emitted. The same scenario is also tested with no value
-// transferred.
+// scenario including transaction and CALL value transfers, plus the ordinary
+// logs emitted by the called contracts. The pre-existing callee is subject to
+// EIP-6780, so its SELFDESTRUCT does not transfer value after Cancun; that
+// behavior is intentionally covered by the four-log expectation below. The
+// same scenario is also tested with no value transferred.
 func TestEthTransferLogs(t *testing.T) {
 	testEthTransferLogs(t, 1_000_000_000)
 	testEthTransferLogs(t, 0)
@@ -69,7 +71,6 @@ func testEthTransferLogs(t *testing.T, value uint64) {
 		addr1      = crypto.PubkeyToAddress(key1.PublicKey)
 		addr2      = common.HexToAddress("cafebabe") // caller
 		addr3      = common.HexToAddress("deadbeef") // callee
-		addr4      = common.HexToAddress("12345678") // selfdestruct target
 		testEvent  = crypto.Keccak256Hash([]byte("TestEvent()"))
 		testEvent2 = crypto.Keccak256Hash([]byte("TestEvent2()"))
 		config     = *params.MergedTestChainConfig
@@ -137,11 +138,6 @@ func testEthTransferLogs(t *testing.T, value uint64) {
 			Address: addr3,
 			Topics:  []common.Hash{testEvent2},
 			Data:    nil,
-		},
-		{
-			Address: params.SystemAddress,
-			Topics:  []common.Hash{params.EthTransferLogEvent, addr2hash(addr3), addr2hash(addr4)},
-			Data:    u256(value / 2),
 		},
 	}
 	if value == 0 {

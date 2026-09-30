@@ -226,8 +226,32 @@ func newTestHandlerWithBlocks(blocks int, mode ethconfig.SyncMode) *testHandler 
 
 // close tears down the handler and all its internal constructs.
 func (b *testHandler) close() {
+	// Stop snapshot generation before stopping the handler. The downloader can
+	// still be waiting on a snapshot worker, and handler.Stop waits for that
+	// worker to exit.
+	if b.chain != nil {
+		if snapshots := b.chain.Snapshots(); snapshots != nil {
+			snapshots.Disable()
+		}
+	}
 	b.handler.Stop()
-	b.chain.Stop()
+	stopEthTestChain(b.chain)
+}
+
+// stopEthTestChain tears down a chain created by an eth protocol fixture.
+// Protocol tests do not need to persist snapshots, and forcing a snapshot
+// journal here can block while the asynchronous fixture generator is active.
+func stopEthTestChain(chain *core.BlockChain) {
+	if chain == nil {
+		return
+	}
+	// Snapshot generation is asynchronous in these protocol fixtures. Disable
+	// it before stopping the chain so the production shutdown path does not
+	// wait indefinitely trying to journal a test-only snapshot tree.
+	if snapshots := chain.Snapshots(); snapshots != nil {
+		snapshots.Disable()
+	}
+	chain.Stop()
 }
 
 func TestBroadcastChoice(t *testing.T) {

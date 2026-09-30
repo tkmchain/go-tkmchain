@@ -110,9 +110,9 @@ func TestCalcBaseFee(t *testing.T) {
 		parentGasUsed   uint64
 		expectedBaseFee int64
 	}{
-		{params.InitialBaseFee, 20000000, 10000000, params.InitialBaseFee}, // usage == target
-		{params.InitialBaseFee, 20000000, 9000000, 987500000},              // usage below target
-		{params.InitialBaseFee, 20000000, 11000000, 1012500000},            // usage above target
+		{params.InitialBaseFee, 20000000, 10000000, params.InitialBaseFee},     // usage == target
+		{params.InitialBaseFee, 20000000, 9000000, params.InitialBaseFee},      // usage below target rounds to TKM's initial fee
+		{params.InitialBaseFee, 20000000, 11000000, params.InitialBaseFee + 1}, // usage above target
 	}
 	for i, test := range tests {
 		parent := &types.Header{

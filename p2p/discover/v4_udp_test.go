@@ -282,7 +282,36 @@ func TestUDPv4_findnode(t *testing.T) {
 	expected := test.table.findnodeByID(testTarget.ID(), bucketSize, true)
 	test.packetIn(nil, &v4wire.Findnode{Target: testTarget, Expiration: futureExp})
 	waitNeighbors := func(want []*enode.Node) {
-		test.waitPacketOut(func(p *v4wire.Neighbors, to netip.AddrPort, hash []byte) {
+		// Table initialization can still emit a liveness ping after initDone.
+		// Drain those maintenance packets before checking the response to the
+		// findnode request. The production transport may interleave these
+		// packets, so the fixture must not depend on their ordering.
+		var packet *v4wire.Neighbors
+		for packet == nil {
+			dgram, err := test.pipe.receive()
+			if err == errClosed {
+				return
+			}
+			if err != nil {
+				t.Error("packet receive error:", err)
+				return
+			}
+			p, _, _, err := v4wire.Decode(dgram.data)
+			if err != nil {
+				t.Errorf("sent packet decode error: %v", err)
+				return
+			}
+			switch p := p.(type) {
+			case *v4wire.Ping:
+				continue
+			case *v4wire.Neighbors:
+				packet = p
+			default:
+				t.Errorf("sent packet type mismatch, got: %v, want: %v", reflect.TypeOf(p), reflect.TypeOf((*v4wire.Neighbors)(nil)))
+				return
+			}
+		}
+		func(p *v4wire.Neighbors, to netip.AddrPort, hash []byte) {
 			if len(p.Nodes) != len(want) {
 				t.Errorf("wrong number of results: got %d, want %d", len(p.Nodes), len(want))
 				return
@@ -295,7 +324,7 @@ func TestUDPv4_findnode(t *testing.T) {
 					t.Errorf("result includes dead node %v", n.ID.ID())
 				}
 			}
-		})
+		}(packet, netip.AddrPort{}, nil)
 	}
 	// Receive replies.
 	want := expected.entries

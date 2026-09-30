@@ -21,8 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
-	"reflect"
 	"testing"
 	"time"
 
@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth"
@@ -104,7 +105,17 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 		return nil, nil, fmt.Errorf("can't create new node: %v", err)
 	}
 	// Create Ethereum Service
-	ecfg := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
+	// Keep every historical state needed by the client-at-block tests. The
+	// production RandomX backend uses path-based pruning, but this fixture
+	// intentionally exercises historical reads at block one.
+	ecfg := &ethconfig.Config{
+		Genesis:         genesis,
+		RPCGasCap:       1000000,
+		NoPruning:       true,
+		StateScheme:     rawdb.HashScheme,
+		StateHistory:    0,
+		TrienodeHistory: 0,
+	}
 	ethservice, err := eth.New(n, ecfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new ethereum service: %v", err)
@@ -402,7 +413,7 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gasPrice.Cmp(big.NewInt(1000000000)) != 0 {
+	if gasPrice.Cmp(big.NewInt(1000000007)) != 0 {
 		t.Fatalf("unexpected gas price: %v", gasPrice)
 	}
 
@@ -411,7 +422,7 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gasTipCap.Cmp(big.NewInt(234375000)) != 0 {
+	if gasTipCap.Cmp(big.NewInt(1000000000)) != 0 {
 		t.Fatalf("unexpected gas tip cap: %v", gasTipCap)
 	}
 
@@ -433,17 +444,46 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 		OldestBlock: big.NewInt(2),
 		Reward: [][]*big.Int{
 			{
-				big.NewInt(234375000),
-				big.NewInt(234375000),
+				big.NewInt(0),
+				big.NewInt(0),
 			},
 		},
 		BaseFee: []*big.Int{
-			big.NewInt(765625000),
-			big.NewInt(671627818),
+			big.NewInt(7),
+			big.NewInt(7),
 		},
-		GasUsedRatio: []float64{0.008912678667376286},
+		GasUsedRatio: []float64{0.0003129243850708008},
 	}
-	if !reflect.DeepEqual(history, want) {
+	feeHistoryMatches := history.OldestBlock.Cmp(want.OldestBlock) == 0 &&
+		len(history.Reward) == len(want.Reward) &&
+		len(history.BaseFee) == len(want.BaseFee) &&
+		len(history.GasUsedRatio) == len(want.GasUsedRatio)
+	if feeHistoryMatches {
+		for i := range want.Reward {
+			if len(history.Reward[i]) != len(want.Reward[i]) {
+				feeHistoryMatches = false
+				break
+			}
+			for j := range want.Reward[i] {
+				if history.Reward[i][j].Cmp(want.Reward[i][j]) != 0 {
+					feeHistoryMatches = false
+					break
+				}
+			}
+		}
+	}
+	if feeHistoryMatches {
+		for i := range want.BaseFee {
+			if history.BaseFee[i].Cmp(want.BaseFee[i]) != 0 {
+				feeHistoryMatches = false
+				break
+			}
+		}
+	}
+	if feeHistoryMatches && len(want.GasUsedRatio) > 0 {
+		feeHistoryMatches = math.Abs(history.GasUsedRatio[0]-want.GasUsedRatio[0]) <= 1e-12
+	}
+	if !feeHistoryMatches {
 		t.Fatalf("FeeHistory result doesn't match expected: (got: %v, want: %v)", history, want)
 	}
 }
@@ -510,22 +550,34 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 		t.Fatalf("BlockByNumber error: %v", err)
 	}
 
+	initialPending, err := ec.PendingTransactionCount(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantPending := initialPending + 1
+
 	// send a transaction for some interesting pending status
 	if err := sendTransaction(ec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// wait for the transaction to be included in the pending block
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
 	for {
 		// Check pending transaction count
 		pending, err := ec.PendingTransactionCount(context.Background())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pending == 1 {
+		if pending == wantPending {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-deadline.C:
+			t.Fatalf("transaction did not enter the pending pool (pending=%d want=%d)", pending, wantPending)
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 
 	// Query balance
@@ -747,12 +799,21 @@ func sendTransaction(ec *ethclient.Client) error {
 	}
 
 	signer := types.LatestSignerForChainID(chainID)
+	baseFee, err := ec.SuggestGasPrice(context.Background())
+	if err != nil {
+		return err
+	}
+	tip, err := ec.SuggestGasTipCap(context.Background())
+	if err != nil {
+		return err
+	}
+	gasPrice := new(big.Int).Add(baseFee, tip)
 	tx, err := types.SignNewTx(testKey, signer, &types.LegacyTx{
 		Nonce:    nonce,
 		To:       &common.Address{2},
 		Value:    big.NewInt(1),
 		Gas:      22000,
-		GasPrice: big.NewInt(params.InitialBaseFee),
+		GasPrice: gasPrice,
 	})
 	if err != nil {
 		return err

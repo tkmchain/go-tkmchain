@@ -126,8 +126,8 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 	ethProFork.Start(1000)
 
 	// Clean up everything after ourselves
-	defer chainNoFork.Stop()
-	defer chainProFork.Stop()
+	defer stopEthTestChain(chainNoFork)
+	defer stopEthTestChain(chainProFork)
 
 	defer ethNoFork.Stop()
 	defer ethProFork.Stop()

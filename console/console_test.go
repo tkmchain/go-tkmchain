@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	testInstance = "console-tester"
+	testInstance = "TKMChain"
 	testAddress  = "0x8605cdbbdb6d264aa742e77020dcbc58fcdce182"
 )
 

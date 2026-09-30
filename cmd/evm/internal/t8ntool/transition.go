@@ -311,6 +311,13 @@ func applyDifficultyChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 	if env.Difficulty != nil {
 		return nil
 	}
+	// Post-merge transition tests identify the PoS execution context with a
+	// prevRandao value and intentionally omit proof-of-work difficulty fields.
+	// TKM's chain configuration is RandomX/PoW by default, so it cannot use the
+	// chain-level IsMerge flag to recognize these generic t8n fixtures.
+	if env.Random != nil {
+		return nil
+	}
 	switch {
 	case env.ParentDifficulty == nil:
 		return NewError(ErrorConfig, errors.New("currentDifficulty was not provided, and cannot be calculated due to missing parentDifficulty"))
@@ -326,7 +333,9 @@ func applyDifficultyChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 }
 
 func applyCancunChecks(env *stEnv, chainConfig *params.ChainConfig) error {
-	env.ParentBeaconBlockRoot = nil
+	// Preserve the supplied parent beacon root. Cancun fixtures use it for the
+	// EIP-4788 beacon-root contract; clearing it here silently changed storage
+	// and made the canonical transition vectors fail.
 	return nil
 }
 

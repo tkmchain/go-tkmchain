@@ -276,7 +276,14 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	if overflow {
 		return nil, fmt.Errorf("value exceeds 256 bits: address %v", from.Hex())
 	}
-	blobGasFeeCap, overflow := uint256.FromBig(tx.BlobGasFeeCap())
+	// BlobGasFeeCap is nil for non-blob transactions and for partially decoded
+	// malformed blob fixtures. Keep the message well formed so validation can
+	// reject the transaction instead of panicking while comparing fee caps.
+	txBlobGasFeeCap := tx.BlobGasFeeCap()
+	if txBlobGasFeeCap == nil {
+		txBlobGasFeeCap = new(big.Int)
+	}
+	blobGasFeeCap, overflow := uint256.FromBig(txBlobGasFeeCap)
 	if overflow {
 		return nil, fmt.Errorf("blobGasFeeCap exceeds 256 bits: address %v", from.Hex())
 	}
@@ -519,14 +526,17 @@ func (st *stateTransition) preCheck() error {
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
 	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) {
 		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
-		skipCheck := st.evm.Config.NoBaseFee && msg.GasFeeCap.BitLen() == 0 && msg.GasTipCap.BitLen() == 0
+		skipCheck := st.evm.Config.NoBaseFee && msg.GasFeeCap != nil && msg.GasFeeCap.BitLen() == 0 && msg.GasTipCap != nil && msg.GasTipCap.BitLen() == 0
 		if !skipCheck {
+			if msg.GasFeeCap == nil || msg.GasTipCap == nil || st.evm.Context.BaseFee == nil {
+				return fmt.Errorf("%w: missing fee cap or block base fee", ErrFeeCapTooLow)
+			}
 			if msg.GasFeeCap.Cmp(msg.GasTipCap) < 0 {
 				return fmt.Errorf("%w: address %v, maxPriorityFeePerGas: %s, maxFeePerGas: %s", ErrTipAboveFeeCap,
 					msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap)
 			}
-			// This will panic if baseFee is nil, but basefee presence is verified
-			// as part of header validation.
+			// A nil base fee is rejected above so malformed calls cannot panic
+			// while comparing the blob fee cap.
 			if msg.GasFeeCap.CmpBig(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
@@ -557,8 +567,11 @@ func (st *stateTransition) preCheck() error {
 	if st.evm.ChainConfig().IsCancun(st.evm.Context.BlockNumber, st.evm.Context.Time) {
 		if st.blobGasUsed() > 0 {
 			// Skip the checks if gas fields are zero and blobBaseFee was explicitly disabled (eth_call)
-			skipCheck := st.evm.Config.NoBaseFee && msg.BlobGasFeeCap.BitLen() == 0
+			skipCheck := st.evm.Config.NoBaseFee && msg.BlobGasFeeCap != nil && msg.BlobGasFeeCap.BitLen() == 0
 			if !skipCheck {
+				if msg.BlobGasFeeCap == nil || st.evm.Context.BlobBaseFee == nil {
+					return fmt.Errorf("%w: missing blob fee cap or block blob base fee", ErrBlobFeeCapTooLow)
+				}
 				// This will panic if blobBaseFee is nil, but blobBaseFee presence
 				// is verified as part of header validation.
 				if msg.BlobGasFeeCap.CmpBig(st.evm.Context.BlobBaseFee) < 0 {

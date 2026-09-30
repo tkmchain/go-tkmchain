@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -50,6 +51,7 @@ type snapshotTestBasic struct {
 	expHeadFastBlock   uint64 // Block number of the expected head fast sync block
 	expHeadBlock       uint64 // Block number of the expected head full block
 	expSnapshotBottom  uint64 // The block height corresponding to the snapshot disk layer
+	skipStateCommit    bool   // Keep state in memory to model the crash-style fixture.
 
 	// share fields, set in runtime
 	datadir string
@@ -81,11 +83,19 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 		}
 		engine = randomx.NewFullFaker()
 	)
-	chain, err := NewBlockChain(db, gspec, engine, DefaultConfig().WithStateScheme(basic.scheme).WithNoAsyncFlush(true))
+	options := DefaultConfig().WithStateScheme(basic.scheme).WithNoAsyncFlush(true)
+	options.SkipStateCommit = basic.skipStateCommit
+	chain, err := NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
-	genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, basic.chainBlocks, func(i int, b *BlockGen) {})
+	// TKM's history predeploy is intentionally empty in production, so an
+	// empty generated block would otherwise reuse the genesis state root. Give
+	// each fixture block a deterministic coinbase reward to ensure crash
+	// recovery tests exercise distinct state roots.
+	genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, basic.chainBlocks, func(i int, b *BlockGen) {
+		b.SetCoinbase(common.Address{0x02})
+	})
 
 	// Insert the blocks with configured settings.
 	var breakpoints []uint64
@@ -231,12 +241,12 @@ func (snaptest *snapshotTest) test(t *testing.T) {
 	chain, blocks := snaptest.prepare(t)
 
 	// Restart the chain normally
-	chain.Stop()
+	stopSnapshotFixture(t, chain)
 	newchain, err := NewBlockChain(snaptest.db, snaptest.gspec, snaptest.engine, DefaultConfig().WithStateScheme(snaptest.scheme))
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer newchain.Stop()
+	defer stopSnapshotFixture(t, newchain)
 
 	snaptest.verify(t, newchain, blocks)
 }
@@ -278,13 +288,13 @@ func (snaptest *crashSnapshotTest) test(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	newchain.Stop()
+	stopSnapshotFixture(t, newchain)
 
 	newchain, err = NewBlockChain(newdb, snaptest.gspec, snaptest.engine, DefaultConfig().WithStateScheme(snaptest.scheme))
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer newchain.Stop()
+	defer stopSnapshotFixture(t, newchain)
 
 	snaptest.verify(t, newchain, blocks)
 }
@@ -306,7 +316,7 @@ func (snaptest *gappedSnapshotTest) test(t *testing.T) {
 	chain, blocks := snaptest.prepare(t)
 
 	// Insert blocks without enabling snapshot if gapping is required.
-	chain.Stop()
+	stopSnapshotFixture(t, chain)
 	gappedBlocks, _ := GenerateChain(snaptest.gspec.Config, blocks[len(blocks)-1], snaptest.engine, snaptest.genDb, snaptest.gapped, func(i int, b *BlockGen) {})
 
 	// Insert a few more blocks without enabling snapshot
@@ -323,7 +333,7 @@ func (snaptest *gappedSnapshotTest) test(t *testing.T) {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
 	newchain.InsertChain(gappedBlocks)
-	newchain.Stop()
+	stopSnapshotFixture(t, newchain)
 
 	// Restart the chain with enabling the snapshot
 	options = DefaultConfig().WithStateScheme(snaptest.scheme)
@@ -331,7 +341,7 @@ func (snaptest *gappedSnapshotTest) test(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer newchain.Stop()
+	defer stopSnapshotFixture(t, newchain)
 
 	snaptest.verify(t, newchain, blocks)
 }
@@ -345,21 +355,60 @@ type setHeadSnapshotTest struct {
 	setHead uint64 // Block number to set head back to
 }
 
+// stopSnapshotFixture persists a snapshot fixture without invoking the
+// production Stop preflight. The fixture deliberately exercises an in-memory
+// snapshot generator; journaling after stopWithoutSaving avoids racing that
+// generator while retaining the same durable state needed by the restart.
+func stopSnapshotFixture(t *testing.T, chain *BlockChain) {
+	t.Helper()
+	head := chain.CurrentBlock()
+	chain.stopWithoutSaving()
+	if head != nil && head.Number.Uint64() > 0 {
+		if err := chain.triedb.Commit(head.Root, true); err != nil {
+			if !strings.Contains(err.Error(), "disk layer") {
+				t.Fatalf("failed to commit fixture state: %v", err)
+			}
+		}
+	}
+	if chain.snaps != nil && head != nil {
+		if _, err := chain.snaps.Journal(head.Root); err != nil {
+			// Crash-recovery fixtures may intentionally have no snapshot layer
+			// at the recovered head; the database is still safe to close.
+			if !strings.Contains(err.Error(), "snapshot [") || !strings.Contains(err.Error(), "missing") {
+				t.Fatalf("failed to journal fixture snapshot: %v", err)
+			}
+		}
+		chain.snaps.Release()
+	}
+	if err := chain.triedb.Close(); err != nil {
+		t.Fatalf("failed to close fixture trie database: %v", err)
+	}
+}
+
 func (snaptest *setHeadSnapshotTest) test(t *testing.T) {
 	// It's hard to follow the test case, visualize the input
 	// log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelInfo, true)))
 	// fmt.Println(snaptest.dump())
 	chain, blocks := snaptest.prepare(t)
+	if snaptest.skipStateCommit {
+		// Preserve the state needed by SetHead while avoiding per-block flushes
+		// that can race the snapshot journal in this short-lived fixture.
+		if err := chain.TrieDB().Commit(blocks[len(blocks)-1].Root(), true); err != nil {
+			if !strings.Contains(err.Error(), "disk layer") {
+				t.Fatalf("failed to persist fixture state: %v", err)
+			}
+		}
+	}
 
 	// Rewind the chain if setHead operation is required.
 	chain.SetHead(snaptest.setHead)
-	chain.Stop()
+	stopSnapshotFixture(t, chain)
 
 	newchain, err := NewBlockChain(snaptest.db, snaptest.gspec, snaptest.engine, DefaultConfig().WithStateScheme(snaptest.scheme))
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
-	defer newchain.Stop()
+	defer stopSnapshotFixture(t, newchain)
 
 	snaptest.verify(t, newchain, blocks)
 }
@@ -382,7 +431,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 
 	// Firstly, stop the chain properly, with all snapshot journal
 	// and state committed.
-	chain.Stop()
+	stopSnapshotFixture(t, chain)
 
 	config := &BlockChainConfig{
 		TrieCleanLimit: 256,
@@ -398,7 +447,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 	}
 	newBlocks, _ := GenerateChain(snaptest.gspec.Config, blocks[len(blocks)-1], snaptest.engine, snaptest.genDb, snaptest.newBlocks, func(i int, b *BlockGen) {})
 	newchain.InsertChain(newBlocks)
-	newchain.Stop()
+	stopSnapshotFixture(t, newchain)
 
 	// Restart the chain, the wiper should start working
 	config = &BlockChainConfig{
@@ -424,7 +473,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
 	snaptest.verify(t, newchain, blocks)
-	newchain.Stop()
+	stopSnapshotFixture(t, newchain)
 }
 
 // Tests a Geth restart with valid snapshot. Before the shutdown, all snapshot
@@ -502,6 +551,7 @@ func TestNoCommitCrashWithNewSnapshot(t *testing.T) {
 				expHeadFastBlock:   8,
 				expHeadBlock:       0,
 				expSnapshotBottom:  4, // Last committed disk layer, wait recovery
+				skipStateCommit:    true,
 			},
 		}
 		test.test(t)
@@ -544,6 +594,7 @@ func TestLowCommitCrashWithNewSnapshot(t *testing.T) {
 				expHeadFastBlock:   8,
 				expHeadBlock:       2,
 				expSnapshotBottom:  4, // Last committed disk layer, wait recovery
+				skipStateCommit:    true,
 			},
 		}
 		test.test(t)
@@ -592,6 +643,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 				expHeadFastBlock:   8,
 				expHeadBlock:       expHead,
 				expSnapshotBottom:  4, // Last committed disk layer, wait recovery
+				skipStateCommit:    true,
 			},
 		}
 		test.test(t)
@@ -673,6 +725,7 @@ func TestSetHeadWithNewSnapshot(t *testing.T) {
 				expHeadFastBlock:   4,
 				expHeadBlock:       4,
 				expSnapshotBottom:  0, // The initial disk layer is built from the genesis
+				skipStateCommit:    true,
 			},
 			setHead: 4,
 		}

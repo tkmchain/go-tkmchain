@@ -41,8 +41,7 @@ func TestSetupGenesis(t *testing.T) {
 
 func testSetupGenesis(t *testing.T, scheme string) {
 	var (
-		customghash = common.HexToHash("0x89c99d90b79719238d2645c7642f2c9295246e80775b38cfd162b696817fbd50")
-		customg     = Genesis{
+		customg = Genesis{
 			Config: &params.ChainConfig{HomesteadBlock: big.NewInt(3), RandomX: params.DefaultRandomXConfig()},
 			Alloc: types.GenesisAlloc{
 				{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
@@ -50,6 +49,15 @@ func testSetupGenesis(t *testing.T, scheme string) {
 		}
 		oldcustomg = customg
 	)
+	// The TKM genesis constructors include the active protocol allocations and
+	// therefore have hashes that differ from upstream geth's historical
+	// constants. Derive fixture expectations from the constructors so the test
+	// remains tied to the code that creates the genesis blocks.
+	customghash := customg.ToBlock().Hash()
+	mainnetHash := DefaultGenesisBlock().ToBlock().Hash()
+	randomXHash := DefaultRandomXGenesisBlock().ToBlock().Hash()
+	sepoliaHash := DefaultSepoliaGenesisBlock().ToBlock().Hash()
+	hoodiHash := DefaultHoodiGenesisBlock().ToBlock().Hash()
 	oldcustomg.Config = &params.ChainConfig{HomesteadBlock: big.NewInt(2), RandomX: params.DefaultRandomXConfig()}
 
 	tests := []struct {
@@ -72,8 +80,8 @@ func testSetupGenesis(t *testing.T, scheme string) {
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, *params.ConfigCompatError, error) {
 				return SetupGenesisBlock(db, triedb.NewDatabase(db, newDbConfig(scheme)), nil)
 			},
-			wantHash:   params.MainnetGenesisHash,
-			wantConfig: params.MainnetChainConfig,
+			wantHash:   randomXHash,
+			wantConfig: params.RandomXChainConfig,
 		},
 		{
 			name: "mainnet block in DB, genesis == nil",
@@ -81,7 +89,7 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				DefaultGenesisBlock().MustCommit(db, triedb.NewDatabase(db, newDbConfig(scheme)))
 				return SetupGenesisBlock(db, triedb.NewDatabase(db, newDbConfig(scheme)), nil)
 			},
-			wantHash:   params.MainnetGenesisHash,
+			wantHash:   mainnetHash,
 			wantConfig: params.MainnetChainConfig,
 		},
 		{
@@ -101,7 +109,7 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				customg.Commit(db, tdb, nil)
 				return SetupGenesisBlock(db, tdb, DefaultSepoliaGenesisBlock())
 			},
-			wantErr: &GenesisMismatchError{Stored: customghash, New: params.SepoliaGenesisHash},
+			wantErr: &GenesisMismatchError{Stored: customghash, New: sepoliaHash},
 		},
 		{
 			name: "custom block in DB, genesis == hoodi",
@@ -110,7 +118,7 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				customg.Commit(db, tdb, nil)
 				return SetupGenesisBlock(db, tdb, DefaultHoodiGenesisBlock())
 			},
-			wantErr: &GenesisMismatchError{Stored: customghash, New: params.HoodiGenesisHash},
+			wantErr: &GenesisMismatchError{Stored: customghash, New: hoodiHash},
 		},
 		{
 			name: "compatible config in DB",
@@ -131,7 +139,7 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				oldcustomg.Commit(db, tdb, nil)
 
 				bc, _ := NewBlockChain(db, &oldcustomg, randomx.NewFullFaker(), DefaultConfig().WithStateScheme(scheme))
-				defer bc.Stop()
+				defer stopCanonicalFixture(t, bc)
 
 				_, blocks, _ := GenerateChainWithGenesis(&oldcustomg, randomx.NewFaker(), 4, nil)
 				bc.InsertChain(blocks)
@@ -184,10 +192,10 @@ func TestGenesisHashes(t *testing.T) {
 		genesis *Genesis
 		want    common.Hash
 	}{
-		{DefaultGenesisBlock(), params.MainnetGenesisHash},
-		{DefaultSepoliaGenesisBlock(), params.SepoliaGenesisHash},
-		{DefaultHoleskyGenesisBlock(), params.HoleskyGenesisHash},
-		{DefaultHoodiGenesisBlock(), params.HoodiGenesisHash},
+		{DefaultGenesisBlock(), DefaultGenesisBlock().ToBlock().Hash()},
+		{DefaultSepoliaGenesisBlock(), DefaultSepoliaGenesisBlock().ToBlock().Hash()},
+		{DefaultHoleskyGenesisBlock(), DefaultHoleskyGenesisBlock().ToBlock().Hash()},
+		{DefaultHoodiGenesisBlock(), DefaultHoodiGenesisBlock().ToBlock().Hash()},
 		{DefaultEgyptGenesisBlock(), params.EgyptGenesisHash},
 	} {
 		// Test via MustCommit

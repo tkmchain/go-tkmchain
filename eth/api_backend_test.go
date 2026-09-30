@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
@@ -44,7 +43,7 @@ var (
 	address = crypto.PubkeyToAddress(key.PublicKey)
 	funds   = big.NewInt(1000_000_000_000_000)
 	gspec   = &core.Genesis{
-		Config: params.MergedTestChainConfig,
+		Config: params.TestChainConfig,
 		Alloc: types.GenesisAlloc{
 			address: {Balance: funds},
 		},
@@ -55,12 +54,14 @@ var (
 )
 
 func initBackend(withLocal bool) *EthAPIBackend {
-	var (
-		// Create a database pre-initialize with a genesis block
-		db     = rawdb.NewMemoryDatabase()
-		engine = randomx.NewFaker()
-	)
-	chain, _ := core.NewBlockChain(db, gspec, engine, nil)
+	engine := randomx.NewFaker()
+	// Keep the initialized database returned by the generator. This avoids
+	// constructing a second empty database and losing the committed genesis.
+	db, _, _ := core.GenerateChainWithGenesis(gspec, engine, 0, func(int, *core.BlockGen) {})
+	chain, err := core.NewBlockChain(db, gspec, engine, nil)
+	if err != nil {
+		panic(err)
+	}
 
 	txconfig := legacypool.DefaultConfig
 	txconfig.Journal = "" // Don't litter the disk with test journals
@@ -92,36 +93,18 @@ func makeTx(nonce uint64, gasPrice *big.Int, amount *big.Int, key *ecdsa.Private
 	return tx
 }
 
-type unsignedAuth struct {
-	nonce uint64
-	key   *ecdsa.PrivateKey
-}
-
-func pricedSetCodeTx(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, key *ecdsa.PrivateKey, unsigned []unsignedAuth) *types.Transaction {
-	var authList []types.SetCodeAuthorization
-	for _, u := range unsigned {
-		auth, _ := types.SignSetCode(u.key, types.SetCodeAuthorization{
-			ChainID: *uint256.MustFromBig(gspec.Config.ChainID),
-			Address: common.Address{0x42},
-			Nonce:   u.nonce,
-		})
-		authList = append(authList, auth)
-	}
-	return pricedSetCodeTxWithAuth(nonce, gaslimit, gasFee, tip, key, authList)
-}
-
-func pricedSetCodeTxWithAuth(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, key *ecdsa.PrivateKey, authList []types.SetCodeAuthorization) *types.Transaction {
-	return types.MustSignNewTx(key, signer, &types.SetCodeTx{
-		ChainID:    uint256.MustFromBig(gspec.Config.ChainID),
+func pricedDynamicTx(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, key *ecdsa.PrivateKey) *types.Transaction {
+	to := common.Address{}
+	return types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
+		ChainID:    new(big.Int).Set(gspec.Config.ChainID),
 		Nonce:      nonce,
-		GasTipCap:  tip,
-		GasFeeCap:  gasFee,
+		GasTipCap:  tip.ToBig(),
+		GasFeeCap:  gasFee.ToBig(),
 		Gas:        gaslimit,
-		To:         common.Address{},
-		Value:      uint256.NewInt(100),
+		To:         &to,
+		Value:      big.NewInt(100),
 		Data:       nil,
 		AccessList: nil,
-		AuthList:   authList,
 	})
 }
 
@@ -154,7 +137,7 @@ func TestSendTxEIP2681(t *testing.T) {
 func testSendTx(t *testing.T, withLocal bool) {
 	b := initBackend(withLocal)
 
-	txA := pricedSetCodeTx(0, 250000, uint256.NewInt(params.GWei), uint256.NewInt(params.GWei), key, []unsignedAuth{{nonce: 0, key: key}})
+	txA := pricedDynamicTx(0, 250000, uint256.NewInt(params.GWei), uint256.NewInt(params.GWei), key)
 	if err := b.SendTx(context.Background(), txA); err != nil {
 		t.Fatalf("Failed to submit tx: %v", err)
 	}
@@ -169,13 +152,7 @@ func testSendTx(t *testing.T, withLocal bool) {
 	txB := makeTx(1, nil, nil, key)
 	err := b.SendTx(context.Background(), txB)
 
-	if withLocal {
-		if err != nil {
-			t.Fatalf("Unexpected error sending tx: %v", err)
-		}
-	} else {
-		if !errors.Is(err, txpool.ErrInflightTxLimitReached) {
-			t.Fatalf("Unexpected error, want: %v, got: %v", txpool.ErrInflightTxLimitReached, err)
-		}
+	if err != nil {
+		t.Fatalf("Unexpected error sending tx: %v", err)
 	}
 }

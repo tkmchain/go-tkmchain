@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/randomx"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth"
@@ -62,7 +63,12 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 		t.Fatalf("can't create new node: %v", err)
 	}
 	// Create Ethereum Service
-	config := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
+	config := &ethconfig.Config{
+		Genesis:     genesis,
+		RPCGasCap:   1000000,
+		NoPruning:   true,
+		StateScheme: rawdb.HashScheme,
+	}
 	ethservice, err := eth.New(n, config)
 	if err != nil {
 		t.Fatalf("can't create new ethereum service: %v", err)

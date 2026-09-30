@@ -42,6 +42,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -253,6 +254,7 @@ func (vm *VM) Close() {
 type RandomX struct {
 	config                  *Config
 	fullFake                bool
+	fakeMixDigest           bool
 	mainKing                common.Address
 	rotatingKings           []common.Address
 	rotatingKingActivations map[common.Address]uint64
@@ -287,6 +289,7 @@ func NewFaker() *RandomX {
 	fakeRx := &RandomX{
 		config:                  config,
 		fullFake:                true,
+		fakeMixDigest:           true,
 		rotatingKings:           []common.Address{common.Address{}},
 		rotatingKingActivations: make(map[common.Address]uint64),
 		rotationInterval:        100,
@@ -1459,7 +1462,22 @@ func (rx *RandomX) Author(header *types.Header) (common.Address, error) {
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	rx.setFakeMixDigest(header)
 	rx.finalizeRewards(chain, header, state, body)
+}
+
+// setFakeMixDigest gives simulated blocks a stable, non-zero seal field. This
+// path is reachable only through NewFaker; native production blocks must carry
+// the RandomX-computed mix digest and are still verified normally.
+func (rx *RandomX) setFakeMixDigest(header *types.Header) {
+	if rx == nil || !rx.fakeMixDigest || header == nil || header.Number == nil || header.Number.Sign() == 0 || header.MixDigest != (common.Hash{}) {
+		return
+	}
+	header.MixDigest = crypto.Keccak256Hash(
+		[]byte("tkm.randomx.simulated.mix"),
+		header.ParentHash.Bytes(),
+		header.Number.Bytes(),
+	)
 }
 
 // FinalizeAndAssemble finalizes RandomX state and assembles a block without dropping user transactions.
@@ -1488,6 +1506,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 }
 
 func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	applyWithdrawals(state, body)
 	blockNumber := header.Number.Uint64()
 	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
@@ -1505,6 +1524,21 @@ func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *ty
 	log.Info("RandomX finalize rewards", "block", blockNumber, "coinbase", header.Coinbase.Hex(), "reward", FormatANTD(blockReward))
 	if blockReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, blockReward)
+	}
+}
+
+// applyWithdrawals applies the consensus-layer validator withdrawals included
+// in a post-Shanghai block. They are execution-state balance changes and must
+// happen before the final state root is calculated, including on compatibility
+// chains that use the RandomX engine for their execution tests.
+func applyWithdrawals(state vm.StateDB, body *types.Body) {
+	if state == nil || body == nil {
+		return
+	}
+	for _, withdrawal := range body.Withdrawals {
+		amount := new(uint256.Int).SetUint64(withdrawal.Amount)
+		amount.Mul(amount, uint256.NewInt(params.GWei))
+		state.AddBalance(withdrawal.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
 }
 
@@ -2065,6 +2099,11 @@ func (rx *RandomX) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	if header.Number == nil {
 		return consensus.ErrInvalidNumber
+	}
+	if chain != nil && chain.Config() != nil {
+		if err := misc.VerifyDAOHeaderExtraData(chain.Config(), header); err != nil {
+			return err
+		}
 	}
 	if err := verifyBlockHashAnchor(chain, header, parents); err != nil {
 		return err

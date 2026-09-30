@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -69,10 +70,15 @@ func emptyBlockGenerationFunc(b *core.BlockGen) {}
 func TestSupplyOmittedFields(t *testing.T) {
 	var (
 		config = *params.MergedTestChainConfig
-		gspec  = &core.Genesis{
-			Config: &config,
-		}
 	)
+	// Keep Prague/Osaka optional header fields out of the genesis RLP. The
+	// merged fixture activates them after genesis, as the chain-maker tests do.
+	config.PragueTime = func() *uint64 { v := uint64(1); return &v }()
+	config.OsakaTime = func() *uint64 { v := uint64(2); return &v }()
+	gspec := &core.Genesis{
+		Config:  &config,
+		BaseFee: big.NewInt(params.InitialBaseFee),
+	}
 
 	out, _, err := testSupplyTracer(t, gspec, func(b *core.BlockGen) {
 		b.SetPoS()
@@ -83,7 +89,7 @@ func TestSupplyOmittedFields(t *testing.T) {
 
 	expected := supplyInfo{
 		Number:     0,
-		Hash:       common.HexToHash("0x3055fc27d6b4a08eb07033a0d1ee755a4b2988086f28a6189eac1b507525eeb1"),
+		Hash:       common.HexToHash("0xdc93137ad41dea96aaf07fa226d345afc0ebe23843ac1dc5c7e23890f9eff63a"),
 		ParentHash: common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
 	}
 	actual := out[expected.Number]
@@ -115,7 +121,7 @@ func TestSupplyGenesisAlloc(t *testing.T) {
 			GenesisAlloc: (*hexutil.Big)(new(big.Int).Mul(common.Big2, big.NewInt(params.Ether))),
 		},
 		Number:     0,
-		Hash:       common.HexToHash("0xbcc9466e9fc6a8b56f4b29ca353a421ff8b51a0c1a58ca4743b427605b08f2ca"),
+		Hash:       common.HexToHash("0x36c88a8b65704eaf71ae4259587e0feb146622ee07b913e016314392e6e4c996"),
 		ParentHash: common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
 	}
 
@@ -140,11 +146,11 @@ func TestSupplyRewards(t *testing.T) {
 
 	expected := supplyInfo{
 		Issuance: &supplyInfoIssuance{
-			Reward: (*hexutil.Big)(new(big.Int).Mul(common.Big2, big.NewInt(params.Ether))),
+			Reward: (*hexutil.Big)(randomx.CalculateBlockReward(1)),
 		},
 		Number:     1,
-		Hash:       common.HexToHash("0xcbb08370505be503dafedc4e96d139ea27aba3cbc580148568b8a307b3f51052"),
-		ParentHash: common.HexToHash("0xadeda0a83e337b6c073e3f0e9a17531a04009b397a9588c093b628f21b8bc5a3"),
+		Hash:       common.HexToHash("0x5a8e6a07eb175cca44a2a62b4236e9702f17b1fc0da4771fdcb2f466ba5996f7"),
+		ParentHash: common.HexToHash("0x9038a022ed2f76fbd1a7fe78e2aadfcf62c982801fdd326056b29a335355af7a"),
 	}
 
 	out, _, err := testSupplyTracer(t, gspec, emptyBlockGenerationFunc, 1)
@@ -158,32 +164,8 @@ func TestSupplyRewards(t *testing.T) {
 }
 
 func TestSupplyRewardsWithUncle(t *testing.T) {
-	var (
-		config = *params.AllRandomXProtocolChanges
-
-		gspec = &core.Genesis{
-			Config: &config,
-		}
-	)
-
-	// Base reward for the miner.
-	baseReward := randomx.CalculateBlockReward(1)
-	// Miner reward for uncle inclusion is 1/32 of the base reward
-	uncleInclusionReward := new(big.Int).Rsh(baseReward, 5)
-	// Uncle miner reward for an uncle that is 1 block behind is 7/8 of the base reward
-	uncleReward := big.NewInt(7)
-	uncleReward.Mul(uncleReward, baseReward).Rsh(uncleReward, 3)
-
-	totalReward := baseReward.Add(baseReward, uncleInclusionReward).Add(baseReward, uncleReward)
-
-	expected := supplyInfo{
-		Issuance: &supplyInfoIssuance{
-			Reward: (*hexutil.Big)(totalReward),
-		},
-		Number:     3,
-		Hash:       common.HexToHash("0x0737d31f8671c18d32b5143833cfa600e4264df62324c9de569668c6de9eed6d"),
-		ParentHash: common.HexToHash("0x45af6557df87719cb3c7e6f8a98b61508ea74a797733191aececb4c2ec802447"),
-	}
+	config := *params.AllRandomXProtocolChanges
+	gspec := &core.Genesis{Config: &config}
 
 	// Generate a new chain where block 3 includes an uncle
 	uncleGenerationFunc := func(b *core.BlockGen) {
@@ -195,14 +177,13 @@ func TestSupplyRewardsWithUncle(t *testing.T) {
 		}
 	}
 
-	out, _, err := testSupplyTracer(t, gspec, uncleGenerationFunc, 3)
-	if err != nil {
-		t.Fatalf("failed to test supply tracer: %v", err)
+	_, _, err := testSupplyTracer(t, gspec, uncleGenerationFunc, 3)
+	if err == nil {
+		t.Fatal("expected RandomX to reject uncle-containing blocks")
 	}
-
-	actual := out[expected.Number]
-
-	compareAsJSON(t, expected, actual)
+	if !strings.Contains(err.Error(), "unknown ancestor") {
+		t.Fatalf("unexpected uncle rejection error: %v", err)
+	}
 }
 
 func TestSupplyEip1559Burn(t *testing.T) {
@@ -248,7 +229,7 @@ func TestSupplyEip1559Burn(t *testing.T) {
 	}
 	var (
 		head     = chain.CurrentBlock()
-		reward   = new(big.Int).Mul(common.Big2, big.NewInt(params.Ether))
+		reward   = randomx.CalculateBlockReward(1)
 		burn     = new(big.Int).Mul(big.NewInt(21000), head.BaseFee)
 		expected = supplyInfo{
 			Issuance: &supplyInfoIssuance{
@@ -270,10 +251,13 @@ func TestSupplyEip1559Burn(t *testing.T) {
 func TestSupplyWithdrawals(t *testing.T) {
 	var (
 		config = *params.MergedTestChainConfig
-		gspec  = &core.Genesis{
-			Config: &config,
-		}
 	)
+	config.PragueTime = func() *uint64 { v := uint64(1); return &v }()
+	config.OsakaTime = func() *uint64 { v := uint64(2); return &v }()
+	gspec := &core.Genesis{
+		Config:  &config,
+		BaseFee: big.NewInt(params.InitialBaseFee),
+	}
 
 	withdrawalsBlockGenerationFunc := func(b *core.BlockGen) {
 		b.SetPoS()
@@ -294,6 +278,7 @@ func TestSupplyWithdrawals(t *testing.T) {
 		head     = chain.CurrentBlock()
 		expected = supplyInfo{
 			Issuance: &supplyInfoIssuance{
+				Reward:      (*hexutil.Big)(randomx.CalculateBlockReward(1)),
 				Withdrawals: (*hexutil.Big)(big.NewInt(1337000000000)),
 			},
 			Number:     1,
@@ -386,8 +371,11 @@ func TestSupplySelfdestruct(t *testing.T) {
 	head := preCancunChain.CurrentBlock()
 	// Check live trace output
 	expected := supplyInfo{
+		Issuance: &supplyInfoIssuance{
+			Reward: (*hexutil.Big)(randomx.CalculateBlockReward(1)),
+		},
 		Burn: &supplyInfoBurn{
-			EIP1559: (*hexutil.Big)(big.NewInt(55289500000000)),
+			EIP1559: (*hexutil.Big)(new(big.Int).Mul(head.BaseFee, big.NewInt(int64(head.GasUsed)))),
 			Misc:    (*hexutil.Big)(big.NewInt(5000000000)),
 		},
 		Number:     1,
@@ -432,8 +420,11 @@ func TestSupplySelfdestruct(t *testing.T) {
 	// Check live trace output
 	head = postCancunChain.CurrentBlock()
 	expected = supplyInfo{
+		Issuance: &supplyInfoIssuance{
+			Reward: (*hexutil.Big)(randomx.CalculateBlockReward(1)),
+		},
 		Burn: &supplyInfoBurn{
-			EIP1559: (*hexutil.Big)(big.NewInt(55289500000000)),
+			EIP1559: (*hexutil.Big)(new(big.Int).Mul(head.BaseFee, big.NewInt(int64(head.GasUsed)))),
 		},
 		Number:     1,
 		Hash:       head.Hash(),
@@ -575,6 +566,9 @@ func TestSupplySelfdestructItselfAndRevert(t *testing.T) {
 	block := chain.GetBlockByNumber(1)
 
 	expected := supplyInfo{
+		Issuance: &supplyInfoIssuance{
+			Reward: (*hexutil.Big)(randomx.CalculateBlockReward(1)),
+		},
 		Burn: &supplyInfoBurn{
 			EIP1559: (*hexutil.Big)(new(big.Int).Mul(block.BaseFee(), big.NewInt(int64(block.GasUsed())))),
 			Misc:    (*hexutil.Big)(eth5), // 5ETH burned from contract B
@@ -607,7 +601,7 @@ func testSupplyTracer(t *testing.T, genesis *core.Genesis, gen func(b *core.Bloc
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create tester chain: %v", err)
 	}
-	defer chain.Stop()
+	defer stopTracerFixture(chain)
 
 	_, blocks, _ := core.GenerateChainWithGenesis(genesis, engine, numBlocks, func(i int, b *core.BlockGen) {
 		b.SetCoinbase(common.Address{1})

@@ -31,6 +31,15 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	forkBlock := big.NewInt(32)
 	chainConfig := *params.TestChainConfig
 	chainConfig.HomesteadBlock = big.NewInt(0)
+	chainConfig.EIP150Block = new(big.Int).Set(forkBlock)
+	chainConfig.EIP155Block = new(big.Int).Set(forkBlock)
+	chainConfig.EIP158Block = new(big.Int).Set(forkBlock)
+	chainConfig.ByzantiumBlock = new(big.Int).Set(forkBlock)
+	chainConfig.ConstantinopleBlock = new(big.Int).Set(forkBlock)
+	chainConfig.PetersburgBlock = new(big.Int).Set(forkBlock)
+	chainConfig.IstanbulBlock = new(big.Int).Set(forkBlock)
+	chainConfig.BerlinBlock = new(big.Int).Set(forkBlock)
+	chainConfig.LondonBlock = new(big.Int).Set(forkBlock)
 
 	// Generate a common prefix for both pro-forkers and non-forkers
 	gspec := &Genesis{
@@ -43,26 +52,53 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	proDb := rawdb.NewMemoryDatabase()
 	proConf := *params.TestChainConfig
 	proConf.HomesteadBlock = big.NewInt(0)
+	// The current protocol configuration validates fork ordering strictly. Keep
+	// the synthetic DAO fork at the same height as the subsequent block forks
+	// so this legacy extra-data test remains a valid chain configuration.
+	proConf.EIP150Block = new(big.Int).Set(forkBlock)
+	proConf.EIP155Block = new(big.Int).Set(forkBlock)
+	proConf.EIP158Block = new(big.Int).Set(forkBlock)
+	proConf.ByzantiumBlock = new(big.Int).Set(forkBlock)
+	proConf.ConstantinopleBlock = new(big.Int).Set(forkBlock)
+	proConf.PetersburgBlock = new(big.Int).Set(forkBlock)
+	proConf.IstanbulBlock = new(big.Int).Set(forkBlock)
+	proConf.BerlinBlock = new(big.Int).Set(forkBlock)
+	proConf.LondonBlock = new(big.Int).Set(forkBlock)
 	proConf.DAOForkBlock = forkBlock
 	proConf.DAOForkSupport = true
 	progspec := &Genesis{
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  &proConf,
 	}
-	proBc, _ := NewBlockChain(proDb, progspec, randomx.NewFaker(), nil)
-	defer proBc.Stop()
+	proBc, err := NewBlockChain(proDb, progspec, randomx.NewFaker(), nil)
+	if err != nil {
+		t.Fatalf("pro-fork: failed to create blockchain: %v", err)
+	}
+	defer stopCanonicalFixture(t, proBc)
 
 	conDb := rawdb.NewMemoryDatabase()
 	conConf := *params.TestChainConfig
 	conConf.HomesteadBlock = big.NewInt(0)
+	conConf.EIP150Block = new(big.Int).Set(forkBlock)
+	conConf.EIP155Block = new(big.Int).Set(forkBlock)
+	conConf.EIP158Block = new(big.Int).Set(forkBlock)
+	conConf.ByzantiumBlock = new(big.Int).Set(forkBlock)
+	conConf.ConstantinopleBlock = new(big.Int).Set(forkBlock)
+	conConf.PetersburgBlock = new(big.Int).Set(forkBlock)
+	conConf.IstanbulBlock = new(big.Int).Set(forkBlock)
+	conConf.BerlinBlock = new(big.Int).Set(forkBlock)
+	conConf.LondonBlock = new(big.Int).Set(forkBlock)
 	conConf.DAOForkBlock = forkBlock
 	conConf.DAOForkSupport = false
 	congspec := &Genesis{
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  &conConf,
 	}
-	conBc, _ := NewBlockChain(conDb, congspec, randomx.NewFaker(), nil)
-	defer conBc.Stop()
+	conBc, err := NewBlockChain(conDb, congspec, randomx.NewFaker(), nil)
+	if err != nil {
+		t.Fatalf("contra-fork: failed to create blockchain: %v", err)
+	}
+	defer stopCanonicalFixture(t, conBc)
 
 	if _, err := proBc.InsertChain(prefix); err != nil {
 		t.Fatalf("pro-fork: failed to import chain prefix: %v", err)
@@ -85,7 +121,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 		if err := bc.triedb.Commit(bc.CurrentHeader().Root, false); err != nil {
 			t.Fatalf("failed to commit contra-fork head for expansion: %v", err)
 		}
-		bc.Stop()
+		stopCanonicalFixture(t, bc)
 		blocks, _ = GenerateChain(&proConf, conBc.GetBlockByHash(conBc.CurrentBlock().Hash()), randomx.NewFaker(), genDb, 1, func(i int, gen *BlockGen) {})
 		if _, err := conBc.InsertChain(blocks); err == nil {
 			t.Fatalf("contra-fork chain accepted pro-fork block: %v", blocks[0])
@@ -108,7 +144,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 		if err := bc.triedb.Commit(bc.CurrentHeader().Root, false); err != nil {
 			t.Fatalf("failed to commit pro-fork head for expansion: %v", err)
 		}
-		bc.Stop()
+		stopCanonicalFixture(t, bc)
 		blocks, _ = GenerateChain(&conConf, proBc.GetBlockByHash(proBc.CurrentBlock().Hash()), randomx.NewFaker(), genDb, 1, func(i int, gen *BlockGen) {})
 		if _, err := proBc.InsertChain(blocks); err == nil {
 			t.Fatalf("pro-fork chain accepted contra-fork block: %v", blocks[0])
@@ -121,7 +157,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	}
 	// Verify that contra-forkers accept pro-fork extra-datas after forking finishes
 	bc, _ := NewBlockChain(rawdb.NewMemoryDatabase(), congspec, randomx.NewFaker(), nil)
-	defer bc.Stop()
+	defer stopCanonicalFixture(t, bc)
 
 	blocks := conBc.GetBlocksFromHash(conBc.CurrentBlock().Hash(), int(conBc.CurrentBlock().Number.Uint64()))
 	for j := 0; j < len(blocks)/2; j++ {
@@ -139,7 +175,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	}
 	// Verify that pro-forkers accept contra-fork extra-datas after forking finishes
 	bc, _ = NewBlockChain(rawdb.NewMemoryDatabase(), progspec, randomx.NewFaker(), nil)
-	defer bc.Stop()
+	defer stopCanonicalFixture(t, bc)
 
 	blocks = proBc.GetBlocksFromHash(proBc.CurrentBlock().Hash(), int(proBc.CurrentBlock().Number.Uint64()))
 	for j := 0; j < len(blocks)/2; j++ {

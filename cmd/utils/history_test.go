@@ -99,6 +99,10 @@ func TestHistoryImportAndExport(t *testing.T) {
 
 			// Make temp directory for era files.
 			dir := t.TempDir()
+			network := params.NetworkNames[genesis.Config.ChainID.String()]
+			if network == "" {
+				network = "unknown"
+			}
 
 			// Export history to temp directory.
 			if err := ExportHistory(chain, dir, 0, count, tt.builder, tt.filename); err != nil {
@@ -113,7 +117,7 @@ func TestHistoryImportAndExport(t *testing.T) {
 			checksums := strings.Split(string(b), "\n")
 
 			// Verify each Era.
-			entries, _ := era.ReadDir(dir, "mainnet")
+			entries, _ := era.ReadDir(dir, network)
 			for i, filename := range entries {
 				func() {
 					f, err := os.Open(filepath.Join(dir, filename))
@@ -182,7 +186,7 @@ func TestHistoryImportAndExport(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unable to initialize chain: %v", err)
 			}
-			if err := ImportHistory(imported, dir, "mainnet", tt.from); err != nil {
+			if err := ImportHistory(imported, dir, network, tt.from); err != nil {
 				t.Fatalf("failed to import chain: %v", err)
 			}
 			if have, want := imported.CurrentHeader(), chain.CurrentHeader(); have.Hash() != want.Hash() {

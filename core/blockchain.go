@@ -221,6 +221,9 @@ type BlockChainConfig struct {
 	// Execution configs
 	StatelessSelfValidation bool // Generate execution witnesses and self-check against them (testing purpose)
 	EnableWitnessStats      bool // Whether trie access statistics collection is enabled
+	// SkipStateCommit is reserved for crash-recovery fixtures that need to
+	// simulate an uncommitted tail. It is false for every production config.
+	SkipStateCommit bool
 }
 
 // DefaultConfig returns the default config.
@@ -1739,12 +1742,14 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
-	if err := bc.triedb.Commit(root, true); err != nil {
-		// For path scheme, "disk layer" means the state is already durable – ignore it.
-		if !strings.Contains(err.Error(), "disk layer") {
-			return err
+	if !bc.cfg.SkipStateCommit {
+		if err := bc.triedb.Commit(root, true); err != nil {
+			// For path scheme, "disk layer" means the state is already durable – ignore it.
+			if !strings.Contains(err.Error(), "disk layer") {
+				return err
+			}
+			log.Debug("State already on disk (path scheme)", "root", root)
 		}
-		log.Debug("State already on disk (path scheme)", "root", root)
 	}
 	if bc.triedb.Scheme() == rawdb.PathScheme {
 		return nil

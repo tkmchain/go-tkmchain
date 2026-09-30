@@ -108,7 +108,10 @@ func transaction(nonce uint64, gaslimit uint64, key *ecdsa.PrivateKey) *types.Tr
 }
 
 func pricedTransaction(nonce uint64, gaslimit uint64, gasprice *big.Int, key *ecdsa.PrivateKey) *types.Transaction {
-	tx, _ := types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(100), gaslimit, gasprice, nil), types.HomesteadSigner{}, key)
+	// TestChainConfig enables EIP-155 at genesis. Sign the fixture with the
+	// chain's active signer so the pool exercises transaction policy rather
+	// than rejecting every legacy fixture as an unprotected sender.
+	tx, _ := types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(100), gaslimit, gasprice, nil), types.LatestSigner(params.TestChainConfig), key)
 	return tx
 }
 
@@ -133,7 +136,7 @@ func pricedDataTransaction(nonce uint64, gaslimit uint64, gasprice *big.Int, key
 		data := make([]byte, dataBytes)
 		crand.Read(data)
 
-		tx, _ = types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(0), gaslimit, gasprice, data), types.HomesteadSigner{}, key)
+		tx, _ = types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(0), gaslimit, gasprice, data), types.LatestSigner(params.TestChainConfig), key)
 		_, r, s := tx.RawSignatureValues()
 		if len(r.Bytes()) == 32 && len(s.Bytes()) == 32 {
 			break
@@ -324,7 +327,7 @@ func validateEvents(events chan core.NewTxsEvent, count int) error {
 }
 
 func deriveSender(tx *types.Transaction) (common.Address, error) {
-	return types.Sender(types.HomesteadSigner{}, tx)
+	return types.Sender(types.LatestSigner(params.TestChainConfig), tx)
 }
 
 type testChain struct {
@@ -2412,7 +2415,12 @@ func TestSetCodeTransactions(t *testing.T) {
 
 	// Create the pool to test the status retrievals with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
-	blockchain := newTestBlockChain(params.MergedTestChainConfig, 1000000, statedb, new(event.Feed))
+	// Keep the merged execution schedule while using the same chain ID as the
+	// fixture constructors below. The production chain ID is intentionally
+	// different from the generic merged test profile.
+	mergedConfig := *params.MergedTestChainConfig
+	mergedConfig.ChainID = new(big.Int).Set(params.TestChainConfig.ChainID)
+	blockchain := newTestBlockChain(&mergedConfig, 1000000, statedb, new(event.Feed))
 
 	pool := New(testTxPoolConfig, blockchain)
 	pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver())
@@ -2710,7 +2718,9 @@ func TestSetCodeTransactionsReorg(t *testing.T) {
 
 	// Create the pool to test the status retrievals with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
-	blockchain := newTestBlockChain(params.MergedTestChainConfig, 1000000, statedb, new(event.Feed))
+	mergedConfig := *params.MergedTestChainConfig
+	mergedConfig.ChainID = new(big.Int).Set(params.TestChainConfig.ChainID)
+	blockchain := newTestBlockChain(&mergedConfig, 1000000, statedb, new(event.Feed))
 
 	pool := New(testTxPoolConfig, blockchain)
 	pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver())

@@ -68,7 +68,7 @@ func FuzzAccessLists(f *testing.F) {
 
 func doFuzz(input []byte, obj interface{}, code int) {
 	bc := getChain()
-	defer bc.Stop()
+	defer stopSnapFixture(bc)
 	fuzz.NewFromGoFuzz(input).Fuzz(obj)
 	var data []byte
 	switch p := obj.(type) {

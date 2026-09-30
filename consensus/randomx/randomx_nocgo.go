@@ -22,6 +22,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -60,7 +61,12 @@ type Work struct {
 }
 
 type RandomX struct {
-	config                  *Config
+	config *Config
+	// fullFake is used only by NewFaker in tests and simulated backends. It
+	// lets those generated blocks carry a deterministic non-zero mix digest,
+	// while the normal no-cgo verifier still rejects empty production proofs.
+	fullFake                bool
+	fakeMixDigest           bool
 	mainKing                common.Address
 	rotatingKings           []common.Address
 	rotatingKingActivations map[common.Address]uint64
@@ -107,11 +113,15 @@ func New(config *Config, threads int, mainKing common.Address, kingAddresses []c
 
 func NewFaker() *RandomX {
 	rx, _ := New(DefaultConfig(), 1, common.Address{}, nil)
+	rx.fullFake = true
+	rx.fakeMixDigest = true
 	return rx
 }
 
 func NewFullFaker() *RandomX {
-	return NewFaker()
+	rx := NewFaker()
+	rx.fakeMixDigest = false
+	return rx
 }
 
 func NewFakeFailer(fail uint64) *RandomX {
@@ -158,17 +168,33 @@ func (rx *RandomX) verifyHeader(chain consensus.ChainHeaderReader, header *types
 	if header == nil || header.Number == nil {
 		return consensus.ErrInvalidNumber
 	}
+	if chain != nil && chain.Config() != nil {
+		if err := misc.VerifyDAOHeaderExtraData(chain.Config(), header); err != nil {
+			return err
+		}
+	}
 	if err := verifyBlockHashAnchor(chain, header, parents); err != nil {
 		return err
+	}
+	// NewFakeFailer is a test-only engine used to exercise batch rollback. Its
+	// requested failure height must be honored even for legacy fixture blocks
+	// that predate the RandomX transaction fork.
+	if rx != nil && rx.fail > 0 && header.Number.Uint64() == rx.fail {
+		return fmt.Errorf("invalid fake randomx header %d", rx.fail)
+	}
+	// The node uses this engine for compatibility test chains that still carry
+	// Ethash-style headers. Match the native verifier and enforce RandomX proof
+	// fields only after the configured RandomX transaction fork. TKM mainnet
+	// and Egypt both have RandomXTxBlock configured, so their zero digests remain
+	// rejected; unrelated protocol fixtures can continue to use legacy headers.
+	if chain != nil && chain.Config() != nil && !chain.Config().IsRandomXTx(header.Number) {
+		return nil
 	}
 	// The fallback build cannot recompute RandomX, but it must never accept
 	// an empty proof.  Otherwise a node built without the native verifier
 	// could mine or relay zero-mix blocks that native nodes correctly reject.
 	if header.Number.Sign() > 0 && header.MixDigest == (common.Hash{}) {
 		return fmt.Errorf("invalid proof: empty mix digest")
-	}
-	if rx != nil && rx.fail > 0 && header.Number.Uint64() == rx.fail {
-		return fmt.Errorf("invalid fake randomx header %d", rx.fail)
 	}
 	return nil
 }
@@ -234,7 +260,22 @@ func (rx *RandomX) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64
 }
 
 func (rx *RandomX) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	rx.setFakeMixDigest(header)
 	rx.finalizeRewards(chain, header, state, body)
+}
+
+// setFakeMixDigest gives simulated blocks a stable, non-zero seal field. The
+// production verifier remains strict: only the explicit NewFaker test engine
+// can use this path, and the fallback verifier still rejects zero digests.
+func (rx *RandomX) setFakeMixDigest(header *types.Header) {
+	if rx == nil || !rx.fakeMixDigest || header == nil || header.Number == nil || header.Number.Sign() == 0 || header.MixDigest != (common.Hash{}) {
+		return
+	}
+	header.MixDigest = crypto.Keccak256Hash(
+		[]byte("tkm.randomx.simulated.mix"),
+		header.ParentHash.Bytes(),
+		header.Number.Bytes(),
+	)
 }
 
 func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
@@ -262,6 +303,7 @@ func (rx *RandomX) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 }
 
 func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+	applyWithdrawals(state, body)
 	blockNumber := header.Number.Uint64()
 	rx.writeRotatingKingToState(state, blockNumber)
 	if header.Coinbase == (common.Address{}) {
@@ -277,6 +319,20 @@ func (rx *RandomX) finalizeRewards(chain consensus.ChainHeaderReader, header *ty
 	blockReward := CalculateBlockReward(blockNumber)
 	if blockReward.Sign() > 0 {
 		rx.distributeRewardsToState(state, header, blockReward)
+	}
+}
+
+// applyWithdrawals applies consensus-layer validator withdrawals before the
+// final state root is committed. This is shared by TKM and legacy fixture
+// chains even when no RandomX reward is emitted for the latter.
+func applyWithdrawals(state vm.StateDB, body *types.Body) {
+	if state == nil || body == nil {
+		return
+	}
+	for _, withdrawal := range body.Withdrawals {
+		amount := new(uint256.Int).SetUint64(withdrawal.Amount)
+		amount.Mul(amount, uint256.NewInt(params.GWei))
+		state.AddBalance(withdrawal.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
 }
 

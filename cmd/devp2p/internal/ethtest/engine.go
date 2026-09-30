@@ -54,6 +54,13 @@ func (ec *EngineClient) token() string {
 
 // sendForkchoiceUpdated sends an fcu for the head of the generated chain.
 func (ec *EngineClient) sendForkchoiceUpdated() error {
+	// The TKM backend does not expose Ethereum's authenticated Engine API;
+	// protocol fixture tests still exercise the execution/P2P paths directly.
+	// Treat the absent optional FCU endpoint as a no-op, while preserving real
+	// HTTP errors whenever an endpoint is configured.
+	if ec.url == "" || ec.url == "http://" {
+		return nil
+	}
 	var (
 		req, _ = http.NewRequest(http.MethodPost, ec.url, io.NopCloser(bytes.NewReader(ec.headfcu)))
 		header = make(http.Header)

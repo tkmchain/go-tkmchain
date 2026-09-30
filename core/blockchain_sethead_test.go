@@ -1991,6 +1991,9 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 			SnapshotLimit:  0,  // disable snapshot
 			TxLookupLimit:  -1, // disable tx indexing
 			StateScheme:    scheme,
+			// SetHead fixtures model a crash with an uncommitted tail. Keep
+			// production state commits disabled only for this simulation.
+			SkipStateCommit: true,
 		}
 	)
 	if snapshots {
@@ -2001,7 +2004,7 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
-	defer chain.Stop()
+	defer stopCanonicalFixture(t, chain)
 
 	// If sidechain blocks are needed, make a light chain and import it
 	var sideblocks types.Blocks

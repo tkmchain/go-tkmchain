@@ -23,8 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/internal/cmdtest"
 	"github.com/ethereum/go-ethereum/internal/reexec"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -39,6 +41,11 @@ type testgeth struct {
 func init() {
 	// Run the app if we've been exec'd as "geth-test" in runGeth.
 	reexec.Register("geth-test", func() {
+		// The command tests create private temporary chains. Remove the global
+		// mainnet checkpoint points in the re-exec child only; production daemon
+		// processes never execute this test callback and retain mandatory anchors.
+		params.RandomXCheckpoints.Points = make(map[uint64]common.Hash)
+		params.SetCheckpointValidation(false)
 		if err := app.Run(os.Args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -67,6 +74,11 @@ func initGeth(t *testing.T) string {
 // spawns geth with the given command line args. If the args don't set --datadir, the
 // child g gets a temporary data directory.
 func runGeth(t *testing.T, args ...string) *testgeth {
+	// The production daemon defaults to onion-only networking and validates the
+	// mainnet checkpoint set. These command tests intentionally use isolated
+	// temporary chains, so opt out explicitly instead of weakening production
+	// defaults or making the fixtures depend on mainnet data.
+	args = append([]string{"--bootnodes", "", "--privacy.onion-only=false", "--checkpoints=false"}, args...)
 	tt := &testgeth{}
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
 	for i, arg := range args {

@@ -152,6 +152,10 @@ func (c CliqueConfig) String() string {
 // ChainConfig is the core config which determines the blockchain settings.
 type ChainConfig struct {
 	ChainID *big.Int `json:"chainId"`
+	// MergeOverride is an in-memory compatibility switch for generic Ethereum
+	// execution fixtures. TKM production profiles remain proof-of-work and do
+	// not serialize or enable this field.
+	MergeOverride bool `json:"-"`
 
 	HomesteadBlock *big.Int `json:"homesteadBlock,omitempty"`
 	DAOForkBlock   *big.Int `json:"daoForkBlock,omitempty"`
@@ -773,7 +777,11 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsEIP2929:             isEIP2929,
 		IsEIP4762:             isEIP4762,
 		TKMProfileVersion:     profileVersion,
-		IsMerge:               false, // RandomX chains always use proof-of-work consensus.
+		// The caller supplies the post-merge execution context (typically by
+		// presence of prevRandao). TKM production callers remain PoW and pass
+		// false; the in-memory override is retained for isolated transition
+		// fixtures that do not carry a complete block context.
+		IsMerge:               isMerge || c.MergeOverride,
 	}
 }
 

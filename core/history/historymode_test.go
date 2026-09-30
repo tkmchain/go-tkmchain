@@ -51,8 +51,12 @@ func TestNewPolicy(t *testing.T) {
 		t.Errorf("PostPrague: unexpected target %+v", p.Target)
 	}
 
-	// PostMerge on unknown network: error.
-	if _, err = NewPolicy(KeepPostMerge, common.HexToHash("0xdeadbeef")); err == nil {
-		t.Fatal("PostMerge unknown network: expected error")
+	// PostMerge on an unknown network falls back to retaining all history.
+	p, err = NewPolicy(KeepPostMerge, common.HexToHash("0xdeadbeef"))
+	if err != nil {
+		t.Fatalf("PostMerge unknown network: %v", err)
+	}
+	if p.Mode != KeepAll || p.Target != nil {
+		t.Fatalf("PostMerge unknown network: unexpected policy %+v", p)
 	}
 }

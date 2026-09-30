@@ -54,6 +54,10 @@ var (
 
 func TestDifficulty(t *testing.T) {
 	t.Parallel()
+	// The JSON vectors exercise Ethereum's historical Ethash difficulty
+	// algorithm. TKM validates RandomX difficulty instead; those vectors are
+	// covered by consensus/randomx tests and cannot be used as TKM fixtures.
+	t.Skip("legacy Ethereum difficulty vectors are not applicable to RandomX")
 
 	dt := new(testMatcher)
 	// Not difficulty-tests

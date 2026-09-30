@@ -68,7 +68,11 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 	})
 
 	db := rawdb.NewMemoryDatabase()
-	chain, _ := core.NewBlockChain(db, gspec, randomx.NewFaker(), nil)
+	chainConfig := core.DefaultConfig()
+	// These fixtures exercise transaction tracking. Disable the unrelated
+	// asynchronous snapshot journal so deferred chain shutdown remains bounded.
+	chainConfig.SnapshotLimit = 0
+	chain, _ := core.NewBlockChain(db, gspec, randomx.NewFaker(), chainConfig)
 
 	legacyPool := legacypool.New(legacypool.DefaultConfig, chain)
 	pool, err := txpool.New(gasTip, chain, []txpool.SubPool{legacyPool})

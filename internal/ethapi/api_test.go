@@ -134,7 +134,10 @@ func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 	t.Parallel()
 
 	var (
-		config = params.AllRandomXProtocolChanges
+		// This fixture is the canonical EIP-2718 transaction vector. Keep its
+		// conventional 1337 chain id independent of the TKM RandomX test
+		// profile (which uses chain id 1), so the signed bytes remain stable.
+		config = params.AllCliqueProtocolChanges
 		tests  = allTransactionTypes(common.Address{0xde, 0xad}, config)
 	)
 	testTransactionMarshal(t, tests, config)
@@ -628,6 +631,27 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.E
 	return backend
 }
 
+// postCancunTestConfig enables blob execution from the first generated block
+// while keeping Cancun inactive in genesis. Cancun-at-genesis headers contain
+// a mandatory beacon-root field and are intentionally rejected by the normal
+// header RLP decoder, so fixtures must activate the fork after block zero.
+func postCancunTestConfig(osaka bool) *params.ChainConfig {
+	config := *params.TestChainConfig
+	activation := uint64(1)
+	config.ShanghaiTime = &activation
+	config.CancunTime = &activation
+	if osaka {
+		config.PragueTime = &activation
+		config.OsakaTime = &activation
+		config.BlobScheduleConfig = &params.BlobScheduleConfig{
+			Cancun: params.DefaultCancunBlobConfig,
+			Prague: params.DefaultPragueBlobConfig,
+			Osaka:  params.DefaultOsakaBlobConfig,
+		}
+	}
+	return &config
+}
+
 func (b testBackend) SyncProgress(ctx context.Context) ethereum.SyncProgress {
 	return ethereum.SyncProgress{}
 }
@@ -642,7 +666,7 @@ func (b testBackend) ChainDb() ethdb.Database                  { return b.db }
 func (b testBackend) AccountManager() *accounts.Manager        { return b.accman }
 func (b testBackend) Etherbase() common.Address                { return b.acc.Address }
 func (b testBackend) ExtRPCEnabled() bool                      { return false }
-func (b testBackend) RPCGasCap() uint64                        { return 10000000 }
+func (b testBackend) RPCGasCap() uint64                        { return 0x47e7c4 }
 func (b testBackend) RPCEVMTimeout() time.Duration             { return time.Second }
 func (b testBackend) RPCTxFeeCap() float64                     { return 0 }
 func (b testBackend) UnprotectedAllowed() bool                 { return false }
@@ -859,7 +883,7 @@ func TestEstimateGas(t *testing.T) {
 	var (
 		accounts = newAccounts(4)
 		genesis  = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: postCancunTestConfig(true),
 			Alloc: types.GenesisAlloc{
 				accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 				accounts[1].addr: {Balance: big.NewInt(params.Ether)},
@@ -1174,7 +1198,7 @@ func TestCall(t *testing.T) {
 		accounts = newAccounts(3)
 		dad      = common.HexToAddress("0x0000000000000000000000000000000000000dad")
 		genesis  = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: postCancunTestConfig(true),
 			Alloc: types.GenesisAlloc{
 				accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 				accounts[1].addr: {Balance: big.NewInt(params.Ether)},
@@ -1519,7 +1543,9 @@ func TestSimulateV1(t *testing.T) {
 		bab          = common.HexToAddress("0x0000000000000000000000000000000000000bab")
 		coinbase     = "0x000000000000000000000000000000000000ffff"
 		genesis      = &core.Genesis{
-			Config: params.TestChainConfig,
+			Config:   params.TestChainConfig,
+			GasLimit: 0x47e7c4,
+			BaseFee:  big.NewInt(1_000_000_000),
 			Alloc: types.GenesisAlloc{
 				accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 				accounts[1].addr: {Balance: big.NewInt(params.Ether)},
@@ -2665,14 +2691,20 @@ func TestSimulateV1ChainLinkage(t *testing.T) {
 		sender       = acc.addr
 		contractAddr = common.Address{0xaa, 0xaa}
 		recipient    = common.Address{0xbb, 0xbb}
-		gspec        = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+		simConfig    = func() *params.ChainConfig {
+			config := *params.TestChainConfig
+			zero := uint64(0)
+			config.ShanghaiTime = &zero // PUSH0 is used by the fixture contract.
+			return &config
+		}()
+		gspec = &core.Genesis{
+			Config: simConfig,
 			Alloc: types.GenesisAlloc{
 				sender:       {Balance: big.NewInt(params.Ether)},
 				contractAddr: {Code: common.Hex2Bytes("5f35405f8114600f575f5260205ff35b5f80fd")},
 			},
 		}
-		signer = types.LatestSigner(params.MergedTestChainConfig)
+		signer = types.LatestSigner(simConfig)
 	)
 	backend := newTestBackend(t, 1, gspec, randomx.NewFaker(), func(i int, b *core.BlockGen) {
 		tx := types.MustSignNewTx(acc.key, signer, &types.LegacyTx{
@@ -2761,7 +2793,7 @@ func TestSimulateV1TxSender(t *testing.T) {
 		sender3   = common.Address{0xaa, 0xac}
 		recipient = common.Address{0xbb, 0xbb}
 		gspec     = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: params.TestChainConfig,
 			Alloc: types.GenesisAlloc{
 				sender:  {Balance: big.NewInt(params.Ether)},
 				sender2: {Balance: big.NewInt(params.Ether)},
@@ -2832,7 +2864,7 @@ func TestSignTransaction(t *testing.T) {
 		key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 		to      = crypto.PubkeyToAddress(key.PublicKey)
 		genesis = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: params.TestChainConfig,
 			Alloc:  types.GenesisAlloc{},
 		}
 	)
@@ -2857,7 +2889,7 @@ func TestSignTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expect := `{"type":"0x2","chainId":"0x1","nonce":"0x0","to":"0x703c4b2bd70c169f5717101caee543299fc946c7","gas":"0x5208","gasPrice":null,"maxPriorityFeePerGas":"0x0","maxFeePerGas":"0x684ee180","value":"0x1","input":"0x","accessList":[],"v":"0x0","r":"0x8fabeb142d585dd9247f459f7e6fe77e2520c88d50ba5d220da1533cea8b34e1","s":"0x582dd68b21aef36ba23f34e49607329c20d981d30404daf749077f5606785ce7","yParity":"0x0","hash":"0x93927839207cfbec395da84b8a2bc38b7b65d2cb2819e9fef1f091f5b1d4cc8f"}`
+	expect := `{"type":"0x2","chainId":"0x1","nonce":"0x0","to":"0x703c4b2bd70c169f5717101caee543299fc946c7","gas":"0x5208","gasPrice":null,"maxPriorityFeePerGas":"0x0","maxFeePerGas":"0xe","value":"0x1","input":"0x","accessList":[],"v":"0x0","r":"0x3bd1dff5213282d0e649eb0cba572a35b7b208084be59d6b7b35f4e70125e963","s":"0x53e6dff01bbfc974220fe56e926c5a413d9bd16a2c61996d2557d30e7dc9ae87","yParity":"0x0","hash":"0xd7868e9ef842f1aa9bbbaba373a41d816803a5113d6d9954605111d1f9dafead"}`
 	if !bytes.Equal(tx, []byte(expect)) {
 		t.Errorf("result mismatch. Have:\n%s\nWant:\n%s\n", tx, expect)
 	}
@@ -2870,7 +2902,7 @@ func TestSignBlobTransaction(t *testing.T) {
 		key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 		to      = crypto.PubkeyToAddress(key.PublicKey)
 		genesis = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: postCancunTestConfig(false),
 			Alloc:  types.GenesisAlloc{},
 		}
 	)
@@ -2901,7 +2933,7 @@ func TestSendBlobTransaction(t *testing.T) {
 		key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 		to      = crypto.PubkeyToAddress(key.PublicKey)
 		genesis = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: postCancunTestConfig(false),
 			Alloc:  types.GenesisAlloc{},
 		}
 	)
@@ -2936,15 +2968,12 @@ func TestFillBlobTransaction(t *testing.T) {
 
 func testFillBlobTransaction(t *testing.T, osaka bool) {
 	// Initialize test accounts
-	config := *params.MergedTestChainConfig
-	if !osaka {
-		config.OsakaTime = nil
-	}
+	config := postCancunTestConfig(osaka)
 	var (
 		key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 		to      = crypto.PubkeyToAddress(key.PublicKey)
 		genesis = &core.Genesis{
-			Config: &config,
+			Config: config,
 			Alloc:  types.GenesisAlloc{},
 		}
 		emptyBlob                          = new(kzg4844.Blob)
@@ -3668,7 +3697,7 @@ func TestRPCGetBlockOrHeader(t *testing.T) {
 }
 
 func setupReceiptBackend(t *testing.T, genBlocks int) (*testBackend, []common.Hash) {
-	config := *params.MergedTestChainConfig
+	config := *postCancunTestConfig(false)
 	var (
 		acc1Key, _ = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 		acc2Key, _ = crypto.HexToECDSA("49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee")
@@ -3676,9 +3705,7 @@ func setupReceiptBackend(t *testing.T, genBlocks int) (*testBackend, []common.Ha
 		acc2Addr   = crypto.PubkeyToAddress(acc2Key.PublicKey)
 		contract   = common.HexToAddress("0000000000000000000000000000000000031ec7")
 		genesis    = &core.Genesis{
-			Config:        &config,
-			ExcessBlobGas: new(uint64),
-			BlobGasUsed:   new(uint64),
+			Config: &config,
 			Alloc: types.GenesisAlloc{
 				acc1Addr: {Balance: big.NewInt(params.Ether)},
 				acc2Addr: {Balance: big.NewInt(params.Ether)},
@@ -3695,7 +3722,7 @@ func setupReceiptBackend(t *testing.T, genBlocks int) (*testBackend, []common.Ha
 				contract: {Balance: big.NewInt(params.Ether), Code: common.FromHex("0x608060405234801561001057600080fd5b506004361061002b5760003560e01c8063a9059cbb14610030575b600080fd5b61004a6004803603810190610045919061016a565b610060565b60405161005791906101c5565b60405180910390f35b60008273ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef846040516100bf91906101ef565b60405180910390a36001905092915050565b600080fd5b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000610101826100d6565b9050919050565b610111816100f6565b811461011c57600080fd5b50565b60008135905061012e81610108565b92915050565b6000819050919050565b61014781610134565b811461015257600080fd5b50565b6000813590506101648161013e565b92915050565b60008060408385031215610181576101806100d1565b5b600061018f8582860161011f565b92505060206101a085828601610155565b9150509250929050565b60008115159050919050565b6101bf816101aa565b82525050565b60006020820190506101da60008301846101b6565b92915050565b6101e981610134565b82525050565b600060208201905061020460008301846101e0565b9291505056fea2646970667358221220b469033f4b77b9565ee84e0a2f04d496b18160d26034d54f9487e57788fd36d564736f6c63430008120033")},
 			},
 		}
-		signer   = types.LatestSignerForChainID(params.TestChainConfig.ChainID)
+		signer   = types.LatestSignerForChainID(config.ChainID)
 		txHashes = make([]common.Hash, 0, genBlocks)
 	)
 
@@ -4028,7 +4055,7 @@ func TestEstimateGasWithMovePrecompile(t *testing.T) {
 	var (
 		accounts = newAccounts(2)
 		genesis  = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: params.TestChainConfig,
 			Alloc: types.GenesisAlloc{
 				accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 			},
@@ -4059,8 +4086,8 @@ func TestEstimateGasWithMovePrecompile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateGas failed: %v", err)
 	}
-	if gas != 21366 {
-		t.Fatalf("mismatched gas: %d, want 21366", gas)
+	if gas != 21246 {
+		t.Fatalf("mismatched gas: %d, want 21246", gas)
 	}
 }
 
@@ -4265,7 +4292,7 @@ func TestGetStorageValues(t *testing.T) {
 		val2  = common.BigToHash(big.NewInt(200))
 
 		genesis = &core.Genesis{
-			Config: params.MergedTestChainConfig,
+			Config: params.TestChainConfig,
 			Alloc: types.GenesisAlloc{
 				addr1: {
 					Balance: big.NewInt(params.Ether),

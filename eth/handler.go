@@ -192,10 +192,19 @@ type handler struct {
 // checkpoints, making consensus-critical mismatches a peer disconnect condition.
 // Optional checkpoints remain local validation only, so stale database rows from
 // older builds do not expand the peer handshake challenge list.
-func checkpointRequiredBlocks(required map[uint64]common.Hash) map[uint64]common.Hash {
+func checkpointRequiredBlocks(required map[uint64]common.Hash, chain *core.BlockChain) map[uint64]common.Hash {
 	merged := make(map[uint64]common.Hash, len(required)+len(params.AllCheckpoints()))
 	for number, hash := range required {
 		merged[number] = hash
+	}
+	// The immutable TKM checkpoint set is consensus-specific. Do not inject it
+	// into generic Ethereum/Hive fixture chains: those chains intentionally have
+	// different heights and would otherwise trigger impossible header challenges
+	// and tear down otherwise healthy protocol peers.
+	if chain == nil || chain.Config() == nil || chain.Config().ChainID == nil ||
+		(chain.Config().ChainID.Int64() != params.TKMMainnetChainID &&
+			(params.EgyptChainConfig == nil || chain.Config().ChainID.Cmp(params.EgyptChainConfig.ChainID) != 0)) {
+		return merged
 	}
 	for _, checkpoint := range params.AllCheckpoints() {
 		if !params.IsMandatoryCheckpoint(checkpoint.Number) {
@@ -225,7 +234,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		chain:               config.Chain,
 		peers:               newPeerSet(),
 		txBroadcastKey:      newBroadcastChoiceKey(),
-		requiredBlocks:      checkpointRequiredBlocks(config.RequiredBlocks),
+		requiredBlocks:      checkpointRequiredBlocks(config.RequiredBlocks, config.Chain),
 		rotatingKingUpdate:  config.RotatingKingUpdate,
 		checkpointUpdate:    config.CheckpointUpdate,
 		tkmPhonePropagation: config.TkmPhonePropagation,
