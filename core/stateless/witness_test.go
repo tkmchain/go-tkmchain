@@ -51,3 +51,30 @@ func TestWitnessKeysRoundTripAndCopy(t *testing.T) {
 		t.Fatal("encoded witness is empty")
 	}
 }
+
+func TestWitnessEncodingIsDeterministic(t *testing.T) {
+	parent := &types.Header{Number: common.Big0, Root: common.HexToHash("0x01")}
+	first := &Witness{
+		Headers: []*types.Header{parent},
+		Codes:   map[string]struct{}{"z-code": {}, "a-code": {}},
+		State:   map[string]struct{}{"node-z": {}, "node-a": {}},
+		Keys:    map[string]struct{}{"key-z": {}, "key-a": {}},
+	}
+	second := &Witness{
+		Headers: []*types.Header{parent},
+		Codes:   map[string]struct{}{"a-code": {}, "z-code": {}},
+		State:   map[string]struct{}{"node-a": {}, "node-z": {}},
+		Keys:    map[string]struct{}{"key-a": {}, "key-z": {}},
+	}
+	a, err := rlp.EncodeToBytes(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := rlp.EncodeToBytes(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatal("witness encoding depends on map iteration order")
+	}
+}

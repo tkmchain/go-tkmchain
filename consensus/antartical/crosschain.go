@@ -68,7 +68,12 @@ func (a CrossChainAttestation) Verify(message CrossChainMessage) error {
 // membership is supplied by the state transition, so a relay cannot choose a
 // larger committee in its message.
 func VerifyCrossChainQuorum(message CrossChainMessage, attestations []CrossChainAttestation, committee map[common.Address]struct{}, numerator, denominator uint64) error {
-	if len(attestations) == 0 || len(committee) == 0 || denominator == 0 || uint64(len(attestations))*denominator < uint64(len(committee))*numerator {
+	if len(attestations) == 0 || len(committee) == 0 || denominator == 0 || numerator > denominator {
+		return ErrInvalidCrossChainQuorum
+	}
+	left := new(big.Int).Mul(new(big.Int).SetUint64(uint64(len(attestations))), new(big.Int).SetUint64(denominator))
+	right := new(big.Int).Mul(new(big.Int).SetUint64(uint64(len(committee))), new(big.Int).SetUint64(numerator))
+	if left.Cmp(right) < 0 {
 		return ErrInvalidCrossChainQuorum
 	}
 	seen := make(map[common.Address]struct{}, len(attestations))

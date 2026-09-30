@@ -140,6 +140,10 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	if metadataErr != nil {
 		return fmt.Errorf("invalid Antartical header metadata: %w", metadataErr)
 	}
+	antarticalActive := v.config != nil && v.config.IsAntartical(header.Number, header.Time)
+	if metadataFound && !antarticalActive {
+		return errors.New("Antartical header metadata is present before fork activation")
+	}
 	if block.GasUsed() != res.GasUsed {
 		return fmt.Errorf("invalid gas used (remote: %d local: %d)", block.GasUsed(), res.GasUsed)
 	}
@@ -154,6 +158,9 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	if cert, found, err := antartical.DecodeFinalityCertificateFromHeaderExtra(header.Extra); err != nil {
 		return fmt.Errorf("invalid Antartical finality certificate: %w", err)
 	} else if found {
+		if !antarticalActive {
+			return errors.New("Antartical finality certificate is present before fork activation")
+		}
 		if cert.Slot != block.NumberU64() {
 			return fmt.Errorf("Antartical finality slot mismatch (certificate: %d block: %d)", cert.Slot, block.NumberU64())
 		}

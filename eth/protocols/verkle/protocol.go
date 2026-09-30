@@ -65,11 +65,12 @@ type GetWitnessPacket struct {
 }
 
 type WitnessPacket struct {
-	ID        uint64
-	BlockHash common.Hash
-	StateRoot common.Hash
-	Witness   rlp.RawValue
-	Error     []byte
+	ID          uint64
+	BlockHash   common.Hash
+	BlockNumber uint64
+	StateRoot   common.Hash
+	Witness     rlp.RawValue
+	Error       []byte
 }
 
 func (*StatusPacket) Name() string     { return "Status" }
@@ -132,7 +133,7 @@ func Handle(backend Backend, peer *Peer) error {
 				return err
 			}
 			witness, err := backend.GetWitness(context.Background(), request.BlockHash, request.BlockNumber, request.MaxBytes)
-			response := WitnessPacket{ID: request.ID, BlockHash: request.BlockHash}
+			response := WitnessPacket{ID: request.ID, BlockHash: request.BlockHash, BlockNumber: request.BlockNumber}
 			if err != nil {
 				response.Error = []byte(err.Error())
 			} else {
@@ -143,6 +144,8 @@ func Handle(backend Backend, peer *Peer) error {
 					response.Witness = encoded
 					if len(witness.Headers) == 0 {
 						response.Error = []byte("witness has no parent header")
+					} else if witness.Headers[0].Number == nil || witness.Headers[0].Number.Sign() < 0 || witness.Headers[0].Number.Uint64()+1 != request.BlockNumber {
+						response.Error = []byte("witness parent header does not match requested block")
 					} else {
 						response.StateRoot = witness.Headers[0].Root
 					}

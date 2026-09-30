@@ -16,7 +16,7 @@ func TestWitnessPacketRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &WitnessPacket{ID: 7, BlockHash: common.HexToHash("0xab"), StateRoot: common.HexToHash("0x1234"), Witness: raw}
+	want := &WitnessPacket{ID: 7, BlockHash: common.HexToHash("0xab"), BlockNumber: 11, StateRoot: common.HexToHash("0x1234"), Witness: raw}
 	encoded, err := rlp.EncodeToBytes(want)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestWitnessPacketRoundTrip(t *testing.T) {
 	if err := rlp.DecodeBytes(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != want.ID || got.BlockHash != want.BlockHash || got.StateRoot != want.StateRoot || string(got.Witness) != string(want.Witness) {
+	if got.ID != want.ID || got.BlockHash != want.BlockHash || got.BlockNumber != want.BlockNumber || got.StateRoot != want.StateRoot || string(got.Witness) != string(want.Witness) {
 		t.Fatalf("witness packet mismatch: got=%+v want=%+v", got, *want)
 	}
 	var decoded stateless.Witness

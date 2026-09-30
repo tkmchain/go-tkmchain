@@ -51,7 +51,12 @@ func (o OracleObservation) Verify(chainID *big.Int) error {
 // is the deterministic consensus rule; a node must not pick the first valid
 // observation it receives from the network.
 func VerifyOracleQuorum(chainID *big.Int, observations []OracleObservation, committeeSize, quorumNumerator, quorumDenominator uint64) error {
-	if len(observations) == 0 || committeeSize == 0 || quorumDenominator == 0 || uint64(len(observations)) > committeeSize || uint64(len(observations))*quorumDenominator < committeeSize*quorumNumerator {
+	if len(observations) == 0 || committeeSize == 0 || quorumDenominator == 0 || quorumNumerator > quorumDenominator || uint64(len(observations)) > committeeSize {
+		return ErrInvalidOracleQuorum
+	}
+	left := new(big.Int).Mul(new(big.Int).SetUint64(uint64(len(observations))), new(big.Int).SetUint64(quorumDenominator))
+	right := new(big.Int).Mul(new(big.Int).SetUint64(committeeSize), new(big.Int).SetUint64(quorumNumerator))
+	if left.Cmp(right) < 0 {
 		return ErrInvalidOracleQuorum
 	}
 	first := observations[0]

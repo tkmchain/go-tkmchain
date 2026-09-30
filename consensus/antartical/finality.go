@@ -35,13 +35,13 @@ func (c FinalityCertificate) Verify(quorumNumerator, quorumDenominator uint64) e
 	if committeeSize == 0 {
 		committeeSize = uint64(len(c.Signers))
 	}
-	if c.BlockHash == (common.Hash{}) || len(c.Signers) == 0 || c.CommitteeSize > 0 && committeeSize < uint64(len(c.Signers)) || len(c.Signers) != len(c.PublicKeys) || len(c.Signers) != len(c.Signatures) || quorumDenominator == 0 {
+	if c.Slot == 0 || c.BlockHash == (common.Hash{}) || len(c.Signers) == 0 || committeeSize < uint64(len(c.Signers)) || len(c.Signers) != len(c.PublicKeys) || len(c.Signers) != len(c.Signatures) || quorumDenominator == 0 || quorumNumerator > quorumDenominator {
 		return ErrInvalidFinalityCertificate
 	}
 	seen := make(map[common.Address]bool)
 	valid := uint64(0)
 	for i, signer := range c.Signers {
-		if signer == (common.Address{}) || seen[signer] || len(c.PublicKeys[i]) == 0 {
+		if signer == (common.Address{}) || seen[signer] || i > 0 && bytes.Compare(signer.Bytes(), c.Signers[i-1].Bytes()) <= 0 || len(c.PublicKeys[i]) == 0 {
 			return ErrInvalidFinalityCertificate
 		}
 		seen[signer] = true
@@ -61,7 +61,9 @@ func (c FinalityCertificate) Verify(quorumNumerator, quorumDenominator uint64) e
 		}
 		valid++
 	}
-	if valid*quorumDenominator < committeeSize*quorumNumerator {
+	left := new(big.Int).Mul(new(big.Int).SetUint64(valid), new(big.Int).SetUint64(quorumDenominator))
+	right := new(big.Int).Mul(new(big.Int).SetUint64(committeeSize), new(big.Int).SetUint64(quorumNumerator))
+	if left.Cmp(right) < 0 {
 		return ErrInvalidFinalityCertificate
 	}
 	return nil

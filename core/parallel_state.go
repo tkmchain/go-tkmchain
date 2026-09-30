@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -22,22 +23,20 @@ type speculativeTransaction struct {
 }
 
 // executeParallelTransfers is the commit phase of Antartical optimistic
-// execution. It deliberately admits only transactions whose destination is an
-// account without code. Such transfers have a complete, explicit account
-// write-set (sender and recipient), so the state deltas can be checked and
-// merged without guessing about internal contract calls. Contract execution,
-// account creation, and consensus envelopes remain on the serial path until
-// their dynamic access witnesses are available.
+// execution. Transactions with an access list are executed against isolated
+// StateDB copies and their complete speculative deltas are validated and
+// committed in canonical transaction order. This includes contract calls: the
+// dynamic account/slot accesses collected by StateDB are checked after the
+// speculative wave. Transactions without an access list, contract creation,
+// self-destructs, and consensus envelopes remain on the canonical serial path
+// because their complete write-set is not known before execution.
 func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *types.Block, statedb *state.StateDB, blockContext vm.BlockContext, signer types.Signer, cfg vm.Config, gp *GasPool) (types.Receipts, []*types.Log, common.Hash, bool, error) {
 	if cfg.Tracer != nil || block == nil || len(block.Transactions()) < 2 {
 		return nil, nil, common.Hash{}, false, nil
 	}
 	txs := block.Transactions()
 	for _, tx := range txs {
-		if tx == nil || types.IsBlockRewardTx(tx) || tx.Type() == types.PQTkmTxType || tx.To() == nil || hasConsensusSideEffects(tx.Data()) {
-			return nil, nil, common.Hash{}, false, nil
-		}
-		if statedb.GetCodeSize(*tx.To()) != 0 {
+		if tx == nil || types.IsBlockRewardTx(tx) || tx.Type() == types.PQTkmTxType || tx.To() == nil || len(tx.AccessList()) == 0 || hasConsensusSideEffects(tx.Data()) {
 			return nil, nil, common.Hash{}, false, nil
 		}
 	}
@@ -48,9 +47,16 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 		if err != nil {
 			return nil, nil, common.Hash{}, false, err
 		}
-		// A simple transfer has no hidden storage access. Include both account
-		// writes so transfers sharing a sender or recipient are serialized.
+		// Include the sender and destination account in the write-set. Access-list
+		// slots are included as declared reads; the dynamic StateDB trace below
+		// remains authoritative and catches undeclared accesses.
 		access[i] = antartical.AccessSet{Reads: []common.Address{msg.From}, Writes: []common.Address{msg.From, *tx.To()}}
+		for _, tuple := range tx.AccessList() {
+			access[i].Reads = append(access[i].Reads, tuple.Address)
+			for _, key := range tuple.StorageKeys {
+				access[i].StorageReads = append(access[i].StorageReads, antartical.StorageAccess{Address: tuple.Address, Key: key})
+			}
+		}
 		sort.Slice(access[i].Reads, func(a, b int) bool { return access[i].Reads[a].Hex() < access[i].Reads[b].Hex() })
 		sort.Slice(access[i].Writes, func(a, b int) bool { return access[i].Writes[a].Hex() < access[i].Writes[b].Hex() })
 	}
@@ -72,6 +78,12 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 		}
 		delta, err := copyState.BuildSpeculativeDelta()
 		if err != nil {
+			if errors.Is(err, state.ErrSpeculativeDelta) {
+				// The transaction used a state effect that cannot be merged
+				// transactionally (for example account deletion). Re-run the
+				// entire block through the canonical serial executor.
+				return speculativeTransaction{}, antartical.AccessSet{}, err
+			}
 			return speculativeTransaction{}, antartical.AccessSet{}, err
 		}
 		reads, writes := copyState.AccessSummary()
@@ -91,6 +103,9 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 		return speculativeTransaction{receipt: receipt, delta: delta, gas: localGas, peakGas: localGas.Used(), gasLimit: tx.Gas()}, dynamic, nil
 	})
 	if err != nil {
+		if errors.Is(err, state.ErrSpeculativeDelta) {
+			return nil, nil, common.Hash{}, false, nil
+		}
 		return nil, nil, common.Hash{}, false, err
 	}
 	for _, result := range results {
@@ -122,6 +137,9 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 	for i, result := range results {
 		checkState.SetTxContext(txs[i].Hash(), i)
 		if err := checkState.ApplySpeculativeDelta(result.delta); err != nil {
+			if errors.Is(err, state.ErrSpeculativeDelta) {
+				return nil, nil, common.Hash{}, false, nil
+			}
 			return nil, nil, common.Hash{}, false, nil
 		}
 		if checkState.IntermediateRoot(p.chainConfig().IsEIP158(block.Number())) == (common.Hash{}) {
@@ -131,6 +149,9 @@ func (p *StateProcessor) executeParallelTransfers(ctx context.Context, block *ty
 	for i, result := range results {
 		statedb.SetTxContext(txs[i].Hash(), i)
 		if err := statedb.ApplySpeculativeDelta(result.delta); err != nil {
+			if errors.Is(err, state.ErrSpeculativeDelta) {
+				return nil, nil, common.Hash{}, false, nil
+			}
 			return nil, nil, common.Hash{}, false, fmt.Errorf("parallel state commit %d: %w", i, err)
 		}
 		if statedb.IntermediateRoot(p.chainConfig().IsEIP158(block.Number())) == (common.Hash{}) {

@@ -19,6 +19,7 @@ package stateless
 import (
 	"errors"
 	"io"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -30,16 +31,31 @@ func (w *Witness) ToExtWitness() *ExtWitness {
 	ext := &ExtWitness{
 		Headers: w.Headers,
 	}
-	ext.Codes = make([]hexutil.Bytes, 0, len(w.Codes))
+	codes := make([]string, 0, len(w.Codes))
 	for code := range w.Codes {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	ext.Codes = make([]hexutil.Bytes, 0, len(codes))
+	for _, code := range codes {
 		ext.Codes = append(ext.Codes, []byte(code))
 	}
-	ext.State = make([]hexutil.Bytes, 0, len(w.State))
+	state := make([]string, 0, len(w.State))
 	for node := range w.State {
+		state = append(state, node)
+	}
+	sort.Strings(state)
+	ext.State = make([]hexutil.Bytes, 0, len(state))
+	for _, node := range state {
 		ext.State = append(ext.State, []byte(node))
 	}
-	ext.Keys = make([]hexutil.Bytes, 0, len(w.Keys))
+	keys := make([]string, 0, len(w.Keys))
 	for key := range w.Keys {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	ext.Keys = make([]hexutil.Bytes, 0, len(keys))
+	for _, key := range keys {
 		ext.Keys = append(ext.Keys, []byte(key))
 	}
 	return ext

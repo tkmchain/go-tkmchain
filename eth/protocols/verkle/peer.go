@@ -28,8 +28,9 @@ type witnessResult struct {
 }
 
 type pendingWitness struct {
-	blockHash common.Hash
-	result    chan witnessResult
+	blockHash   common.Hash
+	blockNumber uint64
+	result      chan witnessResult
 }
 
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
@@ -91,7 +92,7 @@ func (p *Peer) RequestWitnessAndWait(ctx context.Context, id uint64, blockHash c
 		p.mu.Unlock()
 		return nil, fmt.Errorf("duplicate witness request %d", id)
 	}
-	p.pending[id] = pendingWitness{blockHash: blockHash, result: result}
+	p.pending[id] = pendingWitness{blockHash: blockHash, blockNumber: blockNumber, result: result}
 	p.mu.Unlock()
 	if err := p.RequestWitness(id, blockHash, blockNumber, maxBytes); err != nil {
 		p.mu.Lock()
@@ -124,7 +125,7 @@ func (p *Peer) deliverWitness(response WitnessPacket) {
 		pending.result <- witnessResult{err: fmt.Errorf("remote witness: %s", response.Error)}
 		return
 	}
-	if response.BlockHash != pending.blockHash {
+	if response.BlockHash != pending.blockHash || response.BlockNumber != pending.blockNumber {
 		pending.result <- witnessResult{err: errInvalidMessage}
 		return
 	}
@@ -133,7 +134,7 @@ func (p *Peer) deliverWitness(response WitnessPacket) {
 		return
 	}
 	var witness stateless.Witness
-	if err := rlp.DecodeBytes(response.Witness, &witness); err != nil || len(witness.Headers) == 0 || witness.Headers[0].Root != response.StateRoot {
+	if err := rlp.DecodeBytes(response.Witness, &witness); err != nil || len(witness.Headers) == 0 || witness.Headers[0].Number == nil || witness.Headers[0].Number.Sign() < 0 || witness.Headers[0].Number.Uint64()+1 != response.BlockNumber || witness.Headers[0].Root != response.StateRoot {
 		pending.result <- witnessResult{err: errInvalidMessage}
 		return
 	}
@@ -162,7 +163,7 @@ func (p *Peer) ReadWitness(expectedID uint64, expectedHash common.Hash) (*statel
 		return nil, errInvalidMessage
 	}
 	var witness stateless.Witness
-	if err := rlp.DecodeBytes(response.Witness, &witness); err != nil || len(witness.Headers) == 0 || witness.Headers[0].Root != response.StateRoot {
+	if err := rlp.DecodeBytes(response.Witness, &witness); err != nil || len(witness.Headers) == 0 || witness.Headers[0].Number == nil || witness.Headers[0].Number.Sign() < 0 || witness.Headers[0].Number.Uint64()+1 != response.BlockNumber || witness.Headers[0].Root != response.StateRoot {
 		return nil, errInvalidMessage
 	}
 	return &witness, nil
