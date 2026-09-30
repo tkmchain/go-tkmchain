@@ -55,17 +55,17 @@ var antarticalFeatureInfo = [...]struct {
 	consensusReady  bool
 	implementedArea string
 }{
-	{FeatureAccountAbstraction, "Native account abstraction (EIP-4337/RIP-7560)", false, "consensus/antartical UserOperation hashing and secp256k1/ML-DSA authorization"},
-	{FeatureParallelExecution, "Parallel execution (optimistic Block-STM)", false, "consensus/antartical deterministic access-set wave scheduler"},
-	{FeatureAlternativeEVM, "Alternative EVM engines (Revm/evmone/Rust)", false, "engine interface is not consensus-swappable yet"},
+	{FeatureAccountAbstraction, "Native account abstraction (EIP-4337/RIP-7560)", false, "byte-compatible packed UserOperation hash, TKM relay envelope, and secp256k1/ML-DSA authorization"},
+	{FeatureParallelExecution, "Parallel execution (optimistic Block-STM)", false, "deterministic waves and validated StateDB write-set commits for disjoint transfers; serial fallback for dynamic calls"},
+	{FeatureAlternativeEVM, "Alternative EVM engines (Revm/evmone/Rust)", false, "strict time-limited process adapters admitted only by canonical differential vectors"},
 	{FeatureFormalVerification, "Formal verification tooling", false, "consensus/antartical execution claims plus zkEVM witness/proof tooling"},
 	{FeatureMultidimensionalGas, "Multidimensional gas", false, "consensus/antartical deterministic gas vectors"},
 	{FeatureBlobGas, "EIP-4844 blob gas", true, "existing Cancun blob transaction and blob pool implementation"},
 	{FeatureNativePrivacy, "Native private EVM/TVM and zk execution", true, "Shield3/Shield4 and zkEVM witness/proof paths"},
-	{FeatureStatelessVerkle, "Stateless clients (Verkle witnesses)", false, "Verkle transition storage plus consensus/antartical state-witness commitments"},
+	{FeatureStatelessVerkle, "Stateless clients (Verkle witnesses)", false, "Verkle transition storage, state-witness commitments, and authenticated verkle/1 peer transport"},
 	{FeatureNativeRandomness, "Native randomness", false, "consensus/antartical parent-mix/block/slot derivation"},
-	{FeatureOracles, "Native oracle interface", false, "consensus/antartical signed observation envelopes"},
-	{FeatureCrossChain, "Cross-chain standards", false, "consensus/antartical domain-separated replay keys"},
+	{FeatureOracles, "Native oracle interface", false, "signed observations with active-validator two-thirds quorum envelopes"},
+	{FeatureCrossChain, "Cross-chain standards", false, "destination-bound replay keys with active-validator two-thirds attestations"},
 	{FeatureEOF, "EVM Object Format", false, "consensus/antartical EOF v1 container validation"},
 	{FeatureModularPrecompiles, "Modular precompiles", false, "consensus/antartical deterministic module registry"},
 	{FeatureDeterministicGas, "Deterministic gas metering", true, "canonical intrinsic and EIP-1559/blob gas rules"},

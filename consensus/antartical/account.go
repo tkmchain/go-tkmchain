@@ -61,9 +61,12 @@ func (op *UserOperation) validate() error {
 		return ErrInvalidUserOperation
 	}
 	for _, n := range []*big.Int{op.CallGasLimit, op.VerificationGasLimit, op.PreVerificationGas, op.MaxFeePerGas, op.MaxPriorityFeePerGas} {
-		if n == nil || n.Sign() < 0 {
+		if n == nil || n.Sign() < 0 || n.BitLen() > 256 {
 			return ErrInvalidUserOperation
 		}
+	}
+	if op.Nonce.BitLen() > 256 {
+		return ErrInvalidUserOperation
 	}
 	if op.MaxPriorityFeePerGas.Cmp(op.MaxFeePerGas) > 0 {
 		return ErrInvalidUserOperation
@@ -75,15 +78,41 @@ func (op *UserOperation) signingTuple(chainID *big.Int, entryPoint common.Addres
 	if err := op.validate(); err != nil || chainID == nil || chainID.Sign() <= 0 || entryPoint == (common.Address{}) {
 		return nil, ErrInvalidUserOperation
 	}
-	// Hash dynamic fields before the tuple is encoded. This is the canonical
-	// EIP-4337/RIP-7560 domain-separated operation digest format.
-	return rlp.EncodeToBytes([]interface{}{
-		common.BytesToHash([]byte("TKM-AA-1")), op.Sender, op.Nonce,
-		crypto.Keccak256Hash(op.InitCode), crypto.Keccak256Hash(op.CallData),
-		op.CallGasLimit, op.VerificationGasLimit, op.PreVerificationGas,
-		op.MaxFeePerGas, op.MaxPriorityFeePerGas, crypto.Keccak256Hash(op.PaymasterAndData),
-		entryPoint, chainID,
-	})
+	// EIP-4337 EntryPoint.getUserOpHash first hashes the packed operation and
+	// then ABI-encodes that hash with the EntryPoint and chain ID. Every value
+	// below is a single 32-byte ABI word; dynamic fields are represented by
+	// their keccak256 hash exactly as in the canonical EntryPoint contract.
+	packed := make([]byte, 0, 11*32)
+	packed = append(packed, abiAddressWord(op.Sender)...)
+	packed = append(packed, abiBigWord(op.Nonce)...)
+	packed = append(packed, crypto.Keccak256(op.InitCode)...)
+	packed = append(packed, crypto.Keccak256(op.CallData)...)
+	packed = append(packed, abiBigWord(op.CallGasLimit)...)
+	packed = append(packed, abiBigWord(op.VerificationGasLimit)...)
+	packed = append(packed, abiBigWord(op.PreVerificationGas)...)
+	packed = append(packed, abiBigWord(op.MaxFeePerGas)...)
+	packed = append(packed, abiBigWord(op.MaxPriorityFeePerGas)...)
+	packed = append(packed, crypto.Keccak256(op.PaymasterAndData)...)
+	inner := crypto.Keccak256(packed)
+	outer := make([]byte, 0, 96)
+	outer = append(outer, inner...)
+	outer = append(outer, abiAddressWord(entryPoint)...)
+	outer = append(outer, abiBigWord(chainID)...)
+	return outer, nil
+}
+
+func abiAddressWord(address common.Address) []byte {
+	word := make([]byte, 32)
+	copy(word[12:], address[:])
+	return word
+}
+
+func abiBigWord(value *big.Int) []byte {
+	word := make([]byte, 32)
+	if value != nil {
+		copy(word[32-len(value.Bytes()):], value.Bytes())
+	}
+	return word
 }
 
 // Hash returns the operation hash signed by the account owner.

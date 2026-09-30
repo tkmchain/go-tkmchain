@@ -101,91 +101,116 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	if config.IsPrague(block.Number(), block.Time()) || config.IsUBT(block.Number(), block.Time()) {
 		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
+	var conflictTranscript common.Hash
+	parallelProcessed := false
+	if config.IsAntartical(blockNumber, header.Time) {
+		parallelReceipts, parallelLogs, transcript, ready, err := p.executeParallelTransfers(ctx, block, statedb, context, signer, cfg, gp)
+		if err != nil {
+			return nil, fmt.Errorf("optimistic Antartical execution failed: %w", err)
+		}
+		if ready {
+			receipts = parallelReceipts
+			allLogs = append(allLogs, parallelLogs...)
+			conflictTranscript = transcript
+			parallelProcessed = true
+		} else if transcript, ready, err := p.speculativeConflictTranscript(ctx, block, statedb, blockHash, context, signer, cfg); err != nil {
+			return nil, fmt.Errorf("optimistic Antartical execution failed: %w", err)
+		} else if ready {
+			conflictTranscript, err = transcript.Commitment()
+			if err != nil {
+				return nil, fmt.Errorf("could not commit Antartical conflict transcript: %w", err)
+			}
+		}
+	}
 
-	// Iterate over and process the individual transactions
+	// Iterate over and process the individual transactions. A block handled by
+	// the verified optimistic transfer path already committed its receipts and
+	// write-sets above; all other blocks use this canonical serial loop.
 	seenShieldedNullifiers := make(map[common.Hash]struct{})
 	sawRewardTail := false
-	for i, tx := range block.Transactions() {
-		if types.IsBlockRewardTx(tx) {
-			sawRewardTail = true
-			rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used(), statedb)
+	if !parallelProcessed {
+		for i, tx := range block.Transactions() {
+			if types.IsBlockRewardTx(tx) {
+				sawRewardTail = true
+				rewardReceipts, err := p.processBlockRewardTxs(block.Transactions()[i:], header, receipts, gp.Used(), statedb)
+				if err != nil {
+					return nil, err
+				}
+				receipts = append(receipts, rewardReceipts...)
+				break
+			}
+			msg, err := TransactionToMessage(tx, signer, header.BaseFee)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
-			receipts = append(receipts, rewardReceipts...)
-			break
-		}
-		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
-		if err != nil {
-			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-		}
-		if err := ProcessShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
-			return nil, fmt.Errorf("could not apply shielded tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasPrivateTVMPrefix(tx.Data()) {
-			if err := processPrivateTVM(config, blockNumber, header.Time, statedb, tx); err != nil {
-				return nil, fmt.Errorf("could not apply private TVM tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if err := ProcessShieldedTransaction(config, blockNumber, header.Time, statedb, tx, seenShieldedNullifiers); err != nil {
+				return nil, fmt.Errorf("could not apply shielded tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
-		}
-		statedb.SetTxContext(tx.Hash(), i)
-		_, _, spanEnd := telemetry.StartSpan(ctx, "core.ApplyTransactionWithEVM",
-			telemetry.StringAttribute("tx.hash", tx.Hash().Hex()),
-			telemetry.Int64Attribute("tx.index", int64(i)),
-		)
+			if config.IsAntartical(blockNumber, header.Time) && HasPrivateTVMPrefix(tx.Data()) {
+				if err := processPrivateTVM(config, blockNumber, header.Time, statedb, tx); err != nil {
+					return nil, fmt.Errorf("could not apply private TVM tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
+			}
+			statedb.SetTxContext(tx.Hash(), i)
+			_, _, spanEnd := telemetry.StartSpan(ctx, "core.ApplyTransactionWithEVM",
+				telemetry.StringAttribute("tx.hash", tx.Hash().Hex()),
+				telemetry.Int64Attribute("tx.index", int64(i)),
+			)
 
-		receipt, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, context.Time, tx, evm)
-		if err != nil {
-			spanEnd(&err)
-			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasAccountAbstractionPrefix(tx.Data()) {
-			// The outer PQ transaction is only the authenticated relay envelope;
-			// the operation itself is executed by the reserved native entry point.
-			// Charge its verification/call budget from the same block gas pool so
-			// it cannot bypass the block limit.
-			used, aaErr := ProcessAccountAbstraction(config, blockNumber, header.Time, statedb, evm, gp, tx, msg.From)
-			if aaErr != nil {
-				spanEnd(&aaErr)
-				return nil, fmt.Errorf("could not apply account-abstraction tx %d [%v]: %w", i, tx.Hash().Hex(), aaErr)
-			}
-			receipt.GasUsed += used
-			receipt.CumulativeGasUsed += used
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasOracleObservationPrefix(tx.Data()) {
-			if err := ProcessOracleTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
+			receipt, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, context.Time, tx, evm)
+			if err != nil {
 				spanEnd(&err)
-				return nil, fmt.Errorf("could not apply oracle transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+				return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasCrossChainMessagePrefix(tx.Data()) {
-			if err := ProcessCrossChainTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
-				spanEnd(&err)
-				return nil, fmt.Errorf("could not apply cross-chain transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if config.IsAntartical(blockNumber, header.Time) && HasAccountAbstractionPrefix(tx.Data()) {
+				// The outer PQ transaction is only the authenticated relay envelope;
+				// the operation itself is executed by the reserved native entry point.
+				// Charge its verification/call budget from the same block gas pool so
+				// it cannot bypass the block limit.
+				used, aaErr := ProcessAccountAbstraction(config, blockNumber, header.Time, statedb, evm, gp, tx, msg.From)
+				if aaErr != nil {
+					spanEnd(&aaErr)
+					return nil, fmt.Errorf("could not apply account-abstraction tx %d [%v]: %w", i, tx.Hash().Hex(), aaErr)
+				}
+				receipt.GasUsed += used
+				receipt.CumulativeGasUsed += used
 			}
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasAddressVotePrefix(tx.Data()) {
-			if err := ProcessAddressVote(statedb, msg.From, tx.Data(), tx.Hash()); err != nil {
-				return nil, fmt.Errorf("could not apply address vote tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if config.IsAntartical(blockNumber, header.Time) && HasOracleObservationPrefix(tx.Data()) {
+				if err := ProcessOracleTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
+					spanEnd(&err)
+					return nil, fmt.Errorf("could not apply oracle transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
 			}
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasValidatorRegistrationPrefix(tx.Data()) {
-			if err := ProcessValidatorRegistration(config, blockNumber, header.Time, statedb, tx); err != nil {
-				return nil, fmt.Errorf("could not apply validator registration tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if config.IsAntartical(blockNumber, header.Time) && HasCrossChainMessagePrefix(tx.Data()) {
+				if err := ProcessCrossChainTransaction(config, blockNumber, header.Time, statedb, tx, msg.From); err != nil {
+					spanEnd(&err)
+					return nil, fmt.Errorf("could not apply cross-chain transaction %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
 			}
-		}
-		if config.IsAntartical(blockNumber, header.Time) && HasValidatorSlashPrefix(tx.Data()) {
-			if err := ProcessValidatorSlash(config, blockNumber, header.Time, statedb, tx); err != nil {
-				return nil, fmt.Errorf("could not apply validator slash tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if config.IsAntartical(blockNumber, header.Time) && HasAddressVotePrefix(tx.Data()) {
+				if err := ProcessAddressVote(statedb, msg.From, tx.Data(), tx.Hash()); err != nil {
+					return nil, fmt.Errorf("could not apply address vote tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
 			}
-		}
-		if config.IsAntartical(blockNumber, header.Time) && (HasValidatorExitPrefix(tx.Data()) || HasValidatorWithdrawalPrefix(tx.Data())) {
-			if err := ProcessValidatorAction(config, blockNumber, header.Time, statedb, tx); err != nil {
-				return nil, fmt.Errorf("could not apply validator action tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			if config.IsAntartical(blockNumber, header.Time) && HasValidatorRegistrationPrefix(tx.Data()) {
+				if err := ProcessValidatorRegistration(config, blockNumber, header.Time, statedb, tx); err != nil {
+					return nil, fmt.Errorf("could not apply validator registration tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
 			}
+			if config.IsAntartical(blockNumber, header.Time) && HasValidatorSlashPrefix(tx.Data()) {
+				if err := ProcessValidatorSlash(config, blockNumber, header.Time, statedb, tx); err != nil {
+					return nil, fmt.Errorf("could not apply validator slash tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
+			}
+			if config.IsAntartical(blockNumber, header.Time) && (HasValidatorExitPrefix(tx.Data()) || HasValidatorWithdrawalPrefix(tx.Data())) {
+				if err := ProcessValidatorAction(config, blockNumber, header.Time, statedb, tx); err != nil {
+					return nil, fmt.Errorf("could not apply validator action tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
+			}
+			receipts = append(receipts, receipt)
+			allLogs = append(allLogs, receipt.Logs...)
+			spanEnd(nil)
 		}
-		receipts = append(receipts, receipt)
-		allLogs = append(allLogs, receipt.Logs...)
-		spanEnd(nil)
 	}
 	if config.IsAntartical(blockNumber, header.Time) {
 		active, err := ActiveValidatorRecords(statedb, blockNumber.Uint64())
@@ -200,8 +225,7 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	if err != nil {
 		return nil, err
 	}
-	var conflictTranscript common.Hash
-	if config.IsAntartical(blockNumber, header.Time) {
+	if config.IsAntartical(blockNumber, header.Time) && conflictTranscript == (common.Hash{}) {
 		if len(block.Transactions()) == 0 {
 			conflictTranscript = antartical.EmptyCommitment("conflict-transcript")
 		} else {

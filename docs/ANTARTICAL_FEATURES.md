@@ -9,17 +9,17 @@ local command-line switch.
 
 | Capability | Antartical gate | Current implementation | Consensus status |
 | --- | --- | --- | --- |
-| Native account abstraction (EIP-4337/RIP-7560) | `IsAccountAbstraction` | `TKM-AA-ENTRYPOINT-V1` relay envelope, nonce state, factory/paymaster EVM validation, and canonical execution | The native envelope is implemented; deployment/factory policy remains chain configuration work |
-| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | `ExecuteOptimistic` runs canonical waves concurrently, validates dynamic conflicts, and retries serially | StateDB commit integration remains gated until isolated state snapshots are available |
-| Alternative EVMs (Rust EVM/Revm/evmone) | `IsAlternativeEVM` | Strict process adapter plus `RegisterConformant` differential admission | No external backend is selected unless it passes canonical vectors |
+| Native account abstraction (EIP-4337/RIP-7560) | `IsAccountAbstraction` | EIP-4337 packed `getUserOpHash` domain, PQ authorization, nonce state, factory/paymaster validation, and the TKM relay envelope | Hash compatibility is complete; native execution remains a TKM profile until a deployed EntryPoint/account implementation is selected |
+| Parallel execution (Block-STM/optimistic) | `IsParallelExecution` | Deterministic waves, isolated StateDB write-sets, pre-state validation, and transaction-order delta commit for code-free transfers | Contract calls, creates, and dynamic storage accesses remain serial for safety |
+| Alternative EVMs (Rust EVM/Revm/evmone) | `IsAlternativeEVM` | Strict process adapters plus `RegisterConformant` differential admission | No Revm/evmone binary is bundled or selected by default; every external binary must pass canonical vectors |
 | Formal verification tooling | `IsFormalVerification` | Execution witness recovery and zkEVM guest/prover host | Proof artifacts and machine-checked invariants are tooling until accepted by consensus |
 | Multidimensional gas | `IsMultidimensionalGas` | Feature gate and existing gas accounting | Requires header commitment and transaction encoding for every new dimension |
 | EIP-4844 blobs | `IsBlobGas` | Existing Cancun blob transactions, blob pool, and blob base fee | **Ready**; Cancun is activated at Antartical on mainnet |
 | Native privacy (zkEVM/private transactions) | `IsNativePrivacy` | Shield3/Shield4, private EVM/TVM envelopes, and zkEVM execution witness path | **Ready for the implemented envelope formats** |
-| Stateless clients (Verkle) | `IsStatelessVerkle` | Verkle transition storage, witness costs, and state-history recovery | Full Verkle state commitment and network witness protocol still required |
+| Stateless clients (Verkle) | `IsStatelessVerkle` | Verkle transition storage, witness costs, state-history recovery, and authenticated `verkle/1` peer witness request/response | Header witness commitments and an enforced stateless syncer are still required before a node can run without state |
 | Native randomness | `IsNativeRandomness` | RandomX mix digest remains the current consensus randomness source | A new beacon/randomness commitment must be specified before replacing it |
-| Native oracles | `IsNativeOracles` | Signed `TKM-ORACLE-ENVELOPE-V1` observations persist monotonic feed rounds | Feed quorum/committee registration is still required before a value can drive bridge or pricing state |
-| Cross-chain standards | `IsCrossChainStandards` | Destination-bound signed `TKM-XCHAIN-ENVELOPE-V1` messages persist replay keys | The message layer does not release value; a bridge application must consume a finalized commitment |
+| Native oracles | `IsNativeOracles` | Signed observations and versioned quorum envelopes persist monotonic feed rounds; active validators must provide a 2/3 committee | Single-signer envelopes are compatibility-only before validator activation; applications still decide how a feed is consumed |
+| Cross-chain standards | `IsCrossChainStandards` | Destination-bound messages and 2/3 validator attestations persist replay keys and payload commitments | The message layer does not release value; a bridge application must consume a finalized commitment |
 | EVM Object Format (EOF) | `IsEOF` | EOF-prefixed runtime code is validated and stored through the Antartical path; legacy code remains replay-compatible | Full EOF opcode-version migration is still separate from container validation |
 | Modular precompiles | `IsModularPrecompiles` | Existing precompiles are statically registered | Requires an address/version registry committed by chain config |
 | Deterministic gas metering | `IsDeterministicGas` | Canonical intrinsic, EIP-1559, and blob gas rules | **Ready for the current transaction formats** |
@@ -47,18 +47,18 @@ allowlist.
 
 1. Register factory/paymaster policies for every network and publish the
    post-quantum account implementation used by the native envelope.
-2. Wire isolated StateDB snapshots into `ExecuteOptimistic`; retain the serial
-   executor as the deterministic fallback for unknown accesses.
-3. Install Revm/evmone binaries and admit them only after canonical vectors
-   pass `RegisterConformant`.
-4. Commit Verkle roots/witnesses in the block header and implement snap/witness
-   exchange before stateless mode can be enforced.
-5. Define signed randomness/oracle feeds and modular precompile registries in
-   the chain configuration; EOF container validation is now wired into
-   contract deployment.
+2. Extend the StateDB delta path to contract storage write-sets and dynamic
+   access witnesses; unsupported calls already fall back to serial execution.
+3. Build and distribute independently reproducible Revm/evmone binaries, then
+   admit them only after canonical vectors pass `RegisterConformant`.
+4. Commit Verkle roots/witnesses in the block header and connect the
+   `verkle/1` transport to the stateless synchroniser before enforcing
+   state-free execution.
+5. Configure signed randomness feeds and modular precompile registries in the
+   chain configuration; EOF container validation is wired into deployment.
 6. Configure a validator signer implementing `miner.FinalityProvider`; the
-   worker now refuses to seal a post-fork block with an active committee unless
-   it can attach a valid certificate.
+   worker refuses to seal a post-fork block with an active committee unless it
+   can attach a valid certificate.
 
 The deterministic primitives are implemented in `consensus/antartical`:
 
@@ -71,11 +71,13 @@ The deterministic primitives are implemented in `consensus/antartical`:
 - modular precompile registration; and
 - signed single-slot finality certificates.
 
-The block processor currently uses the canonical Go EVM and RandomX engine;
-the Antartical primitives provide the shared transition and differential-test
-surface for the Rust/Revm/evmone adapters. Account-abstraction, oracle, and
-cross-chain envelopes are applied by both the importer and local miner so their
-state roots match. When a block carries a finality certificate,
+The block processor uses the canonical Go EVM and RandomX engine. The
+Antartical primitives provide the shared transition and differential-test
+surface for separately built Rust/Revm/evmone adapters; local binaries are not
+silently trusted. Simple disjoint transfers can commit verified StateDB
+write-sets in parallel, while calls with dynamic state effects use the serial
+path. Account-abstraction, oracle, and cross-chain envelopes are applied by
+both the importer and local miner so their state roots match. When a block carries a finality certificate,
 `BlockValidator` verifies its slot, chain-bound header digest, active-validator
 membership, 2/3 quorum, and metadata commitment. Once an active committee is
 present, a missing certificate is rejected and the miner requires a configured

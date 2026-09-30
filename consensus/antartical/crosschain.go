@@ -10,6 +10,7 @@ import (
 )
 
 var ErrInvalidCrossChainMessage = errors.New("invalid Antartical cross-chain message")
+var ErrInvalidCrossChainQuorum = errors.New("invalid Antartical cross-chain quorum")
 
 type CrossChainMessage struct {
 	SourceChainID      *big.Int
@@ -40,6 +41,50 @@ type SignedCrossChainMessage struct {
 	Message   CrossChainMessage
 	Signer    common.Address
 	Signature []byte
+}
+
+type CrossChainAttestation struct {
+	Signer    common.Address
+	Signature []byte
+}
+
+func (a CrossChainAttestation) Verify(message CrossChainMessage) error {
+	if a.Signer == (common.Address{}) || len(a.Signature) != crypto.SignatureLength {
+		return ErrInvalidCrossChainQuorum
+	}
+	digest, err := message.Hash()
+	if err != nil {
+		return err
+	}
+	pub, err := crypto.SigToPub(digest.Bytes(), a.Signature)
+	if err != nil || crypto.PubkeyToAddress(*pub) != a.Signer {
+		return ErrInvalidCrossChainQuorum
+	}
+	return nil
+}
+
+// VerifyCrossChainQuorum enforces canonical signer ordering, uniqueness, and
+// the same two-thirds threshold used by validator finality. Committee
+// membership is supplied by the state transition, so a relay cannot choose a
+// larger committee in its message.
+func VerifyCrossChainQuorum(message CrossChainMessage, attestations []CrossChainAttestation, committee map[common.Address]struct{}, numerator, denominator uint64) error {
+	if len(attestations) == 0 || len(committee) == 0 || denominator == 0 || uint64(len(attestations))*denominator < uint64(len(committee))*numerator {
+		return ErrInvalidCrossChainQuorum
+	}
+	seen := make(map[common.Address]struct{}, len(attestations))
+	for i, attestation := range attestations {
+		if i > 0 && string(attestation.Signer.Bytes()) <= string(attestations[i-1].Signer.Bytes()) {
+			return ErrInvalidCrossChainQuorum
+		}
+		if _, ok := committee[attestation.Signer]; !ok {
+			return ErrInvalidCrossChainQuorum
+		}
+		if _, ok := seen[attestation.Signer]; ok || attestation.Verify(message) != nil {
+			return ErrInvalidCrossChainQuorum
+		}
+		seen[attestation.Signer] = struct{}{}
+	}
+	return nil
 }
 
 func (m SignedCrossChainMessage) Verify() error {

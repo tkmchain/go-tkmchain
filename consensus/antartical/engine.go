@@ -63,6 +63,18 @@ func NewProcessExecutionEngine(name, path string) (*ProcessExecutionEngine, erro
 	return &ProcessExecutionEngine{engineName: name, path: path}, nil
 }
 
+// NewRevmExecutionEngine and NewEvmoneExecutionEngine give release tooling a
+// typed constructor for the two supported alternate backends. The executable
+// is intentionally supplied by the deployment, so a node cannot accidentally
+// download or trust an arbitrary engine at runtime.
+func NewRevmExecutionEngine(path string) (*ProcessExecutionEngine, error) {
+	return NewProcessExecutionEngine("revm", path)
+}
+
+func NewEvmoneExecutionEngine(path string) (*ProcessExecutionEngine, error) {
+	return NewProcessExecutionEngine("evmone", path)
+}
+
 func (e *ProcessExecutionEngine) Name() string { return e.engineName }
 
 func (e *ProcessExecutionEngine) Execute(input ExecutionInput) (ExecutionOutput, error) {

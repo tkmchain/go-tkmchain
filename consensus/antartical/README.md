@@ -5,13 +5,15 @@ Antartical fork. It contains:
 
 - EIP-4337/RIP-7560 UserOperation hashing and secp256k1 or ML-DSA-87
   authorization;
-- optimistic Block-STM wave execution with dynamic conflict retry;
+- optimistic Block-STM wave execution with isolated StateDB write-set commit
+  for disjoint account transfers and deterministic serial fallback;
 - multidimensional gas accounting;
 - stateless state-witness and zk execution claim commitments;
-- signed oracle observations and cross-chain replay keys;
+- signed oracle observations, validator-quorum envelopes, and cross-chain
+  replay keys with validator attestations;
 - EOF v1 container validation;
 - versioned modular precompile registration;
-- differential execution engine comparison; and
+- strict differential execution-engine adapters; and
 - quorum-checked single-slot finality certificates.
 
 The core state transition consumes the corresponding Antartical envelopes:
@@ -24,8 +26,17 @@ active committee exists, the block validator and miner both reject a missing
 certificate.
 
 `ProcessExecutionEngine` is a strict, time-limited adapter for a separately
-built Revm/evmone process. It is never selected automatically: callers must
-admit it with `EngineRegistry.RegisterConformant`, using canonical vectors.
+built Revm/evmone process. It is never selected automatically and this
+repository does not pretend to ship an unverified alternate binary: callers
+must admit one with `EngineRegistry.RegisterConformant`, using canonical
+vectors that cover roots, receipts, proof digests, gas, and rejection cases.
+
+The node registers an authenticated `verkle/1` peer protocol. It exchanges the
+chain identity and latest state root, serves bounded execution witnesses, and
+routes multiplexed responses to the requesting sync task. The transport is
+available to the stateless synchroniser; header witness commitments and the
+policy that rejects a node without a witness-backed state are separate fork
+requirements.
 
 The profile also includes the Antartical asset and stateless execution
 primitives in `profile.go`:
@@ -61,4 +72,8 @@ before version `1`.
 
 All hashes include a protocol domain tag and chain identifiers where applicable.
 The host EVM, zkEVM guest, and private transaction envelopes use these same
-commitments when the Antartical rules are active.
+commitments when the Antartical rules are active. Native account-abstraction
+hashing is byte-compatible with EntryPoint's packed `getUserOpHash`, while the
+TKM envelope and ML-DSA authorization are explicit chain extensions; an
+EntryPoint/account deployment must still be configured before claiming full
+RIP-7560 execution compatibility.

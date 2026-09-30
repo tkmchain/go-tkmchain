@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/antartical"
@@ -17,7 +18,9 @@ import (
 
 const (
 	OracleObservationMagic = "TKM-ORACLE-ENVELOPE-V1"
+	OracleQuorumMagic      = "TKM-ORACLE-QUORUM-V1"
 	CrossChainMessageMagic = "TKM-XCHAIN-ENVELOPE-V1"
+	CrossChainQuorumMagic  = "TKM-XCHAIN-QUORUM-V1"
 	MaxOracleValueBytes    = 4096
 	MaxCrossChainPayload   = 64 * 1024
 )
@@ -30,11 +33,32 @@ var (
 )
 
 func HasOracleObservationPrefix(data []byte) bool {
-	return bytes.HasPrefix(data, []byte(OracleObservationMagic))
+	return bytes.HasPrefix(data, []byte(OracleObservationMagic)) || HasOracleQuorumPrefix(data)
+}
+
+func HasOracleQuorumPrefix(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(OracleQuorumMagic))
+}
+
+// OracleQuorumEnvelope is the consensus wire format for a feed round after
+// validator activation. Observations are sorted by signer before encoding.
+type OracleQuorumEnvelope struct {
+	Version      uint64
+	Observations []antartical.OracleObservation
 }
 
 func HasCrossChainMessagePrefix(data []byte) bool {
-	return bytes.HasPrefix(data, []byte(CrossChainMessageMagic))
+	return bytes.HasPrefix(data, []byte(CrossChainMessageMagic)) || HasCrossChainQuorumPrefix(data)
+}
+
+func HasCrossChainQuorumPrefix(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(CrossChainQuorumMagic))
+}
+
+type CrossChainQuorumEnvelope struct {
+	Version      uint64
+	Message      antartical.CrossChainMessage
+	Attestations []antartical.CrossChainAttestation
 }
 
 func EncodeOracleObservation(o *antartical.OracleObservation) ([]byte, error) {
@@ -49,7 +73,7 @@ func EncodeOracleObservation(o *antartical.OracleObservation) ([]byte, error) {
 }
 
 func DecodeOracleObservation(data []byte) (*antartical.OracleObservation, error) {
-	if !HasOracleObservationPrefix(data) || uint64(len(data)) > ShieldedV3MaxTxSize {
+	if !bytes.HasPrefix(data, []byte(OracleObservationMagic)) || uint64(len(data)) > ShieldedV3MaxTxSize {
 		return nil, ErrOracleEnvelope
 	}
 	var o antartical.OracleObservation
@@ -57,6 +81,29 @@ func DecodeOracleObservation(data []byte) (*antartical.OracleObservation, error)
 		return nil, fmt.Errorf("%w: %v", ErrOracleEnvelope, err)
 	}
 	return &o, nil
+}
+
+func EncodeOracleQuorum(observations []antartical.OracleObservation) ([]byte, error) {
+	if len(observations) == 0 {
+		return nil, ErrOracleEnvelope
+	}
+	sorted := antartical.SortOracleObservations(observations)
+	b, err := rlp.EncodeToBytes(&OracleQuorumEnvelope{Version: 1, Observations: sorted})
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(OracleQuorumMagic), b...), nil
+}
+
+func DecodeOracleQuorum(data []byte) ([]antartical.OracleObservation, error) {
+	if !HasOracleQuorumPrefix(data) || uint64(len(data)) > ShieldedV3MaxTxSize {
+		return nil, ErrOracleEnvelope
+	}
+	var envelope OracleQuorumEnvelope
+	if err := rlp.DecodeBytes(data[len(OracleQuorumMagic):], &envelope); err != nil || envelope.Version != 1 || len(envelope.Observations) == 0 {
+		return nil, ErrOracleEnvelope
+	}
+	return envelope.Observations, nil
 }
 
 func EncodeCrossChainMessage(m *antartical.SignedCrossChainMessage) ([]byte, error) {
@@ -71,7 +118,7 @@ func EncodeCrossChainMessage(m *antartical.SignedCrossChainMessage) ([]byte, err
 }
 
 func DecodeCrossChainMessage(data []byte) (*antartical.SignedCrossChainMessage, error) {
-	if !HasCrossChainMessagePrefix(data) || uint64(len(data)) > ShieldedV3MaxTxSize {
+	if !bytes.HasPrefix(data, []byte(CrossChainMessageMagic)) || uint64(len(data)) > ShieldedV3MaxTxSize {
 		return nil, ErrCrossChainEnvelope
 	}
 	var m antartical.SignedCrossChainMessage
@@ -79,6 +126,30 @@ func DecodeCrossChainMessage(data []byte) (*antartical.SignedCrossChainMessage, 
 		return nil, fmt.Errorf("%w: %v", ErrCrossChainEnvelope, err)
 	}
 	return &m, nil
+}
+
+func EncodeCrossChainQuorum(message antartical.CrossChainMessage, attestations []antartical.CrossChainAttestation) ([]byte, error) {
+	if len(attestations) == 0 {
+		return nil, ErrCrossChainEnvelope
+	}
+	ordered := append([]antartical.CrossChainAttestation(nil), attestations...)
+	sort.Slice(ordered, func(i, j int) bool { return bytes.Compare(ordered[i].Signer.Bytes(), ordered[j].Signer.Bytes()) < 0 })
+	b, err := rlp.EncodeToBytes(&CrossChainQuorumEnvelope{Version: 1, Message: message, Attestations: ordered})
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(CrossChainQuorumMagic), b...), nil
+}
+
+func DecodeCrossChainQuorum(data []byte) (*CrossChainQuorumEnvelope, error) {
+	if !HasCrossChainQuorumPrefix(data) || uint64(len(data)) > ShieldedV3MaxTxSize {
+		return nil, ErrCrossChainEnvelope
+	}
+	var envelope CrossChainQuorumEnvelope
+	if err := rlp.DecodeBytes(data[len(CrossChainQuorumMagic):], &envelope); err != nil || envelope.Version != 1 || len(envelope.Attestations) == 0 {
+		return nil, ErrCrossChainEnvelope
+	}
+	return &envelope, nil
 }
 
 func oracleRoundSlot(feed common.Hash) common.Hash {
@@ -164,12 +235,44 @@ func ProcessOracleTransaction(config *params.ChainConfig, number *big.Int, times
 	if tx == nil || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value().Sign() != 0 || tx.ChainId().Cmp(config.ChainID) != 0 {
 		return ErrOracleEnvelope
 	}
-	o, err := DecodeOracleObservation(tx.Data())
-	if err != nil {
-		return err
-	}
-	if o.Signer != sender || o.Verify(config.ChainID) != nil {
-		return ErrOracleEnvelope
+	var o antartical.OracleObservation
+	if HasOracleQuorumPrefix(tx.Data()) {
+		observations, err := DecodeOracleQuorum(tx.Data())
+		if err != nil {
+			return err
+		}
+		active, err := ActiveValidatorRecords(st, number.Uint64())
+		if err != nil || len(active) == 0 {
+			return fmt.Errorf("%w: validator committee is unavailable", antartical.ErrInvalidOracleQuorum)
+		}
+		committee := make(map[common.Address]struct{}, len(active))
+		for _, record := range active {
+			committee[record.Address] = struct{}{}
+		}
+		for _, observation := range observations {
+			if _, ok := committee[observation.Signer]; !ok {
+				return fmt.Errorf("%w: signer is not an active validator", antartical.ErrInvalidOracleQuorum)
+			}
+		}
+		if err := antartical.VerifyOracleQuorum(config.ChainID, observations, uint64(len(active)), 2, 3); err != nil {
+			return err
+		}
+		o = observations[0]
+	} else {
+		decoded, err := DecodeOracleObservation(tx.Data())
+		if err != nil {
+			return err
+		}
+		o = *decoded
+		if o.Signer != sender || o.Verify(config.ChainID) != nil {
+			return ErrOracleEnvelope
+		}
+		// Once a validator committee exists, a single signer is never enough
+		// to mutate an oracle feed. Legacy single-observation envelopes remain
+		// readable only on pre-validator Antartical chains.
+		if active, err := ActiveValidatorRecords(st, number.Uint64()); err == nil && len(active) != 0 {
+			return fmt.Errorf("%w: quorum envelope required", antartical.ErrInvalidOracleQuorum)
+		}
 	}
 	if len(o.Value) == 0 || len(o.Value) > MaxOracleValueBytes {
 		return ErrOracleEnvelope
@@ -200,17 +303,44 @@ func ProcessCrossChainTransaction(config *params.ChainConfig, number *big.Int, t
 	if tx == nil || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value().Sign() != 0 || tx.ChainId().Cmp(config.ChainID) != 0 {
 		return ErrCrossChainEnvelope
 	}
-	m, err := DecodeCrossChainMessage(tx.Data())
-	if err != nil {
-		return err
+	var message antartical.CrossChainMessage
+	if HasCrossChainQuorumPrefix(tx.Data()) {
+		envelope, err := DecodeCrossChainQuorum(tx.Data())
+		if err != nil {
+			return err
+		}
+		active, err := ActiveValidatorRecords(st, number.Uint64())
+		if err != nil || len(active) == 0 {
+			return fmt.Errorf("%w: validator committee is unavailable", antartical.ErrInvalidCrossChainQuorum)
+		}
+		committee := make(map[common.Address]struct{}, len(active))
+		for _, record := range active {
+			committee[record.Address] = struct{}{}
+		}
+		if err := antartical.VerifyCrossChainQuorum(envelope.Message, envelope.Attestations, committee, 2, 3); err != nil {
+			return err
+		}
+		message = envelope.Message
+	} else {
+		m, err := DecodeCrossChainMessage(tx.Data())
+		if err != nil {
+			return err
+		}
+		if m.Signer != sender || m.Verify() != nil {
+			return ErrCrossChainEnvelope
+		}
+		message = m.Message
+		if active, err := ActiveValidatorRecords(st, number.Uint64()); err == nil && len(active) != 0 {
+			return fmt.Errorf("%w: quorum envelope required", antartical.ErrInvalidCrossChainQuorum)
+		}
 	}
-	if m.Message.DestinationChainID == nil || m.Message.DestinationChainID.Cmp(config.ChainID) != 0 || m.Message.SourceChainID.Cmp(config.ChainID) == 0 || m.Signer != sender || m.Verify() != nil {
+	if message.DestinationChainID == nil || message.DestinationChainID.Cmp(config.ChainID) != 0 || message.SourceChainID == nil || message.SourceChainID.Cmp(config.ChainID) == 0 {
 		return ErrCrossChainEnvelope
 	}
-	if len(m.Message.Payload) == 0 || len(m.Message.Payload) > MaxCrossChainPayload {
+	if len(message.Payload) == 0 || len(message.Payload) > MaxCrossChainPayload {
 		return ErrCrossChainEnvelope
 	}
-	replay, err := m.Message.ReplayKey()
+	replay, err := message.ReplayKey()
 	if err != nil {
 		return err
 	}
@@ -219,10 +349,10 @@ func ProcessCrossChainTransaction(config *params.ChainConfig, number *big.Int, t
 		return ErrCrossChainReplay
 	}
 	st.SetState(params.ShieldedPoolAddress, slot, tx.Hash())
-	st.SetState(params.ShieldedPoolAddress, crossChainPayloadLengthSlot(replay), uint64Hash(uint64(len(m.Message.Payload))))
-	for index := 0; index*32 < len(m.Message.Payload); index++ {
+	st.SetState(params.ShieldedPoolAddress, crossChainPayloadLengthSlot(replay), uint64Hash(uint64(len(message.Payload))))
+	for index := 0; index*32 < len(message.Payload); index++ {
 		var word [32]byte
-		copy(word[:], m.Message.Payload[index*32:])
+		copy(word[:], message.Payload[index*32:])
 		st.SetState(params.ShieldedPoolAddress, crossChainPayloadChunkSlot(replay, uint64(index)), common.Hash(word))
 	}
 	return nil

@@ -26,14 +26,23 @@ type OptimisticResult[T any] struct {
 // not expose a shared mutable state object; callers provide isolated snapshots
 // in run and commit returned values after this function returns.
 func ExecuteOptimistic[T any](items []T, access []AccessSet, run func(index int, item T) (T, AccessSet, error)) ([]T, ConflictTranscript, error) {
+	return ExecuteOptimisticResults(items, access, func(index int, item T) (T, AccessSet, error) {
+		return run(index, item)
+	})
+}
+
+// ExecuteOptimisticResults is the result-producing form of ExecuteOptimistic.
+// It is used by the block processor when the speculative value is a receipt or
+// a state write-set rather than the transaction itself.
+func ExecuteOptimisticResults[T any, R any](items []T, access []AccessSet, run func(index int, item T) (R, AccessSet, error)) ([]R, ConflictTranscript, error) {
 	if len(items) != len(access) || run == nil {
 		return nil, ConflictTranscript{}, fmt.Errorf("invalid optimistic execution input")
 	}
 	if len(items) == 0 {
-		return []T{}, ConflictTranscript{}, nil
+		return []R{}, ConflictTranscript{}, nil
 	}
 	waves := BuildExecutionWaves(access)
-	results := make([]T, len(items))
+	results := make([]R, len(items))
 	dynamic := make([]AccessSet, len(items))
 	for _, wave := range waves {
 		var wg sync.WaitGroup
@@ -115,9 +124,17 @@ func (a AccessSet) conflicts(b AccessSet) bool {
 // contract-creation transaction forms a serial wave.
 func BuildExecutionWaves(access []AccessSet) [][]int {
 	waves := make([][]int, 0, len(access))
+	barrier := -1
 	for i, item := range access {
+		if item.Unknown {
+			// Unknown access is a hard Block-STM barrier. It must not share a
+			// wave with any transaction before or after it.
+			waves = append(waves, []int{i})
+			barrier = len(waves) - 1
+			continue
+		}
 		placed := false
-		for w := range waves {
+		for w := barrier + 1; w < len(waves); w++ {
 			ok := true
 			for _, j := range waves[w] {
 				if item.conflicts(access[j]) {

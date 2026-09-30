@@ -1,7 +1,9 @@
 package antartical
 
 import (
+	"crypto/ecdsa"
 	"math/big"
+	"sort"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -49,6 +51,14 @@ func TestBuildExecutionWaves(t *testing.T) {
 	waves := BuildExecutionWaves([]AccessSet{{Reads: []common.Address{a}}, {Reads: []common.Address{b}}, {Unknown: true}})
 	if len(waves) != 2 || len(waves[0]) != 2 || len(waves[1]) != 1 {
 		t.Fatalf("unexpected waves: %#v", waves)
+	}
+}
+
+func TestBuildExecutionWavesUnknownIsBarrier(t *testing.T) {
+	a, b, c := common.HexToAddress("0x1"), common.HexToAddress("0x2"), common.HexToAddress("0x3")
+	waves := BuildExecutionWaves([]AccessSet{{Reads: []common.Address{a}}, {Unknown: true}, {Reads: []common.Address{b}}, {Reads: []common.Address{c}}})
+	if len(waves) != 3 || len(waves[0]) != 1 || len(waves[1]) != 1 || len(waves[2]) != 2 {
+		t.Fatalf("unknown access was not a barrier: %#v", waves)
 	}
 }
 
@@ -109,6 +119,53 @@ func TestOracleCrossChainAndFinality(t *testing.T) {
 	cert := FinalityCertificate{Slot: 1, BlockHash: blockHash, Signers: []common.Address{obs.Signer}, PublicKeys: [][]byte{crypto.FromECDSAPub(&key.PublicKey)}, Signatures: [][]byte{sig}}
 	if err := cert.Verify(1, 1); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOracleAndCrossChainQuorum(t *testing.T) {
+	keys := make([]*ecdsa.PrivateKey, 3)
+	observations := make([]OracleObservation, 3)
+	for i := range keys {
+		key, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys[i] = key
+		observation := OracleObservation{FeedID: common.HexToHash("0x42"), Round: 9, Value: []byte("100"), Timestamp: 7, Signer: crypto.PubkeyToAddress(key.PublicKey)}
+		digest, err := observation.Hash(big.NewInt(8979))
+		if err != nil {
+			t.Fatal(err)
+		}
+		observation.Signature, err = crypto.Sign(digest.Bytes(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		observations[i] = observation
+	}
+	ordered := SortOracleObservations(observations)
+	if err := VerifyOracleQuorum(big.NewInt(8979), ordered[:2], 3, 2, 3); err != nil {
+		t.Fatalf("oracle quorum rejected: %v", err)
+	}
+	committee := make(map[common.Address]struct{}, 3)
+	for _, observation := range observations {
+		committee[observation.Signer] = struct{}{}
+	}
+	message := CrossChainMessage{SourceChainID: big.NewInt(8980), DestinationChainID: big.NewInt(8979), Nonce: 2, Sender: ordered[0].Signer, Target: common.HexToAddress("0x123"), Payload: []byte("message")}
+	attestations := make([]CrossChainAttestation, 3)
+	for i, key := range keys {
+		digest, err := message.Hash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		attestations[i] = CrossChainAttestation{Signer: crypto.PubkeyToAddress(key.PublicKey)}
+		attestations[i].Signature, err = crypto.Sign(digest.Bytes(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	sort.Slice(attestations, func(i, j int) bool { return attestations[i].Signer.Hex() < attestations[j].Signer.Hex() })
+	if err := VerifyCrossChainQuorum(message, attestations[:2], committee, 2, 3); err != nil {
+		t.Fatalf("cross-chain quorum rejected: %v", err)
 	}
 }
 
