@@ -111,6 +111,14 @@ func (c *ChainConfig) IsAntarticalFeatureActive(feature AntarticalFeature, num *
 	return false
 }
 
+// IsAntarticalConsensusFeatureActive reports whether a feature is both past
+// the Antartical activation gate and complete enough to enforce in consensus.
+// Keeping this separate from IsAntarticalFeatureActive lets clients advertise
+// scheduled work without accidentally enforcing an unfinished protocol.
+func (c *ChainConfig) IsAntarticalConsensusFeatureActive(feature AntarticalFeature, num *big.Int, timestamp uint64) bool {
+	return c.IsAntarticalFeatureActive(feature, num, timestamp) && AntarticalFeatureConsensusReady(feature)
+}
+
 // AntarticalFeatureConsensusReady reports whether the feature has a complete
 // deterministic implementation in this binary. This check is separate from
 // activation so a node cannot accidentally activate a partial design.

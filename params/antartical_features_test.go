@@ -28,31 +28,14 @@ func TestAntarticalFeatureCatalogUsesSingleActivation(t *testing.T) {
 
 func TestAntarticalRulesExposeAllFeatureGates(t *testing.T) {
 	rules := RandomXChainConfig.Rules(big.NewInt(0), false, MainnetAntarticalTime)
-	checks := []struct {
-		name string
-		got  bool
-	}{
-		{"account abstraction", rules.IsAccountAbstraction},
-		{"parallel execution", rules.IsParallelExecution},
-		{"alternative EVM", rules.IsAlternativeEVM},
-		{"formal verification", rules.IsFormalVerification},
-		{"multidimensional gas", rules.IsMultidimensionalGas},
-		{"blob gas", rules.IsBlobGas},
-		{"native privacy", rules.IsNativePrivacy},
-		{"stateless Verkle", rules.IsStatelessVerkle},
-		{"native randomness", rules.IsNativeRandomness},
-		{"native oracles", rules.IsNativeOracles},
-		{"cross-chain standards", rules.IsCrossChainStandards},
-		{"EOF", rules.IsEOF},
-		{"modular precompiles", rules.IsModularPrecompiles},
-		{"deterministic gas", rules.IsDeterministicGas},
-		{"single-slot finality", rules.IsSingleSlotFinality},
-		{"block-hash anchors", rules.IsBlockHashAnchors},
+	if !rules.IsBlobGas || !rules.IsNativePrivacy || !rules.IsDeterministicGas || !rules.IsBlockHashAnchors {
+		t.Fatal("implemented Antartical features are inactive at the fork")
 	}
-	for _, check := range checks {
-		if !check.got {
-			t.Errorf("%s gate is inactive at Antartical", check.name)
-		}
+	if rules.IsAccountAbstraction || rules.IsParallelExecution || rules.IsAlternativeEVM ||
+		rules.IsFormalVerification || rules.IsMultidimensionalGas || rules.IsStatelessVerkle ||
+		rules.IsNativeRandomness || rules.IsNativeOracles || rules.IsCrossChainStandards ||
+		rules.IsEOF || rules.IsModularPrecompiles || rules.IsSingleSlotFinality {
+		t.Fatal("unfinished Antartical feature is active at the fork")
 	}
 	preFork := RandomXChainConfig.Rules(big.NewInt(0), false, MainnetAntarticalTime-1)
 	if preFork.IsAccountAbstraction || preFork.IsNativePrivacy || preFork.IsSingleSlotFinality {

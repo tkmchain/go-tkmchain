@@ -196,7 +196,7 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 				return fmt.Errorf("Antartical finality metadata commitment mismatch")
 			}
 		}
-	} else if v.config != nil && v.config.IsAntarticalFeatureActive(params.FeatureSingleSlotFinality, header.Number, header.Time) && statedb != nil {
+	} else if v.config != nil && v.config.IsAntarticalConsensusFeatureActive(params.FeatureSingleSlotFinality, header.Number, header.Time) && statedb != nil {
 		active, err := ActiveValidatorRecords(statedb, block.NumberU64())
 		if err != nil {
 			return fmt.Errorf("read Antartical validator committee: %w", err)

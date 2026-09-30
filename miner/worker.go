@@ -1293,7 +1293,7 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	body.Transactions, blockReceipts, rewardTxCount = w.rewardBlockBody(w.current.header, body.Transactions, blockReceipts)
 	w.engine.Finalize(w.chain, w.current.header, s, body)
 	w.current.header.Root = s.IntermediateRoot(w.config.IsEIP158(w.current.header.Number))
-	if w.config.IsAntartical(w.current.header.Number, w.current.header.Time) && w.config.IsAntarticalFeatureActive(params.FeatureSingleSlotFinality, w.current.header.Number, w.current.header.Time) {
+	if w.config.IsAntarticalConsensusFeatureActive(params.FeatureSingleSlotFinality, w.current.header.Number, w.current.header.Time) {
 		active, err := core.ActiveValidatorRecords(s, w.current.header.Number.Uint64())
 		if err != nil {
 			return err
