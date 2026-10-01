@@ -27,6 +27,11 @@ import (
 const maxRequestSize = 1 << 20
 
 type buildRequest struct {
+	// RequestID is an idempotency/correlation value owned by the wallet UI.
+	// The canonical transaction bytes do not depend on it, but accepting it
+	// lets the browser use the same request envelope as the wallet history and
+	// relay layers while keeping unknown fields rejected.
+	RequestID     string                          `json:"requestId,omitempty"`
 	Seed          string                          `json:"seed"`
 	ChainID       uint64                          `json:"chainId"`
 	Account       common.Address                  `json:"account"`
