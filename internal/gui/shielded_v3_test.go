@@ -41,6 +41,26 @@ func TestShield3PrivateEndpointBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestShield3ExplicitHostedOriginRequiresOptIn(t *testing.T) {
+	g := &GUI{opts: Options{AllowedOrigin: "https://wallet.tkmchain.site"}}
+	allowed := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1:8787/shield3/send", nil)
+	allowed.RemoteAddr = "127.0.0.1:4000"
+	allowed.Host = "127.0.0.1:8787"
+	allowed.Header.Set("Origin", "https://wallet.tkmchain.site")
+	response := httptest.NewRecorder()
+	if !g.shield3CORS(response, allowed) || response.Header().Get("Access-Control-Allow-Origin") != "https://wallet.tkmchain.site" {
+		t.Fatal("explicit hosted origin was not enabled")
+	}
+	denied := httptest.NewRequest(http.MethodOptions, "http://127.0.0.1:8787/shield3/send", nil)
+	denied.RemoteAddr = "127.0.0.1:4000"
+	denied.Host = "127.0.0.1:8787"
+	denied.Header.Set("Origin", "https://attacker.example")
+	if g.shield3CORS(httptest.NewRecorder(), denied) {
+		t.Fatal("unconfigured hosted origin was accepted")
+	}
+}
+
 func TestShield3SubmissionSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	g := &GUI{opts: Options{WalletStateDir: dir}}
