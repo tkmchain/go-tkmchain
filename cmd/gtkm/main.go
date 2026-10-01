@@ -170,6 +170,14 @@ var (
 		tkmProverBinaryFlag,
 		tkmProverKeyURLFlag,
 		tkmProverV2KeyURLFlag,
+		// Shield3 is part of the main daemon lifecycle. Keep it on the same
+		// process and datadir as gtkm so operators never need a second gtkm.
+		shield3ServiceEnabledFlag,
+		shield3WalletHostFlag,
+		shield3WalletPortFlag,
+		shield3WalletOriginFlag,
+		shield3WalletTokenFlag,
+		shield3WalletStateFlag,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -400,6 +408,11 @@ func geth(ctx *cli.Context) error {
 	}()
 
 	startNode(ctx, stack, false)
+	shield3Service, err := startEmbeddedShield3(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer shield3Service.Close()
 	prover, err := startTkmProver(ctx)
 	if err != nil {
 		return err

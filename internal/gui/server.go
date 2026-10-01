@@ -155,10 +155,28 @@ func (g *GUI) Run(ctx context.Context) error {
 // No browser or desktop window is opened. When Shield3Only is set, the
 // listener exposes only /shield3/* and /healthz.
 func (g *GUI) RunHeadless(ctx context.Context) error {
+	if err := g.StartHeadless(); err != nil {
+		return err
+	}
+	return g.wait(ctx)
+}
+
+// StartHeadless binds the local Shield3 listener without waiting for it to
+// stop. It is used by the gtkm daemon so the wallet service shares the daemon
+// lifecycle instead of requiring a second gtkm process.
+func (g *GUI) StartHeadless() error {
+	if g.listener != nil {
+		return nil
+	}
 	if err := g.listen(); err != nil {
 		return err
 	}
 	g.logStartup()
+	return nil
+}
+
+// Wait blocks until a started listener is closed or ctx is cancelled.
+func (g *GUI) Wait(ctx context.Context) error {
 	return g.wait(ctx)
 }
 

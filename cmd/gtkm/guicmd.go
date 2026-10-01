@@ -106,6 +106,11 @@ func localGUI(ctx *cli.Context) error {
 	stack, _ := makeFullNode(ctx)
 	startNode(ctx, stack, true)
 	defer stack.Close()
+	shield3Service, err := startEmbeddedShield3(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer shield3Service.Close()
 
 	proverContext, cancelProver := context.WithCancel(ctx.Context)
 	proverCLI := *ctx

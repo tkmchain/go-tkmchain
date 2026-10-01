@@ -23,6 +23,11 @@ import (
 )
 
 var (
+	shield3ServiceEnabledFlag = &cli.BoolFlag{
+		Name:  "shield3.service",
+		Usage: "start the authenticated loopback Shield3 service with the main gtkm process",
+		Value: true,
+	}
 	shield3WalletHostFlag = &cli.StringFlag{
 		Name:  "shield3.host",
 		Usage: "loopback address for the headless Shield3 service",
@@ -35,7 +40,8 @@ var (
 	}
 	shield3WalletOriginFlag = &cli.StringFlag{
 		Name:  "shield3.allowed-origin",
-		Usage: "exact HTTPS origin allowed to call the local service (for example https://wallet.tkmchain.site)",
+		Usage: "exact HTTPS origin allowed to call the local service",
+		Value: "https://wallet.tkmchain.site",
 	}
 	shield3WalletTokenFlag = &cli.PathFlag{
 		Name:  "shield3.token-file",
@@ -54,24 +60,18 @@ var (
 			[]cli.Flag{utils.DataDirFlag, utils.HttpHeaderFlag, shield3WalletHostFlag, shield3WalletPortFlag, shield3WalletOriginFlag, shield3WalletTokenFlag, shield3WalletStateFlag},
 		),
 		Description: `
-Runs only the authenticated local Shield3 wallet API. It attaches to an
-already-running gtkm node and does not start a desktop GUI or expose a public
-RPC proxy. The spending seed is sent only to this loopback process, where the
-canonical native prover builds, signs, and submits the transaction.
-
-For the hosted wallet, use:
-
-    gtkm shield3-wallet --datadir ~/.tkmchain \
-      --shield3.allowed-origin https://wallet.tkmchain.site \
-      --shield3.token-file ~/.tkmchain/shield3-wallet.token
-
-Enter the token from the 0600 token file in the web wallet. Keep this service
-bound to loopback; it deliberately refuses non-loopback requests. An IPC path
-or local RPC URL may be supplied as the positional endpoint.
+The Shield3 service is started automatically by the main gtkm process. This
+legacy command is retained for compatibility with older scripts, but must not
+be run alongside gtkm: starting a second process would compete for the same
+datadir and Shield3 listener. Start gtkm normally instead.
 `,
-		Action: runHeadlessShield3Wallet,
+		Action: rejectStandaloneShield3Wallet,
 	}
 )
+
+func rejectStandaloneShield3Wallet(*cli.Context) error {
+	return fmt.Errorf("Shield3 is embedded in gtkm; start gtkm once and do not run a second gtkm shield3-wallet process")
+}
 
 // slicesConcat keeps this command independent from the large node flag set.
 // urfave/cli accepts a plain slice and the helper avoids importing slices in

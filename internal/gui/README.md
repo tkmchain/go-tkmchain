@@ -24,6 +24,15 @@ requires one confirmed note covering the requested amount and fees. Viewing
 keys reveal incoming and outgoing note history; the separate stamp key reveals
 name and country. Receiving public keys cannot decrypt either.
 
+When `gtkm` starts, it starts the authenticated Shield3 loopback service in
+the same process and datadir. Do not start `gtkm shield3-wallet` separately;
+that compatibility command now stops with an instruction to use the main
+daemon. The service listens on `127.0.0.1:8788` by default, writes its
+0600 bearer token to `~/.tkmchain/shield3-wallet.token`, and accepts only the
+configured wallet origin. `--shield3.service=false` disables it explicitly.
+The loopback boundary is intentional: a public reverse proxy would receive
+spending seeds and would turn the hosted wallet into a custodial service.
+
 Shield public funds creates a Shield3 note from the public balance and exposes
 that funding amount. To move old Shield2 notes, use Migrate one Shield2 note,
 wait for its confirmation, then shield the resulting public balance. This
