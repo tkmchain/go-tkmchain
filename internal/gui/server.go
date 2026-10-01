@@ -65,6 +65,10 @@ type Options struct {
 	ForceBrowser  bool   // always open the dashboard in the default browser
 	AllowedOrigin string // optional explicit browser origin for Shield3 loopback calls
 	TokenFile     string // optional 0600 file receiving the GUI bearer token
+	// Shield3Only serves the authenticated local Shield3 API without the
+	// dashboard, JSON-RPC proxy, or browser assets. It is used by the
+	// headless wallet helper so a hosted web wallet does not require a GUI.
+	Shield3Only bool
 }
 
 // GUI is an embedded web dashboard bound to a local JSON-RPC client.
@@ -147,6 +151,17 @@ func (g *GUI) Run(ctx context.Context) error {
 	return openDesktopWindow(g.URL(), g.opts)
 }
 
+// RunHeadless starts the local Shield3 API and waits until ctx is cancelled.
+// No browser or desktop window is opened. When Shield3Only is set, the
+// listener exposes only /shield3/* and /healthz.
+func (g *GUI) RunHeadless(ctx context.Context) error {
+	if err := g.listen(); err != nil {
+		return err
+	}
+	g.logStartup()
+	return g.wait(ctx)
+}
+
 // logStartup prints the dashboard URL once the server is listening, plus a
 // warning when the dashboard is reachable beyond the loopback interface.
 func (g *GUI) logStartup() {
@@ -212,12 +227,14 @@ func (g *GUI) listen() error {
 	g.listener = ln
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/rpc", g.handleRPC)
-	mux.HandleFunc("/prover/", g.handleProver)
 	mux.HandleFunc("/shield3/", g.handleShield3)
-	mux.HandleFunc("/bootstrap", g.handleBootstrap)
 	mux.HandleFunc("/healthz", g.handleHealth)
-	mux.Handle("/", g.handleAssets())
+	if !g.opts.Shield3Only {
+		mux.HandleFunc("/rpc", g.handleRPC)
+		mux.HandleFunc("/prover/", g.handleProver)
+		mux.HandleFunc("/bootstrap", g.handleBootstrap)
+		mux.Handle("/", g.handleAssets())
+	}
 
 	// Keep the loopback dashboard resistant to slow-header and idle-connection
 	// exhaustion. Proof requests have a longer write budget, but every socket

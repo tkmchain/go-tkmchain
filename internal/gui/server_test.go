@@ -93,6 +93,40 @@ func TestHealthRequiresRPCReady(t *testing.T) {
 	}
 }
 
+func TestShield3OnlyDoesNotExposeDashboardOrRPC(t *testing.T) {
+	node := rpc.NewServer()
+	if err := node.RegisterName("eth", &testEthService{}); err != nil {
+		t.Fatalf("failed to register test eth service: %v", err)
+	}
+	client := rpc.DialInProc(node)
+	g, err := New(client, Options{Shield3Only: true, Port: 0})
+	if err != nil {
+		t.Fatalf("failed to create headless service: %v", err)
+	}
+	if err := g.listen(); err != nil {
+		t.Fatalf("failed to start headless service: %v", err)
+	}
+	t.Cleanup(func() { g.Close() })
+	for _, path := range []string{"/", "/rpc", "/prover/healthz", "/bootstrap"} {
+		resp, err := http.Get(g.URL() + path)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("headless service exposed %s with status %d", path, resp.StatusCode)
+		}
+	}
+	resp, err := http.Get(g.URL() + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("headless health status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
 func callRPC(t *testing.T, url, token, body string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url+"/rpc", strings.NewReader(body))

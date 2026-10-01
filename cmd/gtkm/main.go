@@ -261,6 +261,8 @@ func init() {
 		javascriptCommand,
 		// See guicmd.go:
 		guiCommand,
+		// See shield3cmd.go:
+		shield3WalletCommand,
 		// See misccmd.go:
 		versionCommand,
 		licenseCommand,
