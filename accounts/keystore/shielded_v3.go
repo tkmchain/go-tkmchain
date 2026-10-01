@@ -36,10 +36,38 @@ func (ks *KeyStore) StampPQAccount(a accounts.Account, passphrase string, chainI
 	if key.Shield3Stamp != nil {
 		return errors.New("account already has a stamp; its original stamp is preserved")
 	}
-	key.Shield3Stamp, err = pqcrypto.CreateShieldedV3Stamp(key.Seed, chainID, name, country)
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(key.Seed, chainID, name, country)
 	if err != nil {
 		return err
 	}
+	return ks.persistPQAccountStampLocked(a, key, stamp, passphrase)
+}
+
+// StampPQAccountRecord persists the exact authenticated stamp used by a
+// transaction builder. It is intentionally separate from StampPQAccount,
+// which creates a new random commitment from name and country.
+func (ks *KeyStore) StampPQAccountRecord(a accounts.Account, passphrase string, stamp *pqcrypto.ShieldedV3StampRecord) error {
+	if stamp == nil {
+		return errors.New("missing Shield3 stamp")
+	}
+	ks.importMu.Lock()
+	defer ks.importMu.Unlock()
+	a, key, err := ks.getDecryptedPQKey(a, passphrase)
+	if err != nil {
+		return err
+	}
+	defer zeroPQKey(key)
+	if key.Shield3Stamp != nil {
+		return errors.New("account already has a stamp; its original stamp is preserved")
+	}
+	if stamp.ChainID == 0 || !pqcrypto.VerifyShieldedV3Stamp(key.PublicKey, stamp) {
+		return errors.New("invalid Shield3 stamp for this account")
+	}
+	return ks.persistPQAccountStampLocked(a, key, stamp, passphrase)
+}
+
+func (ks *KeyStore) persistPQAccountStampLocked(a accounts.Account, key *PQKey, stamp *pqcrypto.ShieldedV3StampRecord, passphrase string) error {
+	key.Shield3Stamp = stamp
 	n, p := ks.scryptParams()
 	data, err := EncryptPQKey(key, passphrase, n, p)
 	if err != nil {

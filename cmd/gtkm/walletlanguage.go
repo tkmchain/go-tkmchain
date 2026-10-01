@@ -305,6 +305,32 @@ func walletText(key, fallback string) string {
 		value = terms.Email
 	case "menu.kings":
 		value = terms.Kings
+	case "menu.stamp":
+		value = map[string]string{
+			"zh": "Shield3 地址印记", "ru": "Штамп адреса Shield3",
+			"ja": "Shield3 アドレススタンプ", "ko": "Shield3 주소 스탬프",
+			"es": "Sello de dirección Shield3", "pt": "Selo de endereço Shield3",
+			"fr": "Cachet d’adresse Shield3", "de": "Shield3-Adressstempel",
+			"ar": "ختم عنوان Shield3", "hi": "Shield3 पता स्टाम्प",
+			"id": "Stempel alamat Shield3", "tr": "Shield3 adres damgası",
+			"vi": "Dấu địa chỉ Shield3", "it": "Timbro indirizzo Shield3",
+			"nl": "Shield3-adresstempel", "pl": "Stempel adresu Shield3",
+			"uk": "Штамп адреси Shield3", "th": "ตราประทับที่อยู่ Shield3",
+			"bn": "Shield3 ঠিকানা স্ট্যাম্প",
+		}[walletActiveLanguage.Code]
+	case "section.stamp":
+		value = map[string]string{
+			"zh": "SHIELD3 地址印记", "ru": "ШТАМП АДРЕСА SHIELD3",
+			"ja": "SHIELD3 アドレススタンプ", "ko": "SHIELD3 주소 스탬프",
+			"es": "SELLO DE DIRECCIÓN SHIELD3", "pt": "SELO DE ENDEREÇO SHIELD3",
+			"fr": "CACHET D’ADRESSE SHIELD3", "de": "SHIELD3-ADRESSSTEMPEL",
+			"ar": "ختم عنوان SHIELD3", "hi": "SHIELD3 पता स्टाम्प",
+			"id": "STEMPEL ALAMAT SHIELD3", "tr": "SHIELD3 ADRES DAMGASI",
+			"vi": "DẤU ĐỊA CHỈ SHIELD3", "it": "TIMBRO INDIRIZZO SHIELD3",
+			"nl": "SHIELD3-ADRESSTEMPEL", "pl": "STEMPEL ADRESU SHIELD3",
+			"uk": "ШТАМП АДРЕСИ SHIELD3", "th": "ตราประทับที่อยู่ SHIELD3",
+			"bn": "SHIELD3 ঠিকানা স্ট্যাম্প",
+		}[walletActiveLanguage.Code]
 	case "menu.refresh":
 		value = terms.Refresh
 	case "menu.language":

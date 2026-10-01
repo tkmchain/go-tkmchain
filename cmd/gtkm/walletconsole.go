@@ -20,9 +20,11 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/tyler-smith/go-bip39"
@@ -36,6 +38,9 @@ The wallet connects to the node's local IPC endpoint, keeps private keys in the
 keystore, and signs locally. It never sends a password or private key over RPC.
 Use the Send flow for native TKM or other native account transfers. Shielded
 transfers continue to use the dedicated shielded wallet/prover flow.
+Use Stamp address before a Shield3 send. The flow encrypts the name and
+country locally, persists the exact stamp in the PQ keyfile, submits the
+owner-proof registration, and waits for immutable on-chain confirmation.
 The TKM Phone panel can purchase numbers, register an ML-DSA-87 device, and
 send encrypted messages. Phone purchases require a PQ account and explicit
 confirmation; payment is confirmed before ownership is transferred.
@@ -94,9 +99,10 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  4) %s\n", walletText("menu.phone", "TKM Phone"))
 		fmt.Printf("  5) %s\n", walletText("menu.email", "Email"))
 		fmt.Printf("  6) %s\n", walletText("menu.kings", "Kings"))
-		fmt.Printf("  7) %s\n", walletText("menu.refresh", "Refresh"))
-		fmt.Printf("  8) %s\n", walletText("menu.language", "Language"))
-		fmt.Printf("  9) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
+		fmt.Printf("  7) %s\n", walletText("menu.stamp", "Stamp address"))
+		fmt.Printf("  8) %s\n", walletText("menu.refresh", "Refresh"))
+		fmt.Printf("  9) %s\n", walletText("menu.language", "Language"))
+		fmt.Printf("  10) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -118,8 +124,12 @@ func interactiveWallet(ctx *cli.Context) error {
 		case "6":
 			showWalletKings(reader, rpcClient, accounts)
 		case "7":
-			continue
+			if err := stampWalletAddress(reader, rpcClient, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "8":
+			continue
+		case "9":
 			preference, selected, selectErr := chooseWalletLanguage(reader)
 			if selectErr != nil {
 				showWalletError(reader, selectErr)
@@ -133,7 +143,7 @@ func interactiveWallet(ctx *cli.Context) error {
 			}
 			fmt.Printf("\n  %s: %s — %s\n", walletText("language.saved", "Language saved"), selected.Name, selected.NativeName)
 			pauseWallet(reader)
-		case "9":
+		case "10":
 			if err := migrateECDSAWallet(reader, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
@@ -141,7 +151,7 @@ func interactiveWallet(ctx *cli.Context) error {
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, or 0.")
+			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -431,7 +441,7 @@ func chooseWalletAccount(reader *bufio.Reader, walletAccounts []accounts.Account
 	return walletAccounts[index-1], nil
 }
 
-func walletPhoneKey(ks *keystore.KeyStore, account accounts.Account, password string) (*keystore.PQKey, error) {
+func walletPQKey(ks *keystore.KeyStore, account accounts.Account, password string) (*keystore.PQKey, error) {
 	algorithm, err := ks.AccountAlgorithm(account)
 	if err != nil {
 		return nil, err
@@ -458,7 +468,7 @@ func walletPhoneKey(ks *keystore.KeyStore, account accounts.Account, password st
 }
 
 func walletPhonePublicKey(ks *keystore.KeyStore, account accounts.Account, password string) ([]byte, error) {
-	key, err := walletPhoneKey(ks, account, password)
+	key, err := walletPQKey(ks, account, password)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +477,7 @@ func walletPhonePublicKey(ks *keystore.KeyStore, account accounts.Account, passw
 }
 
 func signWalletPhoneDigest(ks *keystore.KeyStore, account accounts.Account, password string, digest common.Hash) (hexutil.Bytes, error) {
-	key, err := walletPhoneKey(ks, account, password)
+	key, err := walletPQKey(ks, account, password)
 	if err != nil {
 		return nil, err
 	}
@@ -878,6 +888,136 @@ func showWalletKings(reader *bufio.Reader, client *rpc.Client, walletAccounts []
 			return
 		}
 	}
+}
+
+// stampWalletAddress creates the encrypted name/country stamp in the local
+// PQ keyfile, builds the canonical owner-proof registration, and waits until
+// the immutable registry entry is visible on-chain. The stamp is persisted
+// only after the proof has been built successfully, but before broadcast, so
+// an interrupted submission can be retried without creating a different
+// identity.
+func stampWalletAddress(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if chainID == nil || !chainID.IsUint64() || chainID.Sign() == 0 {
+		return errors.New("invalid chain ID for Shield3 stamping")
+	}
+	if len(walletAccounts) == 0 {
+		return errors.New("no local accounts available")
+	}
+	clearWalletScreen()
+	fmt.Println(walletText("section.stamp", "SHIELD3 ADDRESS STAMP"))
+	fmt.Println("────────────────────────")
+	fmt.Println("A stamp encrypts your name and country into this address.")
+	fmt.Println("The labels never enter the transaction or public registry.")
+	fmt.Println("The registration is immutable and required before Shield3 payments.")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return fmt.Errorf("read account algorithm: %w", err)
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("Shield3 stamping requires an ML-DSA-87 account; migrate this ECDSA account first")
+	}
+	var onChain core.AntarticalStampStatus
+	statusCtx, statusCancel := walletRPCContext()
+	statusErr := rpcClient.CallContext(statusCtx, &onChain, "tkmprivacy_antarticalStamp", account.Address)
+	statusCancel()
+	if statusErr == nil && onChain.Registered {
+		fmt.Printf("\n  This address already has an immutable confirmed stamp.\n  Registration transaction: %s\n", onChain.TransactionHash.Hex())
+		pauseWallet(reader)
+		return nil
+	}
+
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+
+	stamp := key.Shield3Stamp
+	newStamp := stamp == nil
+	var stampName, stampCountry string
+	if newStamp {
+		stampName, err = readWalletLine(reader, "Private name")
+		if err != nil {
+			return err
+		}
+		stampCountry, err = readWalletLine(reader, "Private country")
+		if err != nil {
+			return err
+		}
+		stamp, err = pqcrypto.CreateShieldedV3Stamp(key.Seed, chainID.Uint64(), stampName, stampCountry)
+		if err != nil {
+			return fmt.Errorf("create encrypted stamp: %w", err)
+		}
+		fmt.Println("\n  The encrypted stamp is ready locally. The name and country will not be printed or sent in plaintext.")
+	} else {
+		fmt.Println("\n  This account already has a local immutable stamp.")
+		fmt.Println("  The wallet will submit or resume its on-chain registration.")
+	}
+
+	confirm, err := readWalletLine(reader, "Type STAMP to build and submit the registration")
+	if err != nil {
+		return err
+	}
+	if strings.ToUpper(strings.TrimSpace(confirm)) != "STAMP" {
+		fmt.Println("  Cancelled. No proof was built and no transaction was submitted.")
+		pauseWallet(reader)
+		return nil
+	}
+
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), stamp)
+	if err != nil {
+		return fmt.Errorf("derive Shield3 identity: %w", err)
+	}
+	defer identity.Clear()
+
+	fmt.Println("\n  Building the Shield3 stamp proof locally. This can take a minute on slower CPUs...")
+	buildCtx, buildCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	tx, err := shield3wallet.BuildAndSignStamp(buildCtx, rpcClient, key.Seed, identity)
+	buildCancel()
+	if err != nil {
+		return fmt.Errorf("build Shield3 stamp registration: %w", err)
+	}
+
+	if newStamp {
+		if err := ks.StampPQAccountRecord(account, password, stamp); err != nil {
+			return fmt.Errorf("persist Shield3 stamp: %w", err)
+		}
+	}
+
+	submitCtx, submitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err = client.SendTransaction(submitCtx, tx)
+	submitCancel()
+	if err != nil {
+		return fmt.Errorf("submit Shield3 stamp registration: %w (the local stamp is preserved for retry)", err)
+	}
+	fmt.Printf("\n  Stamp registration submitted: %s\n  Waiting for canonical confirmation...\n", tx.Hash().Hex())
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer waitCancel()
+	receipt, err := waitWalletReceipt(waitCtx, client, tx.Hash())
+	if err != nil {
+		return fmt.Errorf("stamp %s was submitted but confirmation failed: %w", tx.Hash().Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("stamp %s was mined but the registration reverted", tx.Hash().Hex())
+	}
+	var status core.AntarticalStampStatus
+	if err := rpcClient.CallContext(waitCtx, &status, "tkmprivacy_antarticalStamp", account.Address); err != nil {
+		return fmt.Errorf("stamp %s was mined but registry lookup failed: %w", tx.Hash().Hex(), err)
+	}
+	if !status.Registered || status.Owner != identity.Owner || status.Commitment != stamp.Commitment {
+		return fmt.Errorf("stamp %s was mined but the immutable registry does not match this keyfile", tx.Hash().Hex())
+	}
+	fmt.Println("  Shield3 address stamp confirmed on-chain.")
+	fmt.Printf("  Registration transaction: %s\n", tx.Hash().Hex())
+	pauseWallet(reader)
+	return nil
 }
 
 func printWalletKingStatus(king walletKingStatusView, indent string) {

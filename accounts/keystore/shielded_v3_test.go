@@ -3,6 +3,7 @@ package keystore
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
@@ -56,5 +57,33 @@ func TestShield3StampedAccountBackup(t *testing.T) {
 	tampered, _ := json.Marshal(encrypted)
 	if _, err := DecryptPQKey(tampered, "backup-pass"); err == nil {
 		t.Fatal("accepted modified stamp in keyfile")
+	}
+}
+
+func TestStampPQAccountRecordPreservesCommitment(t *testing.T) {
+	seed := bytes.Repeat([]byte{7}, 32)
+	ks := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
+	account, err := ks.ImportPQSeed(seed, "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Name", "Country")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ks.StampPQAccountRecord(account, "pass", stamp); err != nil {
+		t.Fatal(err)
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := DecryptPQKey(keyJSON, "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zeroPQKey(key)
+	if key.Shield3Stamp == nil || key.Shield3Stamp.Commitment != stamp.Commitment {
+		t.Fatal("persisted stamp commitment differs from the proof record")
 	}
 }
