@@ -726,12 +726,15 @@ func (p *Prover) ensureSignerStamp(ctx context.Context, seed []byte, identity *s
 	tx, err := shield3wallet.BuildStamp(ctx, p.client.Client(), seed, identity)
 	if err != nil {
 		// A concurrent retry can observe the account-level duplicate before the
-		// receipt is visible through the normal status call. Re-read consensus
-		// state and accept it only when the immutable owner/commitment match.
+		// receipt is visible through the normal status call. Keep polling the
+		// canonical stamp state and accept it only when the immutable
+		// owner/commitment match. This makes registration idempotent when a
+		// previous submission is still being mined.
 		if strings.Contains(strings.ToLower(err.Error()), "already registered") || strings.Contains(strings.ToLower(err.Error()), "already has a stamp") {
-			var retry core.AntarticalStampStatus
-			if retryErr := p.client.Client().CallContext(ctx, &retry, "tkmprivacy_antarticalStamp", identity.Address); retryErr == nil && retry.Registered && retry.Owner == identity.Owner && retry.Commitment == identity.Stamp.Commitment {
+			if retryErr := p.waitForSignerStamp(ctx, identity, 20*time.Second); retryErr == nil {
 				return nil
+			} else {
+				return fmt.Errorf("pool signer stamp registration pending: %w", retryErr)
 			}
 		}
 		return err
@@ -743,12 +746,65 @@ func (p *Prover) ensureSignerStamp(ctx context.Context, seed []byte, identity *s
 	timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
 	receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
 	if err != nil {
-		return fmt.Errorf("pool signer stamp registration pending: %w", err)
+		// eth_sendRawTransactionSync can report a timeout or an account-level
+		// duplicate while the registration transaction is already in the pool.
+		// Wait for canonical state before allowing the Shield4 deposit to be
+		// built. Never proceed on an unconfirmed stamp.
+		if waitErr := p.waitForSignerStamp(ctx, identity, 20*time.Second); waitErr == nil {
+			return nil
+		}
+		return fmt.Errorf("pool signer stamp registration pending (tx %s): %w", signed.Hash().Hex(), err)
 	}
 	if receipt == nil || receipt.Status != types.ReceiptStatusSuccessful {
 		return errors.New("pool signer stamp registration failed")
 	}
 	return nil
+}
+
+// waitForSignerStamp waits for the immutable stamp to be visible in canonical
+// state. A registration can be accepted into the transaction pool before the
+// state query observes it; treating that interval as a hard failure causes the
+// pool to repeat the registration and report a misleading HTTP 400.
+func (p *Prover) waitForSignerStamp(ctx context.Context, identity *shield3wallet.Identity, maxWait time.Duration) error {
+	if maxWait <= 0 {
+		maxWait = time.Second
+	}
+	deadline := time.NewTimer(maxWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	check := func() (bool, error) {
+		var current core.AntarticalStampStatus
+		if err := p.client.Client().CallContext(ctx, &current, "tkmprivacy_antarticalStamp", identity.Address); err != nil {
+			return false, err
+		}
+		if !current.Registered {
+			return false, nil
+		}
+		if current.Owner != identity.Owner || current.Commitment != identity.Stamp.Commitment {
+			return false, errors.New("pool signer has a different immutable on-chain stamp")
+		}
+		return true, nil
+	}
+	var lastErr error
+	for {
+		ok, err := check()
+		if err != nil {
+			lastErr = err
+		} else if ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			if lastErr != nil {
+				return lastErr
+			}
+			return errors.New("stamp registration is not confirmed")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositRequest, amountWei *big.Int, chainID *big.Int) (string, ShieldedNote, error) {
