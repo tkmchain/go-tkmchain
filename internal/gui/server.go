@@ -165,7 +165,11 @@ func (g *GUI) RunHeadless(ctx context.Context) error {
 // logStartup prints the dashboard URL once the server is listening, plus a
 // warning when the dashboard is reachable beyond the loopback interface.
 func (g *GUI) logStartup() {
-	log.Info("GUI dashboard", "url", g.URL())
+	if g.opts.Shield3Only {
+		log.Info("Headless Shield3 wallet service", "url", g.URL())
+	} else {
+		log.Info("GUI dashboard", "url", g.URL())
+	}
 	if g.opts.Host != "127.0.0.1" && g.opts.Host != "::1" && g.opts.Host != "localhost" {
 		log.Warn("GUI dashboard is exposed on the network; anyone on it can read the RPC token and call node methods", "host", g.opts.Host)
 	}
