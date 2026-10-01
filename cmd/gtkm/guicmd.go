@@ -48,8 +48,16 @@ var (
 		Usage: "Bind address for the dashboard (default 127.0.0.1; use 0.0.0.0 to reach it from your phone on the LAN)",
 		Value: "",
 	}
+	guiAllowedOriginFlag = &cli.StringFlag{
+		Name:  "gui.allowed-origin",
+		Usage: "explicit HTTPS origin allowed to call the loopback Shield3 endpoint (empty = same-origin only)",
+	}
+	guiTokenFileFlag = &cli.PathFlag{
+		Name:  "gui.token-file",
+		Usage: "write the GUI bearer token to this 0600 file for an explicitly allowed local browser origin",
+	}
 
-	guiFlags = []cli.Flag{guiBrowserFlag, guiPortFlag, guiHostFlag}
+	guiFlags = []cli.Flag{guiBrowserFlag, guiPortFlag, guiHostFlag, guiAllowedOriginFlag, guiTokenFileFlag}
 
 	guiCommand = &cli.Command{
 		Action: localGUI,
@@ -72,6 +80,14 @@ Mobile / LAN: the dashboard is also a installable progressive web app. Expose
 it with --gui.host 0.0.0.0 and a fixed --gui.port, then open the printed URL
 on your phone. Note: anyone on the network can then read the RPC token and
 call node methods (including spending from unlocked keystore accounts).
+
+The hosted wallet can use the native Shield3 builder without sending proofs to
+a public service. Keep the GUI on loopback and opt in to the exact hosted
+origin, writing the bearer token to a protected file:
+
+    gtkm gui --gui.browser --gui.port 8787 \\
+      --gui.allowed-origin https://wallet.tkmchain.site \\
+      --gui.token-file ~/.tkmchain/gui.token
 
 Build the native desktop binary:
 
@@ -130,6 +146,8 @@ func localGUI(ctx *cli.Context) error {
 		Height:          800,
 		Port:            ctx.Int(guiPortFlag.Name),
 		Host:            ctx.String(guiHostFlag.Name),
+		AllowedOrigin:   ctx.String(guiAllowedOriginFlag.Name),
+		TokenFile:       ctx.Path(guiTokenFileFlag.Name),
 		RelayTransport:  shield3wallet.RelayTransportConfig{SOCKS5Proxy: socks5, OnionOnly: ctx.Bool("privacy.onion-only")},
 		ForceBrowser:    ctx.Bool(guiBrowserFlag.Name),
 	})

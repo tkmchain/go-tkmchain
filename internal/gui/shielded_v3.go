@@ -51,7 +51,7 @@ type shield3Request struct {
 	View             *shield3wallet.ViewKey           `json:"view"`
 }
 
-func shield3LocalRequest(r *http.Request) bool {
+func shield3LocalRequest(r *http.Request, allowedOrigin string) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return false
@@ -63,20 +63,44 @@ func shield3LocalRequest(r *http.Request) bool {
 	if requestHost != "localhost" && (net.ParseIP(requestHost) == nil || !net.ParseIP(requestHost).IsLoopback()) {
 		return false
 	}
-	origin := r.Header.Get("Origin")
-	return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
+	origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+	return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host || (allowedOrigin != "" && origin == allowedOrigin)
+}
+
+func (g *GUI) shield3CORS(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+	if origin == "" {
+		return true
+	}
+	local := origin == "http://"+r.Host || origin == "https://"+r.Host
+	if !local && (g.opts.AllowedOrigin == "" || origin != g.opts.AllowedOrigin) {
+		return false
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-GUI-Token")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Add("Vary", "Origin")
+	return true
 }
 
 // All private wallet operations stay on authenticated loopback HTTP. They are
 // deliberately absent from public JSON-RPC and never log seeds/viewing keys.
 func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if !g.shield3CORS(w, r) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	fail := func(code int, err error) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 	}
-	if r.Method != "POST" || r.Header.Get("X-GUI-Token") != g.token || !shield3LocalRequest(r) {
+	if r.Method != http.MethodPost || r.Header.Get("X-GUI-Token") != g.token || !shield3LocalRequest(r, g.opts.AllowedOrigin) {
 		fail(403, errors.New("private wallet operations require authenticated loopback access"))
 		return
 	}

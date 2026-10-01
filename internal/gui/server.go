@@ -33,6 +33,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +63,8 @@ type Options struct {
 	Port          int    // HTTP port (0 = random free port)
 	Host          string // bind address for the dashboard (default 127.0.0.1)
 	ForceBrowser  bool   // always open the dashboard in the default browser
+	AllowedOrigin string // optional explicit browser origin for Shield3 loopback calls
+	TokenFile     string // optional 0600 file receiving the GUI bearer token
 }
 
 // GUI is an embedded web dashboard bound to a local JSON-RPC client.
@@ -99,6 +103,25 @@ func New(client *rpc.Client, opts Options) (*GUI, error) {
 	}
 	if opts.Host == "" {
 		opts.Host = "127.0.0.1"
+	}
+	if opts.AllowedOrigin != "" {
+		if !strings.HasPrefix(opts.AllowedOrigin, "https://") && !strings.HasPrefix(opts.AllowedOrigin, "http://") {
+			return nil, fmt.Errorf("gui: allowed origin must be an explicit http(s) origin")
+		}
+		opts.AllowedOrigin = strings.TrimRight(opts.AllowedOrigin, "/")
+	}
+	if opts.TokenFile != "" {
+		if err := os.MkdirAll(filepath.Dir(opts.TokenFile), 0700); err != nil {
+			return nil, fmt.Errorf("gui: create token directory: %w", err)
+		}
+	}
+	if opts.TokenFile != "" {
+		if err := os.WriteFile(opts.TokenFile, []byte(token+"\n"), 0600); err != nil {
+			return nil, fmt.Errorf("gui: write token file: %w", err)
+		}
+		if err := os.Chmod(opts.TokenFile, 0600); err != nil {
+			return nil, fmt.Errorf("gui: protect token file: %w", err)
+		}
 	}
 	return &GUI{
 		client: client,
