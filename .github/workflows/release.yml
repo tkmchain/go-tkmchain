@@ -516,6 +516,33 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-browser-shield3:
+    name: Build browser-native Shield3 prover
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+      - name: Install Rust WASM target
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustup target add wasm32-unknown-unknown
+      - name: Build browser Shield3 modules
+        run: |
+          ./scripts/shield3-browser-build.sh "release/tkm-shield3-browser-${RELEASE_TAG}"
+          tar -C "release" -czf "release/tkm-shield3-browser-${RELEASE_TAG}.tar.gz" "tkm-shield3-browser-${RELEASE_TAG}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-shield3
+          path: release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Publish GitHub release
     needs:
@@ -524,6 +551,7 @@ jobs:
       - build-linux-arm
       - build-windows-gui
       - build-android
+      - build-browser-shield3
     runs-on: ubuntu-latest
 
     steps:

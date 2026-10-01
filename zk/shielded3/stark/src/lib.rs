@@ -27,6 +27,26 @@ pub const PRIVATE_TVM_PUBLIC_WORDS: usize = 34;
 pub const PRIVATE_TVM_SECRET_WORDS: usize = 21;
 pub const PRIVATE_TVM_PATH_DIGESTS: usize = MERKLE_DEPTH;
 
+// The browser provides entropy through Web Crypto. Using getrandom's custom
+// backend keeps this cdylib free of wasm-bindgen imports, so the worker can
+// instantiate it with a small, auditable `env` import object.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), getrandom::Error> {
+    unsafe extern "C" {
+        fn tkm_getrandom(dest: *mut u8, len: usize) -> i32;
+    }
+    let result = unsafe { tkm_getrandom(dest, len) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(getrandom::Error::UNSUPPORTED)
+    }
+}
+
 // Public word order: chain lo/hi, asset lo/hi, public value (eight u32 limbs),
 // transaction intent (sixteen u32 words), anchor (five field words),
 // nullifier (five field words), four output commitments (five words each),
@@ -931,6 +951,9 @@ pub fn describe_spend_v4(
 mod tests;
 
 mod ffi;
+
+#[cfg(target_arch = "wasm32")]
+mod wasm;
 
 // Registration proves knowledge of the private owner preimage and binds the
 // complete unsigned registration intent. An observer cannot register somebody

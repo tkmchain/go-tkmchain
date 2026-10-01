@@ -1,4 +1,4 @@
-//go:build !shield3 || !cgo
+//go:build !shield3 || (!cgo && !wasm)
 
 package shielded3
 

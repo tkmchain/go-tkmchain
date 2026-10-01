@@ -15,7 +15,7 @@ fn words(input: &[u8]) -> Result<Vec<u64>, String> {
 fn bytes(words: &[u64]) -> Vec<u8> {
     words.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
-fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
     if operation == 11 || operation == 12 {
         const MAGIC: &[u8] = b"TKMPTVM1";
         let public_count = PRIVATE_TVM_PUBLIC_WORDS;

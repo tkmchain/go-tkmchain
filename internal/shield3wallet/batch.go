@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
@@ -68,4 +69,64 @@ func BuildAssetBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identi
 }
 func BuildRelayedBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, offer *RelayOffer) (*types.Transaction, error) {
 	return build(ctx, rpc, seed, identity, payments, false, offer)
+}
+
+// BuildAndSignBatch is the browser/WASM entry point. It keeps proof
+// construction and ML-DSA signing inside the same canonical Go code used by
+// the node wallet; the caller only receives the final typed transaction bytes.
+func BuildAndSignBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment) (*types.Transaction, error) {
+	tx, err := BuildBatch(ctx, rpc, seed, identity, payments)
+	if err != nil {
+		return nil, err
+	}
+	key, err := pqcrypto.NewMLDSA87FromSeed(seed)
+	if err != nil {
+		return nil, err
+	}
+	return types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(identity.ChainID)), key)
+}
+
+// BuildAndSignDeposit builds the canonical Shield3 public-to-private funding
+// transaction for the identity itself.  Keeping this entry point beside the
+// batch builder lets browser wallets use the exact same deposit relation and
+// signer as desktop wallets without exposing a prover endpoint.
+func BuildAndSignDeposit(ctx context.Context, rpc RPC, seed []byte, identity *Identity, amount *big.Int) (*types.Transaction, error) {
+	if identity == nil || identity.Stamp == nil {
+		return nil, errors.New("missing Shield3 identity")
+	}
+	if amount == nil || amount.Sign() <= 0 {
+		return nil, errors.New("invalid Shield3 deposit amount")
+	}
+	to := PaymentPayload{
+		ChainID: identity.ChainID,
+		Address: identity.Address,
+		Owner:   identity.Owner,
+		Stamp:   *identity.Stamp,
+	}
+	tx, err := Build(ctx, rpc, seed, identity, to, amount, true)
+	if err != nil {
+		return nil, err
+	}
+	key, err := pqcrypto.NewMLDSA87FromSeed(seed)
+	if err != nil {
+		return nil, err
+	}
+	return types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(identity.ChainID)), key)
+}
+
+// BuildAndSignStamp builds and signs the immutable Antartical stamp
+// registration using the same owner-proof relation as the node wallet.
+func BuildAndSignStamp(ctx context.Context, rpc RPC, seed []byte, identity *Identity) (*types.Transaction, error) {
+	if identity == nil || identity.Stamp == nil {
+		return nil, errors.New("missing Shield3 identity stamp")
+	}
+	tx, err := BuildStamp(ctx, rpc, seed, identity)
+	if err != nil {
+		return nil, err
+	}
+	key, err := pqcrypto.NewMLDSA87FromSeed(seed)
+	if err != nil {
+		return nil, err
+	}
+	return types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(identity.ChainID)), key)
 }
