@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -29,7 +30,9 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/zk/shielded"
@@ -73,6 +76,8 @@ type Config struct {
 	TorSOCKS5Proxy       string `json:"torSocks5Proxy"`
 	PrivacyStrict        bool   `json:"privacyStrict"`
 	OnionOnly            bool   `json:"onionOnly"`
+	Shield3StampName     string `json:"shield3StampName,omitempty"`
+	Shield3StampCountry  string `json:"shield3StampCountry,omitempty"`
 }
 
 type PayoutRequest struct {
@@ -86,6 +91,7 @@ type PayoutRequest struct {
 	Nonce                 string    `json:"nonce,omitempty"`
 	GasPriceWei           string    `json:"gasPriceWei,omitempty"`
 	RecipientViewKey      string    `json:"recipientViewKey,omitempty"`
+	RecipientCode         string    `json:"recipientCode,omitempty"`
 	ChangeViewKey         string    `json:"changeViewKey,omitempty"`
 	PrivacyCommitmentTime uint64    `json:"privacyCommitmentTime"`
 	QuantumResistantTime  uint64    `json:"quantumResistantTime"`
@@ -414,6 +420,7 @@ func NewProver(cfg Config) (*Prover, error) {
 func (p *Prover) Serve() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", p.handleHealth)
+	mux.HandleFunc("/healthz/internal", p.handleInternalHealth)
 	mux.HandleFunc("/payout", p.handlePayout)
 	mux.HandleFunc("/deposit", p.handleDeposit)
 	mux.HandleFunc("/build-deposit", p.handleBuildDeposit)
@@ -453,6 +460,23 @@ func (p *Prover) corsHandler(next http.Handler) http.Handler {
 }
 
 func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Operators and the pool may authenticate to receive note sizing. The
+	// unauthenticated response remains intentionally minimal.
+	p.writeHealth(w, p.authorized(r))
+}
+
+// handleInternalHealth is authenticated and is used only by the pool. It
+// exposes note inventory sizing needed for deterministic Shield4 chunking;
+// the public health endpoint deliberately omits those operational details.
+func (p *Prover) handleInternalHealth(w http.ResponseWriter, r *http.Request) {
+	if !p.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	p.writeHealth(w, true)
+}
+
+func (p *Prover) writeHealth(w http.ResponseWriter, includeInventory bool) {
 	noteStatus := p.noteInventoryStatus()
 	ready := p.ready()
 	withdrawalReady := ready && p.pkV2 != nil && p.r1csV2 != nil
@@ -464,8 +488,14 @@ func (p *Prover) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"hasProvingKey":        p.pk != nil,
 		"hasProvingKeyV2":      p.pkV2 != nil,
 		"hasRPC":               p.client != nil,
-		"hasKeystore":          p.ks != nil,
 		"hasSpendableNotes":    noteStatus.HasSpendableNotes,
+	}
+	if includeInventory {
+		status["availableNoteCount"] = noteStatus.AvailableNoteCount
+		status["availableNoteMaxWei"] = noteStatus.AvailableNoteMaxWei
+		status["noteInventoryError"] = noteStatus.Error
+		status["signMode"] = p.cfg.SignMode
+		status["hasKeystore"] = p.ks != nil
 	}
 	// Do not expose filesystem paths, node endpoints, signer addresses, note
 	// inventory, or raw initialization errors through a public health endpoint.
@@ -514,11 +544,13 @@ func (p *Prover) noteInventoryStatus() noteInventoryStatus {
 		if !ok || value.Sign() <= 0 || value.BitLen() > 64 {
 			continue
 		}
-		if err := validateMerkleWitness(note.MerklePath, note.MerklePathIndex); err != nil {
-			if firstWitnessError == "" {
-				firstWitnessError = fmt.Sprintf("note %s has invalid Merkle witness: %v", note.ID, err)
+		if note.Version < 4 {
+			if err := validateMerkleWitness(note.MerklePath, note.MerklePathIndex); err != nil {
+				if firstWitnessError == "" {
+					firstWitnessError = fmt.Sprintf("note %s has invalid Merkle witness: %v", note.ID, err)
+				}
+				continue
 			}
-			continue
 		}
 		status.AvailableNoteCount++
 		total.Add(total, value)
@@ -605,6 +637,204 @@ func (p *Prover) authorized(r *http.Request) bool {
 
 func (p *Prover) ready() bool {
 	return p != nil && p.client != nil && (p.cfg.SignMode == "proof-only" || p.ks != nil) && p.pk != nil && p.r1cs != nil && p.pkV2 != nil && p.r1csV2 != nil
+}
+
+func (p *Prover) shield4Active(ctx context.Context) bool {
+	if p == nil || p.client == nil {
+		return false
+	}
+	var status struct {
+		Active         bool `json:"active"`
+		NativeVerifier bool `json:"nativeVerifier"`
+	}
+	if err := p.client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV4Status"); err != nil {
+		return false
+	}
+	return status.Active && status.NativeVerifier
+}
+
+// signerIdentity decrypts the configured PQ account only while constructing a
+// Shield4 envelope. The seed is never persisted or exposed through HTTP.
+func (p *Prover) signerIdentity(ctx context.Context, chainID uint64) ([]byte, *shield3wallet.Identity, error) {
+	if p.ks == nil {
+		return nil, nil, errors.New("prover has no signing keystore")
+	}
+	account, err := p.ks.Find(accounts.Account{Address: common.HexToAddress(p.cfg.SignerAddress)})
+	if err != nil {
+		return nil, nil, err
+	}
+	keyJSON, err := os.ReadFile(account.URL.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	key, err := keystore.DecryptPQKey(keyJSON, p.passphrase)
+	if err != nil {
+		return nil, nil, err
+	}
+	seed := common.CopyBytes(key.Seed)
+	stamp := key.Shield3Stamp
+	if stamp == nil {
+		if strings.TrimSpace(p.cfg.Shield3StampName) == "" || strings.TrimSpace(p.cfg.Shield3StampCountry) == "" {
+			clear(seed)
+			return nil, nil, errors.New("pool signer has no Shield3 stamp; configure shield3StampName and shield3StampCountry")
+		}
+		if err := p.ks.StampPQAccount(account, p.passphrase, chainID, p.cfg.Shield3StampName, p.cfg.Shield3StampCountry); err != nil && !strings.Contains(err.Error(), "already has a stamp") {
+			clear(seed)
+			return nil, nil, fmt.Errorf("stamp pool signer: %w", err)
+		}
+		keyJSON, err = os.ReadFile(account.URL.Path)
+		if err != nil {
+			clear(seed)
+			return nil, nil, err
+		}
+		key, err = keystore.DecryptPQKey(keyJSON, p.passphrase)
+		if err != nil || key.Shield3Stamp == nil {
+			clear(seed)
+			return nil, nil, firstErr(err, errors.New("pool signer stamp was not persisted"))
+		}
+		stamp = key.Shield3Stamp
+	}
+	identity, err := shield3wallet.NewIdentity(seed, chainID, stamp)
+	if err != nil {
+		clear(seed)
+		return nil, nil, err
+	}
+	if !strings.EqualFold(identity.Address.Hex(), p.cfg.SignerAddress) {
+		identity.Clear()
+		clear(seed)
+		return nil, nil, errors.New("pool signer key does not match configured address")
+	}
+	if err := p.ensureSignerStamp(ctx, seed, identity); err != nil {
+		identity.Clear()
+		clear(seed)
+		return nil, nil, err
+	}
+	return seed, identity, nil
+}
+
+func (p *Prover) ensureSignerStamp(ctx context.Context, seed []byte, identity *shield3wallet.Identity) error {
+	var current core.AntarticalStampStatus
+	if err := p.client.Client().CallContext(ctx, &current, "tkmprivacy_antarticalStamp", identity.Address); err != nil {
+		return err
+	}
+	if current.Registered {
+		if current.Owner != identity.Owner || current.Commitment != identity.Stamp.Commitment {
+			return errors.New("pool signer has a different immutable on-chain stamp")
+		}
+		return nil
+	}
+	tx, err := shield3wallet.BuildStamp(ctx, p.client.Client(), seed, identity)
+	if err != nil {
+		// A concurrent retry can observe the account-level duplicate before the
+		// receipt is visible through the normal status call. Re-read consensus
+		// state and accept it only when the immutable owner/commitment match.
+		if strings.Contains(strings.ToLower(err.Error()), "already registered") || strings.Contains(strings.ToLower(err.Error()), "already has a stamp") {
+			var retry core.AntarticalStampStatus
+			if retryErr := p.client.Client().CallContext(ctx, &retry, "tkmprivacy_antarticalStamp", identity.Address); retryErr == nil && retry.Registered && retry.Owner == identity.Owner && retry.Commitment == identity.Stamp.Commitment {
+				return nil
+			}
+		}
+		return err
+	}
+	signed, err := p.ks.SignTxWithPassphrase(accounts.Account{Address: identity.Address}, p.passphrase, tx, new(big.Int).SetUint64(identity.ChainID))
+	if err != nil {
+		return err
+	}
+	timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
+	receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
+	if err != nil {
+		return fmt.Errorf("pool signer stamp registration pending: %w", err)
+	}
+	if receipt == nil || receipt.Status != types.ReceiptStatusSuccessful {
+		return errors.New("pool signer stamp registration failed")
+	}
+	return nil
+}
+
+func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositRequest, amountWei *big.Int, chainID *big.Int) (string, ShieldedNote, error) {
+	seed, identity, err := p.signerIdentity(ctx, chainID.Uint64())
+	if err != nil {
+		return "", ShieldedNote{}, err
+	}
+	defer func() { identity.Clear(); clear(seed) }()
+	recipient := shield3wallet.PaymentPayload{
+		Version: 3, ChainID: identity.ChainID, Address: identity.Address,
+		Owner: identity.Owner, IncomingPublicKey: identity.IncomingPublicKey,
+		StampPublicKey: identity.StampPublicKey, Stamp: *identity.Stamp,
+	}
+	tx, err := shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
+	if err != nil {
+		return "", ShieldedNote{}, err
+	}
+	signed, err := p.ks.SignTxWithPassphrase(accounts.Account{Address: identity.Address}, p.passphrase, tx, chainID)
+	if err != nil {
+		return "", ShieldedNote{}, err
+	}
+	envelope, ok, err := core.DecodeShieldedV4Transaction(signed.Data())
+	if err != nil || !ok || envelope == nil {
+		return "", ShieldedNote{}, firstErr(err, errors.New("Shield4 deposit produced no envelope"))
+	}
+	commitment := envelope.Outputs[0].Commitment
+	plain, err := pqcrypto.OpenShieldedV3(identity.OutgoingSeed, envelope.Outputs[0].Outgoing, core.ShieldedV3OutputContext(identity.ChainID, pqcrypto.ShieldedV3Outgoing, commitment))
+	if err != nil {
+		return "", ShieldedNote{}, fmt.Errorf("open Shield4 change note: %w", err)
+	}
+	var opened shield3wallet.Note
+	err = json.Unmarshal(plain, &opened)
+	clear(plain)
+	if err != nil || opened.ValueWei == "" {
+		return "", ShieldedNote{}, firstErr(err, errors.New("Shield4 deposit returned an invalid note"))
+	}
+	note := ShieldedNote{
+		Version: 4, ID: "deposit-" + req.RequestID,
+		Commitment:     "0x" + hex.EncodeToString(commitment.Bytes()),
+		OwnerSecret:    new(big.Int).SetBytes(identity.Owner.Bytes()).String(),
+		NoteRandomness: "0x" + hex.EncodeToString(opened.Randomness.Bytes()),
+		NoteValueWei:   opened.ValueWei, AssetID: fmt.Sprintf("%d", opened.AssetID),
+		Status: "pending", Source: "deposit", CreatedAt: req.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
+	receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
+	note.CreatedTxHash = signed.Hash().Hex()
+	if err != nil || receipt == nil {
+		return signed.Hash().Hex(), note, firstErr(err, errors.New("nil receipt"))
+	}
+	return receipt.TxHash.Hex(), p.finalizeNoteWitness(ctx, note, common.BytesToHash(commitment.Bytes()), receipt.TxHash.Hex()), nil
+}
+
+func (p *Prover) buildSignSubmitV4(ctx context.Context, req PayoutRequest, amountWei *big.Int, chainID *big.Int) (string, error) {
+	if strings.TrimSpace(req.RecipientCode) == "" {
+		return "", errors.New("Shield4 payout requires the miner's full tkmshield3 payment code")
+	}
+	seed, identity, err := p.signerIdentity(ctx, chainID.Uint64())
+	if err != nil {
+		return "", err
+	}
+	defer func() { identity.Clear(); clear(seed) }()
+	recipient, err := shield3wallet.DecodePaymentCode(req.RecipientCode, chainID.Uint64())
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(recipient.Address.Hex(), req.To) {
+		return "", errors.New("Shield3 payment code address does not match payout address")
+	}
+	tx, err := shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, false)
+	if err != nil {
+		return "", err
+	}
+	signed, err := p.ks.SignTxWithPassphrase(accounts.Account{Address: identity.Address}, p.passphrase, tx, chainID)
+	if err != nil {
+		return "", err
+	}
+	timeout := time.Duration(p.cfg.ReceiptTimeoutMs) * time.Millisecond
+	receipt, err := p.client.SendTransactionSync(ctx, signed, &timeout)
+	if err != nil {
+		return signed.Hash().Hex(), err
+	}
+	if receipt == nil {
+		return signed.Hash().Hex(), errors.New("nil receipt")
+	}
+	return receipt.TxHash.Hex(), nil
 }
 
 func (p *Prover) operationContext() (context.Context, context.CancelFunc) {
@@ -822,6 +1052,9 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 	chainID, err := p.client.ChainID(ctx)
 	if err != nil {
 		return "", ShieldedNote{}, err
+	}
+	if p.shield4Active(ctx) {
+		return p.buildSignSubmitDepositV4(ctx, req, amountWei, chainID)
 	}
 	proofBlock := new(big.Int)
 	signerAddr := common.HexToAddress(p.cfg.SignerAddress)
@@ -1064,6 +1297,10 @@ func (p *Prover) buildSignSubmit(ctx context.Context, req PayoutRequest, note Sh
 	chainID, err := p.client.ChainID(ctx)
 	if err != nil {
 		return "", nil, err
+	}
+	if p.shield4Active(ctx) {
+		txHash, err := p.buildSignSubmitV4(ctx, req, amountWei, chainID)
+		return txHash, nil, err
 	}
 	proofBlock := new(big.Int)
 	signerAddr := common.HexToAddress(p.cfg.SignerAddress)
@@ -1523,7 +1760,7 @@ func selectSpendableNote(store NoteStore, amount *big.Int) int {
 			continue
 		}
 		value, ok := parseDecimalBig(note.NoteValueWei)
-		if ok && value.Cmp(amount) >= 0 && value.BitLen() <= 64 && validateMerkleWitness(note.MerklePath, note.MerklePathIndex) == nil {
+		if ok && value.Cmp(amount) >= 0 && value.BitLen() <= 64 && (note.Version >= 4 || validateMerkleWitness(note.MerklePath, note.MerklePathIndex) == nil) {
 			return i
 		}
 	}
@@ -1546,7 +1783,7 @@ func selectReplacementNote(store NoteStore, noteID string, requestID string) int
 		if strings.TrimSpace(note.SpentRequestID) != requestID {
 			continue
 		}
-		if validateMerkleWitness(note.MerklePath, note.MerklePathIndex) != nil {
+		if note.Version < 4 && validateMerkleWitness(note.MerklePath, note.MerklePathIndex) != nil {
 			continue
 		}
 		return i
@@ -1656,6 +1893,10 @@ func depositGasPriceWei(req DepositRequest, fallback *big.Int) (*big.Int, error)
 
 func (p *Prover) finalizeNoteWitness(ctx context.Context, note ShieldedNote, commitment common.Hash, txHash string) ShieldedNote {
 	note.CreatedTxHash = txHash
+	if note.Version >= 4 {
+		note.Status = "available"
+		return note
+	}
 	var path commitmentPathRPC
 	if err := p.client.Client().CallContext(ctx, &path, "tkmprivacy_commitmentPath", commitment); err != nil {
 		note.Status = "pending"
