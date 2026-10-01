@@ -261,6 +261,10 @@ func (g *GUI) listen() error {
 // an import or a node restart the GUI can briefly outlive the chain backend,
 // and advertising readiness then makes clients loop forever on reconnecting.
 func (g *GUI) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if !g.shield3CORS(w, r) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
