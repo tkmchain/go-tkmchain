@@ -29,14 +29,18 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/urfave/cli/v2"
 )
 
 var (
-	walletCommand = &cli.Command{
+	accountStampFileFlag = &cli.PathFlag{Name: "stamp-file", Usage: "Read private name and country from a JSON file for Shield3 account creation"}
+	walletCommand        = &cli.Command{
 		Name:      "wallet",
 		Usage:     "Open the interactive wallet or manage imported wallets",
 		Action:    interactiveWallet,
@@ -118,19 +122,28 @@ Print a short summary of all accounts`,
 			},
 			{
 				Name:   "new",
-				Usage:  "Create a new post-quantum account",
+				Usage:  "Create a stamped Shield3 post-quantum account",
 				Action: accountCreate,
 				Flags: []cli.Flag{
 					utils.DataDirFlag,
 					utils.KeyStoreDirFlag,
 					utils.PasswordFileFlag,
 					utils.LightKDFFlag,
+					accountStampFileFlag,
+					utils.EgyptFlag,
 				},
 				Description: `
     gtkm account new
 
-Creates a new ML-DSA-87 post-quantum account and prints its public address and
-mainnet tkmshield2 payment code.
+Creates a new ML-DSA-87 post-quantum account with an encrypted name/country
+stamp and prints its Shield3 receiving address. Mainnet is the default;
+use --egypt for an Egypt account.
+
+Enter your private name and country when prompted. For non-interactive use,
+--stamp-file reads JSON containing "name" and "country" from a private file.
+The original encrypted stamp is preserved in the encrypted keyfile backup.
+Creation runs offline. Before payments, register this same stamp on-chain
+using gtkm wallet interactive -> Stamp address.
 
 The account is saved in encrypted format, you are prompted for a password.
 
@@ -376,6 +389,9 @@ func readPasswordFromFile(path string) (string, bool) {
 
 // accountCreate creates a new post-quantum account into the keystore defined by the CLI flags.
 func accountCreate(ctx *cli.Context) error {
+	if !shielded3.NativeAvailable() {
+		return errors.New("Shield3 account creation requires a gtkm build with native Shield3 support")
+	}
 	cfg := loadBaseConfig(ctx)
 	keydir, isEphemeral, err := cfg.Node.GetKeyStoreDir()
 	if err != nil {
@@ -395,22 +411,78 @@ func accountCreate(ctx *cli.Context) error {
 	if !ok {
 		password = utils.GetPassPhrase("Your new account is locked with a password. Please give a password. Do not forget this password.", true)
 	}
-	ks := keystore.NewKeyStore(keydir, scryptN, scryptP)
-	account, paymentCode, err := ks.NewPQAccountWithShieldedPaymentCode(password, params.MainnetChainConfig.ChainID)
-
+	stampText, err := accountStampText(ctx)
 	if err != nil {
-		utils.Fatalf("Failed to create account: %v", err)
+		return err
+	}
+	chainID := params.MainnetChainConfig.ChainID.Uint64()
+	if ctx.Bool(utils.EgyptFlag.Name) {
+		chainID = params.EgyptChainConfig.ChainID.Uint64()
+	}
+	ks := keystore.NewKeyStore(keydir, scryptN, scryptP)
+	key, err := keystore.NewPQKey()
+	if err != nil {
+		return err
+	}
+	defer clear(key.Seed)
+	key.Shield3Stamp, err = pqcrypto.CreateShieldedV3Stamp(key.Seed, chainID, stampText.Name, stampText.Country)
+	if err != nil {
+		return fmt.Errorf("create Shield3 stamp: %w", err)
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID, key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("derive Shield3 address: %w", err)
+	}
+	defer identity.Clear()
+	// Import the exact stamp used by the receiving code, preserving its random
+	// commitment. The transient backup stays in memory; the keystore re-encrypts
+	// it with the configured KDF before writing the final keyfile.
+	backup, err := keystore.EncryptPQKey(key, password, keystore.LightScryptN, keystore.LightScryptP)
+	if err != nil {
+		return err
+	}
+	defer clear(backup)
+	account, err := ks.ImportStampedPQBackup(backup, password, password, chainID)
+	if err != nil {
+		return fmt.Errorf("save Shield3 account: %w", err)
 	}
 	fmt.Printf("\nYour new post-quantum key was generated\n\n")
 	fmt.Printf("Key algorithm:           ML-DSA-87\n")
 	fmt.Printf("Public address:          %s\n", account.Address.Hex())
-	fmt.Printf("Shielded payment code:   %s\n", paymentCode)
+	fmt.Printf("Shield3 address:         %s\n", identity.Code)
 	fmt.Printf("Path of secret key file: %s\n\n", account.URL.Path)
-	fmt.Printf("- You can share your public address with anyone. Others need it to interact with you.\n")
+	fmt.Printf("- Share your Shield3 address to receive private payments.\n")
+	fmt.Printf("- Your stamp is saved locally. Before payments, register it with gtkm wallet interactive -> Stamp address.\n")
 	fmt.Printf("- You must NEVER share the secret key with anyone! The key controls access to your funds!\n")
 	fmt.Printf("- You must BACKUP your key file! Without the key, it's impossible to access account funds!\n")
 	fmt.Printf("- You must REMEMBER your password! Without the password, it's impossible to decrypt the key!\n\n")
 	return nil
+}
+
+// accountStampText keeps private identity labels out of command-line arguments.
+func accountStampText(ctx *cli.Context) (pqcrypto.ShieldedV3StampText, error) {
+	var stamp pqcrypto.ShieldedV3StampText
+	if path := ctx.Path(accountStampFileFlag.Name); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return stamp, fmt.Errorf("read stamp file: %w", err)
+		}
+		defer clear(data)
+		if err := json.Unmarshal(data, &stamp); err != nil {
+			return stamp, errors.New("stamp file must contain JSON with name and country strings")
+		}
+		return stamp, nil
+	}
+	if ctx.Path(utils.PasswordFileFlag.Name) != "" {
+		return stamp, errors.New("non-interactive Shield3 account creation requires --stamp-file with name and country")
+	}
+	var err error
+	stamp.Name, err = prompt.Stdin.PromptPassword("Private stamp name: ")
+	if err != nil {
+		return stamp, err
+	}
+	stamp.Country, err = prompt.Stdin.PromptPassword("Private stamp country: ")
+	return stamp, err
 }
 
 // accountUpdate transitions an account from a previous format to the current

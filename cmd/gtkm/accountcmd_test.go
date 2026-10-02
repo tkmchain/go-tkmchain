@@ -17,16 +17,21 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
 	"github.com/cespare/cp"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
 // These tests are 'smoke tests' for the account related
@@ -79,6 +84,9 @@ Account #2: {289d485d9771714cce91d3393d764e1311907acc} keystore://{{.Datadir}}\k
 }
 
 func TestAccountNew(t *testing.T) {
+	if !shielded3.NativeAvailable() {
+		t.Skip("requires native Shield3")
+	}
 	t.Parallel()
 	geth := runGeth(t, "account", "new", "--lightkdf")
 	defer geth.ExpectExit()
@@ -87,16 +95,19 @@ Your new account is locked with a password. Please give a password. Do not forge
 !! Unsupported terminal, password will be echoed.
 Password: {{.InputLine "foobar"}}
 Repeat password: {{.InputLine "foobar"}}
+Private stamp name: {{.InputLine "Private Test Name"}}
+Private stamp country: {{.InputLine "Private Test Country"}}
 
 Your new post-quantum key was generated
 `)
 	geth.ExpectRegexp(`
 Key algorithm:           ML-DSA-87
 Public address:          0x[0-9a-fA-F]{40}
-Shielded payment code:   tkmshield2\.[A-Za-z0-9_-]+
+Shield3 address:         tkmshield3\.[A-Za-z0-9_-]+
 Path of secret key file: .*UTC--.+--[0-9a-f]{40}
 
-- You can share your public address with anyone. Others need it to interact with you.
+- Share your Shield3 address to receive private payments.
+- Your stamp is saved locally. Before payments, register it with gtkm wallet interactive -> Stamp address.
 - You must NEVER share the secret key with anyone! The key controls access to your funds!
 - You must BACKUP your key file! Without the key, it's impossible to access account funds!
 - You must REMEMBER your password! Without the password, it's impossible to decrypt the key!
@@ -194,6 +205,9 @@ func importAccountWithExpect(t *testing.T, key string, expected string) {
 }
 
 func TestAccountNewBadRepeat(t *testing.T) {
+	if !shielded3.NativeAvailable() {
+		t.Skip("requires native Shield3")
+	}
 	t.Parallel()
 	geth := runGeth(t, "account", "new", "--lightkdf")
 	defer geth.ExpectExit()
@@ -248,4 +262,115 @@ func TestWalletImportBadPassword(t *testing.T) {
 Password: {{.InputLine "wrong"}}
 Fatal: could not decrypt key with given password
 `)
+}
+
+// Exercise the real command, then restore its encrypted keyfile and verify that
+// the printed receiving identity retained the exact stamp and chain binding.
+func TestAccountNewShield3Backup(t *testing.T) {
+	if !shielded3.NativeAvailable() {
+		t.Skip("requires native Shield3")
+	}
+	for _, chainID := range []uint64{8979, 8980} {
+		t.Run(fmt.Sprint(chainID), func(t *testing.T) {
+			dir := t.TempDir()
+			passwordFile := filepath.Join(dir, "password")
+			stampFile := filepath.Join(dir, "stamp.json")
+			if err := os.WriteFile(passwordFile, []byte("shield3-password\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(stampFile, []byte(`{"name":"Private Test Name","country":"Private Test Country"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"account", "new", "--lightkdf", "--password", passwordFile, "--stamp-file", stampFile}
+			if chainID == 8980 {
+				args = append(args, "--egypt")
+			}
+			geth := runGeth(t, args...)
+			_, matches := geth.ExpectRegexp(`Shield3 address:         (tkmshield3\.[A-Za-z0-9_-]+)
+Path of secret key file: ([^\r\n]+)`)
+			geth.ExpectRegexp(`- You must REMEMBER your password! Without the password, it's impossible to decrypt the key!
+
+`)
+			geth.ExpectExit()
+			payload, err := shield3wallet.DecodePaymentCode(matches[1], chainID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := shield3wallet.DecodePaymentCode(matches[1], chainID+1); err == nil {
+				t.Fatal("address accepted on another chain")
+			}
+			blob, err := os.ReadFile(matches[2])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(blob, []byte("Private Test")) {
+				t.Fatal("plaintext stamp leaked into keyfile")
+			}
+			key, err := keystore.DecryptPQKey(blob, "shield3-password")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer clear(key.Seed)
+			identity, err := shield3wallet.NewIdentity(key.Seed, chainID, key.Shield3Stamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer identity.Clear()
+			restored, err := shield3wallet.DecodePaymentCode(identity.Code, chainID)
+			if err != nil || !reflect.DeepEqual(payload, restored) || payload.Address != key.Address {
+				t.Fatalf("keyfile did not restore receiving identity: %v", err)
+			}
+			text, err := pqcrypto.OpenShieldedV3Stamp(identity.StampSeed, key.Shield3Stamp)
+			if err != nil || text.Name != "Private Test Name" || text.Country != "Private Test Country" {
+				t.Fatalf("stamp did not round-trip: %v", err)
+			}
+		})
+	}
+}
+
+func TestAccountNewRejectsInvalidStamp(t *testing.T) {
+	if !shielded3.NativeAvailable() {
+		t.Skip("requires native Shield3")
+	}
+	for _, stamp := range []string{"", `{`, `{"name":"","country":"Country"}`} {
+		t.Run(stamp, func(t *testing.T) {
+			dir := t.TempDir()
+			passwordFile := filepath.Join(dir, "password")
+			if err := os.WriteFile(passwordFile, []byte("pass"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"account", "new", "--lightkdf", "--password", passwordFile}
+			if stamp != "" {
+				file := filepath.Join(dir, "stamp.json")
+				if err := os.WriteFile(file, []byte(stamp), 0600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--stamp-file", file)
+			}
+			geth := runGeth(t, args...)
+			geth.WaitExit()
+			if geth.ExitStatus() == 0 {
+				t.Fatal("invalid stamp succeeded")
+			}
+			files, err := filepath.Glob(filepath.Join(geth.Datadir, "keystore", "*"))
+			if err != nil || len(files) != 0 {
+				t.Fatalf("failed command wrote a keyfile: %v %v", files, err)
+			}
+		})
+	}
+}
+
+func TestAccountNewRequiresShield3Build(t *testing.T) {
+	if shielded3.NativeAvailable() {
+		t.Skip("tests build without native Shield3")
+	}
+	geth := runGeth(t, "account", "new")
+	geth.WaitExit()
+	if geth.ExitStatus() == 0 {
+		t.Fatal("silently created a legacy account without Shield3")
+	}
+	files, err := filepath.Glob(filepath.Join(geth.Datadir, "keystore", "*"))
+	if err != nil || len(files) != 0 {
+		t.Fatalf("unavailable Shield3 wrote a keyfile: %v %v", files, err)
+	}
 }

@@ -24,7 +24,8 @@ The safe exchange model is:
 
 ## Generating a deposit code and view key
 
-Create a dedicated PQ account:
+This section describes legacy Shield2 scanner integration. New accounts now
+print Shield3 addresses. Create a dedicated stamped PQ account:
 
 ```bash
 gtkm account new --keystore /secure/tkm/keystore
@@ -34,10 +35,11 @@ The command prints:
 
 ```text
 Public address:          0x...
-Shielded payment code:   tkmshield2....
+Shield3 address:         tkmshield3....
 ```
 
-Export the matching view-only key on a trusted machine:
+For a legacy Shield2 scanner only, export the separate Shield2 payment code
+and matching view-only key on a trusted machine:
 
 ```bash
 gtkm account shielded-view-key --keystore /secure/tkm/keystore 0xYourPQAddress

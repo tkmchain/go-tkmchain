@@ -126,10 +126,27 @@ key. New integrations should keep signing in Clef or the client. Clef exposes
 `account_signTransaction`, including EVM contract creation/calls and TVM
 envelope calls.
 
-`gtkm account new` creates an ML-DSA-87 account and prints both `Public
-address: 0x...` and `Shielded payment code: tkmshield2....`. Run `gtkm account
-update 0x...` once to add authenticated shielded metadata to a PQ keyfile made
-by an older release.
+`gtkm account new` creates a stamped ML-DSA-87 account and prints both
+`Public address: 0x...` and `Shield3 address: tkmshield3....`. It asks for a
+password, private name, and country. The name/country stamp is encrypted and
+saved in the keyfile; keep the complete keyfile backup to preserve the exact
+stamp and receiving identity. Use `--egypt` for Egypt (chain ID 8980); the
+default is mainnet (8979). This command requires a release built with native
+Shield3 support and runs offline.
+
+For scripted creation, store `{"name":"Your name","country":"Your country"}`
+in a private JSON file, then run:
+
+```bash
+gtkm account new --password /secure/password.txt --stamp-file /secure/stamp.json
+```
+
+Protect both files with mode `0600`. The JSON input is plaintext; the saved
+keyfile contains the encrypted stamp. Creation does not register the stamp
+on-chain. Before payments, open `gtkm wallet interactive`, select **Stamp
+address**, and submit the saved stamp. Use **Show Shield3 address** to display
+the same receiving identity later. The older `shielded-view-key` command below
+exports legacy Shield2 exchange-scanner credentials, not Shield3 viewing keys.
 
 When a recovery backup is needed, `ethkey inspect --private` displays a
 standard English BIP39 phrase of 24 words for a PQ keyfile. It deliberately
