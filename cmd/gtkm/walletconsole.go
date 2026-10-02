@@ -103,6 +103,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  8) %s\n", walletText("menu.refresh", "Refresh"))
 		fmt.Printf("  9) %s\n", walletText("menu.language", "Language"))
 		fmt.Printf("  10) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
+		fmt.Printf("  11) %s\n", walletText("menu.shield3", "Show Shield3 address"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -147,11 +148,15 @@ func interactiveWallet(ctx *cli.Context) error {
 			if err := migrateECDSAWallet(reader, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
+		case "11":
+			if err := showWalletShield3Address(reader, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, or 0.")
+			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -1147,6 +1152,46 @@ func showWalletAccounts(reader *bufio.Reader, ks *keystore.KeyStore, accounts []
 		fmt.Printf("  %d  %s  %s\n", i+1, account.Address.Hex(), algorithm)
 	}
 	pauseWallet(reader)
+}
+
+// showWalletShield3Address derives the authenticated, shareable Shield3
+// receiving code from a stamped ML-DSA account. The seed is unlocked only in
+// memory and is never printed or sent over RPC.
+func showWalletShield3Address(reader *bufio.Reader, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
+		return errors.New("invalid chain ID for Shield3 address")
+	}
+	clearWalletScreen()
+	fmt.Println(walletText("section.shield3", "SHIELD3 RECEIVING ADDRESS"))
+	fmt.Println("──────────────────────────")
+	fmt.Println("This code is public and safe to share. It contains no private key or plaintext stamp.")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return fmt.Errorf("read account algorithm: %w", err)
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("Shield3 requires an ML-DSA-87 account; migrate this ECDSA account first")
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("derive Shield3 address: %w", err)
+	}
+	defer identity.Clear()
+	fmt.Printf("\n  Account address: %s\n", identity.Address.Hex())
+	fmt.Printf("  Shield3 address: %s\n", identity.Code)
+	pauseWallet(reader)
+	return nil
 }
 
 func showWalletPortfolio(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, accounts []accounts.Account) {
