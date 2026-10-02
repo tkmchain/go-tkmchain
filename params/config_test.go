@@ -466,3 +466,11 @@ func TestTkmnetRequiredForkSchedule(t *testing.T) {
 		t.Fatal("TKMNet requirement inactive at Egypt genesis")
 	}
 }
+
+// Both defaults are used to start the same public network. A node syncing from
+// genesis must validate later rewards and shielded proofs with the same rules.
+func TestRandomXMainnetConfigParity(t *testing.T) {
+	if !reflect.DeepEqual(RandomXChainConfig, MainnetChainConfig) {
+		t.Fatal("RandomX default differs from canonical mainnet configuration")
+	}
+}

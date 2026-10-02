@@ -239,7 +239,10 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}(time.Now())
 	}
 	if handler := handlers[msg.Code]; handler != nil {
-		return handler(backend, msg, peer)
+		if err := handler(backend, msg, peer); err != nil {
+			return fmt.Errorf("eth/%d message %#x (%d bytes): %w", peer.version, msg.Code, msg.Size, err)
+		}
+		return nil
 	}
 	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
 }

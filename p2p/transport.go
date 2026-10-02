@@ -85,8 +85,8 @@ func (t *rlpxTransport) WriteMsg(msg Msg) error {
 
 	// Copy message data to write buffer.
 	t.wbuf.Reset()
-	if _, err := io.CopyN(&t.wbuf, msg.Payload, int64(msg.Size)); err != nil {
-		return err
+	if n, err := io.CopyN(&t.wbuf, msg.Payload, int64(msg.Size)); err != nil {
+		return fmt.Errorf("message %#x payload short read: got %d of %d bytes: %w", msg.Code, n, msg.Size, err)
 	}
 
 	// Write the message.

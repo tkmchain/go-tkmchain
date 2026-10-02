@@ -113,7 +113,9 @@ var RandomXChainConfig = &ChainConfig{
 	AntarticalTime:               newUint64(MainnetAntarticalTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
 	RotatingKingRotationInterval: 100,
+	ShieldedGroth16VerifyingKey:  MainnetShieldedGroth16VerifyingKey,
 	RandomX:                      DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
