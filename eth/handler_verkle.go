@@ -20,12 +20,25 @@ type verkleHandler handler
 
 func (h *verkleHandler) Chain() *core.BlockChain { return h.chain }
 
+// verkleProtocolActive reports whether the canonical head has reached the
+// Antartical activation boundary. P2P protocol capabilities are negotiated
+// once when a connection is created, so a node that is still at genesis must
+// not advertise Verkle yet: doing so makes the peer run the handler, which
+// then rejects the connection before ordinary eth synchronization can catch
+// the node up to the fork.
+func verkleProtocolActive(chain *core.BlockChain) bool {
+	if chain == nil || chain.Config() == nil {
+		return false
+	}
+	head := chain.CurrentHeader()
+	return head != nil && chain.Config().IsAntartical(head.Number, head.Time)
+}
+
 func (h *verkleHandler) RunPeer(peer *verkle.Peer, hand verkle.Handler) error {
 	if h.chain == nil || h.chain.Config() == nil {
 		return fmt.Errorf("verkle protocol unavailable without chain configuration")
 	}
-	head := h.chain.CurrentHeader()
-	if head == nil || !h.chain.Config().IsAntartical(head.Number, head.Time) {
+	if !verkleProtocolActive(h.chain) {
 		return fmt.Errorf("verkle protocol is inactive before Antartical")
 	}
 	if err := peer.Handshake(h.chain); err != nil {
@@ -45,8 +58,7 @@ func (h *verkleHandler) GetWitness(ctx context.Context, hash common.Hash, number
 	if h.chain == nil || h.chain.Config() == nil {
 		return nil, fmt.Errorf("verkle protocol unavailable without chain configuration")
 	}
-	head := h.chain.CurrentHeader()
-	if head == nil || !h.chain.Config().IsAntartical(head.Number, head.Time) {
+	if !verkleProtocolActive(h.chain) {
 		return nil, fmt.Errorf("verkle protocol is inactive before Antartical")
 	}
 	block := h.chain.GetBlockByHash(hash)

@@ -1675,7 +1675,13 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler))...)
 	}
-	protos = append(protos, verkle.MakeProtocols((*verkleHandler)(s.handler))...)
+	// Capabilities are fixed for the lifetime of a P2P connection. A fresh
+	// node starts at genesis, so defer advertising Verkle until its canonical
+	// head reaches Antartical; otherwise peers invoke the Verkle handler and
+	// are disconnected before the ordinary eth sync can advance the head.
+	if s.blockchain != nil && verkleProtocolActive(s.blockchain) {
+		protos = append(protos, verkle.MakeProtocols((*verkleHandler)(s.handler))...)
+	}
 	return protos
 }
 
