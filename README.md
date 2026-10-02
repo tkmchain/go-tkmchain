@@ -853,6 +853,16 @@ $ gtkm wallet interactive
 
 The wallet opens a menu with portfolio, account, refresh, and send screens. It connects through the local IPC socket, keeps passwords and private keys local, validates the recipient and decimal amount, estimates the network fee, checks the available balance, and shows a final review before signing. Type `SEND` to authorize submission; any other response cancels without signing. `wallet ui` and `wallet send` are aliases. Use the existing shielded wallet/prover flow for shielded TKM transfers.
 
+For a stamped ML-DSA-87 account, choose **Show Shield3 address** in the
+interactive menu (option 11 in the current release), select the account, and
+unlock it with the PQ account password. The wallet derives and prints the
+shareable `tkmshield3.…` receiving code locally. It does not print the seed,
+private viewing keys, or the plaintext name/country stamp. If the account has
+not been stamped, choose **Stamp address** first and wait for its registration
+to be confirmed. The ordinary `0x…` ML-DSA account address remains visible in
+the **Accounts** screen; it is not a substitute for the `tkmshield3.…`
+receiving code.
+
 ### Full Node on the Main Tkmchain Network
 
 By far the most common scenario is people wanting to simply interact with Tkmchain: create accounts; transfer funds; deploy and interact with contracts. For this particular use case, the user doesn't care about years-old historical data, so we can sync quickly to the current state of the network. To do so:

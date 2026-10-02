@@ -194,7 +194,7 @@ The guided console wallet provides the same flow locally:
 
 ```text
 ./build/bin/gtkm wallet interactive
-9) Migrate ECDSA → ML-DSA-87
+10) Migrate ECDSA → ML-DSA-87
 ```
 
 Choose the legacy `ECDSA-secp256k1` account, enter its password and a password
@@ -209,6 +209,24 @@ new account password in separate secure backups; the raw seed is never logged
 or printed as hexadecimal. The old ECDSA keyfile is never printed, deleted, or
 overwritten. Cancelling leaves the new PQ key encrypted in the keystore but
 submits no transaction.
+
+### Print a Shield3 receiving address
+
+After the account has a confirmed Antartical stamp, the guided wallet can
+derive the authenticated Shield3 payment code without sending anything:
+
+```text
+./build/bin/gtkm wallet interactive
+11) Show Shield3 address
+```
+
+Select the stamped ML-DSA-87 account and enter its PQ password. The wallet
+prints the public `tkmshield3.…` receiving code and the corresponding ML-DSA
+account address. The code contains the recipient's authenticated public
+payment data and stamp commitment; it never contains the seed, private
+viewing key, or plaintext name/country. Share the `tkmshield3.…` code with a
+sender. A missing or unconfirmed stamp is reported before any code is
+returned, because Shield3 payments require the consensus stamp registration.
 
 ## Keystore-Assisted Auto Migration
 
