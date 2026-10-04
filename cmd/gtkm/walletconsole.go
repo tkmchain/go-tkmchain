@@ -108,6 +108,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  10) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
 		fmt.Printf("  11) %s\n", walletText("menu.shield3", "Show Shield3 address"))
 		fmt.Printf("  12) %s\n", walletText("menu.stampSponsor", "Stamp sponsorship"))
+		fmt.Printf("  13) %s\n", walletText("menu.validator", "Validator"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -160,11 +161,15 @@ func interactiveWallet(ctx *cli.Context) error {
 			if err := walletStampSponsorship(reader, rpcClient, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
+		case "13":
+			if err := walletValidatorMenu(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1 through 12, or 0.")
+			fmt.Println("\n  Choose 1 through 13, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -1126,6 +1131,154 @@ func queryWalletKingStatus(reader *bufio.Reader, client *rpc.Client, walletAccou
 	if status.Hash != (common.Hash{}) {
 		fmt.Printf("  Registration hash: %s\n", status.Hash.Hex())
 	}
+	pauseWallet(reader)
+	return nil
+}
+
+func walletValidatorMenu(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	for {
+		clearWalletScreen()
+		fmt.Println("VALIDATOR")
+		fmt.Println("─────────")
+		fmt.Printf("  Bond: %s TKM    Registration fee: %s TKM\n", formatTKM(walletAmountTKM(core.ValidatorBondTKM)), formatTKM(walletAmountTKM(core.ValidatorRegistrationFeeTKM)))
+		fmt.Printf("  Activation delay: %d blocks    Unbonding: %d blocks\n", core.ValidatorActivationDelay, core.ValidatorUnbondingPeriod)
+		fmt.Println("  Registration requires an ML-DSA-87 account and is available after Antartical activation.")
+		fmt.Println("\n  r) Register validator")
+		fmt.Println("  e) Request validator exit")
+		fmt.Println("  w) Withdraw an unlocked validator bond")
+		fmt.Println("  Enter) Back")
+		choice, err := readWalletLine(reader, "Action")
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "r", "register":
+			err = submitWalletValidatorAction(reader, client, ks, walletAccounts, chainID, "register")
+		case "e", "exit":
+			err = submitWalletValidatorAction(reader, client, ks, walletAccounts, chainID, "exit")
+		case "w", "withdraw":
+			err = submitWalletValidatorAction(reader, client, ks, walletAccounts, chainID, "withdraw")
+		default:
+			return nil
+		}
+		if err != nil {
+			showWalletError(reader, err)
+		}
+	}
+}
+
+func walletAmountTKM(amount uint64) *big.Int {
+	return new(big.Int).Mul(new(big.Int).SetUint64(amount), big.NewInt(params.Ether))
+}
+
+func submitWalletValidatorAction(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int, action string) error {
+	if len(walletAccounts) == 0 {
+		return errors.New("no local accounts available")
+	}
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return err
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("validator actions require an ML-DSA-87 account; create or migrate a PQ account first")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	block, err := client.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("read current block: %w", err)
+	}
+	keyPassword := utils.GetPassPhrase("ML-DSA-87 account password", false)
+	defer clearWalletBytes([]byte(keyPassword))
+	key, err := walletPQKey(ks, account, keyPassword)
+	if err != nil {
+		return err
+	}
+	defer clear(key.Seed)
+
+	var data []byte
+	value := new(big.Int)
+	destination := params.ShieldedPoolAddress
+	switch action {
+	case "register":
+		if block > ^uint64(0)-core.ValidatorActivationDelay {
+			return errors.New("current block is too large to schedule validator activation")
+		}
+		data, err = core.EncodeValidatorRegistration(&core.ValidatorRegistration{
+			Version: core.ValidatorEnvelopeVersion, PublicKey: common.CopyBytes(key.PublicKey),
+			RewardAddress: account.Address, ActivationHeight: block + core.ValidatorActivationDelay,
+		})
+		value = core.ValidatorBondWei()
+	case "exit":
+		data, err = core.EncodeValidatorExit(&core.ValidatorAction{Version: core.ValidatorEnvelopeVersion})
+	case "withdraw":
+		data, err = core.EncodeValidatorWithdrawal(&core.ValidatorAction{Version: core.ValidatorEnvelopeVersion})
+	default:
+		return errors.New("unknown validator action")
+	}
+	if err != nil {
+		return fmt.Errorf("encode validator action: %w", err)
+	}
+	nonce, err := client.PendingNonceAt(ctx, account.Address)
+	if err != nil {
+		return fmt.Errorf("read pending nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return fmt.Errorf("read network fee: %w", err)
+	}
+	gas := uint64(500000)
+	unsigned := types.NewTx(&types.PQTkmTx{ChainID: chainID, Nonce: nonce, GasTipCap: new(big.Int).Set(gasPrice), GasFeeCap: new(big.Int).Set(gasPrice), Gas: gas, To: &destination, Value: value, Data: data})
+	fee := new(big.Int).Mul(new(big.Int).SetUint64(gas), gasPrice)
+	needed := new(big.Int).Add(new(big.Int).Set(value), fee)
+	if action == "register" {
+		needed.Add(needed, core.ValidatorRegistrationFeeWei())
+	}
+	balance, err := client.BalanceAt(ctx, account.Address, nil)
+	if err != nil {
+		return fmt.Errorf("read account balance: %w", err)
+	}
+	if balance.Cmp(needed) < 0 {
+		return fmt.Errorf("insufficient balance: need %s TKM including bond, registration fee and maximum transaction fee; have %s TKM", formatTKM(needed), formatTKM(balance))
+	}
+	fmt.Printf("\n  Action: %s\n  Account: %s\n  Current block: #%d\n", action, account.Address.Hex(), block)
+	if action == "register" {
+		fmt.Printf("  Bond: %s TKM\n  Registration fee: %s TKM (burned)\n  Scheduled activation: #%d\n", formatTKM(value), formatTKM(core.ValidatorRegistrationFeeWei()), block+core.ValidatorActivationDelay)
+	}
+	fmt.Printf("  Maximum network fee: %s TKM\n", formatTKM(fee))
+	confirm, err := readWalletLine(reader, "Type "+strings.ToUpper(action)+" to sign and submit")
+	if err != nil {
+		return err
+	}
+	if confirm != strings.ToUpper(action) {
+		fmt.Println("  Cancelled. No transaction was signed.")
+		pauseWallet(reader)
+		return nil
+	}
+	signed, err := ks.SignTxWithPassphrase(account, keyPassword, unsigned, chainID)
+	if err != nil {
+		return fmt.Errorf("sign validator transaction: %w", err)
+	}
+	submitCtx, submitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer submitCancel()
+	if err := client.SendTransaction(submitCtx, signed); err != nil {
+		return fmt.Errorf("submit validator transaction: %w", err)
+	}
+	fmt.Printf("\n  Validator transaction submitted: %s\n  Waiting for confirmation...\n", signed.Hash().Hex())
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer waitCancel()
+	receipt, err := waitWalletReceipt(waitCtx, client, signed.Hash())
+	if err != nil {
+		return fmt.Errorf("transaction %s was submitted but confirmation failed: %w", signed.Hash().Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("validator transaction %s was mined but failed; inspect node logs for the consensus rejection reason", signed.Hash().Hex())
+	}
+	fmt.Printf("  Confirmed in block #%d. Transaction: %s\n", receipt.BlockNumber.Uint64(), signed.Hash().Hex())
 	pauseWallet(reader)
 	return nil
 }
