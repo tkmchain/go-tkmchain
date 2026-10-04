@@ -52,6 +52,13 @@ const (
 	MainnetPQMigrationRecoveryTime uint64 = 1786687200
 	// MainnetAntarticalTime is 2026-10-01 00:00:00 UTC.
 	MainnetAntarticalTime uint64 = 1790812800
+	// MainnetShieldedOnlyTime is the proposed 2026-10-04 10:00 UTC cutoff.
+	// It is not scheduled by default: confidential public-balance funding and
+	// protocol operations must be completed before restricting live networks.
+	MainnetShieldedOnlyTime uint64 = 1791108000
+	// ProposedConfidentialLedgerTime schedules the replacement ledger proposal.
+	// Network configurations must opt in after compatibility testing.
+	ProposedConfidentialLedgerTime uint64 = 1791108000
 	// MainnetRandomXMoneroBlock activates canonical RandomX proof validation.
 	MainnetRandomXMoneroBlock uint64 = 20374
 
@@ -195,6 +202,10 @@ type ChainConfig struct {
 	QuantumResistantTime    *uint64 `json:"quantumResistantTime,omitempty"`
 	PQMigrationRecoveryTime *uint64 `json:"pqMigrationRecoveryTime,omitempty"`
 	AntarticalTime          *uint64 `json:"antarticalTime,omitempty"`
+	// ShieldedOnlyTime closes public payment entry/exit paths. It is a
+	// separate fork: Antartical blocks already contain public deposits.
+	ShieldedOnlyTime       *uint64 `json:"shieldedOnlyTime,omitempty"`
+	ConfidentialLedgerTime *uint64 `json:"confidentialLedgerTime,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -649,6 +660,17 @@ func (c *ChainConfig) IsAntartical(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.AntarticalTime, time)
 }
 
+// IsShieldedOnly restricts user payments to existing Shield3/4 notes. A nil
+// timestamp leaves historical rules intact; network schedules must explicitly
+// opt in after public-balance migration has been arranged.
+func (c *ChainConfig) IsShieldedOnly(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.ShieldedOnlyTime, time)
+}
+
+func (c *ChainConfig) IsConfidentialLedger(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.ConfidentialLedgerTime, time)
+}
+
 // IsTkmnetRequired reports whether the TKMNet relay is a mandatory node
 // service for the active chain rules. TKMNet becomes mandatory with the
 // Antartical consensus rules, so existing chain configurations do not need a
@@ -700,6 +722,8 @@ type Rules struct {
 	IsKyoto, IsPhone                                        bool
 	IsQuantumResistant, IsAntartical, IsTkmnetRequired      bool
 	IsPQMigrationAllowed                                    bool
+	IsShieldedOnly                                          bool
+	IsConfidentialLedger                                    bool
 	// Antartical feature gates. These are exposed in Rules so the txpool,
 	// execution layer, and alternative clients can use one deterministic fork
 	// decision. A gate being true means the feature is scheduled; callers that
@@ -758,6 +782,8 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsPhone:               c.IsPhone(num, timestamp),
 		IsQuantumResistant:    c.IsQuantumResistant(num, timestamp),
 		IsAntartical:          c.IsAntartical(num, timestamp),
+		IsShieldedOnly:        c.IsShieldedOnly(num, timestamp),
+		IsConfidentialLedger:  c.IsConfidentialLedger(num, timestamp),
 		IsTkmnetRequired:      c.IsTkmnetRequired(num, timestamp),
 		IsPQMigrationAllowed:  c.IsPQMigrationAllowed(num, timestamp),
 		IsAccountAbstraction:  c.IsAntarticalConsensusFeatureActive(FeatureAccountAbstraction, num, timestamp),
@@ -796,6 +822,17 @@ func (c *ChainConfig) IsUBTGenesis() bool {
 func (c *ChainConfig) CheckConfigForkOrder() error {
 	if c == nil {
 		return nil
+	}
+	if c.ConfidentialLedgerTime != nil {
+		if c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil {
+			return fmt.Errorf("confidentialLedgerTime requires London, privacy, quantum and Antartical forks")
+		}
+		if c.ShieldedOnlyTime != nil {
+			return fmt.Errorf("confidential ledger permits explicit public boundaries and cannot use the shielded-only cutoff")
+		}
+	}
+	if c.ShieldedOnlyTime != nil && (c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil) {
+		return fmt.Errorf("shieldedOnlyTime requires London, privacyCommitmentTime, quantumResistantTime and antarticalTime")
 	}
 	blockForks := []struct {
 		name     string
@@ -857,6 +894,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"amsterdamTime", c.AmsterdamTime},
 		{"ubtTime", c.UBTTime},
 		{"antarticalTime", c.AntarticalTime},
+		{"shieldedOnlyTime", c.ShieldedOnlyTime},
+		{"confidentialLedgerTime", c.ConfidentialLedgerTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -1056,6 +1095,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.AntarticalTime, newcfg.AntarticalTime, headTimestamp) {
 		return newTimestampCompatError("Antartical fork timestamp", c.AntarticalTime, newcfg.AntarticalTime)
+	}
+	if isForkTimestampIncompatible(c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime, headTimestamp) {
+		return newTimestampCompatError("Shielded-only fork timestamp", c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime)
+	}
+	if isForkTimestampIncompatible(c.ConfidentialLedgerTime, newcfg.ConfidentialLedgerTime, headTimestamp) {
+		return newTimestampCompatError("Confidential ledger timestamp", c.ConfidentialLedgerTime, newcfg.ConfidentialLedgerTime)
 	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)

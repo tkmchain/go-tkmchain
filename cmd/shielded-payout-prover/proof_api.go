@@ -8,13 +8,10 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/zk/shielded"
 )
 
 type BuildTransferRequest struct {
@@ -193,6 +190,8 @@ func (p *Prover) releaseBuildSlot() {
 }
 
 func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShieldedResponse, error) {
+	return BuildShieldedResponse{}, errors.New("legacy proof-only deposit API is disabled; use the daemon-funded Shield3/Shield4 deposit flow")
+	/* Legacy V1/V2 construction is intentionally unreachable.
 	if !p.ready() {
 		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
 	}
@@ -261,9 +260,12 @@ func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShi
 		IntentHash:   intentHash.Hex(),
 		CreatedNotes: []ShieldedNote{note},
 	}, nil
+	*/
 }
 
 func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (BuildShieldedResponse, error) {
+	return BuildShieldedResponse{}, errors.New("legacy proof-only transfer API is disabled; use the daemon-backed Shield3/Shield4 wallet flow")
+	/* Legacy V1/V2 construction is intentionally unreachable.
 	if !p.ready() {
 		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
 	}
@@ -352,38 +354,11 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 		SpentNullifier: draft.Envelope.Spends[0].Nullifier.Hex(),
 		CreatedNotes:   created,
 	}, nil
+	*/
 }
 
-func (p *Prover) BuildWithdrawal(ctx context.Context, req BuildWithdrawalRequest) (BuildShieldedResponse, error) {
-	if !p.ready() {
-		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(strings.TrimSpace(req.RequestID)) < 8 {
-		return BuildShieldedResponse{}, errors.New("requestId must contain at least 8 characters")
-	}
-	if _, err := shieldedSpendData(req.RequestID, req.ApplicationData); err != nil {
-		return BuildShieldedResponse{}, err
-	}
-	if !isValidAddress(req.From) || !isValidAddress(req.To) {
-		return BuildShieldedResponse{}, errors.New("valid from and withdrawal recipient addresses are required")
-	}
-	if _, err := parseViewPublicKey(req.ChangeViewKey); err != nil {
-		return BuildShieldedResponse{}, fmt.Errorf("change %w", err)
-	}
-	amountWei, ok := parseBigFlexible(req.AmountWei)
-	if !ok || amountWei.Sign() <= 0 || amountWei.BitLen() > 64 {
-		return BuildShieldedResponse{}, errors.New("amountWei must be a positive uint64 value")
-	}
-	chainID, nonce, gasPrice, err := p.proofTransactionContext(ctx, req.From, req.Nonce, req.GasPriceWei)
-	if err != nil {
-		return BuildShieldedResponse{}, err
-	}
-	if p.activeShieldedVersion(ctx, chainID) != core.ShieldedTxVersionV2 {
-		return BuildShieldedResponse{}, errors.New("shielded withdrawals require the recipient-bound V2 circuit")
-	}
-	return p.buildWithdrawalV2(ctx, req, amountWei, chainID, nonce, gasPrice)
+func (p *Prover) BuildWithdrawal(context.Context, BuildWithdrawalRequest) (BuildShieldedResponse, error) {
+	return BuildShieldedResponse{}, errors.New("legacy proof-only withdrawal API is disabled; use the daemon-backed Shield3/Shield4 wallet flow")
 }
 
 func shieldedSpendData(requestID string, applicationData string) ([]byte, error) {

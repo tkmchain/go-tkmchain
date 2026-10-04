@@ -41,6 +41,9 @@ transfers continue to use the dedicated shielded wallet/prover flow.
 Use Stamp address before a Shield3 send. The flow encrypts the name and
 country locally, persists the exact stamp in the PQ keyfile, submits the
 owner-proof registration, and waits for immutable on-chain confirmation.
+Use Stamp sponsorship for an unfunded recipient in another wallet. Exchange
+an offer code and recipient authorization code, then let the funded sponsor
+review and pay the registration gas. Private keys stay in their own wallets.
 The TKM Phone panel can purchase numbers, register an ML-DSA-87 device, and
 send encrypted messages. Phone purchases require a PQ account and explicit
 confirmation; payment is confirmed before ownership is transferred.
@@ -104,6 +107,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  9) %s\n", walletText("menu.language", "Language"))
 		fmt.Printf("  10) %s\n", walletText("menu.migrate", "Migrate ECDSA → ML-DSA-87"))
 		fmt.Printf("  11) %s\n", walletText("menu.shield3", "Show Shield3 address"))
+		fmt.Printf("  12) %s\n", walletText("menu.stampSponsor", "Stamp sponsorship"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -152,11 +156,15 @@ func interactiveWallet(ctx *cli.Context) error {
 			if err := showWalletShield3Address(reader, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
+		case "12":
+			if err := walletStampSponsorship(reader, rpcClient, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, or 0.")
+			fmt.Println("\n  Choose 1 through 12, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -986,6 +994,7 @@ func stampWalletAddress(reader *bufio.Reader, rpcClient *rpc.Client, client *eth
 	tx, err := shield3wallet.BuildAndSignStamp(buildCtx, rpcClient, key.Seed, identity)
 	buildCancel()
 	if err != nil {
+		fmt.Println("  For an unfunded address, choose Stamp sponsorship from the main menu.")
 		return fmt.Errorf("build Shield3 stamp registration: %w", err)
 	}
 

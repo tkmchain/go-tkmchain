@@ -119,6 +119,17 @@ func processShieldedV4(config *params.ChainConfig, number *big.Int, time uint64,
 	if _, ok := seen[linkKey]; ok {
 		return fmt.Errorf("%w: duplicate Shield4 linkability tag in block", ErrInvalidShieldedTx)
 	}
+	var ledger ConfidentialLedgerTotals
+	if config.IsConfidentialLedger(number, time) {
+		deposit := new(big.Int)
+		if e.Deposit {
+			deposit.Set(tx.Value())
+		}
+		ledger, err = ledgerTransition(st, assetID, deposit, e.WithdrawalValue, e.GasSponsorValue)
+		if err != nil {
+			return err
+		}
+	}
 	statement, err := ShieldedV4Statement(tx, e)
 	if err != nil {
 		return err
@@ -159,10 +170,18 @@ func processShieldedV4(config *params.ChainConfig, number *big.Int, time uint64,
 		}
 		seen[linkKey] = struct{}{}
 	}
+	publicSponsor := e.GasSponsorValue
+	if config.IsConfidentialLedger(number, time) {
+		commitLedger(st, assetID, ledger)
+		if e.FeeMode == ShieldedFeePrepaid {
+			burnConfidentialFee(st, tx, e.GasSponsorValue)
+			publicSponsor = new(big.Int)
+		}
+	}
 	for _, release := range []struct {
 		to    common.Address
 		value *big.Int
-	}{{e.WithdrawalRecipient, e.WithdrawalValue}, {sender, e.GasSponsorValue}} {
+	}{{e.WithdrawalRecipient, e.WithdrawalValue}, {sender, publicSponsor}} {
 		if release.value.Sign() > 0 {
 			amount := uint256.MustFromBig(release.value)
 			st.SubBalance(params.ShieldedPoolAddress, amount, tracing.BalanceChangeTransfer)

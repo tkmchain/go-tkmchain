@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/holiman/uint256"
 )
 
@@ -218,6 +219,9 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 // ProcessShieldedTransaction applies consensus shielded commitment state for tx.
 // The seen map should be shared across all transactions in the candidate block.
 func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
+	if err := ValidateShieldedOnlyTransaction(config, blockNumber, blockTime, tx); err != nil {
+		return err
+	}
 	if HasShieldedV4Prefix(tx.Data()) && (config == nil || !config.IsAntartical(blockNumber, blockTime) || !config.IsPrivacyCommitments(blockNumber, blockTime)) {
 		return fmt.Errorf("%w: Shield4 is not active until Antartical", ErrInvalidShieldedTx)
 	}
@@ -264,6 +268,9 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 // nullifier and commitment state checks so txpool validation can reject malformed
 // or transparent post-privacy transactions without needing a StateDB.
 func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if err := ValidateShieldedOnlyTransaction(config, blockNumber, blockTime, tx); err != nil {
+		return err
+	}
 	if HasPrivateTVMPrefix(tx.Data()) {
 		_, err := ValidatePrivateTVMBasics(config, blockNumber, blockTime, tx)
 		return err
@@ -380,6 +387,15 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 	withdrawalValue := shieldedWithdrawalValue(envelope)
 	gasSponsorValue := shieldedGasSponsorValue(envelope)
 	publicRelease := new(big.Int).Add(withdrawalValue, gasSponsorValue)
+	var ledger ConfidentialLedgerTotals
+	if config.IsConfidentialLedger(blockNumber, blockTime) {
+		// The remaining V2 path is a proved public migration withdrawal.
+		// Account for its reserve debit so it cannot strand the new ledger.
+		ledger, err = ledgerTransition(statedb, shielded3.AssetTKM, new(big.Int), publicRelease, new(big.Int))
+		if err != nil {
+			return err
+		}
+	}
 	if publicRelease.Sign() > 0 {
 		amount := uint256.MustFromBig(publicRelease)
 		if statedb.GetBalance(params.ShieldedPoolAddress).Cmp(amount) < 0 {
@@ -460,6 +476,9 @@ func processShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		if err := appendShieldedMerkleLeaf(statedb, output.Commitment, txHash); err != nil {
 			return err
 		}
+	}
+	if config.IsConfidentialLedger(blockNumber, blockTime) {
+		commitLedger(statedb, shielded3.AssetTKM, ledger)
 	}
 	return nil
 }

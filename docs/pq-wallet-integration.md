@@ -148,6 +148,12 @@ address**, and submit the saved stamp. Use **Show Shield3 address** to display
 the same receiving identity later. The older `shielded-view-key` command below
 exports legacy Shield2 exchange-scanner credentials, not Shield3 viewing keys.
 
+An unfunded recipient can use **12) Stamp sponsorship** to exchange public
+codes with a funded sponsor in another interactive wallet. Preparing the address
+costs no gas; the sponsor pays registration gas after receiving the beneficiary's
+authorization. See [external stamp sponsorship](STAMP_SPONSORSHIP.md) for the
+four steps and recovery of pending submissions.
+
 When a recovery backup is needed, `ethkey inspect --private` displays a
 standard English BIP39 phrase of 24 words for a PQ keyfile. It deliberately
 does not print the raw hexadecimal seed; the phrase round-trips to the exact

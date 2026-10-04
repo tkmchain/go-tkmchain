@@ -9,14 +9,19 @@ import (
 // ShieldedV4Status reports the native relation and the single Antartical
 // activation gate. Shield4 has no independent fork timestamp.
 type ShieldedV4Status struct {
-	Active         bool            `json:"active"`
-	NativeVerifier bool            `json:"nativeVerifier"`
-	ActivationTime *hexutil.Uint64 `json:"activationTime"`
-	MaxSendWei     string          `json:"maxSendWei"`
-	MaxRecipients  uint64          `json:"maxRecipients"`
-	ViewKeyVersion uint64          `json:"viewKeyVersion"`
-	MaxInputs      uint64          `json:"maxInputs"`
-	MaxSendTKM     uint64          `json:"maxSendTKM"`
+	ConfidentialLedger     bool            `json:"confidentialLedger"`
+	ConfidentialLedgerTime *hexutil.Uint64 `json:"confidentialLedgerTime"`
+	PrepaidFeeGas          uint64          `json:"prepaidFeeGas"`
+	Active                 bool            `json:"active"`
+	NativeVerifier         bool            `json:"nativeVerifier"`
+	ActivationTime         *hexutil.Uint64 `json:"activationTime"`
+	MaxSendWei             string          `json:"maxSendWei"`
+	MaxRecipients          uint64          `json:"maxRecipients"`
+	ViewKeyVersion         uint64          `json:"viewKeyVersion"`
+	MaxInputs              uint64          `json:"maxInputs"`
+	MaxSendTKM             uint64          `json:"maxSendTKM"`
+	ShieldedOnly           bool            `json:"shieldedOnly"`
+	ShieldedOnlyTime       *hexutil.Uint64 `json:"shieldedOnlyTime"`
 }
 
 func (api *PrivacyAPI) ShieldedV4Status() ShieldedV4Status {
@@ -25,12 +30,23 @@ func (api *PrivacyAPI) ShieldedV4Status() ShieldedV4Status {
 		return status
 	}
 	cfg := api.e.blockchain.Config()
+	status.PrepaidFeeGas = core.ConfidentialPrepaidGas
+	if cfg.ConfidentialLedgerTime != nil {
+		t := hexutil.Uint64(*cfg.ConfidentialLedgerTime)
+		status.ConfidentialLedgerTime = &t
+	}
+	if cfg.ShieldedOnlyTime != nil {
+		t := hexutil.Uint64(*cfg.ShieldedOnlyTime)
+		status.ShieldedOnlyTime = &t
+	}
 	if cfg.AntarticalTime != nil {
 		t := hexutil.Uint64(*cfg.AntarticalTime)
 		status.ActivationTime = &t
 	}
 	head := api.e.blockchain.CurrentBlock()
 	status.Active = head != nil && cfg.IsAntartical(head.Number, head.Time) && cfg.IsPrivacyCommitments(head.Number, head.Time)
+	status.ShieldedOnly = head != nil && cfg.IsShieldedOnly(head.Number, head.Time)
+	status.ConfidentialLedger = head != nil && cfg.IsConfidentialLedger(head.Number, head.Time)
 	return status
 }
 

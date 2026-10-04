@@ -34,6 +34,9 @@ var ErrPublicExecutionDisabled = errors.New("transparent EVM/TVM execution is di
 // is shared by txpool admission and block execution so both paths enforce the
 // same rule.
 func ValidatePrivateExecutionPolicy(config *params.ChainConfig, number *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if err := ValidateShieldedOnlyTransaction(config, number, blockTime, tx); err != nil {
+		return err
+	}
 	if config == nil || tx == nil || !config.IsAntartical(number, blockTime) {
 		return nil
 	}
@@ -63,7 +66,11 @@ func ValidatePrivateExecutionMessage(config *params.ChainConfig, number *big.Int
 	return validatePrivateExecutionFields(config, number, blockTime, txType, to, value, data, false)
 }
 
-func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int, blockTime uint64, txType uint8, _ *common.Address, _ *big.Int, data []byte, blockReward bool) error {
+func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int, blockTime uint64, txType uint8, to *common.Address, value *big.Int, data []byte, blockReward bool) error {
+	if config.IsShieldedOnly(number, blockTime) {
+		_, err := shieldedOnlyFields(txType, to, value, data)
+		return err
+	}
 	if config == nil || !config.IsAntartical(number, blockTime) || blockReward {
 		return nil
 	}

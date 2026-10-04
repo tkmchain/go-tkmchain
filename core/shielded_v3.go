@@ -54,6 +54,7 @@ type ShieldedV3Transaction struct {
 	// AssetID is optional for wire compatibility; zero means native TKM.
 	// Non-zero IDs are bound into the native proof statement and state domain.
 	AssetID uint64 `rlp:"optional"`
+	FeeMode uint64 `rlp:"optional"`
 }
 
 func shieldedV3AssetID(e *ShieldedV3Transaction) uint64 {
@@ -163,6 +164,9 @@ func validateV3Ciphertext(data []byte, ctx pqcrypto.ShieldedV3Context) bool {
 	return pqcrypto.ValidateShieldedV3CiphertextContext(data, ctx) == nil
 }
 func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, tx *types.Transaction) (*ShieldedV3Transaction, error) {
+	if err := ValidateShieldedOnlyTransaction(config, number, time, tx); err != nil {
+		return nil, err
+	}
 	fail := func(message string) (*ShieldedV3Transaction, error) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidShieldedTx, message)
 	}
@@ -188,13 +192,16 @@ func shieldedV3Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if e.WithdrawalValue == nil || e.GasSponsorValue == nil || e.WithdrawalValue.Sign() < 0 || e.GasSponsorValue.Sign() < 0 {
 		return fail("invalid Shield3 public values")
 	}
+	if err := validateConfidentialLedgerShape(config, number, time, tx, e.Deposit, e.GasSponsorValue, e.FeeMode, shieldedV3AssetID(e)); err != nil {
+		return nil, err
+	}
 	if err := ValidateShieldedV3Time(e, time); err != nil {
 		return nil, err
 	}
 	if _, err := ShieldedV3Nullifiers(e); err != nil {
 		return fail("invalid input count or nullifiers")
 	}
-	if e.Relayed && e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+	if e.Relayed && !config.IsShieldedOnly(number, time) && !config.IsConfidentialLedger(number, time) && e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
 		return fail("relay requires the exact authorized gas reserve")
 	}
 	release := new(big.Int).Add(e.WithdrawalValue, e.GasSponsorValue)
@@ -384,6 +391,17 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 			return fmt.Errorf("%w: duplicate Shield3 nullifier in block", ErrInvalidShieldedTx)
 		}
 	}
+	var ledger ConfidentialLedgerTotals
+	if config.IsConfidentialLedger(number, time) {
+		deposit := new(big.Int)
+		if e.Deposit {
+			deposit.Set(tx.Value())
+		}
+		ledger, err = ledgerTransition(st, assetID, deposit, e.WithdrawalValue, e.GasSponsorValue)
+		if err != nil {
+			return err
+		}
+	}
 	statement, err := ShieldedV3Statement(tx, e)
 	if err != nil {
 		return err
@@ -417,10 +435,18 @@ func processShieldedV3(config *params.ChainConfig, number *big.Int, time uint64,
 		}
 		setShieldedV3AssetSupply(st, assetID, supply)
 	}
+	publicSponsor := e.GasSponsorValue
+	if config.IsConfidentialLedger(number, time) {
+		commitLedger(st, assetID, ledger)
+		if e.FeeMode == ShieldedFeePrepaid {
+			burnConfidentialFee(st, tx, e.GasSponsorValue)
+			publicSponsor = new(big.Int)
+		}
+	}
 	for _, release := range []struct {
 		to    common.Address
 		value *big.Int
-	}{{e.WithdrawalRecipient, e.WithdrawalValue}, {sender, e.GasSponsorValue}} {
+	}{{e.WithdrawalRecipient, e.WithdrawalValue}, {sender, publicSponsor}} {
 		if release.value.Sign() > 0 {
 			amount := uint256.MustFromBig(release.value)
 			st.SubBalance(params.ShieldedPoolAddress, amount, tracing.BalanceChangeTransfer)

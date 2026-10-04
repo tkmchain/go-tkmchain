@@ -232,12 +232,30 @@ func TestShield3WalletConsensus(t *testing.T) {
 			if offerErr != nil {
 				t.Fatal(offerErr)
 			}
+			// Exchange only public codes between the sponsor and recipient.
+			// No private key or in-memory Identity crosses the wallet boundary.
+			offerCode, codeErr := EncodeStampSponsorshipCode(offer)
+			if codeErr != nil {
+				t.Fatal(codeErr)
+			}
+			offer, codeErr = DecodeStampSponsorshipCode(offerCode, 8979)
+			if codeErr != nil {
+				t.Fatal(codeErr)
+			}
 			if _, err := AuthorizeStampSponsorship(ctx, rpc, seedA, a, offer.Transaction); err == nil {
 				t.Fatal("another beneficiary accepted fee offer")
 			}
 			authorized, authErr := AuthorizeStampSponsorship(ctx, rpc, seedB, b, offer.Transaction)
 			if authErr != nil {
 				t.Fatal(authErr)
+			}
+			authorizedCode, codeErr := EncodeStampSponsorshipCode(authorized)
+			if codeErr != nil {
+				t.Fatal(codeErr)
+			}
+			authorized, codeErr = DecodeStampSponsorshipCode(authorizedCode, 8979)
+			if codeErr != nil {
+				t.Fatal(codeErr)
 			}
 			if _, err := BuildSponsoredStamp(ctx, rpc, seedB, b, authorized.Transaction); err == nil {
 				t.Fatal("another fee payer accepted authorized packet")
@@ -346,7 +364,10 @@ func TestShield3WalletConsensus(t *testing.T) {
 		}
 	}
 	st.SubBalance(b.Address, st.GetBalance(b.Address), tracing.BalanceChangeUnspecified)
-	amount := new(big.Int).Mul(big.NewInt(11), big.NewInt(1_000_000_000_000_000_000))
+	// Keep a note larger than the legacy uint64-wei boundary in the wallet
+	// integration test. Shielded spends must never copy this value into the
+	// public transaction Value field.
+	amount := new(big.Int).Mul(big.NewInt(40), big.NewInt(1_000_000_000_000_000_000))
 	unsigned, err := Build(ctx, rpc, seedA, a, pa, amount, true)
 	if err != nil {
 		t.Fatal(err)
@@ -385,10 +406,13 @@ func TestShield3WalletConsensus(t *testing.T) {
 		t.Fatal("accepted reorged scan")
 	}
 	rpc.reorg = false
-	payment := new(big.Int).Mul(big.NewInt(5), big.NewInt(1_000_000_000_000_000_000))
+	payment := new(big.Int).Mul(big.NewInt(20), big.NewInt(1_000_000_000_000_000_000))
 	unsigned, err = Build(ctx, rpc, seedA, a, pb, payment, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if unsigned.Value().Sign() != 0 {
+		t.Fatalf("Shield3 spend exposed its amount in the public transaction value: %s", unsigned.Value())
 	}
 	spend := sign(unsigned, seedA)
 	if err := core.ValidateShieldedV3Proof(spend); err != nil {
@@ -621,10 +645,13 @@ func TestShield3WalletConsensus(t *testing.T) {
 
 	// Shield4 uses the same authenticated output scan and full-chain tree while
 	// selecting a distinct native relation and envelope version.
-	v4Payment := big.NewInt(1_000_000_000_000_000_000)
+	v4Payment := new(big.Int).Mul(big.NewInt(19), big.NewInt(1_000_000_000_000_000_000))
 	v4Unsigned, err := BuildV4(ctx, rpc, seedA, a, pb, v4Payment, false)
 	if err != nil {
 		t.Fatal("Shield4 wallet build:", err)
+	}
+	if v4Unsigned.Value().Sign() != 0 {
+		t.Fatalf("Shield4 spend exposed its amount in the public transaction value: %s", v4Unsigned.Value())
 	}
 	v4 := sign(v4Unsigned, seedA)
 	if err := core.ValidateShieldedV4Proof(v4); err != nil {

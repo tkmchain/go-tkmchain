@@ -61,6 +61,10 @@ func buildV4Asset(ctx context.Context, rpc RPC, seed []byte, identity *Identity,
 }
 
 func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest) (*types.Transaction, error) {
+	return buildV4AssetWithWithdrawalFee(ctx, rpc, seed, identity, payments, deposit, relay, assetID, withdrawal, nil)
+}
+
+func buildV4AssetWithWithdrawalFee(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest, prepaidLimit *big.Int) (*types.Transaction, error) {
 	assetID = shielded3.NormalizeAssetID(assetID)
 	if !shielded3.IsSupportedAsset(assetID) {
 		return nil, errors.New("unsupported shielded asset")
@@ -68,11 +72,8 @@ func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, ident
 	var amount *big.Int
 	var err error
 	if withdrawal != nil {
-		if deposit || assetID != shielded3.AssetPTKM || withdrawal.Amount == nil || withdrawal.Amount.Sign() <= 0 || withdrawal.Amount.Cmp(shielded4.MaxSendWei()) > 0 || withdrawal.Recipient == (common.Address{}) {
+		if deposit || withdrawal.Amount == nil || withdrawal.Amount.Sign() <= 0 || withdrawal.Amount.Cmp(shielded4.MaxSendWei()) > 0 || withdrawal.Recipient == (common.Address{}) {
 			return nil, errors.New("invalid wrapped private TKM withdrawal")
-		}
-		if err := RequireRegisteredAddress(ctx, rpc, withdrawal.Recipient); err != nil {
-			return nil, err
 		}
 		if identity == nil || identity.Stamp == nil {
 			return nil, errors.New("create the private stamp first")
@@ -89,18 +90,33 @@ func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, ident
 		return nil, errors.New("shielding requires exactly one destination")
 	}
 
+	var active status
+	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV4Status"); err != nil {
+		return nil, err
+	}
+	if active.ShieldedOnly && (deposit || withdrawal != nil) {
+		return nil, core.ErrPublicPaymentDisabled
+	}
+	prepaid := prepaidLimit != nil
+	if prepaid && (!active.ConfidentialLedger || deposit || assetID != shielded3.AssetTKM || prepaidLimit.Sign() <= 0 || prepaidLimit.BitLen() > 256 || relay != nil) {
+		return nil, errors.New("prepaid note fees require an active confidential ledger, a native TKM spend, and an explicit fee budget")
+	}
+	if withdrawal != nil && assetID == shielded3.AssetTKM && !active.ConfidentialLedger {
+		return nil, errors.New("native TKM public withdrawal requires the confidential ledger fork")
+	}
+	if !active.Active || !active.NativeVerifier {
+		return nil, errors.New("Shield4 requires an Antartical node with the embedded verifier")
+	}
 	select {
 	case buildSlot <- struct{}{}:
 		defer func() { <-buildSlot }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	var active status
-	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV4Status"); err != nil {
-		return nil, err
-	}
-	if !active.Active || !active.NativeVerifier {
-		return nil, errors.New("Shield4 requires an Antartical node with the embedded verifier")
+	if withdrawal != nil {
+		if err := RequireRegisteredAddress(ctx, rpc, withdrawal.Recipient); err != nil {
+			return nil, err
+		}
 	}
 	self := PaymentPayload{ChainID: identity.ChainID, Address: identity.Address, Owner: identity.Owner, Stamp: *identity.Stamp}
 	if err := RequireRegisteredStamp(ctx, rpc, self); err != nil {
@@ -150,13 +166,28 @@ func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, ident
 	}
 	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), gasPrice)
 	sponsor := new(big.Int)
-	if assetID == shielded3.AssetPTKM && relay != nil {
+	if prepaid {
+		if maxGas.Cmp(prepaidLimit) > 0 {
+			return nil, errors.New("prepaid note fee exceeds the authorized budget")
+		}
+		sponsor.Set(maxGas)
+	} else if active.ConfidentialLedger && !deposit {
+		if err := requirePublicFeePayer(ctx, rpc, relay, &balance, maxGas); err != nil {
+			return nil, errors.New("authorize prepaid note fees, fund public gas, or use a fee-sponsored relay")
+		}
+	}
+	if active.ShieldedOnly {
+		if err := requirePublicFeePayer(ctx, rpc, relay, &balance, maxGas); err != nil {
+			return nil, err
+		}
+	}
+	if assetID == shielded3.AssetPTKM && relay != nil && !active.ShieldedOnly && !active.ConfidentialLedger {
 		return nil, errors.New("wrapped private TKM requires the sender to pay public gas")
 	}
 	if !deposit && assetID == shielded3.AssetPTKM && (*big.Int)(&balance).Cmp(maxGas) < 0 {
 		return nil, errors.New("public balance cannot cover gas for wrapped private TKM")
 	}
-	if !deposit && assetID != shielded3.AssetPTKM && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
+	if !active.ShieldedOnly && !active.ConfidentialLedger && !deposit && assetID != shielded3.AssetPTKM && (relay != nil || (*big.Int)(&balance).Cmp(maxGas) < 0) {
 		sponsor.Set(maxGas)
 	}
 	required := new(big.Int).Add(amount, sponsor)
@@ -166,6 +197,9 @@ func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, ident
 	witness := shielded4.SpendWitness{SpendingSecret: identity.SpendingSecret}
 	change := new(big.Int)
 	envelope := &core.ShieldedV4Transaction{Version: 4, Deposit: deposit, AssetID: assetID, WithdrawalValue: new(big.Int), GasSponsorValue: sponsor}
+	if prepaid {
+		envelope.FeeMode = core.ShieldedFeePrepaid
+	}
 	if withdrawal != nil {
 		envelope.WithdrawalRecipient = withdrawal.Recipient
 		envelope.WithdrawalValue.Set(withdrawal.Amount)

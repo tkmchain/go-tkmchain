@@ -216,6 +216,7 @@ func toWordSize(size uint64) uint64 {
 // A Message contains the data derived from a single transaction that is relevant to state
 // processing.
 type Message struct {
+	shieldedTransactionHash        common.Hash
 	antarticalStampTransactionHash common.Hash
 	antarticalStampBeneficiary     common.Address
 
@@ -289,22 +290,23 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	}
 
 	msg := &Message{
-		From:                  from,
-		Nonce:                 tx.Nonce(),
-		GasLimit:              tx.Gas(),
-		GasPrice:              gasPrice,
-		GasFeeCap:             gasFeeCap,
-		GasTipCap:             gasTipCap,
-		To:                    tx.To(),
-		Value:                 value,
-		Data:                  tx.Data(),
-		AccessList:            tx.AccessList(),
-		SetCodeAuthorizations: tx.SetCodeAuthorizations(),
-		SkipNonceChecks:       false,
-		SkipTransactionChecks: false,
-		BlobHashes:            tx.BlobHashes(),
-		TxType:                tx.Type(),
-		BlobGasFeeCap:         blobGasFeeCap,
+		shieldedTransactionHash: tx.Hash(),
+		From:                    from,
+		Nonce:                   tx.Nonce(),
+		GasLimit:                tx.Gas(),
+		GasPrice:                gasPrice,
+		GasFeeCap:               gasFeeCap,
+		GasTipCap:               gasTipCap,
+		To:                      tx.To(),
+		Value:                   value,
+		Data:                    tx.Data(),
+		AccessList:              tx.AccessList(),
+		SetCodeAuthorizations:   tx.SetCodeAuthorizations(),
+		SkipNonceChecks:         false,
+		SkipTransactionChecks:   false,
+		BlobHashes:              tx.BlobHashes(),
+		TxType:                  tx.Type(),
+		BlobGasFeeCap:           blobGasFeeCap,
 	}
 	if HasAntarticalStampPrefix(tx.Data()) {
 		msg.antarticalStampTransactionHash = tx.Hash()
@@ -370,12 +372,13 @@ func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool) (*ExecutionResult, err
 //  5. Run Script section
 //  6. Derive new state root
 type stateTransition struct {
-	gp            *GasPool
-	msg           *Message
-	initialBudget vm.GasBudget
-	gasRemaining  vm.GasBudget
-	state         vm.StateDB
-	evm           *vm.EVM
+	confidentialPrepaid bool
+	gp                  *GasPool
+	msg                 *Message
+	initialBudget       vm.GasBudget
+	gasRemaining        vm.GasBudget
+	state               vm.StateDB
+	evm                 *vm.EVM
 }
 
 // newStateTransition initialises and returns a new state transition object.
@@ -397,6 +400,40 @@ func (st *stateTransition) to() common.Address {
 }
 
 func (st *stateTransition) buyGas() error {
+	if st.evm.ChainConfig().IsConfidentialLedger(st.evm.Context.BlockNumber, st.evm.Context.Time) && (HasShieldedV3Prefix(st.msg.Data) || HasShieldedV4Prefix(st.msg.Data)) {
+		mode := uint64(0)
+		if HasShieldedV4Prefix(st.msg.Data) {
+			e, _, err := DecodeShieldedV4Transaction(st.msg.Data)
+			if err != nil {
+				return err
+			}
+			mode = e.FeeMode
+		} else {
+			e, _, err := DecodeShieldedV3Transaction(st.msg.Data)
+			if err != nil {
+				return err
+			}
+			mode = e.FeeMode
+		}
+		if mode == ShieldedFeePrepaid {
+			if st.msg.TxType != types.PQTkmTxType || st.to() != params.ShieldedPoolAddress || st.msg.Value.Sign() != 0 || st.msg.GasLimit != ConfidentialPrepaidGas || st.msg.GasFeeCap.Cmp(st.msg.GasTipCap) != 0 || st.msg.shieldedTransactionHash == (common.Hash{}) {
+				return fmt.Errorf("%w: invalid prepaid message", ErrInvalidShieldedTx)
+			}
+			fee := new(big.Int).Mul(new(big.Int).SetUint64(st.msg.GasLimit), st.msg.GasFeeCap.ToBig())
+			ticket := confidentialFeeTicket(st.msg.shieldedTransactionHash)
+			if fee.Sign() <= 0 || fee.BitLen() > 256 || st.state.GetState(params.ShieldedPoolAddress, ticket) != common.BigToHash(fee) {
+				return fmt.Errorf("%w: prepaid fee has no verified note debit", ErrInvalidShieldedTx)
+			}
+			if err := st.gp.SubGas(st.msg.GasLimit); err != nil {
+				return err
+			}
+			st.state.SetState(params.ShieldedPoolAddress, ticket, common.Hash{})
+			st.confidentialPrepaid = true
+			st.gasRemaining = vm.NewGasBudget(st.msg.GasLimit)
+			st.initialBudget = st.gasRemaining.Copy()
+			return nil
+		}
+	}
 	mgval := new(uint256.Int).SetUint64(st.msg.GasLimit)
 	_, overflow := mgval.MulOverflow(mgval, st.msg.GasPrice)
 	if overflow {
@@ -710,10 +747,17 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 
 	// Record the gas used excluding gas refunds. This value represents the actual
 	// gas allowance required to complete execution.
+	if st.confidentialPrepaid {
+		// This opted-in fixed charge is independent of proof serialization size.
+		// No unused reserve can become a public refund or miner balance credit.
+		st.gasRemaining = vm.NewGasBudget(0)
+	}
 	peakGasUsed := st.gasUsed()
 
 	// Compute refund counter, capped to a refund quotient.
-	st.gasRemaining.Refund(st.calcRefund())
+	if !st.confidentialPrepaid {
+		st.gasRemaining.Refund(st.calcRefund())
+	}
 
 	if rules.IsPrague {
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
@@ -728,7 +772,9 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		}
 	}
 	// Return gas to the user
-	st.returnGas()
+	if !st.confidentialPrepaid {
+		st.returnGas()
+	}
 
 	// Return gas to the gas pool
 	if rules.IsAmsterdam {
@@ -750,7 +796,9 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		effectiveTip = new(uint256.Int).Sub(msg.GasPrice, baseFee)
 	}
 
-	if st.evm.Config.NoBaseFee && msg.GasFeeCap.Sign() == 0 && msg.GasTipCap.Sign() == 0 {
+	if st.confidentialPrepaid {
+		// Fee was destroyed from the proved note reserve before execution.
+	} else if st.evm.Config.NoBaseFee && msg.GasFeeCap.Sign() == 0 && msg.GasTipCap.Sign() == 0 {
 		// Skip fee payment when NoBaseFee is set and the fee fields
 		// are 0. This avoids a negative effectiveTip being applied to
 		// the coinbase when simulating calls.

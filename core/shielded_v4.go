@@ -52,6 +52,7 @@ type ShieldedV4Transaction struct {
 	ValidUntil           uint64                                     `rlp:"optional"`
 	// AssetID is optional for wire compatibility; zero means native TKM.
 	AssetID uint64 `rlp:"optional"`
+	FeeMode uint64 `rlp:"optional"`
 }
 
 func shieldedV4AssetID(e *ShieldedV4Transaction) uint64 {
@@ -149,6 +150,9 @@ func ShieldedV4Intent(tx *types.Transaction, e *ShieldedV4Transaction) ([64]byte
 }
 
 func shieldedV4Basics(config *params.ChainConfig, number *big.Int, time uint64, tx *types.Transaction) (*ShieldedV4Transaction, error) {
+	if err := ValidateShieldedOnlyTransaction(config, number, time, tx); err != nil {
+		return nil, err
+	}
 	fail := func(message string) (*ShieldedV4Transaction, error) {
 		return nil, fmt.Errorf("%w: Shield4 %s", ErrInvalidShieldedTx, message)
 	}
@@ -174,13 +178,16 @@ func shieldedV4Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if e.WithdrawalValue == nil || e.GasSponsorValue == nil || e.WithdrawalValue.Sign() < 0 || e.GasSponsorValue.Sign() < 0 {
 		return fail("invalid public values")
 	}
+	if err := validateConfidentialLedgerShape(config, number, time, tx, e.Deposit, e.GasSponsorValue, e.FeeMode, shieldedV4AssetID(e)); err != nil {
+		return nil, err
+	}
 	if err := ValidateShieldedV4Time(e, time); err != nil {
 		return nil, err
 	}
 	if _, err := ShieldedV4Nullifiers(e); err != nil {
 		return fail("invalid input count or nullifiers")
 	}
-	if e.Relayed && e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+	if e.Relayed && !config.IsShieldedOnly(number, time) && !config.IsConfidentialLedger(number, time) && e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
 		return fail("relay requires the exact authorized gas reserve")
 	}
 	release := new(big.Int).Add(e.WithdrawalValue, e.GasSponsorValue)

@@ -29,26 +29,28 @@ type shield3RequestRecord struct {
 	Submitted    bool
 }
 type shield3Request struct {
-	StampDisclosure  *shield3wallet.StampDisclosure   `json:"stampDisclosure,omitempty"`
-	Scope            string                           `json:"scope,omitempty"`
-	RelayURL         string                           `json:"relayURL,omitempty"`
-	Payments         []shield3wallet.PaymentRequest   `json:"payments,omitempty"`
-	Relay            *shield3wallet.RelayOffer        `json:"relay,omitempty"`
-	RelayTransaction hexutil.Bytes                    `json:"relayTransaction,omitempty"`
-	TransactionHash  *common.Hash                     `json:"transactionHash,omitempty"`
-	OutputIndex      uint64                           `json:"outputIndex,omitempty"`
-	Disclosure       *shield3wallet.PaymentDisclosure `json:"disclosure,omitempty"`
-	Capsule          *shield3wallet.DisclosureCapsule `json:"capsule,omitempty"`
-	AuditKey         hexutil.Bytes                    `json:"auditKey,omitempty"`
-	AuditPublicKey   hexutil.Bytes                    `json:"auditPublicKey,omitempty"`
-	Sponsorship      hexutil.Bytes                    `json:"sponsorship,omitempty"`
-	Seed             hexutil.Bytes                    `json:"seed"`
-	Stamp            *pqcrypto.ShieldedV3StampRecord  `json:"stamp"`
-	Account          common.Address                   `json:"account"`
-	Recipient        string                           `json:"recipient"`
-	AmountWei        string                           `json:"amountWei"`
-	RequestID        string                           `json:"requestId"`
-	View             *shield3wallet.ViewKey           `json:"view"`
+	PrepaidFeeLimitWei string                           `json:"prepaidFeeLimitWei,omitempty"`
+	StampDisclosure    *shield3wallet.StampDisclosure   `json:"stampDisclosure,omitempty"`
+	Scope              string                           `json:"scope,omitempty"`
+	RelayURL           string                           `json:"relayURL,omitempty"`
+	Payments           []shield3wallet.PaymentRequest   `json:"payments,omitempty"`
+	Relay              *shield3wallet.RelayOffer        `json:"relay,omitempty"`
+	RelayTransaction   hexutil.Bytes                    `json:"relayTransaction,omitempty"`
+	RelayFeeLimitWei   string                           `json:"relayFeeLimitWei,omitempty"`
+	TransactionHash    *common.Hash                     `json:"transactionHash,omitempty"`
+	OutputIndex        uint64                           `json:"outputIndex,omitempty"`
+	Disclosure         *shield3wallet.PaymentDisclosure `json:"disclosure,omitempty"`
+	Capsule            *shield3wallet.DisclosureCapsule `json:"capsule,omitempty"`
+	AuditKey           hexutil.Bytes                    `json:"auditKey,omitempty"`
+	AuditPublicKey     hexutil.Bytes                    `json:"auditPublicKey,omitempty"`
+	Sponsorship        hexutil.Bytes                    `json:"sponsorship,omitempty"`
+	Seed               hexutil.Bytes                    `json:"seed"`
+	Stamp              *pqcrypto.ShieldedV3StampRecord  `json:"stamp"`
+	Account            common.Address                   `json:"account"`
+	Recipient          string                           `json:"recipient"`
+	AmountWei          string                           `json:"amountWei"`
+	RequestID          string                           `json:"requestId"`
+	View               *shield3wallet.ViewKey           `json:"view"`
 }
 
 func shield3LocalRequest(r *http.Request, allowedOrigin string) bool {
@@ -106,7 +108,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
+	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
@@ -281,8 +283,14 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if operation == "relay-offer" {
-		offer, err := shield3wallet.BuildRelayOffer(r.Context(), g.client, req.Seed, identity)
+	if operation == "relay-offer" || operation == "fee-sponsored-relay-offer" {
+		var offer shield3wallet.RelayOffer
+		var err error
+		if operation == "fee-sponsored-relay-offer" {
+			offer, err = shield3wallet.BuildFeeSponsoredRelayOffer(r.Context(), g.client, req.Seed, identity)
+		} else {
+			offer, err = shield3wallet.BuildRelayOffer(r.Context(), g.client, req.Seed, identity)
+		}
 		if err != nil {
 			fail(400, err)
 			return
@@ -492,7 +500,16 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if operation == "submit-relay" {
-			unsigned, err = shield3wallet.BuildRelaySubmission(r.Context(), g.client, req.Seed, identity, req.RelayTransaction)
+			if req.RelayFeeLimitWei != "" {
+				limit, ok := new(big.Int).SetString(req.RelayFeeLimitWei, 10)
+				if !ok || limit.Sign() <= 0 || limit.BitLen() > 256 {
+					fail(400, errors.New("invalid explicit relay fee limit"))
+					return
+				}
+				unsigned, err = shield3wallet.BuildFeeSponsoredRelaySubmission(r.Context(), g.client, req.Seed, identity, req.RelayTransaction, limit)
+			} else {
+				unsigned, err = shield3wallet.BuildRelaySubmission(r.Context(), g.client, req.Seed, identity, req.RelayTransaction)
+			}
 		} else if operation == "prepare-relay" {
 			if req.Relay == nil {
 				fail(400, errors.New("signed relay offer required"))
@@ -512,6 +529,20 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 			unsigned, err = shield3wallet.BuildSponsoredStamp(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
 		} else if operation == "register-stamp" {
 			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
+		} else if req.PrepaidFeeLimitWei != "" {
+			if operation != "send" {
+				fail(400, errors.New("prepaid note fees are only supported for sends"))
+				return
+			}
+			limit, ok := new(big.Int).SetString(req.PrepaidFeeLimitWei, 10)
+			if !ok || limit.Sign() <= 0 || limit.BitLen() > 256 {
+				fail(400, errors.New("invalid explicit prepaid fee budget"))
+				return
+			}
+			if len(payments) == 0 {
+				payments = []shield3wallet.Payment{{Recipient: recipient, Amount: amount}}
+			}
+			unsigned, err = shield3wallet.BuildPrepaidPayment(r.Context(), walletRPC, req.Seed, identity, payments, 4, limit)
 		} else if len(payments) != 0 {
 			unsigned, err = shield3wallet.BuildBatch(r.Context(), walletRPC, req.Seed, identity, payments)
 		} else {

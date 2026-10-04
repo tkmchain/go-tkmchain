@@ -57,12 +57,19 @@ func relayOfferMessage(o *RelayOffer) ([64]byte, error) {
 	return sha512.Sum512(data), nil
 }
 func validateRelayOffer(ctx context.Context, rpc RPC, o *RelayOffer, chainID uint64) error {
-	if o == nil || o.Version != 1 || o.ChainID != chainID || o.Gas != WalletGas || o.GasFeeCap == nil || o.GasTipCap == nil || (*big.Int)(o.GasFeeCap).Sign() <= 0 || (*big.Int)(o.GasFeeCap).BitLen() > 256 || (*big.Int)(o.GasTipCap).Sign() < 0 || (*big.Int)(o.GasTipCap).Cmp((*big.Int)(o.GasFeeCap)) > 0 {
+	if o == nil || (o.Version != 1 && o.Version != 2) || o.ChainID != chainID || o.Gas != WalletGas || o.GasFeeCap == nil || o.GasTipCap == nil || (*big.Int)(o.GasFeeCap).Sign() <= 0 || (*big.Int)(o.GasFeeCap).BitLen() > 256 || (*big.Int)(o.GasTipCap).Sign() < 0 || (*big.Int)(o.GasTipCap).Cmp((*big.Int)(o.GasFeeCap)) > 0 {
 		return errors.New("invalid relay offer")
 	}
 	message, err := relayOfferMessage(o)
 	if err != nil || !pqcrypto.VerifyMLDSA87(o.PublicKey, message[:], o.Signature) {
 		return errors.New("invalid relay fee quote signature")
+	}
+	var active status
+	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV3Status"); err != nil {
+		return err
+	}
+	if (active.ShieldedOnly || active.ConfidentialLedger) != (o.Version == 2) {
+		return errors.New("relay fee offer does not match the active privacy rules; obtain a new offer")
 	}
 	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, o.PublicKey)
 	if err != nil {
@@ -102,6 +109,17 @@ func relayState(ctx context.Context, rpc RPC, address common.Address, nonce, exp
 	return nil
 }
 func BuildRelayOffer(ctx context.Context, rpc RPC, seed []byte, identity *Identity) (RelayOffer, error) {
+	return buildRelayOffer(ctx, rpc, seed, identity, 1)
+}
+
+// BuildFeeSponsoredRelayOffer explicitly authorizes the operator to pay gas
+// without reimbursement from private notes. It must be requested deliberately;
+// existing relay integrations never opt into spending operator funds silently.
+func BuildFeeSponsoredRelayOffer(ctx context.Context, rpc RPC, seed []byte, identity *Identity) (RelayOffer, error) {
+	return buildRelayOffer(ctx, rpc, seed, identity, 2)
+}
+
+func buildRelayOffer(ctx context.Context, rpc RPC, seed []byte, identity *Identity, version uint64) (RelayOffer, error) {
 	if identity == nil {
 		return RelayOffer{}, errors.New("missing relay identity")
 	}
@@ -132,7 +150,13 @@ func BuildRelayOffer(ctx context.Context, rpc RPC, seed []byte, identity *Identi
 	if uint64(head.Timestamp) > ^uint64(0)-core.AntarticalStampSponsorshipLifetime {
 		return RelayOffer{}, errors.New("invalid chain timestamp")
 	}
-	offer := RelayOffer{Version: 1, ChainID: identity.ChainID, PublicKey: pub, Nonce: uint64(nonce), Gas: WalletGas, GasFeeCap: &price, GasTipCap: &price, ValidUntil: uint64(head.Timestamp) + core.AntarticalStampSponsorshipLifetime}
+	offer := RelayOffer{Version: version, ChainID: identity.ChainID, PublicKey: pub, Nonce: uint64(nonce), Gas: WalletGas, GasFeeCap: &price, GasTipCap: &price, ValidUntil: uint64(head.Timestamp) + core.AntarticalStampSponsorshipLifetime}
+	if version == 2 {
+		var balance hexutil.Big
+		if err := requirePublicFeePayer(ctx, rpc, &offer, &balance, new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), (*big.Int)(&price))); err != nil {
+			return RelayOffer{}, err
+		}
+	}
 	message, err := relayOfferMessage(&offer)
 	if err != nil {
 		return RelayOffer{}, err
@@ -199,6 +223,19 @@ func BuildRelayed(ctx context.Context, rpc RPC, seed []byte, identity *Identity,
 func RelayPacketForTransaction(tx *types.Transaction) (RelayPacket, error) { return relayPacket(tx) }
 
 func BuildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *Identity, raw []byte) (*types.Transaction, error) {
+	return buildRelaySubmission(ctx, rpc, seed, identity, raw, nil)
+}
+
+// BuildFeeSponsoredRelaySubmission requires a caller-supplied spending limit.
+// A request received from an unauthenticated payer is not that authorization.
+func BuildFeeSponsoredRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *Identity, raw []byte, maxFee *big.Int) (*types.Transaction, error) {
+	if maxFee == nil || maxFee.Sign() <= 0 || maxFee.BitLen() > 256 {
+		return nil, errors.New("explicit relay fee limit required")
+	}
+	return buildRelaySubmission(ctx, rpc, seed, identity, raw, maxFee)
+}
+
+func buildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *Identity, raw []byte, maxFee *big.Int) (*types.Transaction, error) {
 	if identity == nil || uint64(len(raw)) > core.ShieldedV3MaxTxSize {
 		return nil, errors.New("invalid relay transaction size")
 	}
@@ -218,14 +255,31 @@ func BuildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *I
 	if err != nil || address != identity.Address {
 		return nil, errors.New("wrong relay operator")
 	}
+	expectedSponsor := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())
+	var active status
+	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV3Status"); err != nil {
+		return nil, err
+	}
+	if active.ShieldedOnly || active.ConfidentialLedger {
+		if maxFee == nil || expectedSponsor.Cmp(maxFee) > 0 {
+			return nil, errors.New("operator fee sponsorship requires an explicit sufficient fee limit")
+		}
+		var balance hexutil.Big
+		if err := requirePublicFeePayer(ctx, rpc, &RelayOffer{Version: 2, PublicKey: pub}, &balance, expectedSponsor); err != nil {
+			return nil, err
+		}
+		expectedSponsor.SetInt64(0)
+	} else if maxFee != nil {
+		return nil, errors.New("fee-sponsored relay requires the shielded-only or confidential ledger fork")
+	}
 	if core.HasShieldedV4Prefix(tx.Data()) {
-		return buildShieldedV4RelaySubmission(ctx, rpc, identity, &tx, address)
+		return buildShieldedV4RelaySubmission(ctx, rpc, identity, &tx, address, expectedSponsor)
 	}
 	e, ok, err := core.DecodeShieldedV3Transaction(tx.Data())
 	if err != nil {
 		return nil, err
 	}
-	if !ok || e.Version != 3 || !e.Relayed || e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || e.GasSponsorValue == nil || e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+	if !ok || e.Version != 3 || !e.Relayed || e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || e.GasSponsorValue == nil || e.GasSponsorValue.Cmp(expectedSponsor) != 0 {
 		return nil, errors.New("relay must not release value except its authorized gas reserve")
 	}
 	seenOutputs := make(map[shielded3.Digest]bool)
@@ -296,12 +350,12 @@ func BuildRelaySubmission(ctx context.Context, rpc RPC, seed []byte, identity *I
 	return &tx, nil
 }
 
-func buildShieldedV4RelaySubmission(ctx context.Context, rpc RPC, identity *Identity, tx *types.Transaction, address common.Address) (*types.Transaction, error) {
+func buildShieldedV4RelaySubmission(ctx context.Context, rpc RPC, identity *Identity, tx *types.Transaction, address common.Address, expectedSponsor *big.Int) (*types.Transaction, error) {
 	e, ok, err := core.DecodeShieldedV4Transaction(tx.Data())
 	if err != nil {
 		return nil, err
 	}
-	if !ok || e.Version != 4 || !e.Relayed || e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || e.GasSponsorValue == nil || e.GasSponsorValue.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) != 0 {
+	if !ok || e.Version != 4 || !e.Relayed || e.Deposit || e.WithdrawalValue == nil || e.WithdrawalValue.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || e.GasSponsorValue == nil || e.GasSponsorValue.Cmp(expectedSponsor) != 0 {
 		return nil, errors.New("Shield4 relay must not release value except its authorized gas reserve")
 	}
 	seenOutputs := make(map[shielded3.Digest]bool)

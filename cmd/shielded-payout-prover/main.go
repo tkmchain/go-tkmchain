@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/zk/shielded"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	xproxy "golang.org/x/net/proxy"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -57,27 +58,30 @@ const (
 )
 
 type Config struct {
-	Listen               string `json:"listen"`
-	AllowedOrigin        string `json:"allowedOrigin"`
-	BearerToken          string `json:"bearerToken"`
-	NodeRPC              string `json:"nodeRPC"`
-	KeystoreDir          string `json:"keystoreDir"`
-	SignerAddress        string `json:"signerAddress"`
-	SignerPassphrase     string `json:"signerPassphrase"`
-	SignerPassphraseFile string `json:"signerPassphraseFile"`
-	SignMode             string `json:"signMode"`
-	ProvingKeyPath       string `json:"provingKeyPath"`
-	ProvingKeyV2Path     string `json:"provingKeyV2Path"`
-	NotesPath            string `json:"notesPath"`
-	RequestsPath         string `json:"requestsPath"`
-	GasLimit             uint64 `json:"gasLimit"`
-	SubmitSync           bool   `json:"submitSync"`
-	ReceiptTimeoutMs     int64  `json:"receiptTimeoutMs"`
-	TorSOCKS5Proxy       string `json:"torSocks5Proxy"`
-	PrivacyStrict        bool   `json:"privacyStrict"`
-	OnionOnly            bool   `json:"onionOnly"`
-	Shield3StampName     string `json:"shield3StampName,omitempty"`
-	Shield3StampCountry  string `json:"shield3StampCountry,omitempty"`
+	AutoPublicFunding         bool   `json:"autoPublicFunding,omitempty"`
+	AutoPublicFundingLimitWei string `json:"autoPublicFundingLimitWei,omitempty"`
+	PrepaidFeeLimitWei        string `json:"prepaidFeeLimitWei,omitempty"`
+	Listen                    string `json:"listen"`
+	AllowedOrigin             string `json:"allowedOrigin"`
+	BearerToken               string `json:"bearerToken"`
+	NodeRPC                   string `json:"nodeRPC"`
+	KeystoreDir               string `json:"keystoreDir"`
+	SignerAddress             string `json:"signerAddress"`
+	SignerPassphrase          string `json:"signerPassphrase"`
+	SignerPassphraseFile      string `json:"signerPassphraseFile"`
+	SignMode                  string `json:"signMode"`
+	ProvingKeyPath            string `json:"provingKeyPath"`
+	ProvingKeyV2Path          string `json:"provingKeyV2Path"`
+	NotesPath                 string `json:"notesPath"`
+	RequestsPath              string `json:"requestsPath"`
+	GasLimit                  uint64 `json:"gasLimit"`
+	SubmitSync                bool   `json:"submitSync"`
+	ReceiptTimeoutMs          int64  `json:"receiptTimeoutMs"`
+	TorSOCKS5Proxy            string `json:"torSocks5Proxy"`
+	PrivacyStrict             bool   `json:"privacyStrict"`
+	OnionOnly                 bool   `json:"onionOnly"`
+	Shield3StampName          string `json:"shield3StampName,omitempty"`
+	Shield3StampCountry       string `json:"shield3StampCountry,omitempty"`
 }
 
 type PayoutRequest struct {
@@ -99,9 +103,11 @@ type PayoutRequest struct {
 }
 
 type PayoutResponse struct {
-	TxHash string `json:"txHash,omitempty"`
-	Status string `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
+	PreparationPrivacyBoundary string `json:"preparationPrivacyBoundary,omitempty"`
+	TxHash                     string `json:"txHash,omitempty"`
+	PreparationTxHash          string `json:"preparationTxHash,omitempty"`
+	Status                     string `json:"status,omitempty"`
+	Error                      string `json:"error,omitempty"`
 }
 
 type DepositRequest struct {
@@ -164,17 +170,19 @@ type commitmentPathRPC struct {
 }
 
 type RequestDB struct {
-	Requests map[string]RequestRecord `json:"requests"`
-	Deposits map[string]DepositRecord `json:"deposits,omitempty"`
+	Requests        map[string]RequestRecord `json:"requests"`
+	Deposits        map[string]DepositRecord `json:"deposits,omitempty"`
+	NotePreparation *NotePreparationRecord   `json:"notePreparation,omitempty"`
 }
 
 type RequestRecord struct {
-	Request   PayoutRequest `json:"request"`
-	Status    string        `json:"status"`
-	TxHash    string        `json:"txHash,omitempty"`
-	Error     string        `json:"error,omitempty"`
-	NoteID    string        `json:"noteId,omitempty"`
-	UpdatedAt time.Time     `json:"updatedAt"`
+	SignedTransaction string        `json:"signedTransaction,omitempty"`
+	Request           PayoutRequest `json:"request"`
+	Status            string        `json:"status"`
+	TxHash            string        `json:"txHash,omitempty"`
+	Error             string        `json:"error,omitempty"`
+	NoteID            string        `json:"noteId,omitempty"`
+	UpdatedAt         time.Time     `json:"updatedAt"`
 }
 
 type DepositRecord struct {
@@ -381,6 +389,9 @@ func dialProverRPC(cfg Config) (*ethclient.Client, error) {
 }
 
 func NewProver(cfg Config) (*Prover, error) {
+	if err := validateAutomaticFundingConfig(cfg); err != nil {
+		return nil, err
+	}
 	prover := &Prover{cfg: cfg, passphrase: cfg.SignerPassphrase, buildSlots: make(chan struct{}, 1)}
 	client, err := dialProverRPC(cfg)
 	if err != nil {
@@ -478,19 +489,49 @@ func (p *Prover) handleInternalHealth(w http.ResponseWriter, r *http.Request) {
 
 func (p *Prover) writeHealth(w http.ResponseWriter, includeInventory bool) {
 	noteStatus := p.noteInventoryStatus()
+	var capacity *nativePayoutCapacity
+	if includeInventory && p.client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if p.shield4Active(ctx) {
+			var err error
+			capacity, err = p.nativeCapacity(ctx)
+			noteStatus = noteInventoryStatus{}
+			if err != nil {
+				noteStatus.Error = err.Error()
+			} else {
+				noteStatus.AvailableNoteCount = capacity.Count
+				noteStatus.AvailableNoteMaxWei = capacity.MaxPayoutWei
+				noteStatus.HasSpendableNotes = capacity.ImmediateMaxPayoutWei != "0"
+			}
+		}
+	}
 	ready := p.ready()
 	withdrawalReady := ready && p.pkV2 != nil && p.r1csV2 != nil
 	status := map[string]any{
 		"ok":                   ready,
 		"buildReady":           ready,
 		"withdrawalBuildReady": withdrawalReady,
-		"payoutReady":          ready && noteStatus.HasSpendableNotes,
+		"payoutReady":          ready && (noteStatus.HasSpendableNotes || (capacity != nil && capacity.AutomaticPreparation)),
 		"hasProvingKey":        p.pk != nil,
 		"hasProvingKeyV2":      p.pkV2 != nil,
 		"hasRPC":               p.client != nil,
 		"hasSpendableNotes":    noteStatus.HasSpendableNotes,
 	}
 	if includeInventory {
+		if capacity != nil {
+			status["shieldedVersion"] = 4
+			status["maxPayoutWei"] = capacity.MaxPayoutWei
+			status["maxImmediatePayoutWei"] = capacity.ImmediateMaxPayoutWei
+			status["automaticNotePreparation"] = capacity.AutomaticPreparation
+			status["automaticPublicFunding"] = p.cfg.AutoPublicFunding
+			status["publicFundingAvailable"] = capacity.PublicFundingAvailable
+			status["autoPublicFundingLimitWei"] = p.cfg.AutoPublicFundingLimitWei
+			status["prepaidFeeLimitWei"] = p.cfg.PrepaidFeeLimitWei
+			status["maxSendWei"] = shielded3.MaxSendWei().String()
+			status["pendingFunding"] = capacity.PendingFunding
+			status["gasReserveWei"] = capacity.GasReserveWei
+		}
 		status["availableNoteCount"] = noteStatus.AvailableNoteCount
 		status["availableNoteMaxWei"] = noteStatus.AvailableNoteMaxWei
 		status["noteInventoryError"] = noteStatus.Error
@@ -592,6 +633,11 @@ func (p *Prover) handlePayout(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	txHash, err := p.ProcessPayout(ctx, req)
 	if err != nil {
+		var preparation *notePreparationPending
+		if errors.As(err, &preparation) {
+			writeJSON(w, http.StatusAccepted, PayoutResponse{Status: "preparing-notes", PreparationTxHash: preparation.hash, PreparationPrivacyBoundary: preparation.boundary, Error: preparation.Error()})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, PayoutResponse{Status: "waiting", TxHash: txHash, Error: err.Error()})
 		return
 	}
@@ -636,7 +682,10 @@ func (p *Prover) authorized(r *http.Request) bool {
 }
 
 func (p *Prover) ready() bool {
-	return p != nil && p.client != nil && (p.cfg.SignMode == "proof-only" || p.ks != nil) && p.pk != nil && p.r1cs != nil && p.pkV2 != nil && p.r1csV2 != nil
+	// Production payout/deposit processing uses the daemon-backed Shield3/4
+	// wallet and local PQ keystore. Legacy V1/V2 circuit artifacts are neither
+	// required nor accepted as a fallback readiness condition.
+	return p != nil && p.client != nil && p.ks != nil
 }
 
 func (p *Prover) shield4Active(ctx context.Context) bool {
@@ -651,6 +700,31 @@ func (p *Prover) shield4Active(ctx context.Context) bool {
 		return false
 	}
 	return status.Active && status.NativeVerifier
+}
+
+// nativeShieldVersion reports only the consensus-native proof systems. A
+// status/RPC failure is deliberately not treated as permission to fall back to
+// the legacy V1/V2 prover: that would change the privacy and amount semantics
+// of a payment based on a transient node/API problem.
+func (p *Prover) nativeShieldVersion(ctx context.Context) uint64 {
+	if p == nil || p.client == nil {
+		return 0
+	}
+	var status struct {
+		Active         bool `json:"active"`
+		NativeVerifier bool `json:"nativeVerifier"`
+	}
+	if err := p.client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV4Status"); err == nil && status.Active && status.NativeVerifier {
+		return 4
+	}
+	status = struct {
+		Active         bool `json:"active"`
+		NativeVerifier bool `json:"nativeVerifier"`
+	}{}
+	if err := p.client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV3Status"); err == nil && status.Active && status.NativeVerifier {
+		return 3
+	}
+	return 0
 }
 
 // signerIdentity decrypts the configured PQ account only while constructing a
@@ -671,6 +745,7 @@ func (p *Prover) signerIdentity(ctx context.Context, chainID uint64) ([]byte, *s
 	if err != nil {
 		return nil, nil, err
 	}
+	defer clear(key.Seed)
 	seed := common.CopyBytes(key.Seed)
 	stamp := key.Shield3Stamp
 	if stamp == nil {
@@ -688,6 +763,9 @@ func (p *Prover) signerIdentity(ctx context.Context, chainID uint64) ([]byte, *s
 			return nil, nil, err
 		}
 		key, err = keystore.DecryptPQKey(keyJSON, p.passphrase)
+		if err == nil {
+			defer clear(key.Seed)
+		}
 		if err != nil || key.Shield3Stamp == nil {
 			clear(seed)
 			return nil, nil, firstErr(err, errors.New("pool signer stamp was not persisted"))
@@ -807,7 +885,7 @@ func (p *Prover) waitForSignerStamp(ctx context.Context, identity *shield3wallet
 	}
 }
 
-func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositRequest, amountWei *big.Int, chainID *big.Int) (string, ShieldedNote, error) {
+func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRequest, amountWei *big.Int, chainID *big.Int, version uint64) (string, ShieldedNote, error) {
 	seed, identity, err := p.signerIdentity(ctx, chainID.Uint64())
 	if err != nil {
 		return "", ShieldedNote{}, err
@@ -818,7 +896,14 @@ func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositReques
 		Owner: identity.Owner, IncomingPublicKey: identity.IncomingPublicKey,
 		StampPublicKey: identity.StampPublicKey, Stamp: *identity.Stamp,
 	}
-	tx, err := shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
+	var tx *types.Transaction
+	if version == 4 {
+		tx, err = shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
+	} else if version == 3 {
+		tx, err = shield3wallet.Build(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
+	} else {
+		return "", ShieldedNote{}, errors.New("unsupported native shield version")
+	}
 	if err != nil {
 		return "", ShieldedNote{}, err
 	}
@@ -826,12 +911,24 @@ func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositReques
 	if err != nil {
 		return "", ShieldedNote{}, err
 	}
-	envelope, ok, err := core.DecodeShieldedV4Transaction(signed.Data())
-	if err != nil || !ok || envelope == nil {
-		return "", ShieldedNote{}, firstErr(err, errors.New("Shield4 deposit produced no envelope"))
+	var commitment shielded3.Digest
+	var outgoing []byte
+	if version == 4 {
+		envelope, ok, decodeErr := core.DecodeShieldedV4Transaction(signed.Data())
+		if decodeErr != nil || !ok || envelope == nil {
+			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield4 deposit produced no envelope"))
+		}
+		commitment = shielded3.Digest(envelope.Outputs[0].Commitment)
+		outgoing = envelope.Outputs[0].Outgoing
+	} else {
+		envelope, ok, decodeErr := core.DecodeShieldedV3Transaction(signed.Data())
+		if decodeErr != nil || !ok || envelope == nil {
+			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield3 deposit produced no envelope"))
+		}
+		commitment = envelope.Outputs[0].Commitment
+		outgoing = envelope.Outputs[0].Outgoing
 	}
-	commitment := envelope.Outputs[0].Commitment
-	plain, err := pqcrypto.OpenShieldedV3(identity.OutgoingSeed, envelope.Outputs[0].Outgoing, core.ShieldedV3OutputContext(identity.ChainID, pqcrypto.ShieldedV3Outgoing, commitment))
+	plain, err := pqcrypto.OpenShieldedV3(identity.OutgoingSeed, outgoing, core.ShieldedV3OutputContext(identity.ChainID, pqcrypto.ShieldedV3Outgoing, commitment))
 	if err != nil {
 		return "", ShieldedNote{}, fmt.Errorf("open Shield4 change note: %w", err)
 	}
@@ -842,7 +939,7 @@ func (p *Prover) buildSignSubmitDepositV4(ctx context.Context, req DepositReques
 		return "", ShieldedNote{}, firstErr(err, errors.New("Shield4 deposit returned an invalid note"))
 	}
 	note := ShieldedNote{
-		Version: 4, ID: "deposit-" + req.RequestID,
+		Version: version, ID: "deposit-" + req.RequestID,
 		Commitment:     "0x" + hex.EncodeToString(commitment.Bytes()),
 		OwnerSecret:    new(big.Int).SetBytes(identity.Owner.Bytes()).String(),
 		NoteRandomness: "0x" + hex.EncodeToString(opened.Randomness.Bytes()),
@@ -946,71 +1043,23 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (txHash s
 			retErr = errors.New("internal prover error while processing payout")
 		}
 	}()
-	var existing RequestRecord
-	replacing := false
 	if rec, ok := db.Requests[req.RequestID]; ok {
+		if rec.SignedTransaction != "" {
+			return p.submitNativeRecord(ctx, rec)
+		}
 		if rec.TxHash != "" {
 			if !payoutReplacementRequested(req) {
 				return rec.TxHash, nil
 			}
-			existing = rec
-			replacing = true
 		}
-		if rec.Status == "processing" && !replacing {
+		if rec.Status == "processing" {
 			return "", errors.New("request is already processing")
 		}
 	}
-
-	notes, err := readNoteStore(p.cfg.NotesPath)
-	if err != nil {
-		return "", err
+	if version := p.nativeShieldVersion(ctx); version != 0 {
+		return p.processNativePayout(ctx, req, &db, version)
 	}
-	amountWei, ok := parseBigFlexible(req.AmountWei)
-	if !ok || amountWei.Sign() <= 0 || amountWei.BitLen() > 64 {
-		p.recordError(db, req, "", "amountWei must be a positive uint64 value")
-		return "", errors.New("amountWei must be a positive uint64 value")
-	}
-	noteIndex := -1
-	if replacing {
-		noteIndex = selectReplacementNote(notes, existing.NoteID, req.RequestID)
-	} else {
-		noteIndex = selectSpendableNote(notes, amountWei)
-	}
-	if noteIndex < 0 {
-		p.recordError(db, req, "", "no spendable shielded note is available for this amount")
-		return "", errors.New("no spendable shielded note is available for this amount")
-	}
-	note := notes.Notes[noteIndex]
-	panicNoteID = note.ID
-	db.Requests[req.RequestID] = RequestRecord{Request: req, Status: "processing", NoteID: note.ID, UpdatedAt: time.Now().UTC()}
-	if err := writeRequestDB(p.cfg.RequestsPath, db); err != nil {
-		return "", err
-	}
-
-	txHash, changeNote, err := p.buildSignSubmit(ctx, req, note, amountWei)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "nullifier already spent") {
-			notes.Notes[noteIndex].Status = "spent"
-			notes.Notes[noteIndex].SpentRequestID = req.RequestID
-			_ = writeNoteStore(p.cfg.NotesPath, notes)
-		}
-		p.recordError(db, req, note.ID, err.Error())
-		return txHash, err
-	}
-	notes.Notes[noteIndex].Status = "spent"
-	notes.Notes[noteIndex].SpentRequestID = req.RequestID
-	notes.Notes[noteIndex].SpentTxHash = txHash
-	if changeNote != nil {
-		notes.Notes = appendOrReplaceNote(notes.Notes, *changeNote)
-	}
-	if err := writeNoteStore(p.cfg.NotesPath, notes); err != nil {
-		return "", err
-	}
-	db.Requests[req.RequestID] = RequestRecord{Request: req, Status: "sent", TxHash: txHash, NoteID: note.ID, UpdatedAt: time.Now().UTC()}
-	if err := writeRequestDB(p.cfg.RequestsPath, db); err != nil {
-		return "", err
-	}
-	return txHash, nil
+	return "", errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy payout fallback")
 }
 
 func (p *Prover) ProcessDeposit(ctx context.Context, req DepositRequest) (DepositResponse, error) {
@@ -1023,7 +1072,11 @@ func (p *Prover) ProcessDeposit(ctx context.Context, req DepositRequest) (Deposi
 	if req.CreatedAt.IsZero() {
 		req.CreatedAt = time.Now().UTC()
 	}
-	amountWei, err := depositAmountWei(req)
+	version := p.nativeShieldVersion(ctx)
+	if version == 0 {
+		return DepositResponse{}, errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy deposit fallback")
+	}
+	amountWei, err := nativeDepositAmount(req)
 	if err != nil {
 		return DepositResponse{}, err
 	}
@@ -1109,9 +1162,12 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 	if err != nil {
 		return "", ShieldedNote{}, err
 	}
-	if p.shield4Active(ctx) {
-		return p.buildSignSubmitDepositV4(ctx, req, amountWei, chainID)
+	version := p.nativeShieldVersion(ctx)
+	if version == 0 {
+		return "", ShieldedNote{}, errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy deposit fallback")
 	}
+	return p.buildSignSubmitDepositNative(ctx, req, amountWei, chainID, version)
+	/* legacy V1/V2 construction intentionally disabled below */
 	proofBlock := new(big.Int)
 	signerAddr := common.HexToAddress(p.cfg.SignerAddress)
 	nonce, err := p.client.PendingNonceAt(ctx, signerAddr)
@@ -2121,7 +2177,40 @@ func readRequestDB(path string) (RequestDB, error) {
 }
 
 func writeRequestDB(path string, db RequestDB) error {
-	return writeJSONFile(path, db, 0600)
+	// A retry must never observe a truncated request database or lose a
+	// signed payout because the process stopped during an overwrite.
+	data, err := json.MarshalIndent(db, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".requests-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(append(data, '\n')); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func writeJSONFile(path string, v any, perm os.FileMode) error {

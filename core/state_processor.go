@@ -478,6 +478,9 @@ func postExecution(ctx context.Context, config *params.ChainConfig, block *types
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
 func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, evm *vm.EVM) (receipt *types.Receipt, err error) {
+	if err := ValidateShieldedOnlyTransaction(evm.ChainConfig(), blockNumber, blockTime, tx); err != nil {
+		return nil, err
+	}
 	if evm.ChainConfig().IsAntartical(blockNumber, blockTime) && HasAntarticalStampPrefix(tx.Data()) {
 		if err := ProcessAntarticalStamp(evm.ChainConfig(), blockNumber, blockTime, statedb, tx); err != nil {
 			return nil, err

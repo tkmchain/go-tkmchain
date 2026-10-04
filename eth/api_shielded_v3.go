@@ -12,15 +12,20 @@ import (
 )
 
 type ShieldedV3Status struct {
-	Active          bool            `json:"active"`
-	NativeVerifier  bool            `json:"nativeVerifier"`
-	ActivationTime  *hexutil.Uint64 `json:"activationTime"`
-	MaxSendWei      string          `json:"maxSendWei"`
-	MaxRecipients   uint64          `json:"maxRecipients"`
-	ViewKeyVersion  uint64          `json:"viewKeyVersion"`
-	MaxInputs       uint64          `json:"maxInputs"`
-	MaxSendTKM      uint64          `json:"maxSendTKM"`
-	SupportedAssets []uint64        `json:"supportedAssets"`
+	ConfidentialLedger     bool            `json:"confidentialLedger"`
+	ConfidentialLedgerTime *hexutil.Uint64 `json:"confidentialLedgerTime"`
+	PrepaidFeeGas          uint64          `json:"prepaidFeeGas"`
+	Active                 bool            `json:"active"`
+	NativeVerifier         bool            `json:"nativeVerifier"`
+	ActivationTime         *hexutil.Uint64 `json:"activationTime"`
+	MaxSendWei             string          `json:"maxSendWei"`
+	MaxRecipients          uint64          `json:"maxRecipients"`
+	ViewKeyVersion         uint64          `json:"viewKeyVersion"`
+	MaxInputs              uint64          `json:"maxInputs"`
+	MaxSendTKM             uint64          `json:"maxSendTKM"`
+	SupportedAssets        []uint64        `json:"supportedAssets"`
+	ShieldedOnly           bool            `json:"shieldedOnly"`
+	ShieldedOnlyTime       *hexutil.Uint64 `json:"shieldedOnlyTime"`
 }
 
 type ShieldedAssetSupply struct {
@@ -30,18 +35,43 @@ type ShieldedAssetSupply struct {
 	BackingPool    common.Address `json:"backingPool"`
 }
 
+// ConfidentialLedger reports public conservation counters, never note owners
+// or individual balances. They are not a view of confidential mining issuance.
+func (api *PrivacyAPI) ConfidentialLedger(assetID hexutil.Uint64) (core.ConfidentialLedgerTotals, error) {
+	id := shielded3.NormalizeAssetID(uint64(assetID))
+	if !shielded3.IsSupportedAsset(id) {
+		return core.ConfidentialLedgerTotals{}, fmt.Errorf("unsupported shielded asset")
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return core.ConfidentialLedgerTotals{}, err
+	}
+	return core.ConfidentialLedgerState(st, id), nil
+}
+
 func (api *PrivacyAPI) ShieldedV3Status() ShieldedV3Status {
 	status := ShieldedV3Status{MaxRecipients: shielded3.OutputSlots - 1, ViewKeyVersion: 2, MaxInputs: shielded3.InputSlots, NativeVerifier: shielded3.NativeAvailable(), MaxSendWei: shielded3.MaxSendWei().String(), MaxSendTKM: shielded3.MaxSendTKM, SupportedAssets: []uint64{shielded3.AssetTKM, shielded3.AssetPTKM}}
 	if api == nil || api.e == nil || api.e.blockchain == nil {
 		return status
 	}
 	cfg := api.e.blockchain.Config()
+	status.PrepaidFeeGas = core.ConfidentialPrepaidGas
+	if cfg.ConfidentialLedgerTime != nil {
+		t := hexutil.Uint64(*cfg.ConfidentialLedgerTime)
+		status.ConfidentialLedgerTime = &t
+	}
+	if cfg.ShieldedOnlyTime != nil {
+		t := hexutil.Uint64(*cfg.ShieldedOnlyTime)
+		status.ShieldedOnlyTime = &t
+	}
 	if cfg.AntarticalTime != nil {
 		t := hexutil.Uint64(*cfg.AntarticalTime)
 		status.ActivationTime = &t
 	}
 	head := api.e.blockchain.CurrentBlock()
 	status.Active = head != nil && cfg.IsAntartical(head.Number, head.Time) && cfg.IsPrivacyCommitments(head.Number, head.Time)
+	status.ShieldedOnly = head != nil && cfg.IsShieldedOnly(head.Number, head.Time)
+	status.ConfidentialLedger = head != nil && cfg.IsConfidentialLedger(head.Number, head.Time)
 	return status
 }
 
