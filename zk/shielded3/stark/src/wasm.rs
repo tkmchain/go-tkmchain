@@ -28,14 +28,12 @@ pub extern "C" fn tkm_shield3_wasm_buffer_capacity() -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tkm_shield3_wasm_run(
-    operation: u32,
-    length: usize,
-) -> i32 {
+pub unsafe extern "C" fn tkm_shield3_wasm_run(operation: u32, length: usize) -> i32 {
     if length > BUFFER_CAPACITY {
         return 1;
     }
-    let input = unsafe { core::slice::from_raw_parts(core::ptr::addr_of!(INPUT) as *const u8, length) };
+    let input =
+        unsafe { core::slice::from_raw_parts(core::ptr::addr_of!(INPUT) as *const u8, length) };
     let result = match super::ffi::process(operation, input) {
         Ok(value) if value.len() <= BUFFER_CAPACITY => value,
         _ => return 1,
@@ -69,7 +67,15 @@ pub unsafe extern "C" fn tkm_shield3_wasm_output_length() -> usize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tkm_shield3_wasm_clear() {
     unsafe {
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(INPUT) as *mut u8, 0, BUFFER_CAPACITY);
-        core::ptr::write_bytes(core::ptr::addr_of_mut!(OUTPUT) as *mut u8, 0, BUFFER_CAPACITY);
+        core::ptr::write_bytes(
+            core::ptr::addr_of_mut!(INPUT) as *mut u8,
+            0,
+            BUFFER_CAPACITY,
+        );
+        core::ptr::write_bytes(
+            core::ptr::addr_of_mut!(OUTPUT) as *mut u8,
+            0,
+            BUFFER_CAPACITY,
+        );
     }
 }
