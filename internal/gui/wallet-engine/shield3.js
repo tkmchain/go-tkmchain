@@ -77,6 +77,10 @@ export async function shield3RegisterStamp(options) {
  const release=acquireWalletOperation();
  try{return await privateOperation('register-stamp',options,{requestId:options.requestId})}finally{release()}
 }
+export async function shield3RegisterUsername(options) {
+ const release=acquireWalletOperation();
+ try{return await privateOperation('register-username',options,{username:options.username})}finally{release()}
+}
 
 export async function shield3StampSponsorship(options) {
  const operations={offer:'stamp-offer',authorize:'authorize-stamp',review:'review-sponsorship',submit:'sponsor-stamp'};

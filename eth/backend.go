@@ -149,6 +149,8 @@ type Ethereum struct {
 	emailDir             string
 	governanceSvc        *GovernanceService
 	governanceDir        string
+	tkmNameOnce          sync.Once
+	tkmNameAPI           *TkmNameAPI
 }
 
 // New creates a new Ethereum object with RandomX consensus and Rotating King support
@@ -620,6 +622,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewTkmPhoneAPI(s),
 		},
 		{
+			Namespace: "tkmname",
+			Service:   s.TkmNameService(),
+		},
+		{
 			Namespace: "tkmdomain",
 			Service:   NewTkmDomainAPI(s),
 		},
@@ -680,6 +686,16 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewKingAPI(s),
 		},
 	}...)
+}
+
+// TkmNameService returns the backend's shared username service. RPC and the
+// TKMNet relay must use the same database and in-memory directory instance.
+func (s *Ethereum) TkmNameService() *TkmNameAPI {
+	if s == nil {
+		return NewTkmNameAPI(nil)
+	}
+	s.tkmNameOnce.Do(func() { s.tkmNameAPI = NewTkmNameAPI(s) })
+	return s.tkmNameAPI
 }
 
 // ResetWithGenesisBlock resets the blockchain with the given genesis block

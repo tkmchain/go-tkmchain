@@ -9,7 +9,7 @@ import (
 
 func TestConfidentialLedgerFork(t *testing.T) {
 	at := ProposedConfidentialLedgerTime
-	if time.Unix(int64(at), 0).UTC().Format(time.RFC3339) != "2026-10-03T22:00:00Z" {
+	if time.Unix(int64(at), 0).UTC().Format(time.RFC3339) != "2026-10-04T10:00:00Z" {
 		t.Fatal("wrong requested activation time")
 	}
 	for _, network := range []*ChainConfig{MainnetChainConfig, RandomXChainConfig, EgyptChainConfig} {

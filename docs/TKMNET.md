@@ -29,6 +29,50 @@ It is created with mode `0600` and must be backed up with the node's private
 state. The relay's ML-KEM public key and onion hostname belong in a signed
 directory descriptor; the private key is never sent over the network.
 
+## Host a username directory operator
+
+A directory operator is a `gtkm` node whose signed descriptor is included in
+`Tkmnet.DirectoryPeers` on participating nodes. It stores signed name bindings
+in its node database and serves requests through the username handler.
+Registrations are copied to every configured directory after the
+username-network activation. This is application-level replication, not
+consensus state.
+
+Use a fixed local port so Tor can publish the service. Add this mapping to the
+operator's Tor configuration and restart Tor:
+
+```text
+HiddenServiceDir /var/lib/tor/gtkm-tkmnet
+HiddenServiceVersion 3
+HiddenServicePort 39000 127.0.0.1:39000
+```
+
+Keep the hidden-service directory readable only by Tor. Read the `.onion`
+hostname from its `hostname` file. Do not open port 39000 on the public
+firewall; Tor forwards to the loopback-only `gtkm` listener.
+
+Configure `[Tkmnet]` with the local Tor SOCKS proxy, relay port `39000`,
+loopback listener `127.0.0.1:39000`, and the node's peer descriptors. Keep the
+relay key at its default path under the node data directory. Run `gtkm` with
+`--privacy.onion-only --tkmnet.listen=127.0.0.1:39000`. Antartical nodes enable
+TKMNet automatically; `--tkmnet.enable` is useful before that activation.
+
+The initial username network requires **two pinned directory operators**.
+More can be added later, up to the 16-query privacy fanout. Lookups select
+configured operators in randomized order; registrations replicate to every
+configured directory. The three-hop route also requires two transit relay
+descriptors distinct from directory descriptors. Participating nodes need
+matching onion relay descriptors in `Tkmnet.RelayPeers`.
+
+Descriptors contain the operator's onion host, ML-KEM relay public key,
+ML-DSA signing public key, expiry, and ML-DSA signature. The `SigningKeyPin`
+must be the SHA-256 fingerprint of that signing key and should be exchanged
+over a trusted channel. **This checkout has no descriptor-generation/export
+command or automatic operator discovery.** Do not invent a descriptor or
+copy another operator's pin: peers reject invalid descriptors and network
+readiness remains false. There is no automatic protocol reward for directory
+service.
+
 ## Services
 
 The packet format has separate authenticated service identifiers:

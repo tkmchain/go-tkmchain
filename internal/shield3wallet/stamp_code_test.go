@@ -26,7 +26,7 @@ func sponsorshipCodeFixture(t *testing.T) *types.Transaction {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Hidden Name", "Hidden Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Hidden Name", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}

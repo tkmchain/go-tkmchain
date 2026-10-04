@@ -5,7 +5,35 @@
 
   let fieldID = 0;
   let accountCache = null, accountCacheTime = 0;
+  async function attachStampCountryOptions(input) {
+    const id='wallet-stamp-countries-'+(++fieldID);input.setAttribute('list',id);
+    const list=el('datalist',{id});
+    try {(await rpc('tkmprivacy_stampCountries',[])).forEach(country=>list.appendChild(el('option',{value:country})));} catch(e) {}
+    return list;
+  }
   async function walletAccounts() { if(accountCache && Date.now()-accountCacheTime<3000) return accountCache; accountCache=await rpc('eth_accounts',[]);accountCacheTime=Date.now();return accountCache; }
+  const USERNAME_ALPHABET='abcdefghijklmnopqrstuvwxyz234567';
+  async function verifyUsernameHandle(handle,chainId) {
+    const match=/^@([a-z0-9_-]{3,32})#([a-z2-7]{7})$/i.exec(handle.trim());
+    if(!match)throw Error('Use a checksummed username such as @alice#abc2345.');
+    const name=match[1].toLowerCase();let chain=BigInt(chainId);const chainBytes=new Uint8Array(8);
+    for(let i=7;i>=0;i--){chainBytes[i]=Number(chain&255n);chain>>=8n;}
+    const prefix=new TextEncoder().encode('TKM_SHIELD3_USERNAME_HANDLE_V1'),label=new TextEncoder().encode(name),input=new Uint8Array(prefix.length+8+label.length);
+    input.set(prefix);input.set(chainBytes,prefix.length);input.set(label,prefix.length+8);
+    const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',input));let bits=0,value=0,check='';
+    for(let i=0;i<4;i++){value=(value<<8)|digest[i];bits+=8;while(bits>=5){bits-=5;check+=USERNAME_ALPHABET[(value>>bits)&31];}}
+    if(bits>0)check+=USERNAME_ALPHABET[(value<<(5-bits))&31];
+    if(check!==match[2].toLowerCase())throw Error('Username checksum does not match this network.');
+    return name;
+  }
+  async function resolveShield3Recipient(engine,input) {
+    const trimmed=input.trim();
+    if(!trimmed.startsWith('@'))return {...await engine.validateShield3Recipient(trimmed,{rpcToken:GUI.rpcToken()}),paymentCode:trimmed};
+    const chainId=await rpc('eth_chainId',[]);await verifyUsernameHandle(trimmed,chainId);
+    const binding=await rpc('tkmname_resolve',[trimmed]);
+    if(!binding||BigInt(binding.chainId)!==BigInt(chainId)||typeof binding.paymentCode!=='string')throw Error('Username is missing from this node or belongs to another network.');
+    return {...await engine.validateShield3Recipient(binding.paymentCode,{rpcToken:GUI.rpcToken()}),paymentCode:binding.paymentCode};
+  }
   document.addEventListener('visibilitychange',()=>{if(document.hidden) document.querySelectorAll('#view input[type=password],#view .recovery-words').forEach(input=>input.value='');});
   const section = {
     id: 'wallet',
@@ -150,6 +178,7 @@
     const row=(label,input)=>{input.id='wallet-field-'+(++fieldID);return el('div',{class:'form-row'},[el('label',{for:input.id,text:label}),input]);};
     const shield3Active=(await rpc('tkmprivacy_shieldedV3Status',[]).catch(()=>({active:false}))).active;
     const stampName=el('input',{class:'txt',maxlength:'120',autocomplete:'name'}),stampCountry=el('input',{class:'txt',maxlength:'80',autocomplete:'country-name'});
+    const stampCountryOptions=shield3Active?await attachStampCountryOptions(stampCountry):null;
     const password=el('input',{class:'txt',type:'password',autocomplete:'new-password'});
     const repeat=el('input',{class:'txt',type:'password',autocomplete:'new-password'});
     const phrase=el('textarea',{class:'txt recovery-words',autocomplete:'off',autocapitalize:'none',spellcheck:'false',rows:'5',placeholder:'Enter your 24 TKM PQ recovery words'});
@@ -166,6 +195,7 @@
     hide.onclick=clear;
     container.body.append(el('p',{class:'dim',text:'A TKM PQ wallet uses 24 recovery words. These recover its post-quantum identity and note keys. Keep an encrypted backup to preserve the original private stamp. Keep them offline; anyone with the words can spend your funds.'}),row('New wallet password',password),row('Confirm password',repeat),el('div',{class:'btn-row'},[generate]),row('TKM PQ recovery phrase · 24 words',phrase),ackRow,challenge,el('div',{class:'btn-row'},[save,restore,hide]),status);
     if(shield3Active){container.body.prepend(el('p',{class:'dim',text:'Create your private name/country stamp before adding this Shield3 wallet. Only its stamp key can reveal these labels.'}),row('Private stamp · name',stampName),row('Private stamp · country',stampCountry));}
+    if(stampCountryOptions)container.body.appendChild(stampCountryOptions);
     generate.onclick=async()=>{try{if(shield3Active&&(!stampName.value.trim()||!stampCountry.value.trim()))throw Error('Enter your private stamp name and country first.');generated=(await GUI.engine()).newRecoveryPhrase();phrase.value=generated;save.hidden=false;ackRow.hidden=false;challenge.hidden=false;acknowledgement.checked=false;status.textContent='Write down all 24 words in order, then confirm word 6.';}catch(e){status.textContent=e.message;}};
     const importPhrase=async creating=>{
       if(password.value.length<10 || password.value!==repeat.value){status.textContent='Use a password of at least 10 characters and confirm it.';return;}
@@ -279,6 +309,7 @@
     const name=el('input',{class:'txt',id:'stamp-name-'+(++fieldID),autocomplete:'name',maxlength:'120'}),country=el('input',{class:'txt',id:'stamp-country-'+(++fieldID),autocomplete:'country-name',maxlength:'80'});
     const register=el('button',{class:'btn gold',text:'Stamp address · register on chain'}),refresh=el('button',{class:'btn secondary',text:'Check stamp confirmation'}),state=el('p',{class:'wallet-status',role:'status'});
     const section=el('section',{class:'wallet-stamp-step'},[el('h3',{text:'First: stamp your address'}),el('p',{class:'dim',text:'Create your private name/country stamp, register it, and wait for confirmation before sending. Existing stamped backups keep their original stamp. Registration transfers no amount and uses normal gas fees.'}),el('div',{class:'form-row'},[el('label',{for:name.id,text:'Private name'}),name]),el('div',{class:'form-row'},[el('label',{for:country.id,text:'Private country'}),country]),el('div',{class:'btn-row'},[register,refresh]),state]);
+    attachStampCountryOptions(country).then(list=>section.appendChild(list));
     container.body.appendChild(section);
     let busy=false;
     const update=async()=>{
@@ -408,8 +439,8 @@
     const invalidate=()=>{prepared=null;review.hidden=true;};
     const addRecipient=()=>{
       if(recipientRows.length===3)return;
-      const index=nextRecipient++,to=el('textarea',{class:'txt',id:index===0?'shield3-to':'shield3-to-'+index,rows:'3',placeholder:'tkmshield3.…',spellcheck:'false'}),amount=el('input',{class:'txt',id:index===0?'shield3-amount':'shield3-amount-'+index,inputmode:'decimal',placeholder:'0.00'});
-      const section=el('div',{class:'shield3-payment-row'},[row('Recipient '+(index+1)+' · Shield3 address',to),row('Amount (TKM)',amount)]);
+      const index=nextRecipient++,to=el('textarea',{class:'txt',id:index===0?'shield3-to':'shield3-to-'+index,rows:'3',placeholder:'tkmshield3.… or @name#checksum',spellcheck:'false'}),amount=el('input',{class:'txt',id:index===0?'shield3-amount':'shield3-amount-'+index,inputmode:'decimal',placeholder:'0.00'});
+      const section=el('div',{class:'shield3-payment-row'},[row('Recipient '+(index+1)+' · Shield3 address or username',to),row('Amount (TKM)',amount)]);
       if(index>0){const remove=el('button',{class:'btn secondary',text:'Remove recipient'});remove.onclick=()=>{section.remove();recipientRows.splice(recipientRows.findIndex(item=>item.to===to),1);recipientRows.forEach((item,n)=>item.section.querySelector('label').textContent='Recipient '+(n+1)+' · Shield3 address');add.disabled=false;invalidate();};section.append(remove);}
       [to,amount].forEach(input=>input.addEventListener('input',invalidate));recipientRows.push({to,amount,section});destinations.append(section);recipientRows.forEach((item,n)=>item.section.querySelector('label').textContent='Recipient '+(n+1)+' · Shield3 address');add.disabled=recipientRows.length===3;invalidate();
     };
@@ -432,21 +463,23 @@
     send.onclick=async()=>{
       const reviewControls=[send,from,pass,add,mode,relayURL,retry,...recipientRows.flatMap(item=>[item.to,item.amount,...item.section.querySelectorAll('button')])];reviewControls.forEach(input=>input.disabled=true);
       try{
-        const engine=await GUI.engine(),payments=recipientRows.map(item=>({recipient_address:item.to.value.trim(),amount:item.amount.value.trim()})),checked=engine.validateShield3Payments(payments);
+        const engine=await GUI.engine(),payments=recipientRows.map(item=>({recipient_address:item.to.value.trim(),amount:item.amount.value.trim()}));
         if(!from.value||!pass.value)throw Error('Choose your wallet and enter its password.');
-        const recipients=await Promise.all(payments.map(payment=>engine.validateShield3Recipient(payment.recipient_address,{rpcToken:GUI.rpcToken()})));
+        const recipients=await Promise.all(payments.map(payment=>resolveShield3Recipient(engine,payment.recipient_address)));
+        const resolvedPayments=payments.map((payment,index)=>({...payment,recipient_address:recipients[index].paymentCode||payment.recipient_address}));
+        const checked=engine.validateShield3Payments(resolvedPayments);
         let requestId=crypto.randomUUID(),relayOffer,quote;
         if(mode.value==='relay'){
           const endpoint=relayURL.value.trim();if(!endpoint)throw Error('Enter a shared relay URL.');
-          const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({account:from.value,endpoint,payments}))))).map(b=>b.toString(16).padStart(2,'0')).join('');
+          const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({account:from.value,endpoint,payments:resolvedPayments}))))).map(b=>b.toString(16).padStart(2,'0')).join('');
           const existing=savedDraft();
           if(existing&&existing.digest!==digest)throw Error('Check the saved relay payment before starting another. Its notes stay reserved until confirmation or expiry.');
           const saved=existing||{digest,account:from.value,endpoint,requestId};requestId=saved.requestId;localStorage.setItem(draftKey,JSON.stringify(saved));
           if(saved.prepared)throw Error('This payment is already prepared. Use Check / retry saved relay payment.');
           status.textContent='Obtaining a signed relay fee estimate…';relayOffer=await engine.shield3FetchRelayOffer({relayURL:endpoint,requestId,rpcToken:GUI.rpcToken()});quote=await engine.shield3ReviewRelayOffer({relay:relayOffer,rpcToken:GUI.rpcToken()});
         }
-        prepared={account:from.value,payments,requestId,relayOffer,relayURL:mode.value==='relay'?relayURL.value.trim():undefined};
-        review.replaceChildren(el('h3',{text:'Review private Shield3 transfer'}),...payments.map((payment,index)=>el('p',{class:'mono',text:payment.amount+' TKM → '+recipients[index].address})),el('p',{text:'Combined amount: '+fmtTKM(checked.total.toString(),18)+' TKM'}),el('p',{text:quote?'Shared operator: '+quote.relay+' · full reserved fee: '+fmtTKM(quote.gasReserveWei,18)+' TKM. The operator keeps unused gas. Authorization expires '+new Date(quote.validUntil*1000).toLocaleString()+'.':'Network fee additional. Your signer account is public.'}),el('div',{class:'btn-row'},[confirmButton,cancel]));review.hidden=false;status.textContent='Confirm all receiving addresses, amounts and the fee.';
+        prepared={account:from.value,payments:resolvedPayments,requestId,relayOffer,relayURL:mode.value==='relay'?relayURL.value.trim():undefined};
+        review.replaceChildren(el('h3',{text:'Review private Shield3 transfer'}),...payments.map((payment,index)=>el('p',{class:'mono',text:payment.amount+' TKM → '+(payment.recipient_address.startsWith('@')?payment.recipient_address+' · ':'')+recipients[index].address})),el('p',{text:'Combined amount: '+fmtTKM(checked.total.toString(),18)+' TKM'}),el('p',{text:quote?'Shared operator: '+quote.relay+' · full reserved fee: '+fmtTKM(quote.gasReserveWei,18)+' TKM. The operator keeps unused gas. Authorization expires '+new Date(quote.validUntil*1000).toLocaleString()+'.':'Network fee additional. Your signer account is public.'}),el('div',{class:'btn-row'},[confirmButton,cancel]));review.hidden=false;status.textContent='Confirm all receiving addresses, amounts and the fee.';
       }catch(e){status.textContent=e.message;}finally{reviewControls.forEach(input=>input.disabled=false);add.disabled=recipientRows.length===3;await updateStamp();}
     };
     confirmButton.onclick=async()=>{
@@ -469,12 +502,15 @@
     const pass=el('input',{class:'txt',type:'password',id:'shield3-receive-pass',autocomplete:'current-password'}),code=el('textarea',{class:'txt receive-code',readonly:'readonly',rows:'5','aria-label':'Shield3 receiving address'}),status=el('p',{class:'wallet-status',role:'status'});
     const row=(text,input)=>el('div',{class:'form-row'},[el('label',{for:input.id,text}),input]);
     const address=el('button',{class:'btn gold',text:'Unlock receiving address'}),copy=el('button',{class:'btn secondary',text:'Copy address'}),scan=el('button',{class:'btn gold',text:'Scan Shield3 balance'}),backup=el('button',{class:'btn secondary',text:'Save encrypted wallet backup'}),view=el('button',{class:'btn secondary',text:'Reveal selected viewing key'});
+    const username=el('input',{class:'txt',id:'shield3-username',autocomplete:'off',maxlength:'32',placeholder:'alice'}),registerUsername=el('button',{class:'btn secondary',text:'Register username'}),usernameStatus=el('p',{class:'wallet-status',role:'status'});
     const keys=el('textarea',{class:'txt recovery-words',readonly:'readonly',rows:'6','aria-label':'Private viewing and stamp keys'});keys.hidden=true;
     container.body.append(row('Wallet',select),row('Wallet password',pass));
-    const stampControls=[address,copy];const updateStamp=consensusStampGate(container,select,pass,stampControls);
-    container.body.append(el('div',{class:'btn-row'},[address,copy,scan,backup,view]),code,keys,status);
-    const run=async action=>{[address,scan,backup,view].forEach(button=>button.disabled=true);try{const unlocked=await shield3Unlock(select.value,pass.value);await action(unlocked);}catch(e){status.textContent=e.message;}finally{pass.value='';[address,scan,backup,view].forEach(button=>button.disabled=false);await updateStamp();}};
+    const stampControls=[address,copy,registerUsername];const updateStamp=consensusStampGate(container,select,pass,stampControls);
+    container.body.append(el('div',{class:'btn-row'},[address,copy,scan,backup,view]),code,keys,status,el('hr'),el('h3',{text:'Shield3 username'}),el('p',{class:'dim',text:'Register a checksummed @name for this Shield3 address. At network activation, the selected node replicates the signed binding to all configured directory operators over Tor. At least two pinned operators are required.'}),row('Username · ASCII only',username),registerUsername,usernameStatus);
+    const run=async action=>{[address,scan,backup,view,registerUsername].forEach(button=>button.disabled=true);try{const unlocked=await shield3Unlock(select.value,pass.value);await action(unlocked);}catch(e){status.textContent=e.message;}finally{pass.value='';[address,scan,backup,view,registerUsername].forEach(button=>button.disabled=false);await updateStamp();}};
     address.onclick=()=>run(async({engine,options})=>{code.value=(await engine.shield3Identity(options)).paymentCode;status.textContent='Share this Shield3 receiving address. Its public keys cannot decrypt notes or stamps.';});
+    registerUsername.onclick=()=>run(async({engine,options})=>{usernameStatus.textContent='Signing the binding and registering with the selected node…';const result=await engine.shield3RegisterUsername({...options,username:username.value.trim()});usernameStatus.textContent='Registered '+result.handle+' · expires '+new Date(Number(result.expiresAt)*1000).toLocaleDateString()+'. Network replication follows the configured username-network activation and peer readiness.';localStorage.setItem('tkm-shield3-username:'+select.value,result.handle);});
+    const savedHandle=localStorage.getItem('tkm-shield3-username:'+select.value);if(savedHandle)usernameStatus.textContent='Saved on this device: '+savedHandle+'. The selected node handles replication when the username network is active.';
     copy.onclick=async()=>{if(!code.value)return;try{await navigator.clipboard.writeText(code.value);toast('Shield3 address copied.','ok');}catch(e){code.focus();code.select();}};
     scan.onclick=()=>run(async({engine,options})=>{status.textContent='Scanning private notes…';const result=await engine.shield3Scan(options);status.textContent='Confirmed spendable Shield3: '+fmtTKM('0x'+BigInt(result.balanceWei).toString(16),8)+' TKM';});
     backup.onclick=()=>run(async({options})=>{const blob=new Blob([JSON.stringify(options.keystore,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),link=el('a',{href:url,download:'TKM-Shield3-'+select.value+'.json'});link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);status.textContent='Encrypted backup saved. Keep it with your recovery words; it preserves the original private stamp.';});
@@ -493,7 +529,7 @@
     stampControls.push(migrate);
     container.body.append(el('hr'),el('h3',{text:'Move Shield2 funds into Shield3'}),el('p',{class:'dim',text:'Migrate each legacy note to your own public balance, wait for confirmation, then shield the confirmed balance. This migration reveals its amount.'}),migrate);
     const clearExtras=shield3Extras(container,select,pass,status,stampControls,updateStamp);
-    const clear=()=>{pass.value='';keys.value='';keys.hidden=true;importedView.value='';clearExtras();};container.clearSecrets=clear;select.onchange=()=>{clear();code.value='';};await updateStamp();
+    const clear=()=>{pass.value='';keys.value='';keys.hidden=true;importedView.value='';clearExtras();};container.clearSecrets=clear;select.onchange=()=>{clear();code.value='';username.value='';usernameStatus.textContent=localStorage.getItem('tkm-shield3-username:'+select.value)?'Saved on this device: '+localStorage.getItem('tkm-shield3-username:'+select.value)+'. The selected node handles replication when the username network is active.':'';};await updateStamp();
   }
 
   async function renderActivity(container) {

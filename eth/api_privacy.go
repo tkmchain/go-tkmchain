@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -145,6 +146,13 @@ type PrivacyAPI struct {
 
 func NewPrivacyAPI(e *Ethereum) *PrivacyAPI {
 	return &PrivacyAPI{e: e}
+}
+
+// StampCountries returns the canonical ISO country and territory names used by
+// Shield3 address stamping. The country value itself stays encrypted in the
+// stamp and is never added to a public transaction field.
+func (api *PrivacyAPI) StampCountries() []string {
+	return pqcrypto.StampCountries()
 }
 
 // Fee returns the minimum fee paid to the main king to activate address privacy.

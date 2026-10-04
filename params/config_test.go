@@ -18,6 +18,7 @@ package params
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"math/big"
 	"reflect"
@@ -188,6 +189,7 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				"QuantumResistantTime":    config.QuantumResistantTime,
 				"PQMigrationRecoveryTime": config.PQMigrationRecoveryTime,
 				"AntarticalTime":          config.AntarticalTime,
+				"UsernameNetworkTime":     config.UsernameNetworkTime,
 			}
 			want := map[string]uint64{
 				"EDATime":                 0,
@@ -197,6 +199,7 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				"QuantumResistantTime":    MainnetPrivacyQuantumTime,
 				"PQMigrationRecoveryTime": MainnetPQMigrationRecoveryTime,
 				"AntarticalTime":          MainnetAntarticalTime,
+				"UsernameNetworkTime":     MainnetUsernameNetworkTime,
 			}
 			for forkName, wantTime := range want {
 				forkTime := tkmForkTimes[forkName]
@@ -205,6 +208,38 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUsernameNetworkForkSchedule(t *testing.T) {
+	if MainnetUsernameNetworkTime != 1791151200 { // 2026-10-04 22:00:00 UTC
+		t.Fatalf("username network timestamp = %d, want 2026-10-04 22:00:00 UTC", MainnetUsernameNetworkTime)
+	}
+	if MainnetChainConfig.UsernameNetworkTime == nil || *MainnetChainConfig.UsernameNetworkTime != MainnetUsernameNetworkTime {
+		t.Fatalf("mainnet username network time = %v, want %d", MainnetChainConfig.UsernameNetworkTime, MainnetUsernameNetworkTime)
+	}
+	if MainnetChainConfig.IsUsernameNetworkActive(big.NewInt(0), MainnetAntarticalTime) {
+		t.Fatal("username network activated with Antartical instead of its own timestamp")
+	}
+	if MainnetChainConfig.IsUsernameNetworkActive(big.NewInt(0), MainnetUsernameNetworkTime-1) {
+		t.Fatal("username network active before scheduled timestamp")
+	}
+	if !MainnetChainConfig.IsUsernameNetworkActive(big.NewInt(0), MainnetUsernameNetworkTime) {
+		t.Fatal("username network inactive at scheduled timestamp")
+	}
+	if EgyptChainConfig.IsUsernameNetworkActive(big.NewInt(0), 0) {
+		t.Fatal("username network activated early on Egypt")
+	}
+	if !EgyptChainConfig.IsUsernameNetworkActive(big.NewInt(0), MainnetUsernameNetworkTime) {
+		t.Fatal("username network inactive at scheduled timestamp on Egypt")
+	}
+	encoded, err := json.Marshal(MainnetChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ChainConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded.UsernameNetworkTime == nil || *decoded.UsernameNetworkTime != MainnetUsernameNetworkTime {
+		t.Fatalf("username network schedule did not survive config serialization: %v", err)
 	}
 }
 

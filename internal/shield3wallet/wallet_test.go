@@ -122,7 +122,7 @@ func (r *walletRPC) CallContext(_ context.Context, dest any, method string, args
 }
 func testIdentity(t *testing.T, seed []byte) *Identity {
 	t.Helper()
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Private Name", "Private Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Private Name", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}

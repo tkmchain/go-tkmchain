@@ -89,14 +89,64 @@ func TestPacketTamperingAndWrongKeyFail(t *testing.T) {
 
 func TestServicesAndPayloadLimits(t *testing.T) {
 	hops, _ := testHops(t)
-	for _, service := range []ServiceID{ServiceTransaction, ServiceP2P, ServiceMail, ServicePhone} {
+	for _, service := range []ServiceID{ServiceTransaction, ServiceP2P, ServiceMail, ServicePhone, ServiceUsername} {
 		packet, err := Build(BuildOptions{Service: service, Hops: hops}, bytes.Repeat([]byte{7}, MaxPayload))
-		if err != nil || len(packet) != PacketSize {
+		if err != nil || len(packet) != ExtendedPacketSize {
 			t.Fatalf("service %d: packet=%d err=%v", service, len(packet), err)
 		}
 	}
 	if _, err := Build(BuildOptions{Service: ServicePhone, Hops: hops}, bytes.Repeat([]byte{1}, MaxPayload+1)); err == nil {
 		t.Fatal("oversized payload accepted")
+	}
+}
+
+func TestExtendedUsernameResponseIsBoundToRequest(t *testing.T) {
+	hops, keys := testHops(t)
+	payload, err := EncodeUsernameQuery("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, payloadKey, err := BuildWithSecret(BuildOptions{Service: ServiceUsername, Hops: hops}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clearBytes(payloadKey[:])
+	var route Route
+	for i := 0; i < MaxHops; i++ {
+		route, err = OpenLayer(packet, keys[i], uint8(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < MaxHops-1 {
+			packet, err = Forward(packet, route)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	opened, err := OpenPayload(packet, route)
+	if err != nil || !bytes.Equal(opened, payload) {
+		t.Fatalf("request payload err=%v", err)
+	}
+	reply, err := UsernameRecordReply([]byte("signed binding"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := SealResponse(packet, route.PayloadKey, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := OpenResponse(response, packet, payloadKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := DecodeUsernameRecordReply(decoded)
+	if err != nil || string(record) != "signed binding" {
+		t.Fatalf("reply=%q err=%v", record, err)
+	}
+	packet[5] = byte(ServiceMail)
+	if _, err := OpenResponse(response, packet, payloadKey); err == nil {
+		t.Fatal("response accepted for a different request")
 	}
 }
 

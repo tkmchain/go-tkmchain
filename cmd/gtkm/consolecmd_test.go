@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	ipcAPIs  = "admin:1.0 debug:1.0 emailvm:1.0 king:1.0 mainking:1.0 miner:1.0 net:1.0 randomx:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 tkmaccount:1.0 tkmasset:1.0 tkmdomain:1.0 tkmgov:1.0 tkminstitution:1.0 tkmphone:1.0 tkmprivacy:1.0 tkmprotocol:1.0 tkmsupply:1.0 tvm:1.0 txpool:1.0 web3:1.0"
+	ipcAPIs  = "admin:1.0 debug:1.0 emailvm:1.0 king:1.0 mainking:1.0 miner:1.0 net:1.0 randomx:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 tkmaccount:1.0 tkmasset:1.0 tkmdomain:1.0 tkmgov:1.0 tkminstitution:1.0 tkmname:1.0 tkmphone:1.0 tkmprivacy:1.0 tkmprotocol:1.0 tkmsupply:1.0 tvm:1.0 txpool:1.0 web3:1.0"
 	httpAPIs = "net:1.0 rk:1.0 rotatingking:1.0 rpc:1.0 tkm:1.0 web3:1.0"
 )
 

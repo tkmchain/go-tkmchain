@@ -28,21 +28,31 @@ var _ node.Lifecycle = (*Service)(nil)
 // intentionally a local listener: Tor publishes it as an onion service and
 // no public TCP socket is opened by this package.
 type ServiceConfig struct {
-	Enabled        bool
-	ListenAddr     string
-	OnionOnly      bool
+	Enabled    bool
+	ListenAddr string
+	OnionOnly  bool
+	// HopIndex is retained for config compatibility; relays accept any
+	// packet hop so one onion service can be selected at any
+	// position in a three-hop circuit.
 	HopIndex       uint8
 	PrivateKeyPath string
+	SOCKS5Proxy    string
+	RelayPort      string
+	RelayPeers     []Descriptor
 	ReplayCache    *ReplayCache
 	Handler        Handler
+	PayloadHandler PayloadHandler
 	Logger         func(message string, args ...any)
 }
 
-// Handler receives one opened relay layer. For a final route, callers should
-// call OpenPayload and dispatch it to the service selected by the packet. For
-// a non-final route, callers forward the packet through their signed directory.
-// A non-empty returned packet is written back on the same connection.
+// Handler receives an opened final relay packet. It must decrypt and dispatch
+// the service payload, then return one fixed-size TKMNet response packet.
+// Intermediate forwarding is handled by Service from its configured peers.
 type Handler func(context.Context, Route, []byte) ([]byte, error)
+
+// PayloadHandler is called only at the final relay with the decrypted service
+// payload. Its result is encrypted into a fixed-size reply for the requester.
+type PayloadHandler func(context.Context, ServiceID, []byte) ([]byte, error)
 
 // Service implements node.Lifecycle and can be registered directly with
 // gtkm's protocol stack.
@@ -51,6 +61,8 @@ type Service struct {
 	mu       sync.RWMutex
 	listener net.Listener
 	key      *mlkem.DecapsulationKey1024
+	dialer   *SOCKS5Dialer
+	peers    map[[LayerNextIDSize]byte]Descriptor
 	replay   *ReplayCache
 	stop     chan struct{}
 	cancel   context.CancelFunc
@@ -67,9 +79,6 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = "127.0.0.1:0"
-	}
-	if cfg.HopIndex >= MaxHops {
-		return nil, errors.New("tkmnet: hop index is outside the supported range")
 	}
 	if !isLoopbackListenAddr(cfg.ListenAddr) {
 		return nil, errors.New("tkmnet: relay service must listen on loopback; publish it through Tor")
@@ -88,7 +97,27 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{cfg: cfg, key: key, replay: cfg.ReplayCache, conns: make(map[net.Conn]struct{})}, nil
+	peers := make(map[[LayerNextIDSize]byte]Descriptor, len(cfg.RelayPeers))
+	for _, peer := range cfg.RelayPeers {
+		if err := peer.Verify(time.Now()); err != nil {
+			return nil, fmt.Errorf("tkmnet: invalid configured relay peer: %w", err)
+		}
+		if _, duplicate := peers[peer.ID]; duplicate {
+			return nil, errors.New("tkmnet: duplicate configured relay identifier")
+		}
+		peers[peer.ID] = peer
+	}
+	var dialer *SOCKS5Dialer
+	if len(peers) != 0 {
+		if cfg.SOCKS5Proxy == "" || cfg.RelayPort == "" {
+			return nil, errors.New("tkmnet: relay forwarding requires a Tor SOCKS5 proxy and onion port")
+		}
+		dialer, err = NewSOCKS5Dialer(cfg.SOCKS5Proxy)
+		if err != nil {
+			return nil, fmt.Errorf("tkmnet: configure onion relay forwarding: %w", err)
+		}
+	}
+	return &Service{cfg: cfg, key: key, dialer: dialer, peers: peers, replay: cfg.ReplayCache, conns: make(map[net.Conn]struct{})}, nil
 }
 
 func (s *Service) Start() error {
@@ -111,7 +140,7 @@ func (s *Service) Start() error {
 	s.stop = make(chan struct{})
 	s.listener = listener
 	s.started = true
-	s.log("tkmnet relay started", "listen", listener.Addr().String(), "hop", s.cfg.HopIndex, "relayID", s.RelayID())
+	s.log("tkmnet relay started", "listen", listener.Addr().String(), "hop", "any", "relayID", s.RelayID())
 	s.wg.Add(1)
 	go s.acceptLoop(listener)
 	return nil
@@ -222,17 +251,14 @@ func (s *Service) handleConn(conn net.Conn) {
 		return
 	}
 	header, err := parseHeader(packet)
-	if err != nil || header.hopIndex != s.cfg.HopIndex {
+	if err != nil {
 		return
 	}
-	route, err := OpenLayer(packet, s.key, s.cfg.HopIndex)
+	route, err := OpenLayer(packet, s.key, header.hopIndex)
 	if err != nil {
 		return
 	}
 	if err := s.replay.Accept(header.circuitID, header.sequence, header.expires, time.Now()); err != nil {
-		return
-	}
-	if s.cfg.Handler == nil {
 		return
 	}
 	s.mu.RLock()
@@ -241,11 +267,58 @@ func (s *Service) handleConn(conn net.Conn) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	response, err := s.cfg.Handler(ctx, route, packet)
+	var response []byte
+	if route.Final {
+		if s.cfg.PayloadHandler != nil {
+			var payload []byte
+			payload, err = OpenPayload(packet, route)
+			if err == nil {
+				var responsePayload []byte
+				responsePayload, err = s.cfg.PayloadHandler(ctx, route.Service, payload)
+				if err == nil {
+					response, err = SealResponse(packet, route.PayloadKey, responsePayload)
+				}
+			}
+		} else if s.cfg.Handler != nil {
+			response, err = s.cfg.Handler(ctx, route, packet)
+		} else {
+			return
+		}
+	} else {
+		response, err = s.forward(ctx, route, packet)
+	}
 	if err != nil || len(response) == 0 {
 		return
 	}
 	_ = WritePacket(conn, response)
+}
+
+func (s *Service) forward(ctx context.Context, route Route, packet []byte) ([]byte, error) {
+	if s.dialer == nil {
+		return nil, errors.New("tkmnet: relay forwarding is not configured")
+	}
+	peer, ok := s.peers[route.NextID]
+	if !ok {
+		return nil, errors.New("tkmnet: next relay is not in the configured peer set")
+	}
+	forwarded, err := Forward(packet, route)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.dialer.DialContext(ctx, peer.Onion, s.cfg.RelayPort)
+	if err != nil {
+		return nil, fmt.Errorf("tkmnet: onion relay dial failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := WritePacket(conn, forwarded); err != nil {
+		return nil, fmt.Errorf("tkmnet: forward packet: %w", err)
+	}
+	response, err := ReadPacket(conn)
+	if err != nil {
+		return nil, fmt.Errorf("tkmnet: read relay response: %w", err)
+	}
+	return response, nil
 }
 
 func (s *Service) log(message string, args ...any) {

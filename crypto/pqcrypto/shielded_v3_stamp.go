@@ -38,9 +38,20 @@ func stampMessage(r *ShieldedV3StampRecord) []byte {
 // random hiding commitment and encrypted labels disclose no name or country.
 func CreateShieldedV3Stamp(seed []byte, chainID uint64, name, country string) (*ShieldedV3StampRecord, error) {
 	text := ShieldedV3StampText{strings.TrimSpace(name), strings.TrimSpace(country)}
-	if chainID == 0 || text.Name == "" || text.Country == "" || len(text.Name) > 120 || len(text.Country) > 80 || !utf8.ValidString(text.Name) || !utf8.ValidString(text.Country) {
+	if chainID == 0 {
+		return nil, errors.New("stamp requires a valid chain ID")
+	}
+	if text.Name == "" || len(text.Name) > 120 || !utf8.ValidString(text.Name) {
 		return nil, errors.New("stamp requires a name (up to 120 bytes) and country (up to 80 bytes)")
 	}
+	if len(text.Country) > 80 || !utf8.ValidString(text.Country) {
+		return nil, errors.New("stamp country must be a valid country name of up to 80 bytes")
+	}
+	canonicalCountry, ok := CanonicalStampCountry(text.Country)
+	if !ok {
+		return nil, errors.New("stamp country is not recognized; choose one of the supported ISO 3166 countries or territories")
+	}
+	text.Country = canonicalCountry
 	plain, err := json.Marshal(text)
 	if err != nil {
 		return nil, err
@@ -91,8 +102,14 @@ func OpenShieldedV3Stamp(stampKey []byte, record *ShieldedV3StampRecord) (Shield
 	}
 	defer clear(plain)
 	err = json.Unmarshal(plain, &text)
-	if err == nil && (text.Name == "" || text.Country == "") {
-		err = ErrInvalidShieldedV3Ciphertext
+	if err == nil {
+		text.Name = strings.TrimSpace(text.Name)
+		country, ok := CanonicalStampCountry(text.Country)
+		if text.Name == "" || len(text.Name) > 120 || !utf8.ValidString(text.Name) || !ok {
+			err = ErrInvalidShieldedV3Ciphertext
+		} else {
+			text.Country = country
+		}
 	}
 	return text, err
 }

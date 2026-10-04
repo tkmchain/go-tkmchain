@@ -318,6 +318,19 @@ func walletText(key, fallback string) string {
 			"uk": "Штамп адреси Shield3", "th": "ตราประทับที่อยู่ Shield3",
 			"bn": "Shield3 ঠিকানা স্ট্যাম্প",
 		}[walletActiveLanguage.Code]
+	case "menu.username":
+		value = map[string]string{
+			"zh": "Shield3 用户名", "ru": "Имя пользователя Shield3",
+			"ja": "Shield3 ユーザー名", "ko": "Shield3 사용자 이름",
+			"es": "Usuario Shield3", "pt": "Nome Shield3",
+			"fr": "Nom d’utilisateur Shield3", "de": "Shield3-Benutzername",
+			"ar": "اسم مستخدم Shield3", "hi": "Shield3 उपयोगकर्ता नाम",
+			"id": "Nama pengguna Shield3", "tr": "Shield3 kullanıcı adı",
+			"vi": "Tên người dùng Shield3", "it": "Nome utente Shield3",
+			"nl": "Shield3-gebruikersnaam", "pl": "Nazwa użytkownika Shield3",
+			"uk": "Ім’я користувача Shield3", "th": "ชื่อผู้ใช้ Shield3",
+			"bn": "Shield3 ব্যবহারকারীর নাম",
+		}[walletActiveLanguage.Code]
 	case "section.stamp":
 		value = map[string]string{
 			"zh": "SHIELD3 地址印记", "ru": "ШТАМП АДРЕСА SHIELD3",

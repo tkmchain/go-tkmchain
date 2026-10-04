@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -50,6 +51,7 @@ type shield3Request struct {
 	Recipient          string                           `json:"recipient"`
 	AmountWei          string                           `json:"amountWei"`
 	RequestID          string                           `json:"requestId"`
+	Username           string                           `json:"username,omitempty"`
 	View               *shield3wallet.ViewKey           `json:"view"`
 }
 
@@ -108,7 +110,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
+	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "register-username", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
@@ -348,6 +350,52 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	switch operation {
 	case "identity":
 		reply(map[string]any{"address": identity.Address, "paymentCode": identity.Code})
+		return
+	case "register-username":
+		name, err := shield3wallet.NormalizeUsername(req.Username)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		if err := shield3wallet.RequireRegisteredStamp(r.Context(), g.client, shield3wallet.PaymentPayload{ChainID: chainID.Uint64(), Address: identity.Address, Stamp: *identity.Stamp}); err != nil {
+			fail(400, fmt.Errorf("Shield3 username registration requires a confirmed address stamp: %w", err))
+			return
+		}
+		sequence := uint64(1)
+		if handle, err := shield3wallet.UsernameHandle(name, chainID.Uint64()); err == nil {
+			var previous shield3wallet.UsernameBinding
+			if g.client.CallContext(r.Context(), &previous, "tkmname_resolve", handle) == nil {
+				if previous.Address != identity.Address {
+					fail(409, errors.New("username is already registered to another Shield3 identity"))
+					return
+				}
+				if previous.Sequence == ^uint64(0) {
+					fail(409, errors.New("username sequence is exhausted"))
+					return
+				}
+				sequence = previous.Sequence + 1
+			}
+		}
+		now := time.Now().UTC()
+		record, err := shield3wallet.CreateUsernameBinding(req.Seed, name, identity.Code, chainID.Uint64(), sequence, now.Add(90*24*time.Hour), now)
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		var accepted bool
+		if err := g.client.CallContext(r.Context(), &accepted, "tkmname_register", record); err != nil || !accepted {
+			if err == nil {
+				err = errors.New("username directory did not accept the signed record")
+			}
+			fail(409, err)
+			return
+		}
+		handle, err := shield3wallet.UsernameHandle(name, chainID.Uint64())
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		reply(map[string]any{"handle": handle, "expiresAt": record.ExpiresAt, "directory": "local-node"})
 		return
 	case "viewkeys":
 		if req.Scope == "stamp" {

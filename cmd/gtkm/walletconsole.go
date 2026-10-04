@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
@@ -41,6 +42,9 @@ transfers continue to use the dedicated shielded wallet/prover flow.
 Use Stamp address before a Shield3 send. The flow encrypts the name and
 country locally, persists the exact stamp in the PQ keyfile, submits the
 owner-proof registration, and waits for immutable on-chain confirmation.
+Use Shield3 username to register a checksummed @name for a stamped receiving
+address. The wallet signs the binding locally and shows whether the node has
+replicated it to its configured directory operators.
 Use Stamp sponsorship for an unfunded recipient in another wallet. Exchange
 an offer code and recipient authorization code, then let the funded sponsor
 review and pay the registration gas. Private keys stay in their own wallets.
@@ -109,6 +113,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  11) %s\n", walletText("menu.shield3", "Show Shield3 address"))
 		fmt.Printf("  12) %s\n", walletText("menu.stampSponsor", "Stamp sponsorship"))
 		fmt.Printf("  13) %s\n", walletText("menu.validator", "Validator"))
+		fmt.Printf("  14) %s\n", walletText("menu.username", "Shield3 username"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -165,11 +170,15 @@ func interactiveWallet(ctx *cli.Context) error {
 			if err := walletValidatorMenu(reader, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
+		case "14":
+			if err := walletShield3Username(reader, rpcClient, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1 through 13, or 0.")
+			fmt.Println("\n  Choose 1 through 14, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -1352,6 +1361,113 @@ func showWalletShield3Address(reader *bufio.Reader, ks *keystore.KeyStore, walle
 	defer identity.Clear()
 	fmt.Printf("\n  Account address: %s\n", identity.Address.Hex())
 	fmt.Printf("  Shield3 address: %s\n", identity.Code)
+	pauseWallet(reader)
+	return nil
+}
+
+func walletShield3Username(reader *bufio.Reader, client *rpc.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
+		return errors.New("invalid chain ID for Shield3 username")
+	}
+	clearWalletScreen()
+	fmt.Println("SHIELD3 USERNAME")
+	fmt.Println("────────────────")
+	fmt.Println("Register a short, checksummed name for your Shield3 receiving code.")
+	var before eth.TkmNameDirectoryStatus
+	if err := client.Call(&before, "tkmname_status"); err != nil {
+		return fmt.Errorf("check username network status: %w", err)
+	}
+	if before.NetworkActive {
+		if before.NetworkPeersConfigured {
+			fmt.Printf("Network: active · %d directory operators configured · ready=%t\n", before.DirectoryOperators, before.NetworkReady)
+		} else {
+			fmt.Println("Network: active · directory peers are not configured; registration cannot complete until they are.")
+			return errors.New("configure at least two pinned username directory operators and two independent transit relays in the node's TKMNet settings")
+		}
+	} else {
+		fmt.Println("Network: not active yet · registration is saved locally and will replicate after activation.")
+	}
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	name, err := readWalletLine(reader, "Username (3–32 ASCII letters, digits, _ or -)")
+	if err != nil {
+		return err
+	}
+	name, err = shield3wallet.NormalizeUsername(name)
+	if err != nil {
+		return err
+	}
+	handle, err := shield3wallet.UsernameHandle(name, chainID.Uint64())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n  You are registering %s on chain %s.\n", handle, chainID.String())
+	confirmation, err := readWalletLine(reader, "Type REGISTER to confirm")
+	if err != nil {
+		return err
+	}
+	if confirmation != "REGISTER" {
+		return errors.New("username registration cancelled")
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	key, err := walletPQKey(ks, account, password)
+	clearWalletBytes([]byte(password))
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("stamp this ML-DSA-87 wallet before registering a Shield3 username")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("derive Shield3 payment code: %w", err)
+	}
+	defer identity.Clear()
+	payload, err := shield3wallet.DecodePaymentCode(identity.Code, chainID.Uint64())
+	if err != nil {
+		return err
+	}
+	if err := shield3wallet.RequireRegisteredStamp(context.Background(), client, payload); err != nil {
+		return err
+	}
+	sequence := uint64(1)
+	if handle, handleErr := shield3wallet.UsernameHandle(name, chainID.Uint64()); handleErr == nil {
+		var prior shield3wallet.UsernameBinding
+		if client.Call(&prior, "tkmname_resolve", handle) == nil {
+			if prior.Address != identity.Address {
+				return errors.New("username belongs to another Shield3 identity and cannot be claimed")
+			}
+			sequence = prior.Sequence + 1
+		}
+	}
+	expires := time.Now().UTC().Add(90 * 24 * time.Hour)
+	fmt.Println("\n  Creating owner-signed name record and proof of work…")
+	record, err := shield3wallet.CreateUsernameBinding(key.Seed, name, identity.Code, chainID.Uint64(), sequence, expires, time.Now())
+	if err != nil {
+		return fmt.Errorf("create username record: %w", err)
+	}
+	var accepted bool
+	if err := client.Call(&accepted, "tkmname_register", record); err != nil {
+		return fmt.Errorf("register username: %w", err)
+	}
+	if !accepted {
+		return errors.New("node did not confirm username registration")
+	}
+	fmt.Printf("\n  Registered: %s\n", handle)
+	fmt.Println("  Shield3 code remains private to your local wallet until you share it.")
+	var after eth.TkmNameDirectoryStatus
+	if err := client.Call(&after, "tkmname_status"); err != nil {
+		fmt.Println("  The node accepted the record, but its replication status could not be checked.")
+	} else if after.NetworkActive && after.NetworkReady {
+		fmt.Printf("  Replicated to all %d configured directory operators over TKMNet.\n", after.DirectoryOperators)
+	} else if after.NetworkActive {
+		fmt.Println("  Network activation is live, but directory replication is not confirmed. Check node peer configuration before sharing the name.")
+	} else {
+		fmt.Println("  Saved in this node's directory; network replication begins at username-network activation.")
+	}
 	pauseWallet(reader)
 	return nil
 }

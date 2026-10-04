@@ -3,11 +3,13 @@ package tkmnet
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	xproxy "golang.org/x/net/proxy"
 )
@@ -66,11 +68,67 @@ func (d *SOCKS5Dialer) DialContext(ctx context.Context, onionHost string, port s
 	}
 }
 
+// ExchangePacket sends one fixed-size request to the first onion relay and
+// reads one fixed-size response. Each invocation opens a fresh Tor stream;
+// callers doing private username lookup must invoke it once per independently
+// assigned directory peer and must encrypt/authenticate the application reply.
+func ExchangePacket(ctx context.Context, proxyURL string, firstRelay Descriptor, relayPort string, packet []byte) ([]byte, error) {
+	if err := firstRelay.Verify(time.Now()); err != nil {
+		return nil, fmt.Errorf("tkmnet: invalid first relay descriptor: %w", err)
+	}
+	dialer, err := NewSOCKS5Dialer(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialer.DialContext(ctx, firstRelay.Onion, relayPort)
+	if err != nil {
+		return nil, fmt.Errorf("tkmnet: onion relay connection failed: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := WritePacket(conn, packet); err != nil {
+		return nil, err
+	}
+	return ReadPacket(conn)
+}
+
+// ExchangeService sends one payload through the supplied onion route and
+// opens the final relay's authenticated response.
+func ExchangeService(ctx context.Context, proxyURL, relayPort string, route []Descriptor, service ServiceID, payload []byte) ([]byte, error) {
+	if len(route) != MaxHops {
+		return nil, errors.New("tkmnet: service exchange requires a complete three-relay route")
+	}
+	hops := make([]Hop, MaxHops)
+	for i, descriptor := range route {
+		if err := descriptor.Verify(time.Now()); err != nil {
+			return nil, fmt.Errorf("tkmnet: invalid route descriptor %d: %w", i, err)
+		}
+		hops[i] = Hop{ID: descriptor.ID, PublicKey: descriptor.PublicKey}
+	}
+	options := BuildOptions{Service: service, Hops: hops}
+	packet, key, err := BuildWithSecret(options, payload)
+	if err != nil {
+		return nil, err
+	}
+	defer clearBytes(key[:])
+	response, err := ExchangePacket(ctx, proxyURL, route[0], relayPort, packet)
+	if err != nil {
+		return nil, err
+	}
+	return OpenResponse(response, packet, key)
+}
+
 // WritePacket writes exactly one fixed-size packet. There is no length field
 // on the wire, which prevents packet-size metadata from exposing the service
 // payload size.
 func WritePacket(w io.Writer, packet []byte) error {
-	if len(packet) != PacketSize {
+	version := byte(0)
+	if len(packet) >= HeaderSize && string(packet[:4]) == Magic {
+		version = packet[4]
+	} else if len(packet) >= 4+HeaderSize && string(packet[:4]) == "TKMR" {
+		version = packet[8]
+	}
+	if version == 0 || len(packet) != packetSizeForVersion(version) {
 		return errors.New("tkmnet: invalid packet size")
 	}
 	for len(packet) > 0 {
@@ -87,8 +145,44 @@ func WritePacket(w io.Writer, packet []byte) error {
 }
 
 func ReadPacket(r io.Reader) ([]byte, error) {
-	packet := make([]byte, PacketSize)
-	if _, err := io.ReadFull(r, packet); err != nil {
+	preamble := make([]byte, 4)
+	if _, err := io.ReadFull(r, preamble); err != nil {
+		return nil, err
+	}
+	if string(preamble) == "TKMR" {
+		header := make([]byte, HeaderSize)
+		if _, err := io.ReadFull(r, header); err != nil {
+			return nil, err
+		}
+		version := header[4]
+		if version != Version && version != ExtendedVersion {
+			return nil, errors.New("tkmnet: invalid response version")
+		}
+		packet := make([]byte, packetSizeForVersion(version))
+		copy(packet[:4], preamble)
+		copy(packet[4:4+HeaderSize], header)
+		if _, err := io.ReadFull(r, packet[4+HeaderSize:]); err != nil {
+			return nil, err
+		}
+		return packet, nil
+	}
+	if string(preamble) != Magic {
+		return nil, errors.New("tkmnet: invalid packet preamble")
+	}
+	header := make([]byte, HeaderSize)
+	copy(header[:4], preamble)
+	if _, err := io.ReadFull(r, header[4:5]); err != nil {
+		return nil, err
+	}
+	if header[4] != Version && header[4] != ExtendedVersion {
+		return nil, errors.New("tkmnet: invalid packet version")
+	}
+	if _, err := io.ReadFull(r, header[5:]); err != nil {
+		return nil, err
+	}
+	packet := make([]byte, packetSizeForVersion(header[4]))
+	copy(packet, header)
+	if _, err := io.ReadFull(r, packet[HeaderSize:]); err != nil {
 		return nil, err
 	}
 	return packet, nil

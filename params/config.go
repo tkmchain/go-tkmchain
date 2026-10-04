@@ -52,6 +52,8 @@ const (
 	MainnetPQMigrationRecoveryTime uint64 = 1786687200
 	// MainnetAntarticalTime is 2026-10-01 00:00:00 UTC.
 	MainnetAntarticalTime uint64 = 1790812800
+	// MainnetUsernameNetworkTime is 2026-10-04 22:00:00 UTC.
+	MainnetUsernameNetworkTime uint64 = 1791151200
 	// MainnetShieldedOnlyTime is the proposed 2026-10-04 10:00 UTC cutoff.
 	// It is not scheduled by default: confidential public-balance funding and
 	// protocol operations must be completed before restricting live networks.
@@ -118,6 +120,7 @@ var RandomXChainConfig = &ChainConfig{
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	AntarticalTime:               newUint64(MainnetAntarticalTime),
+	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -202,6 +205,7 @@ type ChainConfig struct {
 	QuantumResistantTime    *uint64 `json:"quantumResistantTime,omitempty"`
 	PQMigrationRecoveryTime *uint64 `json:"pqMigrationRecoveryTime,omitempty"`
 	AntarticalTime          *uint64 `json:"antarticalTime,omitempty"`
+	UsernameNetworkTime     *uint64 `json:"usernameNetworkTime,omitempty"`
 	// ShieldedOnlyTime closes public payment entry/exit paths. It is a
 	// separate fork: Antartical blocks already contain public deposits.
 	ShieldedOnlyTime       *uint64 `json:"shieldedOnlyTime,omitempty"`
@@ -337,6 +341,7 @@ var MainnetChainConfig = &ChainConfig{
 	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	AntarticalTime:               newUint64(MainnetAntarticalTime),
+	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -488,6 +493,7 @@ var (
 		// privacy and post-quantum rules active from genesis so the testnet
 		// exercises the same Shield3/Shield4 admission path as the fork.
 		AntarticalTime:               newUint64(0),
+		UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
 		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 		PostQuantumMainKingAddress:   common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b"),
 		RotatingKingRotationInterval: 100,
@@ -677,6 +683,13 @@ func (c *ChainConfig) IsConfidentialLedger(num *big.Int, time uint64) bool {
 // second timestamp that could drift from the hardfork schedule.
 func (c *ChainConfig) IsTkmnetRequired(num *big.Int, time uint64) bool {
 	return c.IsAntartical(num, time)
+}
+
+// IsUsernameNetworkActive reports whether Shield3 username resolution through
+// the TKMNet network path is enabled. This gates alias service behavior only;
+// it does not alter block validation or transaction consensus.
+func (c *ChainConfig) IsUsernameNetworkActive(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && isTimestampForked(c.UsernameNetworkTime, time)
 }
 
 func (c *ChainConfig) IsPQMigrationAllowed(num *big.Int, time uint64) bool {
@@ -896,6 +909,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"antarticalTime", c.AntarticalTime},
 		{"shieldedOnlyTime", c.ShieldedOnlyTime},
 		{"confidentialLedgerTime", c.ConfidentialLedgerTime},
+		{"usernameNetworkTime", c.UsernameNetworkTime},
 	}
 	lastName = ""
 	var lastTime *uint64
@@ -1101,6 +1115,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.ConfidentialLedgerTime, newcfg.ConfidentialLedgerTime, headTimestamp) {
 		return newTimestampCompatError("Confidential ledger timestamp", c.ConfidentialLedgerTime, newcfg.ConfidentialLedgerTime)
+	}
+	if isForkTimestampIncompatible(c.UsernameNetworkTime, newcfg.UsernameNetworkTime, headTimestamp) {
+		return newTimestampCompatError("Username network fork timestamp", c.UsernameNetworkTime, newcfg.UsernameNetworkTime)
 	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)
