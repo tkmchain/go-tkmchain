@@ -63,7 +63,11 @@ const (
 	txMaxBroadcastSize = 4096
 )
 
-var syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the sync progress challenge
+// Tor round trips and checkpoint reads can take substantially longer than a
+// clearnet request, especially while a node is indexing or serving a busy
+// chain. Keep a peer through transient latency; actual consensus mismatches
+// are still rejected immediately by the required-block challenge below.
+const syncChallengeTimeout = 90 * time.Second
 
 // txPool defines the methods needed from a transaction pool implementation to
 // support all the operations needed by the Ethereum chain protocols.

@@ -19,6 +19,6 @@ package version
 const (
 	Major = 1              // Major version component of the current release
 	Minor = 21             // Minor version component of the current release
-	Patch = 70             // Patch version component of the current release
+	Patch = 71             // Patch version component of the current release
 	Meta  = "shielded-gas" // Version metadata to append to the version string
 )

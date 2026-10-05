@@ -23,7 +23,9 @@ import "github.com/ethereum/go-ethereum/common"
 // transport endpoint is carried by a Tor onion service.
 var MainnetBootnodes = []string{
 	"enode://9f8ff5bda3629e9da4b2f1f4d4bd2385f38a382fa7f063b7f21c913411ef852dd224c7ee292450d587c3cbee5bd2d4a79999f0b9002070d7a559f8fe9a04baa2@4aof7abdduh4vftejgdpdfqeosvxxco3xmpu4uqypnpdbi7wjuzfqhqd.onion:3000?discport=0",
-	"enode://2c36e766ab52f04abfc129891b0d92d4d61dff6b8cf496910fd7046be7ca66afddc0086d527d9540003e766716a5337a2b866f8519708996fb8ff645e0b6b52e@eaoerarabizbzwbbawjrlcyawnrnoobj3ndy3oh627hwl5rbmedukoqd.onion:3000?discport=0",
+	// Server 82. Its enode key was derived from the node's local nodekey and
+	// its onion hostname was read from Tor's active hidden-service directory.
+	"enode://551bdaafa74ab8db0e7d60225bafa30d48833ccea03f9718c11d960aa815ac1de17fad9c26a1618e490283954fabe3252b4120957f64c85a13a6dea34b62fe3b@oll36d63j2ujkcjjpwm7bitpfs6zojcjk5odrj7se3eqrhwsbb6gknid.onion:3000?discport=0",
 }
 
 // TestnetBootnodes intentionally has no defaults until testnet operators
