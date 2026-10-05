@@ -284,6 +284,47 @@ func testRecvTransactions(t *testing.T, protocol uint) {
 // This test checks that pending transactions are sent.
 func TestSendTransactions69(t *testing.T) { testSendTransactions(t, eth.ETH69) }
 
+func TestRotatingKingRegistrationsReplayToNewPeers(t *testing.T) {
+	t.Parallel()
+	source := newTestHandler(ethconfig.FullSync)
+	defer source.close()
+	receiver := newTestHandler(ethconfig.FullSync)
+	defer receiver.close()
+
+	want := eth.RotatingKingUpdatePacket{
+		Address:    common.HexToAddress("0x0000000000000000000000000000000000000042"),
+		UnlockTime: uint64(time.Now().Add(time.Hour).Unix()),
+	}
+	source.handler.rotatingKingSnapshot = func() []eth.RotatingKingUpdatePacket { return []eth.RotatingKingUpdatePacket{want} }
+	updates := make(chan eth.RotatingKingUpdatePacket, 1)
+	receiver.handler.rotatingKingUpdate = func(address common.Address, unlock time.Time, _ string) {
+		updates <- eth.RotatingKingUpdatePacket{Address: address, UnlockTime: uint64(unlock.Unix())}
+	}
+
+	p2pSource, p2pReceiver := p2p.MsgPipe()
+	defer p2pSource.Close()
+	defer p2pReceiver.Close()
+	sourcePeer := eth.NewPeer(eth.ETH69, p2p.NewPeerPipe(enode.ID{1}, "", nil, p2pSource), p2pSource, source.txpool, nil)
+	receiverPeer := eth.NewPeer(eth.ETH69, p2p.NewPeerPipe(enode.ID{2}, "", nil, p2pReceiver), p2pReceiver, receiver.txpool, nil)
+	defer sourcePeer.Close()
+	defer receiverPeer.Close()
+	go source.handler.runEthPeer(sourcePeer, func(peer *eth.Peer) error {
+		return eth.Handle((*ethHandler)(source.handler), peer)
+	})
+	go receiver.handler.runEthPeer(receiverPeer, func(peer *eth.Peer) error {
+		return eth.Handle((*ethHandler)(receiver.handler), peer)
+	})
+
+	select {
+	case got := <-updates:
+		if got != want {
+			t.Fatalf("replayed rotating king = %#v, want %#v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("new peer did not receive persisted rotating king registration")
+	}
+}
+
 func testSendTransactions(t *testing.T, protocol uint) {
 	t.Parallel()
 

@@ -492,17 +492,18 @@ func newEthereum(stack *node.Node, config *ethconfig.Config, engine consensus.En
 	// Create network handler
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
-		NodeID:              eth.p2pServer.Self().ID(),
-		Database:            chainDb,
-		Chain:               eth.blockchain,
-		TxPool:              eth.txPool,
-		Network:             networkID,
-		Sync:                config.SyncMode,
-		BloomCache:          uint64(cacheLimit),
-		RequiredBlocks:      config.RequiredBlocks,
-		RotatingKingUpdate:  eth.noteRotatingKingFromPeer,
-		CheckpointUpdate:    eth.noteCheckpointFromPeer,
-		TkmPhonePropagation: eth.noteTkmPhonePropagationFromPeer,
+		NodeID:               eth.p2pServer.Self().ID(),
+		Database:             chainDb,
+		Chain:                eth.blockchain,
+		TxPool:               eth.txPool,
+		Network:              networkID,
+		Sync:                 config.SyncMode,
+		BloomCache:           uint64(cacheLimit),
+		RequiredBlocks:       config.RequiredBlocks,
+		RotatingKingUpdate:   eth.noteRotatingKingFromPeer,
+		RotatingKingSnapshot: eth.rotatingKingSnapshot,
+		CheckpointUpdate:     eth.noteCheckpointFromPeer,
+		TkmPhonePropagation:  eth.noteTkmPhonePropagationFromPeer,
 	}); err != nil {
 		return nil, err
 	}
@@ -547,6 +548,27 @@ func newEthereum(stack *node.Node, config *ethconfig.Config, engine consensus.En
 
 	log.Info("Tkmchain backend initialized successfully with RandomX and Rotating King")
 	return eth, nil
+}
+
+// rotatingKingSnapshot returns durable registrations in their persisted order.
+// It is sent to each newly connected eth peer so registrations are not lost
+// merely because that peer was offline when the original gossip was broadcast.
+func (s *Ethereum) rotatingKingSnapshot() []eth.RotatingKingUpdatePacket {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	updates := make([]eth.RotatingKingUpdatePacket, 0, len(s.kingAddresses))
+	for _, address := range s.kingAddresses {
+		info, ok := s.rkLocks[address]
+		if !ok || info.UnlockTime.IsZero() {
+			continue
+		}
+		updates = append(updates, eth.RotatingKingUpdatePacket{
+			Address:    address,
+			UnlockTime: uint64(info.UnlockTime.Unix()),
+		})
+	}
+	return updates
 }
 
 // Peers returns the peer set
