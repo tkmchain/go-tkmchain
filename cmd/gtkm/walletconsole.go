@@ -204,12 +204,12 @@ type walletKingStatusView struct {
 	Registered      bool           `json:"registered"`
 	Current         bool           `json:"current"`
 	Next            bool           `json:"next"`
-	LockedAmount    *hexutil.Big   `json:"lockedAmount"`
-	RegistrationFee *hexutil.Big   `json:"registrationFee"`
+	LockedAmount    *big.Int       `json:"lockedAmount"`
+	RegistrationFee *big.Int       `json:"registrationFee"`
 	UnlockTime      *time.Time     `json:"unlockTime,omitempty"`
 	UnlockHeight    uint64         `json:"unlockHeight,omitempty"`
 	AddedHeight     uint64         `json:"addedHeight,omitempty"`
-	TotalReceived   *hexutil.Big   `json:"totalReceived"`
+	TotalReceived   *big.Int       `json:"totalReceived"`
 }
 
 type walletKingStatsView struct {
@@ -1057,7 +1057,7 @@ func printWalletKingStatus(king walletKingStatusView, indent string) {
 	}
 	line := fmt.Sprintf("%s%-8s %s", indent, slot, king.Address.Hex())
 	if king.LockedAmount != nil {
-		line += "  stake " + formatTKM((*big.Int)(king.LockedAmount))
+		line += "  stake " + formatTKM(king.LockedAmount)
 	}
 	if king.UnlockHeight != 0 {
 		line += fmt.Sprintf("  unlock #%d", king.UnlockHeight)
@@ -1132,7 +1132,7 @@ func queryWalletKingStatus(reader *bufio.Reader, client *rpc.Client, walletAccou
 	printWalletKingStatus(status, "  ")
 	fmt.Printf("  Registered: %t    Current: %t    Next: %t\n", status.Registered, status.Current, status.Next)
 	if status.RegistrationFee != nil {
-		fmt.Printf("  Fee reserve: %s\n", formatTKM((*big.Int)(status.RegistrationFee)))
+		fmt.Printf("  Fee reserve: %s\n", formatTKM(status.RegistrationFee))
 	}
 	if status.AddedHeight != 0 {
 		fmt.Printf("  Added at block: #%d\n", status.AddedHeight)

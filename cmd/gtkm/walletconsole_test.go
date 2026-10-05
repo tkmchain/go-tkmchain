@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math/big"
 	"strings"
 	"testing"
@@ -9,6 +10,25 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 )
+
+func TestWalletKingStatusDecodesRPCBigInts(t *testing.T) {
+	const response = `{"address":"0x0000000000000000000000000000000000000001","registered":true,"lockedAmount":500000000000000000000000,"registrationFee":100000000000000000000,"totalReceived":2500000000000000000}`
+	var status walletKingStatusView
+	if err := json.Unmarshal([]byte(response), &status); err != nil {
+		t.Fatalf("decode rk status response: %v", err)
+	}
+	wantStake, _ := new(big.Int).SetString("500000000000000000000000", 10)
+	if status.LockedAmount.Cmp(wantStake) != 0 {
+		t.Fatalf("locked amount = %v", status.LockedAmount)
+	}
+	wantFee, _ := new(big.Int).SetString("100000000000000000000", 10)
+	if status.RegistrationFee.Cmp(wantFee) != 0 {
+		t.Fatalf("registration fee = %v", status.RegistrationFee)
+	}
+	if status.TotalReceived.Cmp(big.NewInt(2500000000000000000)) != 0 {
+		t.Fatalf("total received = %v", status.TotalReceived)
+	}
+}
 
 func TestParseWalletAmount(t *testing.T) {
 	tests := []struct {
