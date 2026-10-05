@@ -34,7 +34,7 @@ func TestAntarticalStampSponsorshipAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(beneficiarySeed, 8979, "Private Name", "Private Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(beneficiarySeed, 8979, "Private Name", "United States")
 	if err != nil {
 		t.Fatal(err)
 	}

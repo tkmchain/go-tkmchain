@@ -26,3 +26,25 @@ func TestShieldedOnlyForkID(t *testing.T) {
 		t.Fatal("fork ID did not change at the privacy cutoff")
 	}
 }
+
+func TestValidatorTransactionForkID(t *testing.T) {
+	cfg := *params.MainnetChainConfig
+	genesis := core.DefaultGenesisBlock().ToBlock()
+	height := uint64(50_000)
+	at := params.MainnetValidatorTransactionTime
+	if id := NewID(&cfg, genesis, height, at-1); id.Next != at {
+		t.Fatalf("next fork before validator transaction activation = %d, want %d", id.Next, at)
+	}
+	old := cfg
+	old.ValidatorTransactionTime = nil
+	before := NewID(&cfg, genesis, height, at-1)
+	oldBefore := NewID(&old, genesis, height, at-1)
+	if before.Hash != oldBefore.Hash {
+		t.Fatal("validator transaction fork changed the fork checksum before activation")
+	}
+	after := NewID(&cfg, genesis, height, at)
+	oldAfter := NewID(&old, genesis, height, at)
+	if after.Hash == oldAfter.Hash {
+		t.Fatal("validator transaction fork was not included in the active fork checksum")
+	}
+}

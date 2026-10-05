@@ -182,24 +182,26 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 	for name, config := range configs {
 		t.Run(name, func(t *testing.T) {
 			tkmForkTimes := map[string]*uint64{
-				"EDATime":                 config.EDATime,
-				"KyotoTime":               config.KyotoTime,
-				"PhoneTime":               config.PhoneTime,
-				"PrivacyCommitmentTime":   config.PrivacyCommitmentTime,
-				"QuantumResistantTime":    config.QuantumResistantTime,
-				"PQMigrationRecoveryTime": config.PQMigrationRecoveryTime,
-				"AntarticalTime":          config.AntarticalTime,
-				"UsernameNetworkTime":     config.UsernameNetworkTime,
+				"EDATime":                  config.EDATime,
+				"KyotoTime":                config.KyotoTime,
+				"PhoneTime":                config.PhoneTime,
+				"PrivacyCommitmentTime":    config.PrivacyCommitmentTime,
+				"QuantumResistantTime":     config.QuantumResistantTime,
+				"PQMigrationRecoveryTime":  config.PQMigrationRecoveryTime,
+				"AntarticalTime":           config.AntarticalTime,
+				"UsernameNetworkTime":      config.UsernameNetworkTime,
+				"ValidatorTransactionTime": config.ValidatorTransactionTime,
 			}
 			want := map[string]uint64{
-				"EDATime":                 0,
-				"KyotoTime":               MainnetKyotoTime,
-				"PhoneTime":               MainnetPhoneTime,
-				"PrivacyCommitmentTime":   MainnetPrivacyQuantumTime,
-				"QuantumResistantTime":    MainnetPrivacyQuantumTime,
-				"PQMigrationRecoveryTime": MainnetPQMigrationRecoveryTime,
-				"AntarticalTime":          MainnetAntarticalTime,
-				"UsernameNetworkTime":     MainnetUsernameNetworkTime,
+				"EDATime":                  0,
+				"KyotoTime":                MainnetKyotoTime,
+				"PhoneTime":                MainnetPhoneTime,
+				"PrivacyCommitmentTime":    MainnetPrivacyQuantumTime,
+				"QuantumResistantTime":     MainnetPrivacyQuantumTime,
+				"PQMigrationRecoveryTime":  MainnetPQMigrationRecoveryTime,
+				"AntarticalTime":           MainnetAntarticalTime,
+				"UsernameNetworkTime":      MainnetUsernameNetworkTime,
+				"ValidatorTransactionTime": MainnetValidatorTransactionTime,
 			}
 			for forkName, wantTime := range want {
 				forkTime := tkmForkTimes[forkName]
@@ -208,6 +210,47 @@ func TestMainnetHistoricalForkTimestamps(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidatorTransactionForkSchedule(t *testing.T) {
+	const want uint64 = 1791226800 // 2026-10-05 19:00:00 UTC
+	if MainnetValidatorTransactionTime != want {
+		t.Fatalf("validator transaction timestamp = %d, want %d", MainnetValidatorTransactionTime, want)
+	}
+	for _, config := range []*ChainConfig{MainnetChainConfig, RandomXChainConfig} {
+		if config.ValidatorTransactionTime == nil || *config.ValidatorTransactionTime != want {
+			t.Fatalf("mainnet validator transaction time = %v, want %d", config.ValidatorTransactionTime, want)
+		}
+		if config.IsValidatorTransactionsActive(big.NewInt(1), want-1) {
+			t.Fatal("validator transactions active before the scheduled time")
+		}
+		if !config.IsValidatorTransactionsActive(big.NewInt(1), want) {
+			t.Fatal("validator transactions inactive at the scheduled time")
+		}
+		if err := config.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("invalid fork schedule: %v", err)
+		}
+	}
+	if !EgyptChainConfig.IsValidatorTransactionsActive(big.NewInt(1), 0) {
+		t.Fatal("Egypt validator transaction rehearsal must remain active from genesis")
+	}
+	encoded, err := json.Marshal(MainnetChainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ChainConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded.ValidatorTransactionTime == nil || *decoded.ValidatorTransactionTime != want {
+		t.Fatalf("validator transaction timestamp did not survive config serialization: %v", err)
+	}
+	stored := *MainnetChainConfig
+	updated := stored
+	updated.ValidatorTransactionTime = newUint64(want + 60)
+	if err := stored.CheckCompatible(&updated, 1, want-1); err != nil {
+		t.Fatalf("future validator fork schedule should remain compatible: %v", err)
+	}
+	if err := stored.CheckCompatible(&updated, 1, want); err == nil || err.What != "Validator transaction fork timestamp" {
+		t.Fatalf("changed active validator fork schedule compatibility error = %v", err)
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
@@ -131,6 +133,82 @@ func TestShieldedOnlyRejectsPrefixAndDestinationBypasses(t *testing.T) {
 	}
 	if err := ValidatePrivateExecutionMessage(shieldedOnlyTestConfig(), big.NewInt(1), params.MainnetShieldedOnlyTime, types.LegacyTxType, valid.To(), valid.Value(), valid.Data()); !errors.Is(err, ErrPublicPaymentDisabled) {
 		t.Fatal("non-PQ transaction accepted")
+	}
+}
+
+func TestShieldedOnlyAllowsValidatedValidatorProtocolTransaction(t *testing.T) {
+	chainConfig := *params.MainnetChainConfig
+	chainConfig.ShieldedOnlyTime = new(uint64)
+	*chainConfig.ShieldedOnlyTime = params.MainnetShieldedOnlyTime
+	cfg := &chainConfig
+	number := big.NewInt(48_162)
+	timestamp := params.MainnetValidatorTransactionTime
+	if !cfg.IsAntartical(number, timestamp) || !cfg.IsShieldedOnly(number, timestamp) {
+		t.Fatal("test timestamp must have Antartical and shielded-only active")
+	}
+	key, err := pqcrypto.GenerateMLDSA87()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := pqcrypto.PublicKeyBytes(key)
+	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := EncodeValidatorRegistration(&ValidatorRegistration{
+		Version: ValidatorEnvelopeVersion, PublicKey: publicKey, RewardAddress: address,
+		ActivationHeight: number.Uint64() + ValidatorActivationDelay,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := types.SignNewPQTkmTx(key, types.NewQuantumSigner(cfg.ChainID), &types.PQTkmTx{
+		ChainID: cfg.ChainID, To: &params.ShieldedPoolAddress, Value: ValidatorBondWei(),
+		Gas: 500_000, GasFeeCap: big.NewInt(1), GasTipCap: big.NewInt(1),
+		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: publicKey, Data: data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePrivateExecutionPolicy(cfg, number, params.MainnetValidatorTransactionTime-1, tx); !errors.Is(err, ErrValidatorTransactionsNotActive) {
+		t.Fatalf("validator registration before activation error = %v, want %v", err, ErrValidatorTransactionsNotActive)
+	}
+	if err := ValidatePrivateExecutionPolicy(cfg, number, timestamp, tx); err != nil {
+		t.Fatalf("valid validator registration rejected by transaction policy: %v", err)
+	}
+	if err := ValidateShieldedTransactionBasics(cfg, number, timestamp, tx); err != nil {
+		t.Fatalf("valid validator registration rejected by privacy-envelope admission: %v", err)
+	}
+	if err := ValidatePrivateExecutionMessage(cfg, number, timestamp, tx.Type(), tx.To(), tx.Value(), tx.Data()); err != nil {
+		t.Fatalf("valid validator registration rejected by EVM message policy: %v", err)
+	}
+	st, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetState(params.ShieldedPoolAddress, ShieldedV3StateSlot("stamp/address", address.Bytes()), common.Hash{1})
+	if err := ProcessShieldedTransaction(cfg, number, timestamp, st, tx, nil); err != nil {
+		t.Fatalf("valid validator registration rejected by block shielded-transaction dispatch: %v", err)
+	}
+
+	// The exception is limited to the fixed bond transfer into the reserved
+	// pool. A different public amount and an ordinary transparent transfer
+	// must continue to fail at the privacy boundary.
+	wrongValue, err := types.SignNewPQTkmTx(key, types.NewQuantumSigner(cfg.ChainID), &types.PQTkmTx{
+		ChainID: cfg.ChainID, To: &params.ShieldedPoolAddress,
+		Value: new(big.Int).Add(ValidatorBondWei(), big.NewInt(1)), Gas: 500_000,
+		GasFeeCap: big.NewInt(1), GasTipCap: big.NewInt(1),
+		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: publicKey, Data: data,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePrivateExecutionPolicy(cfg, number, timestamp, wrongValue); err == nil {
+		t.Fatal("validator registration accepted an arbitrary public value")
+	}
+	ordinary := types.NewTx(&types.PQTkmTx{ChainID: cfg.ChainID, To: &params.ShieldedPoolAddress, Value: big.NewInt(1), Gas: 21_000, GasFeeCap: big.NewInt(1), GasTipCap: big.NewInt(1)})
+	if err := ValidatePrivateExecutionPolicy(cfg, number, timestamp, ordinary); !errors.Is(err, ErrPublicPaymentDisabled) {
+		t.Fatalf("ordinary transparent transfer error = %v, want ErrPublicPaymentDisabled", err)
 	}
 }
 

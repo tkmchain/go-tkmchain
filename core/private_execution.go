@@ -67,6 +67,9 @@ func ValidatePrivateExecutionMessage(config *params.ChainConfig, number *big.Int
 }
 
 func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int, blockTime uint64, txType uint8, to *common.Address, value *big.Int, data []byte, blockReward bool) error {
+	if config != nil && config.IsAntartical(number, blockTime) && isValidatorProtocolEnvelope(data) && !config.IsValidatorTransactionsActive(number, blockTime) {
+		return ErrValidatorTransactionsNotActive
+	}
 	if config.IsShieldedOnly(number, blockTime) {
 		_, err := shieldedOnlyFields(txType, to, value, data)
 		return err

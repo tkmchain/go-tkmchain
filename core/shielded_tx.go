@@ -222,6 +222,11 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 	if err := ValidateShieldedOnlyTransaction(config, blockNumber, blockTime, tx); err != nil {
 		return err
 	}
+	if config != nil && config.IsValidatorTransactionsActive(blockNumber, blockTime) && isValidatorProtocolEnvelope(tx.Data()) {
+		if err := validateValidatorProtocolBasics(config, blockNumber, blockTime, tx); err != nil {
+			return err
+		}
+	}
 	if HasShieldedV4Prefix(tx.Data()) && (config == nil || !config.IsAntartical(blockNumber, blockTime) || !config.IsPrivacyCommitments(blockNumber, blockTime)) {
 		return fmt.Errorf("%w: Shield4 is not active until Antartical", ErrInvalidShieldedTx)
 	}
@@ -241,6 +246,13 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 		// legacy ShieldedTransaction decoder, which would reject it as a
 		// transparent transaction.
 		if HasPrivateTVMPrefix(tx.Data()) {
+			return nil
+		}
+		// Validator registry transitions are applied by StateProcessor after
+		// the signed PQ envelope executes. They do not carry a shielded-note
+		// payload and must not be passed to the legacy public-transaction
+		// decoder.
+		if isValidatorProtocolEnvelope(tx.Data()) {
 			return nil
 		}
 	}
@@ -277,6 +289,9 @@ func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *
 	}
 	if HasAntarticalStampPrefix(tx.Data()) {
 		return ValidateAntarticalStampBasics(config, blockNumber, blockTime, tx)
+	}
+	if config != nil && config.IsValidatorTransactionsActive(blockNumber, blockTime) && isValidatorProtocolEnvelope(tx.Data()) {
+		return validateValidatorProtocolBasics(config, blockNumber, blockTime, tx)
 	}
 	if HasShieldedV4Prefix(tx.Data()) && (config == nil || !config.IsAntartical(blockNumber, blockTime) || !config.IsPrivacyCommitments(blockNumber, blockTime)) {
 		return fmt.Errorf("%w: Shield4 is not active until Antartical", ErrInvalidShieldedTx)
@@ -490,6 +505,12 @@ func validateShieldedTransactionEnvelope(config *params.ChainConfig, blockNumber
 	}
 	if !ok {
 		if config != nil && config.IsPrivacyCommitments(blockNumber, blockTime) {
+			if config.IsValidatorTransactionsActive(blockNumber, blockTime) && isValidatorProtocolEnvelope(tx.Data()) {
+				if err := validateValidatorProtocolBasics(config, blockNumber, blockTime, tx); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			}
 			if config.IsPQMigrationAllowed(blockNumber, blockTime) && types.IsPQMigrationTx(tx) {
 				return nil, nil
 			}

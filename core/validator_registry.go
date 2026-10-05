@@ -79,6 +79,45 @@ func HasValidatorRegistrationPrefix(data []byte) bool {
 	return bytes.HasPrefix(data, []byte(ValidatorRegistrationMagic))
 }
 
+// isValidatorProtocolEnvelope identifies only the validator registry
+// transaction families. Callers must still run validateValidatorProtocolBasics
+// before admission; a matching prefix alone never grants the exception.
+func isValidatorProtocolEnvelope(data []byte) bool {
+	return HasValidatorRegistrationPrefix(data) || HasValidatorSlashPrefix(data) || HasValidatorExitPrefix(data) || HasValidatorWithdrawalPrefix(data)
+}
+
+func validateValidatorEnvelopeEncoding(data []byte) error {
+	switch {
+	case HasValidatorRegistrationPrefix(data):
+		_, err := DecodeValidatorRegistration(data)
+		return err
+	case HasValidatorSlashPrefix(data):
+		_, err := DecodeValidatorSlash(data)
+		return err
+	case HasValidatorExitPrefix(data):
+		_, err := DecodeValidatorExit(data)
+		return err
+	case HasValidatorWithdrawalPrefix(data):
+		_, err := DecodeValidatorWithdrawal(data)
+		return err
+	default:
+		return ErrInvalidShieldedTx
+	}
+}
+
+func validateValidatorProtocolBasics(config *params.ChainConfig, number *big.Int, blockTime uint64, tx *types.Transaction) error {
+	switch {
+	case tx != nil && HasValidatorRegistrationPrefix(tx.Data()):
+		return ValidateValidatorRegistrationBasics(config, number, blockTime, tx)
+	case tx != nil && HasValidatorSlashPrefix(tx.Data()):
+		return ValidateValidatorSlashBasics(config, number, blockTime, tx)
+	case tx != nil && (HasValidatorExitPrefix(tx.Data()) || HasValidatorWithdrawalPrefix(tx.Data())):
+		return ValidateValidatorActionBasics(config, number, blockTime, tx)
+	default:
+		return ErrInvalidShieldedTx
+	}
+}
+
 func EncodeValidatorRegistration(e *ValidatorRegistration) ([]byte, error) {
 	if e == nil {
 		return nil, ErrInvalidShieldedTx

@@ -54,6 +54,9 @@ const (
 	MainnetAntarticalTime uint64 = 1790812800
 	// MainnetUsernameNetworkTime is 2026-10-04 22:00:00 UTC.
 	MainnetUsernameNetworkTime uint64 = 1791151200
+	// MainnetValidatorTransactionTime enables validator registry transactions
+	// through the post-Antartical privacy boundary at 2026-10-05 19:00:00 UTC.
+	MainnetValidatorTransactionTime uint64 = 1791226800
 	// MainnetShieldedOnlyTime is the proposed 2026-10-04 10:00 UTC cutoff.
 	// It is not scheduled by default: confidential public-balance funding and
 	// protocol operations must be completed before restricting live networks.
@@ -121,6 +124,7 @@ var RandomXChainConfig = &ChainConfig{
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	AntarticalTime:               newUint64(MainnetAntarticalTime),
 	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
+	ValidatorTransactionTime:     newUint64(MainnetValidatorTransactionTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -206,6 +210,9 @@ type ChainConfig struct {
 	PQMigrationRecoveryTime *uint64 `json:"pqMigrationRecoveryTime,omitempty"`
 	AntarticalTime          *uint64 `json:"antarticalTime,omitempty"`
 	UsernameNetworkTime     *uint64 `json:"usernameNetworkTime,omitempty"`
+	// ValidatorTransactionTime activates the narrow validator registry
+	// transaction exception to the Antartical transparent-transaction ban.
+	ValidatorTransactionTime *uint64 `json:"validatorTransactionTime,omitempty"`
 	// ShieldedOnlyTime closes public payment entry/exit paths. It is a
 	// separate fork: Antartical blocks already contain public deposits.
 	ShieldedOnlyTime       *uint64 `json:"shieldedOnlyTime,omitempty"`
@@ -342,6 +349,7 @@ var MainnetChainConfig = &ChainConfig{
 	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
 	AntarticalTime:               newUint64(MainnetAntarticalTime),
 	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
+	ValidatorTransactionTime:     newUint64(MainnetValidatorTransactionTime),
 	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
 	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
@@ -494,6 +502,7 @@ var (
 		// exercises the same Shield3/Shield4 admission path as the fork.
 		AntarticalTime:               newUint64(0),
 		UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
+		ValidatorTransactionTime:     newUint64(0),
 		MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
 		PostQuantumMainKingAddress:   common.HexToAddress("0x095943648A687DA264c3c49993b8B4aa4fF5aC2b"),
 		RotatingKingRotationInterval: 100,
@@ -692,6 +701,12 @@ func (c *ChainConfig) IsUsernameNetworkActive(num *big.Int, time uint64) bool {
 	return c != nil && c.IsAntartical(num, time) && isTimestampForked(c.UsernameNetworkTime, time)
 }
 
+// IsValidatorTransactionsActive reports whether validator registry envelopes
+// are permitted through the Antartical private-transaction boundary.
+func (c *ChainConfig) IsValidatorTransactionsActive(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && isTimestampForked(c.ValidatorTransactionTime, time)
+}
+
 func (c *ChainConfig) IsPQMigrationAllowed(num *big.Int, time uint64) bool {
 	if !c.IsQuantumResistant(num, time) {
 		return true
@@ -846,6 +861,12 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	}
 	if c.ShieldedOnlyTime != nil && (c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil) {
 		return fmt.Errorf("shieldedOnlyTime requires London, privacyCommitmentTime, quantumResistantTime and antarticalTime")
+	}
+	if c.ValidatorTransactionTime != nil && (c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil) {
+		return fmt.Errorf("validatorTransactionTime requires privacyCommitmentTime, quantumResistantTime and antarticalTime")
+	}
+	if c.ValidatorTransactionTime != nil && c.AntarticalTime != nil && *c.ValidatorTransactionTime < *c.AntarticalTime {
+		return fmt.Errorf("unsupported fork ordering: validatorTransactionTime enabled at timestamp %v, before antarticalTime at timestamp %v", *c.ValidatorTransactionTime, *c.AntarticalTime)
 	}
 	blockForks := []struct {
 		name     string
@@ -1118,6 +1139,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.UsernameNetworkTime, newcfg.UsernameNetworkTime, headTimestamp) {
 		return newTimestampCompatError("Username network fork timestamp", c.UsernameNetworkTime, newcfg.UsernameNetworkTime)
+	}
+	if isForkTimestampIncompatible(c.ValidatorTransactionTime, newcfg.ValidatorTransactionTime, headTimestamp) {
+		return newTimestampCompatError("Validator transaction fork timestamp", c.ValidatorTransactionTime, newcfg.ValidatorTransactionTime)
 	}
 	if c.IsPrivacyCommitments(new(big.Int).SetUint64(headBlock), headTimestamp) && !bytes.Equal(c.ShieldedGroth16VerifyingKey, newcfg.ShieldedGroth16VerifyingKey) {
 		head := new(big.Int).SetUint64(headBlock)

@@ -1256,7 +1256,8 @@ func submitWalletValidatorAction(reader *bufio.Reader, client *ethclient.Client,
 	}
 	fmt.Printf("\n  Action: %s\n  Account: %s\n  Current block: #%d\n", action, account.Address.Hex(), block)
 	if action == "register" {
-		fmt.Printf("  Bond: %s TKM\n  Registration fee: %s TKM (burned)\n  Scheduled activation: #%d\n", formatTKM(value), formatTKM(core.ValidatorRegistrationFeeWei()), block+core.ValidatorActivationDelay)
+		fmt.Printf("  Bond: %s TKM (public consensus stake)\n  Registration fee: %s TKM (burned)\n  Scheduled activation: #%d\n", formatTKM(value), formatTKM(core.ValidatorRegistrationFeeWei()), block+core.ValidatorActivationDelay)
+		fmt.Println("  Note: validator registration is a public consensus operation; the bond and fee are visible on-chain.")
 	}
 	fmt.Printf("  Maximum network fee: %s TKM\n", formatTKM(fee))
 	confirm, err := readWalletLine(reader, "Type "+strings.ToUpper(action)+" to sign and submit")
