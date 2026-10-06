@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -55,7 +56,11 @@ var (
 )
 
 type managedTkmProver struct {
-	cmd *exec.Cmd
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	launch func() (*exec.Cmd, error)
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
@@ -96,34 +101,106 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 
 	// The executable is resolved and permission-checked before this direct
 	// exec. No shell is involved, so config contents cannot become arguments.
-	cmd := exec.Command(binary, "--config", config) // #nosec G204 -- validated executable and fixed arguments
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	launch := func() (*exec.Cmd, error) {
+		cmd := exec.Command(binary, "--config", config) // #nosec G204 -- validated executable and fixed arguments
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		return cmd, nil
+	}
+	cmd, err := launch()
+	if err != nil {
 		return nil, fmt.Errorf("start tkmprover: %w", err)
 	}
 	log.Info("TKM shielded prover started", "pid", cmd.Process.Pid, "config", config)
-	return &managedTkmProver{cmd: cmd}, nil
+	monitorCtx, cancel := context.WithCancel(context.Background())
+	prover := &managedTkmProver{cmd: cmd, launch: launch, cancel: cancel, done: make(chan struct{})}
+	go prover.supervise(monitorCtx)
+	return prover, nil
+}
+
+const maxTkmProverRestartDelay = 30 * time.Second
+
+func (p *managedTkmProver) supervise(ctx context.Context) {
+	defer close(p.done)
+	delay := time.Second
+	startedAt := time.Now()
+	for {
+		p.mu.Lock()
+		cmd := p.cmd
+		p.mu.Unlock()
+		if cmd != nil {
+			err := cmd.Wait()
+			p.mu.Lock()
+			if p.cmd == cmd {
+				p.cmd = nil
+			}
+			p.mu.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
+			if time.Since(startedAt) >= time.Minute {
+				delay = time.Second
+			}
+			log.Error("TKM shielded prover exited; restarting", "err", err, "retryIn", delay)
+		}
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case <-timer.C:
+		}
+
+		restarted, err := p.launch()
+		if err != nil {
+			log.Error("Failed to restart TKM shielded prover", "err", err, "retryIn", delay)
+			delay *= 2
+			if delay > maxTkmProverRestartDelay {
+				delay = maxTkmProverRestartDelay
+			}
+			continue
+		}
+		p.mu.Lock()
+		if ctx.Err() != nil {
+			p.mu.Unlock()
+			_ = restarted.Process.Kill()
+			_ = restarted.Wait()
+			return
+		}
+		p.cmd = restarted
+		p.mu.Unlock()
+		log.Info("TKM shielded prover restarted", "pid", restarted.Process.Pid)
+		startedAt = time.Now()
+	}
 }
 
 type tkmProverConfig struct {
 	AutoPublicFunding         bool   `json:"autoPublicFunding,omitempty"`
 	AutoPublicFundingLimitWei string `json:"autoPublicFundingLimitWei,omitempty"`
-	Listen               string `json:"listen"`
-	AllowedOrigin        string `json:"allowedOrigin"`
-	BearerToken          string `json:"bearerToken"` // #nosec G117 -- generated random token is stored in the private 0600 prover config
-	NodeRPC              string `json:"nodeRPC"`
-	KeystoreDir          string `json:"keystoreDir"`
-	SignerAddress        string `json:"signerAddress"`
-	SignerPassphraseFile string `json:"signerPassphraseFile"`
-	SignMode             string `json:"signMode"`
-	ProvingKeyPath       string `json:"provingKeyPath"`
-	ProvingKeyV2Path     string `json:"provingKeyV2Path"`
-	NotesPath            string `json:"notesPath"`
-	RequestsPath         string `json:"requestsPath"`
-	GasLimit             uint64 `json:"gasLimit"`
-	SubmitSync           bool   `json:"submitSync"`
-	ReceiptTimeoutMs     int64  `json:"receiptTimeoutMs"`
+	Listen                    string `json:"listen"`
+	AllowedOrigin             string `json:"allowedOrigin"`
+	BearerToken               string `json:"bearerToken"` // #nosec G117 -- generated random token is stored in the private 0600 prover config
+	NodeRPC                   string `json:"nodeRPC"`
+	KeystoreDir               string `json:"keystoreDir"`
+	SignerAddress             string `json:"signerAddress"`
+	SignerPassphraseFile      string `json:"signerPassphraseFile"`
+	SignMode                  string `json:"signMode"`
+	ProvingKeyPath            string `json:"provingKeyPath"`
+	ProvingKeyV2Path          string `json:"provingKeyV2Path"`
+	NotesPath                 string `json:"notesPath"`
+	RequestsPath              string `json:"requestsPath"`
+	GasLimit                  uint64 `json:"gasLimit"`
+	SubmitSync                bool   `json:"submitSync"`
+	ReceiptTimeoutMs          int64  `json:"receiptTimeoutMs"`
 }
 
 func ensureTkmProverConfig(ctx *cli.Context, configPath string) error {
@@ -362,13 +439,18 @@ func downloadTkmProvingKey(ctx context.Context, path, keyURL, expectedSHA256 str
 }
 
 func (p *managedTkmProver) stop() {
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+	if p == nil || p.cancel == nil {
 		return
 	}
-	if err := p.cmd.Process.Kill(); err != nil {
-		log.Debug("TKM shielded prover already stopped", "err", err)
-		return
+	p.cancel()
+	p.mu.Lock()
+	cmd := p.cmd
+	p.mu.Unlock()
+	if cmd != nil && cmd.Process != nil {
+		if err := cmd.Process.Kill(); err != nil {
+			log.Debug("TKM shielded prover already stopped", "err", err)
+		}
 	}
-	_, _ = p.cmd.Process.Wait()
+	<-p.done
 	log.Info("TKM shielded prover stopped")
 }

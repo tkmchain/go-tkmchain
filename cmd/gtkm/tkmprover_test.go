@@ -3,15 +3,63 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestManagedTkmProverRestartsAfterUnexpectedExit(t *testing.T) {
+	var starts atomic.Int32
+	launch := func() (*exec.Cmd, error) {
+		attempt := starts.Add(1)
+		mode := "stay"
+		if attempt == 1 {
+			mode = "exit"
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=^TestTkmProverSupervisorChild$")
+		cmd.Env = append(os.Environ(), "TKM_PROVER_SUPERVISOR_TEST="+mode)
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		return cmd, nil
+	}
+	initial, err := launch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &managedTkmProver{cmd: initial, launch: launch, cancel: cancel, done: make(chan struct{})}
+	go p.supervise(ctx)
+	defer p.stop()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for starts.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := starts.Load(); got < 2 {
+		t.Fatalf("prover restart attempts = %d, want at least 2", got)
+	}
+}
+
+func TestTkmProverSupervisorChild(t *testing.T) {
+	switch os.Getenv("TKM_PROVER_SUPERVISOR_TEST") {
+	case "exit":
+		os.Exit(9)
+	case "stay":
+		select {}
+	}
+}
 
 func TestTkmProverConfigPreservesAutomaticFunding(t *testing.T) {
 	const limit = "1000000000000000000000"
