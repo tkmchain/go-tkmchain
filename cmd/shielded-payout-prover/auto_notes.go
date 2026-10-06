@@ -106,12 +106,29 @@ func (p *Prover) preparePrivateNotes(ctx context.Context, seed []byte, id *shiel
 		if head.Hash() != receipt.BlockHash {
 			return &notePreparationPending{saved.TxHash, saved.PrivacyBoundary}
 		}
+		if receipt.Status != types.ReceiptStatusSuccessful {
+			db.NotePreparation = nil
+			if err := writeRequestDB(p.cfg.RequestsPath, *db); err != nil {
+				return err
+			}
+			return errors.New("private note consolidation reverted; balances will be rescanned on retry")
+		}
+		// A successful receipt is not enough: do not clear the durable journal
+		// until the output is visible as a canonical, spendable note. Keeping the
+		// journal blocks retries from creating another public deposit when the
+		// output is malformed, encrypted to the wrong view key, or not yet indexed.
+		view := id.ViewKey()
+		scan, err := shield3wallet.Scan(ctx, p.client.Client(), view)
+		view.Clear()
+		if err != nil {
+			return fmt.Errorf("confirmed note preparation %s; rescan failed: %w", saved.TxHash, err)
+		}
+		if err := requirePreparedNoteCapacity(scan.Notes, target); err != nil {
+			return fmt.Errorf("confirmed note preparation %s is not spendable; refusing duplicate funding: %w", saved.TxHash, err)
+		}
 		db.NotePreparation = nil
 		if err := writeRequestDB(p.cfg.RequestsPath, *db); err != nil {
 			return err
-		}
-		if receipt.Status != types.ReceiptStatusSuccessful {
-			return errors.New("private note consolidation reverted; balances will be rescanned on retry")
 		}
 	}
 	view := id.ViewKey()
@@ -205,6 +222,20 @@ func (p *Prover) preparePrivateNotes(ctx context.Context, seed []byte, id *shiel
 		return err
 	}
 	return &notePreparationPending{saved.TxHash, saved.PrivacyBoundary}
+}
+
+func requirePreparedNoteCapacity(notes []shield3wallet.OwnedNote, target *big.Int) error {
+	if target == nil || target.Sign() <= 0 {
+		return errors.New("invalid note preparation target")
+	}
+	capacity, err := nativeNoteCapacity(notes, new(big.Int))
+	if err != nil {
+		return err
+	}
+	if capacity.Cmp(target) < 0 {
+		return fmt.Errorf("spendable note total is below the requested payout target")
+	}
+	return nil
 }
 
 // Fund only the missing principal. A limit is required even when the operator

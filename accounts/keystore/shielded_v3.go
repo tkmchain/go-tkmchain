@@ -2,6 +2,7 @@ package keystore
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
@@ -63,7 +64,23 @@ func (ks *KeyStore) StampPQAccountRecord(a accounts.Account, passphrase string, 
 	if stamp.ChainID == 0 || !pqcrypto.VerifyShieldedV3Stamp(key.PublicKey, stamp) {
 		return errors.New("invalid Shield3 stamp for this account")
 	}
+	if err := validateShield3StampForSeed(key.Seed, stamp); err != nil {
+		return err
+	}
 	return ks.persistPQAccountStampLocked(a, key, stamp, passphrase)
+}
+
+func validateShield3StampForSeed(seed []byte, stamp *pqcrypto.ShieldedV3StampRecord) error {
+	stampSeed, err := pqcrypto.DeriveShieldedV3ViewKey(seed, stamp.ChainID, pqcrypto.ShieldedV3Stamp)
+	if err != nil {
+		return err
+	}
+	_, openErr := pqcrypto.OpenShieldedV3Stamp(stampSeed, stamp)
+	clear(stampSeed)
+	if openErr != nil {
+		return fmt.Errorf("Shield3 stamp ciphertext cannot be opened by this account: %w", openErr)
+	}
+	return nil
 }
 
 func (ks *KeyStore) persistPQAccountStampLocked(a accounts.Account, key *PQKey, stamp *pqcrypto.ShieldedV3StampRecord, passphrase string) error {
@@ -88,6 +105,9 @@ func (ks *KeyStore) ImportStampedPQBackup(blob []byte, passphrase, newPassphrase
 	}
 	if key.Shield3Stamp == nil || key.Shield3Stamp.ChainID != chainID {
 		return accounts.Account{}, errors.New("backup requires its original Shield3 stamp for this chain; restore an older wallet with its recovery words and add a stamp")
+	}
+	if err := validateShield3StampForSeed(key.Seed, key.Shield3Stamp); err != nil {
+		return accounts.Account{}, err
 	}
 	ks.importMu.Lock()
 	defer ks.importMu.Unlock()

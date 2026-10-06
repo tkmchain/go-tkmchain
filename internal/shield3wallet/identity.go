@@ -131,9 +131,10 @@ func NewIdentity(seed []byte, chainID uint64, stamp *pqcrypto.ShieldedV3StampRec
 			return fail(err)
 		}
 	}
-	if _, err = pqcrypto.OpenShieldedV3Stamp(identity.StampSeed, stamp); err != nil {
-		return fail(err)
-	}
+	// Keep the signed stamp opaque while constructing a payment identity.
+	// The ciphertext is opened only when the owner explicitly requests stamp
+	// disclosure. Requiring successful decryption here can prevent a valid,
+	// already-registered stamp from being used for ordinary Shield3 payments.
 	payload := PaymentPayload{3, chainID, identity.Address, identity.Owner, identity.IncomingPublicKey, identity.StampPublicKey, *stamp}
 	message, err := paymentMessage(payload)
 	if err != nil {

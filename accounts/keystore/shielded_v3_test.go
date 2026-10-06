@@ -12,18 +12,18 @@ import (
 func TestShield3StampedAccountBackup(t *testing.T) {
 	seed := make([]byte, 32)
 	ks := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
-	account, err := ks.ImportStampedPQSeed(seed, "pass", 8979, "Hidden Name", "Hidden Country")
+	account, err := ks.ImportStampedPQSeed(seed, "pass", 8979, "Hidden Name", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ks.StampPQAccount(account, "pass", 8979, "Changed Name", "Changed Country"); err == nil {
+	if err := ks.StampPQAccount(account, "pass", 8979, "Changed Name", "Canada"); err == nil {
 		t.Fatal("replaced original stamp")
 	}
 	backup, err := ks.ExportPQ(account, "pass", "backup-pass")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(backup, []byte("Hidden Name")) || bytes.Contains(backup, []byte("Hidden Country")) {
+	if bytes.Contains(backup, []byte("Hidden Name")) || bytes.Contains(backup, []byte("New Zealand")) {
 		t.Fatal("backup exposes stamp")
 	}
 	key, err := DecryptPQKey(backup, "backup-pass")
@@ -37,7 +37,7 @@ func TestShield3StampedAccountBackup(t *testing.T) {
 	}
 	defer clear(private)
 	stamp, err := pqcrypto.OpenShieldedV3Stamp(private, key.Shield3Stamp)
-	if err != nil || stamp.Name != "Hidden Name" || stamp.Country != "Hidden Country" {
+	if err != nil || stamp.Name != "Hidden Name" || stamp.Country != "New Zealand" {
 		t.Fatal("backup lost stamp")
 	}
 	ks2 := NewKeyStore(t.TempDir(), LightScryptN, LightScryptP)
@@ -67,7 +67,7 @@ func TestStampPQAccountRecordPreservesCommitment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Name", "Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Name", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}

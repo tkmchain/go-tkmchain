@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,25 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestTkmProverConfigPreservesAutomaticFunding(t *testing.T) {
+	const limit = "1000000000000000000000"
+	var cfg tkmProverConfig
+	if err := json.Unmarshal([]byte(`{"autoPublicFunding":true,"autoPublicFundingLimitWei":"`+limit+`"}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted["autoPublicFunding"] != true || persisted["autoPublicFundingLimitWei"] != limit {
+		t.Fatalf("automatic funding settings were not preserved: %s", data)
+	}
+}
 
 func TestDownloadTkmProvingKey(t *testing.T) {
 	want := []byte("test proving key")

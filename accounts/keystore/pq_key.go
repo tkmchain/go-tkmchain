@@ -139,17 +139,10 @@ func DecryptPQKey(keyjson []byte, auth string) (*PQKey, error) {
 			zeroPQKey(key)
 			return nil, fmt.Errorf("invalid Shield3 address stamp")
 		}
-		stampSeed, err := pqcrypto.DeriveShieldedV3ViewKey(key.Seed, encrypted.Shield3Stamp.ChainID, pqcrypto.ShieldedV3Stamp)
-		if err != nil {
-			zeroPQKey(key)
-			return nil, err
-		}
-		_, err = pqcrypto.OpenShieldedV3Stamp(stampSeed, encrypted.Shield3Stamp)
-		clear(stampSeed)
-		if err != nil {
-			zeroPQKey(key)
-			return nil, err
-		}
+		// A valid signed stamp remains sufficient to load and transact from an
+		// account. Opening its private name/country belongs to the disclosure
+		// path; requiring that here made an opaque but correctly signed stamp
+		// lock the account out of every wallet and prover operation.
 		key.Shield3Stamp = encrypted.Shield3Stamp
 	}
 	id, err := uuid.Parse(encrypted.Id)

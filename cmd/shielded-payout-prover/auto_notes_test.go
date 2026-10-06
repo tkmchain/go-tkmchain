@@ -117,6 +117,21 @@ func TestAutomaticPrivateNotePreparation(t *testing.T) {
 	}
 }
 
+func TestConfirmedPreparationRequiresSpendableCapacity(t *testing.T) {
+	tkm := func(v int64) *big.Int { return new(big.Int).Mul(big.NewInt(v), big.NewInt(params.Ether)) }
+	target := tkm(1000)
+	if err := requirePreparedNoteCapacity(nil, target); err == nil {
+		t.Fatal("confirmed deposit with no scanned notes must not be treated as spendable")
+	}
+	notes := []shield3wallet.OwnedNote{{Commitment: shielded3.Digest{1}, Note: shield3wallet.Note{ValueWei: tkm(1000).String()}}}
+	if err := requirePreparedNoteCapacity(notes, target); err != nil {
+		t.Fatalf("sufficient canonical notes rejected: %v", err)
+	}
+	if err := requirePreparedNoteCapacity(notes, tkm(1001)); err == nil {
+		t.Fatal("preparation below requested payout target must not be accepted")
+	}
+}
+
 func TestAutomaticPublicFundingBudget(t *testing.T) {
 	for _, cfg := range []Config{{AutoPublicFunding: true}, {AutoPublicFunding: true, AutoPublicFundingLimitWei: "-1"}, {PrepaidFeeLimitWei: "bad"}} {
 		if err := validateAutomaticFundingConfig(cfg); err == nil {

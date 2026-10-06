@@ -107,6 +107,8 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 }
 
 type tkmProverConfig struct {
+	AutoPublicFunding         bool   `json:"autoPublicFunding,omitempty"`
+	AutoPublicFundingLimitWei string `json:"autoPublicFundingLimitWei,omitempty"`
 	Listen               string `json:"listen"`
 	AllowedOrigin        string `json:"allowedOrigin"`
 	BearerToken          string `json:"bearerToken"` // #nosec G117 -- generated random token is stored in the private 0600 prover config
