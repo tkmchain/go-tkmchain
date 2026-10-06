@@ -802,6 +802,28 @@ func waitWalletReceipt(ctx context.Context, client *ethclient.Client, hash commo
 	}
 }
 
+// validatorReceiptTimeout explains the state of a validator transaction after
+// the receipt wait expires. SendTransaction returning nil only confirms that
+// the RPC accepted the request; it does not mean a block included it.
+func validatorReceiptTimeout(client *ethclient.Client, hash common.Hash, waitErr error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, pending, err := client.TransactionByHash(ctx, hash)
+	switch {
+	case err == nil && tx != nil && pending:
+		return fmt.Errorf("validator transaction %s is still pending after the confirmation wait; do not submit it again. Check this hash again after the next block (wait ended: %v)", hash.Hex(), waitErr)
+	case err == nil && tx != nil:
+		return fmt.Errorf("validator transaction %s is known to the node but has no receipt yet; do not submit it again. Check this hash again after the next block (wait ended: %v)", hash.Hex(), waitErr)
+	case errors.Is(err, ethereum.NotFound):
+		return fmt.Errorf("validator transaction %s was acknowledged by the RPC but is no longer known to this node and has no receipt. It was not confirmed; check the same hash on the RPC endpoint you submitted to before retrying (wait ended: %v)", hash.Hex(), waitErr)
+	default:
+		if err != nil {
+			return fmt.Errorf("validator transaction %s was submitted, but confirmation timed out and its status check failed: %v (receipt wait: %v)", hash.Hex(), err, waitErr)
+		}
+		return fmt.Errorf("validator transaction %s was submitted but no receipt arrived before the wait expired: %v", hash.Hex(), waitErr)
+	}
+}
+
 func showWalletEmail(reader *bufio.Reader, client *rpc.Client) {
 	clearWalletScreen()
 	fmt.Println(walletText("section.email", "EMAILVM"))
@@ -1150,7 +1172,8 @@ func walletValidatorMenu(reader *bufio.Reader, client *ethclient.Client, ks *key
 		fmt.Println("VALIDATOR")
 		fmt.Println("─────────")
 		fmt.Printf("  Bond: %s TKM    Registration fee: %s TKM\n", formatTKM(walletAmountTKM(core.ValidatorBondTKM)), formatTKM(walletAmountTKM(core.ValidatorRegistrationFeeTKM)))
-		fmt.Printf("  Activation delay: %d blocks    Unbonding: %d blocks\n", core.ValidatorActivationDelay, core.ValidatorUnbondingPeriod)
+		fmt.Printf("  Minimum activation delay: %d blocks    Unbonding: %d blocks\n", core.ValidatorActivationDelay, core.ValidatorUnbondingPeriod)
+		fmt.Printf("  Registration scheduling includes an additional %d-block inclusion window.\n", core.ValidatorActivationDelay)
 		fmt.Println("  Registration requires an ML-DSA-87 account and is available after Antartical activation.")
 		fmt.Println("\n  r) Register validator")
 		fmt.Println("  e) Request validator exit")
@@ -1212,14 +1235,21 @@ func submitWalletValidatorAction(reader *bufio.Reader, client *ethclient.Client,
 	var data []byte
 	value := new(big.Int)
 	destination := params.ShieldedPoolAddress
+	activationHeight := uint64(0)
 	switch action {
 	case "register":
-		if block > ^uint64(0)-core.ValidatorActivationDelay {
+		// Consensus checks the minimum delay again at block inclusion, not only
+		// when the wallet submits the transaction. Reserve one extra delay window
+		// so normal block advancement while the transaction is pending cannot
+		// make the registration invalid before it is included.
+		schedulingDelay := core.ValidatorActivationDelay * 2
+		if block > ^uint64(0)-schedulingDelay {
 			return errors.New("current block is too large to schedule validator activation")
 		}
+		activationHeight = block + schedulingDelay
 		data, err = core.EncodeValidatorRegistration(&core.ValidatorRegistration{
 			Version: core.ValidatorEnvelopeVersion, PublicKey: common.CopyBytes(key.PublicKey),
-			RewardAddress: account.Address, ActivationHeight: block + core.ValidatorActivationDelay,
+			RewardAddress: account.Address, ActivationHeight: activationHeight,
 		})
 		value = core.ValidatorBondWei()
 	case "exit":
@@ -1256,7 +1286,7 @@ func submitWalletValidatorAction(reader *bufio.Reader, client *ethclient.Client,
 	}
 	fmt.Printf("\n  Action: %s\n  Account: %s\n  Current block: #%d\n", action, account.Address.Hex(), block)
 	if action == "register" {
-		fmt.Printf("  Bond: %s TKM (public consensus stake)\n  Registration fee: %s TKM (burned)\n  Scheduled activation: #%d\n", formatTKM(value), formatTKM(core.ValidatorRegistrationFeeWei()), block+core.ValidatorActivationDelay)
+		fmt.Printf("  Bond: %s TKM (public consensus stake)\n  Registration fee: %s TKM (burned)\n  Scheduled activation: #%d\n", formatTKM(value), formatTKM(core.ValidatorRegistrationFeeWei()), activationHeight)
 		fmt.Println("  Note: validator registration is a public consensus operation; the bond and fee are visible on-chain.")
 	}
 	fmt.Printf("  Maximum network fee: %s TKM\n", formatTKM(fee))
@@ -1283,7 +1313,7 @@ func submitWalletValidatorAction(reader *bufio.Reader, client *ethclient.Client,
 	defer waitCancel()
 	receipt, err := waitWalletReceipt(waitCtx, client, signed.Hash())
 	if err != nil {
-		return fmt.Errorf("transaction %s was submitted but confirmation failed: %w", signed.Hash().Hex(), err)
+		return validatorReceiptTimeout(client, signed.Hash(), err)
 	}
 	if receipt.Status != types.ReceiptStatusSuccessful {
 		return fmt.Errorf("validator transaction %s was mined but failed; inspect node logs for the consensus rejection reason", signed.Hash().Hex())
