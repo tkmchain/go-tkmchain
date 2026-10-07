@@ -26,6 +26,40 @@ type Descriptor struct {
 	Signature        []byte
 }
 
+// UnmarshalTOML decodes the fixed-size relay identifier from a TOML byte
+// array. naoina/toml cannot assign arrays directly, so decode into a slice
+// and validate its exact protocol width before copying it.
+func (d *Descriptor) UnmarshalTOML(decode func(interface{}) error) error {
+	if d == nil {
+		return errors.New("tkmnet: nil relay descriptor")
+	}
+	var raw struct {
+		Version          uint8
+		ID               []byte
+		Onion            string
+		PublicKey        []byte
+		SigningPublicKey []byte
+		Expires          uint64
+		Signature        []byte
+	}
+	if err := decode(&raw); err != nil {
+		return err
+	}
+	if len(raw.ID) != LayerNextIDSize {
+		return fmt.Errorf("tkmnet: descriptor ID must contain %d bytes", LayerNextIDSize)
+	}
+	*d = Descriptor{
+		Version:          raw.Version,
+		Onion:            raw.Onion,
+		PublicKey:        raw.PublicKey,
+		SigningPublicKey: raw.SigningPublicKey,
+		Expires:          raw.Expires,
+		Signature:        raw.Signature,
+	}
+	copy(d.ID[:], raw.ID)
+	return nil
+}
+
 func (d Descriptor) signingBytes() ([]byte, error) {
 	if d.Version != Version || d.ID == ([LayerNextIDSize]byte{}) || len(d.PublicKey) != 1568 || len(d.SigningPublicKey) != pqcrypto.MLDSA87PublicKeySize || d.Expires == 0 {
 		return nil, errors.New("tkmnet: invalid relay descriptor")

@@ -111,3 +111,5 @@ cmd/shielded-payout-prover/wallet_version_windows_amd64.syso
 /build/fetchpayload
 /build/keeper-mipsle
 /*_payload.rlp
+deploy/tkmnet-relays/bin/
+deploy/tkmnet-relays/state/

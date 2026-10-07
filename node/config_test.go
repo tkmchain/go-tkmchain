@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -165,8 +166,11 @@ func TestPrivacyStrictConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !slices.Contains(node.config.HTTPModules, "tkmname") {
+		t.Fatal("strict privacy HTTP API must expose the signed username directory methods")
+	}
 	for _, forbidden := range []string{"miner", "rk", "rotatingking", "admin", "debug"} {
-		for _, module := range config.HTTPModules {
+		for _, module := range node.config.HTTPModules {
 			if module == forbidden {
 				t.Fatalf("strict privacy exposed mutating namespace %q", forbidden)
 			}
@@ -174,6 +178,12 @@ func TestPrivacyStrictConfiguration(t *testing.T) {
 	}
 	if err := node.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultHTTPModulesExposeUsernameRPC(t *testing.T) {
+	if !slices.Contains(DefaultConfig.HTTPModules, "tkmname") {
+		t.Fatal("default HTTP API must expose the signed username directory methods")
 	}
 }
 

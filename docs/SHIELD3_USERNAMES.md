@@ -42,6 +42,30 @@ returned owner signature, chain ID, lease, and Shield3 code.
 If Tor, TKMNet, pins, or a directory response is unavailable, resolution
 fails closed rather than falling back to local lookup.
 
+## Wallet and external-node use
+
+The interactive wallet exposes username registration/details and renewal, and
+its Send flow accepts a checksummed `@name#checksum`. Registration and renewal
+cost 0 TKM; a renewal keeps the same owner and payment code, increments the
+sequence, and sets a new 90–365 day lease. The wallet shows the mapped
+Shield3 address, expiry, remaining lease, sequence, and renewal cost.
+
+The `tkmname` JSON-RPC namespace provides `tkmname_status`,
+`tkmname_register`, `tkmname_resolve`, and `tkmname_lookupBatch`. It is enabled
+in the default and strict-privacy HTTP API module lists so the hosted wallet
+can use the node's `/rpc` endpoint. External wallets may use that configured
+RPC endpoint without operating directory infrastructure themselves.
+
+An Ethereum P2P peer connection alone does **not** transfer this off-consensus
+directory or the private TKMNet operator configuration. A node using its own
+RPC must have the Tor, transit-relay, and pinned-directory settings above;
+connecting to ordinary chain peers does not satisfy `networkReady`. The
+wallet fails with a clear status in that case. We do not gossip every signed
+name-to-payment-code record to all chain peers because that would publish the
+mapping and defeat the private lookup design. Peer-discovered trusted operator
+bootstrap is a separate network feature; it must preserve operator pinning and
+per-operator query separation before it can replace explicit configuration.
+
 This is a non-collusion design, not cryptographic PIR. The cover source sees a
 request for covers; each query directory sees its one alias; colluding
 operators can correlate activity. TKMNet hides the source IP from a directory
@@ -58,7 +82,9 @@ TKMNet privacy route. Configure `SOCKS5Proxy`, `RelayPort`, `TransitPeers`, and
 `DirectoryPeers` in the `Tkmnet` TOML section. The regular
 `RelayPeers` list must allow the transit hops to forward to the selected
 directory. Every signing-key pin must match the SHA-256 fingerprint of that
-operator's ML-DSA key.
+operator's ML-DSA key. For third-party hosting, paid service scope, onboarding
+deliverables, the node settings, readiness checks, and the current descriptor
+tooling limitation, see [Paid third-party TKMNet operators](TKMNET_THIRD_PARTY_OPERATORS.md).
 
 ## Abuse and security limits
 

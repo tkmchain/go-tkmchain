@@ -31,6 +31,11 @@ directory descriptor; the private key is never sent over the network.
 
 ## Host a username directory operator
 
+For the paid four-service deployment (two pinned directories plus two
+independent transit relays), provider responsibilities, node configuration,
+key-pin verification, readiness checks, and the current descriptor-tooling
+limitation, see [Paid third-party TKMNet operators](TKMNET_THIRD_PARTY_OPERATORS.md).
+
 A directory operator is a `gtkm` node whose signed descriptor is included in
 `Tkmnet.DirectoryPeers` on participating nodes. It stores signed name bindings
 in its node database and serves requests through the username handler.

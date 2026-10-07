@@ -1,0 +1,48 @@
+services:
+  tkmnet-transit-1:
+    image: local/tkmnet-relay:dev
+    container_name: tkmnet-transit-1
+    restart: unless-stopped
+    environment:
+      TKMNET_STATE_DIR: /var/lib/tkmnet
+      TKMNET_LISTEN: 127.0.0.1:39000
+      TKMNET_HEALTH_ADDR: 127.0.0.1:39080
+      TKMNET_SOCKS5: socks5://127.0.0.1:9050
+      TKMNET_RELAY_PORT: "39000"
+      TKMNET_ONION_FILE: /var/lib/tkmnet/onion.hostname
+      TKMNET_PEERS_FILE: /var/lib/tkmnet/peers.json
+      TKMNET_PEERS_SOURCE: /etc/tkmnet/peers.json
+    volumes:
+      - ./state/relay1:/var/lib/tkmnet
+      - ./state/tor1:/var/lib/tor
+      - ./config/relay1-peers.json:/etc/tkmnet/peers.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  tkmnet-transit-2:
+    image: local/tkmnet-relay:dev
+    container_name: tkmnet-transit-2
+    restart: unless-stopped
+    environment:
+      TKMNET_STATE_DIR: /var/lib/tkmnet
+      TKMNET_LISTEN: 127.0.0.1:39000
+      TKMNET_HEALTH_ADDR: 127.0.0.1:39080
+      TKMNET_SOCKS5: socks5://127.0.0.1:9050
+      TKMNET_RELAY_PORT: "39000"
+      TKMNET_ONION_FILE: /var/lib/tkmnet/onion.hostname
+      TKMNET_PEERS_FILE: /var/lib/tkmnet/peers.json
+      TKMNET_PEERS_SOURCE: /etc/tkmnet/peers.json
+    volumes:
+      - ./state/relay2:/var/lib/tkmnet
+      - ./state/tor2:/var/lib/tor
+      - ./config/relay2-peers.json:/etc/tkmnet/peers.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s

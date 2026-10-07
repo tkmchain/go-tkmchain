@@ -5,12 +5,48 @@ import (
 	"crypto/mlkem"
 	"crypto/rand"
 	"crypto/sha256"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
+	"github.com/naoina/toml"
 )
+
+func TestTkmnetDescriptorsAndPinsTOMLRoundTrip(t *testing.T) {
+	now := time.Now()
+	directories := pinnedDirectoryPeers(t, 2, now)
+	peers := []Descriptor{directories[0].Descriptor, directories[1].Descriptor}
+	type config struct {
+		RelayPeers     []Descriptor
+		DirectoryPeers []PinnedDirectoryPeer
+	}
+	want := config{RelayPeers: peers, DirectoryPeers: directories}
+	settings := toml.Config{
+		NormFieldName: func(_ reflect.Type, key string) string { return key },
+		FieldToKey:    func(_ reflect.Type, field string) string { return field },
+	}
+	var encoded bytes.Buffer
+	if err := settings.NewEncoder(&encoded).Encode(want); err != nil {
+		t.Fatalf("encode peer config: %v", err)
+	}
+	var got config
+	if err := settings.NewDecoder(&encoded).Decode(&got); err != nil {
+		t.Fatalf("decode peer config: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("TOML peer descriptors or key pins changed during round trip")
+	}
+	for _, peer := range got.DirectoryPeers {
+		if err := peer.Descriptor.Verify(now); err != nil {
+			t.Fatalf("decoded descriptor is invalid: %v", err)
+		}
+		if sha256.Sum256(peer.Descriptor.SigningPublicKey) != peer.SigningKeyPin {
+			t.Fatal("decoded directory signing-key pin does not match descriptor")
+		}
+	}
+}
 
 func pinnedDirectoryPeers(t *testing.T, count int, now time.Time) []PinnedDirectoryPeer {
 	t.Helper()

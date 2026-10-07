@@ -135,6 +135,28 @@ type PinnedDirectoryPeer struct {
 	SigningKeyPin [sha256.Size]byte
 }
 
+// UnmarshalTOML validates the fixed-size out-of-band signing-key pin while
+// decoding peer configuration. This keeps malformed pins from being silently
+// truncated or padded by a configuration parser.
+func (p *PinnedDirectoryPeer) UnmarshalTOML(decode func(interface{}) error) error {
+	if p == nil {
+		return errors.New("tkmnet: nil pinned directory peer")
+	}
+	var raw struct {
+		Descriptor    Descriptor
+		SigningKeyPin []byte
+	}
+	if err := decode(&raw); err != nil {
+		return err
+	}
+	if len(raw.SigningKeyPin) != sha256.Size {
+		return fmt.Errorf("tkmnet: directory signing-key pin must contain %d bytes", sha256.Size)
+	}
+	p.Descriptor = raw.Descriptor
+	copy(p.SigningKeyPin[:], raw.SigningKeyPin)
+	return nil
+}
+
 // UsernameQuery is one independently routed member of a private lookup set.
 // Send each query over its own onion circuit to a different operator. Never
 // combine these into one request to a single directory server.
