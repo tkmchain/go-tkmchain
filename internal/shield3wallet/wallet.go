@@ -290,7 +290,12 @@ func scanAsset(ctx context.Context, rpc RPC, view ViewKey, assetID uint64) (Scan
 	received := new(big.Int)
 	seen := make(map[shielded3.Digest]bool)
 	for from := low; from <= uint64(head.Number); {
-		to := from + 31
+		// Match the node RPC's maximum inclusive scan span (2048 blocks). The
+		// browser worker uses this same scanner, so keeping this at 32 made a
+		// send issue hundreds or thousands of sequential HTTP requests before
+		// it could even start proving. If a busy range produces an oversized
+		// response, the bounded retry below halves the span until it fits.
+		to := from + 2047
 		if to < from || to > uint64(head.Number) {
 			to = uint64(head.Number)
 		}
