@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"io"
 	"net"
 	"strconv"
@@ -21,6 +22,23 @@ func TestSOCKS5DialerValidation(t *testing.T) {
 	}
 	if dialer, err := NewSOCKS5Dialer("socks5://127.0.0.1:9050"); err != nil || dialer == nil {
 		t.Fatalf("valid SOCKS5 endpoint rejected: %v", err)
+	}
+}
+
+func TestOnionOnlyTransportUsesTorHandshakeTimeoutBothDirections(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory := newTransportFactory(&SOCKS5Dialer{onionOnly: true})
+	for _, dest := range []*ecdsa.PublicKey{nil, &key.PublicKey} {
+		left, right := net.Pipe()
+		transport := factory(left, dest).(*rlpxTransport)
+		if transport.handshakeTimeout != torHandshakeTimeout {
+			t.Errorf("onion-only handshake timeout = %s, want %s", transport.handshakeTimeout, torHandshakeTimeout)
+		}
+		left.Close()
+		right.Close()
 	}
 }
 

@@ -933,6 +933,11 @@ var (
 		Usage:    "Enable the fixed-size encrypted tkmnet relay service",
 		Category: flags.NetworkingCategory,
 	}
+	TkmnameEnabledFlag = &cli.BoolFlag{
+		Name:     "tkmname.enable",
+		Usage:    "Enable the TKMNet username directory service (also enables the local relay)",
+		Category: flags.NetworkingCategory,
+	}
 	TkmnetListenFlag = &cli.StringFlag{
 		Name:     "tkmnet.listen",
 		Usage:    "Local listener for the tkmnet Tor onion service",

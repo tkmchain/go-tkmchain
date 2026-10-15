@@ -117,8 +117,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  11) %s\n", walletText("menu.shield3", "Show Shield3 address"))
 		fmt.Printf("  12) %s\n", walletText("menu.stampSponsor", "Stamp sponsorship"))
 		fmt.Printf("  13) %s\n", walletText("menu.validator", "Validator"))
-		fmt.Printf("  14) %s\n", walletText("menu.username", "Shield3 username"))
-		fmt.Printf("  15) %s\n", "Username details / renew")
+		fmt.Printf("  14) %s\n", walletText("menu.username", "Create / manage username"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -176,10 +175,6 @@ func interactiveWallet(ctx *cli.Context) error {
 				showWalletError(reader, err)
 			}
 		case "14":
-			if err := walletShield3Username(reader, rpcClient, ks, accounts, chainID); err != nil {
-				showWalletError(reader, err)
-			}
-		case "15":
 			if err := walletShield3Username(reader, rpcClient, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
@@ -1412,22 +1407,27 @@ func walletShield3Username(reader *bufio.Reader, client *rpc.Client, ks *keystor
 	clearWalletScreen()
 	fmt.Println("SHIELD3 USERNAME")
 	fmt.Println("────────────────")
-	fmt.Println("View, register, or renew the short name for a Shield3 receiving code.")
-	fmt.Println("A username lease lasts 90 days by default (up to 365 days). Renewal costs 0 TKM; it uses local proof-of-work and directory relay traffic.")
-	var before eth.TkmNameDirectoryStatus
-	if err := client.Call(&before, "tkmname_status"); err != nil {
-		return fmt.Errorf("check username network status: %w", err)
+	fmt.Println("Create a short payment name for your stamped Shield3 address, or renew your existing name.")
+	var info eth.TkmNameRegistrationInfo
+	if err := client.Call(&info, "tkmname_registrationInfo"); err != nil {
+		return fmt.Errorf("check username requirements: %w (enable the tkmname RPC namespace)", err)
 	}
-	if before.NetworkActive {
-		if before.NetworkPeersConfigured {
-			fmt.Printf("Network: active · %d directory operators configured · ready=%t\n", before.DirectoryOperators, before.NetworkReady)
-		} else {
-			fmt.Println("Network: active · directory peers are not configured; registration cannot complete until they are.")
+	if info.ChainID != chainID.Uint64() {
+		return fmt.Errorf("username RPC is connected to chain %d, but this wallet is on chain %d", info.ChainID, chainID.Uint64())
+	}
+	if info.NetworkActive {
+		if !info.NetworkPeersConfigured || info.DirectoryOperators < 2 {
+			fmt.Println("Username network: active · pinned directory operators or transit relays are not configured.")
 			return errors.New("configure at least two pinned username directory operators and two independent transit relays in the node's TKMNet settings")
 		}
+		fmt.Printf("Username network: active · %d pinned directory operators · ready=%t\n", info.DirectoryOperators, info.NetworkReady)
+		if !info.NetworkReady {
+			return errors.New("username directory is not synchronized yet; wait for TKMNet directory peers to become ready, then retry")
+		}
 	} else {
-		fmt.Println("Network: not active yet · registration is saved locally and will replicate after activation.")
+		fmt.Println("Username network: not active · registration will be stored locally and replicate after activation.")
 	}
+	fmt.Printf("Registration/renewal: %s TKM · lease: %d–%d days · default %d days\n", info.RegistrationFeeTKM, info.MinimumLeaseDays, info.MaximumLeaseDays, info.DefaultLeaseDays)
 	account, err := chooseWalletAccount(reader, walletAccounts)
 	if err != nil {
 		return err
@@ -1490,7 +1490,7 @@ func walletShield3Username(reader *bufio.Reader, client *rpc.Client, ks *keystor
 			return errors.New("username sequence is exhausted")
 		}
 		sequence = prior.Sequence + 1
-	} else if before.NetworkActive {
+	} else if info.NetworkActive {
 		var status eth.TkmNameDirectoryStatus
 		if err := client.Call(&status, "tkmname_status"); err != nil {
 			return fmt.Errorf("check username directory after lookup failure: %w", err)
@@ -1502,22 +1502,22 @@ func walletShield3Username(reader *bufio.Reader, client *rpc.Client, ks *keystor
 	} else {
 		fmt.Printf("\n  %s has no local active lease.\n", handle)
 	}
-	daysText, err := readWalletLine(reader, "Lease length in days [90], from 90 to 365")
+	daysText, err := readWalletLine(reader, fmt.Sprintf("Lease length in days [%d], from %d to %d (Enter accepts default)", info.DefaultLeaseDays, info.MinimumLeaseDays, info.MaximumLeaseDays))
 	if err != nil {
 		return err
 	}
-	days := 90
+	days := info.DefaultLeaseDays
 	if strings.TrimSpace(daysText) != "" {
 		days, err = strconv.Atoi(strings.TrimSpace(daysText))
-		if err != nil || days < 90 || days > 365 {
-			return errors.New("username lease must be between 90 and 365 days")
+		if err != nil || days < info.MinimumLeaseDays || days > info.MaximumLeaseDays {
+			return fmt.Errorf("username lease must be between %d and %d days", info.MinimumLeaseDays, info.MaximumLeaseDays)
 		}
 	}
 	action := "REGISTER"
 	if sequence > 1 {
 		action = "RENEW"
 	}
-	fmt.Printf("\n  %s %s on chain %s.\n  Lease: %d days\n  Renewal/registration amount: 0 TKM\n  Required work: 18-bit local proof of work\n", action, handle, chainID.String(), days)
+	fmt.Printf("\n  %s %s on chain %s.\n  Lease: %d days\n  Registration/renewal amount: %s TKM\n  Required work: %d-bit local proof of work\n", action, handle, chainID.String(), days, info.RegistrationFeeTKM, info.ProofOfWorkBits)
 	confirmation, err := readWalletLine(reader, "Type "+action+" to confirm")
 	if err != nil {
 		return err

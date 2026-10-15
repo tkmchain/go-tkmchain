@@ -24,7 +24,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/internal/gui"
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 )
 
@@ -74,7 +73,7 @@ every exposed API namespace.
 All node flags apply, for example:
 
     gtkm gui --mine --miner.threads=2 --miner.etherbase=0xYourAddress
-    gtkm gui --http --http.api eth,net,web3,tkm,tkmphone,emailvm,rk,mainking,miner
+    gtkm gui --http --http.api eth,net,web3,tkm,tkmname,tkmphone,emailvm,rk,mainking,miner
 
 Mobile / LAN: the dashboard is also a installable progressive web app. Expose
 it with --gui.host 0.0.0.0 and a fixed --gui.port, then open the printed URL
@@ -112,21 +111,11 @@ func localGUI(ctx *cli.Context) error {
 	}
 	defer shield3Service.Close()
 
-	proverContext, cancelProver := context.WithCancel(ctx.Context)
-	proverCLI := *ctx
-	proverCLI.Context = proverContext
-	proverDone := make(chan struct{})
-	go func() {
-		defer close(proverDone)
-		prover, err := startTkmProver(&proverCLI)
-		if err != nil {
-			log.Error("Wallet proof builder setup failed", "err", err)
-			return
-		}
-		<-proverContext.Done()
-		prover.stop()
-	}()
-	defer func() { cancelProver(); <-proverDone }()
+	prover, err := startTkmProver(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer prover.stop()
 
 	proverConfig := ctx.Path(tkmProverConfigFlag.Name)
 	if proverConfig == "" {

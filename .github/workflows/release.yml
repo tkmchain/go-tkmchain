@@ -211,6 +211,9 @@ jobs:
       - name: Build and package portable Linux binaries
         run: |
           ./scripts/shield4-build.sh
+          # Exercise the username RPC preflight and interactive-wallet
+          # prerequisites on the exact source revision used for this release.
+          go test ./eth ./cmd/gtkm -run 'TestTkmNameAPI|TestUsernameRPCIncludedInDefaultHTTPAndWSModules|TestUsernameFlagEnablesTKMNetWithoutForkGate' -count=1
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
           archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"

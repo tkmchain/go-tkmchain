@@ -44,17 +44,27 @@ fails closed rather than falling back to local lookup.
 
 ## Wallet and external-node use
 
-The interactive wallet exposes username registration/details and renewal, and
-its Send flow accepts a checksummed `@name#checksum`. Registration and renewal
-cost 0 TKM; a renewal keeps the same owner and payment code, increments the
-sequence, and sets a new 90–365 day lease. The wallet shows the mapped
-Shield3 address, expiry, remaining lease, sequence, and renewal cost.
+Choose **Create / manage username** in the interactive wallet. It checks the
+connected chain and directory readiness, derives the stamped Shield3 identity
+from the selected ML-DSA key locally, then registers a new name or recognizes
+and renews a name already owned by that identity. Press Enter to use the
+90-day default lease. Registration and renewal cost 0 TKM; renewal keeps the
+same owner and payment code, increments the sequence, and resets a 90–365 day
+lease. The wallet displays the existing address, expiry, remaining lease, and
+sequence before renewal. Private seeds and owner signatures remain local.
+The Send flow accepts a checksummed `@name#checksum` and verifies the signed
+Shield3 binding returned by the resolver before constructing the payment.
 
-The `tkmname` JSON-RPC namespace provides `tkmname_status`,
-`tkmname_register`, `tkmname_resolve`, and `tkmname_lookupBatch`. It is enabled
-in the default and strict-privacy HTTP API module lists so the hosted wallet
-can use the node's `/rpc` endpoint. External wallets may use that configured
-RPC endpoint without operating directory infrastructure themselves.
+The `tkmname` JSON-RPC namespace provides `tkmname_registrationInfo`,
+`tkmname_status`, `tkmname_register`, `tkmname_resolve`, and
+`tkmname_lookupBatch`. `registrationInfo` returns the chain, network readiness,
+lease limits/default, fee, proof-of-work cost, and the stamp/signature
+requirements. Wallets still create the signed record locally and submit it
+with `register`; the RPC never receives a seed or private key. `tkmname` is
+included in gtkm's default HTTP and WebSocket API modules. If an operator sets
+`--http.api` or `--ws.api` explicitly, include `tkmname` in that list as well.
+External wallets may use the configured RPC endpoint without operating
+directory infrastructure themselves.
 
 An Ethereum P2P peer connection alone does **not** transfer this off-consensus
 directory or the private TKMNet operator configuration. A node using its own

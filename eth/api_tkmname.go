@@ -31,6 +31,7 @@ type TkmNameAPI struct {
 	proxy         string
 	port          string
 	transit       []tkmnet.Descriptor
+	discovered    []tkmnet.Descriptor
 	directories   []tkmnet.PinnedDirectoryPeer
 	publicationMu sync.Mutex
 	networkReady  bool
@@ -51,6 +52,24 @@ type TkmNameDirectoryStatus struct {
 	NetworkPeersConfigured bool        `json:"networkPeersConfigured"`
 	DirectoryOperators     int         `json:"directoryOperators"`
 	NetworkReady           bool        `json:"networkReady"`
+}
+
+// TkmNameRegistrationInfo describes the client-side requirements for creating
+// or renewing a username. The node can publish owner-signed records, but it
+// never creates a signature or derives a payment code on the wallet's behalf.
+type TkmNameRegistrationInfo struct {
+	ChainID                uint64 `json:"chainId"`
+	NetworkActive          bool   `json:"networkActive"`
+	NetworkPeersConfigured bool   `json:"networkPeersConfigured"`
+	NetworkReady           bool   `json:"networkReady"`
+	DirectoryOperators     int    `json:"directoryOperators"`
+	MinimumLeaseDays       int    `json:"minimumLeaseDays"`
+	DefaultLeaseDays       int    `json:"defaultLeaseDays"`
+	MaximumLeaseDays       int    `json:"maximumLeaseDays"`
+	RegistrationFeeTKM     string `json:"registrationFeeTkm"`
+	ProofOfWorkBits        uint   `json:"proofOfWorkBits"`
+	RequiresConfirmedStamp bool   `json:"requiresConfirmedStamp"`
+	RequiresOwnerSignature bool   `json:"requiresOwnerSignature"`
 }
 
 func NewTkmNameAPI(e *Ethereum) *TkmNameAPI {
@@ -126,9 +145,10 @@ func (api *TkmNameAPI) LookupBatch(names []string) ([]TkmNameRecord, error) {
 	return api.directory.LookupBatch(names, time.Now().UTC())
 }
 
-// ResolveLocal is intended for local wallet RPC only. It is deliberately not
-// a substitute for LookupBatch on public or remotely reachable endpoints.
-func (api *TkmNameAPI) ResolveLocal(handle string) (TkmNameRecord, error) {
+// resolveLocal is an internal pre-activation lookup. Keeping it unexported
+// prevents RPC reflection from exposing a direct local directory lookup once
+// private network resolution is active.
+func (api *TkmNameAPI) resolveLocal(handle string) (TkmNameRecord, error) {
 	if err := api.ready(); err != nil {
 		return TkmNameRecord{}, err
 	}
@@ -148,7 +168,7 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 		return TkmNameRecord{}, err
 	}
 	if !api.usernameNetworkActive() {
-		return api.ResolveLocal(handle)
+		return api.resolveLocal(handle)
 	}
 	if err := api.syncNetworkDirectory(); err != nil {
 		return TkmNameRecord{}, fmt.Errorf("username directory synchronization failed: %w", err)
@@ -286,6 +306,24 @@ func (api *TkmNameAPI) Status() (TkmNameDirectoryStatus, error) {
 	}, nil
 }
 
+// RegistrationInfo is a client-friendly RPC preflight for username creation
+// and renewal. It lets wallets show the current chain/network readiness and
+// lease requirements before asking the owner to sign locally.
+func (api *TkmNameAPI) RegistrationInfo() (TkmNameRegistrationInfo, error) {
+	status, err := api.Status()
+	if err != nil {
+		return TkmNameRegistrationInfo{}, err
+	}
+	return TkmNameRegistrationInfo{
+		ChainID: status.ChainID, NetworkActive: status.NetworkActive,
+		NetworkPeersConfigured: status.NetworkPeersConfigured,
+		NetworkReady:           status.NetworkReady, DirectoryOperators: status.DirectoryOperators,
+		MinimumLeaseDays: 90, DefaultLeaseDays: 90, MaximumLeaseDays: 365,
+		RegistrationFeeTKM: "0", ProofOfWorkBits: 18,
+		RequiresConfirmedStamp: true, RequiresOwnerSignature: true,
+	}, nil
+}
+
 // ConfigureNetwork installs the local Tor egress path and pinned directory
 // operator set. Descriptor slices are copied to protect live routing state.
 func (api *TkmNameAPI) ConfigureNetwork(proxy, port string, transit []tkmnet.Descriptor, directories []tkmnet.PinnedDirectoryPeer) {
@@ -299,10 +337,72 @@ func (api *TkmNameAPI) ConfigureNetwork(proxy, port string, transit []tkmnet.Des
 	api.directories = append([]tkmnet.PinnedDirectoryPeer(nil), directories...)
 }
 
+// AddDiscoveredTransit accepts a verified relay descriptor learned from the
+// gtkm peer gossip protocol as an optional onion transit hop. It never adds a
+// descriptor to the pinned directory set; directory authorization continues
+// to require an explicit signing-key pin.
+func (api *TkmNameAPI) AddDiscoveredTransit(peer tkmnet.Descriptor) error {
+	if api == nil {
+		return errors.New("TKM username service is unavailable")
+	}
+	if err := peer.Verify(time.Now()); err != nil {
+		return fmt.Errorf("invalid discovered transit descriptor: %w", err)
+	}
+	api.networkMu.Lock()
+	defer api.networkMu.Unlock()
+	if sameDescriptorIdentity(peer, api.transit) || sameDirectoryIdentity(peer, api.directories) {
+		return nil
+	}
+	for i, existing := range api.discovered {
+		if existing.ID != peer.ID {
+			if strings.EqualFold(existing.Onion, peer.Onion) {
+				return nil
+			}
+			continue
+		}
+		if string(existing.PublicKey) != string(peer.PublicKey) || string(existing.SigningPublicKey) != string(peer.SigningPublicKey) {
+			return errors.New("discovered transit descriptor attempted to replace established keys")
+		}
+		if peer.Expires > existing.Expires {
+			api.discovered[i] = peer
+		}
+		return nil
+	}
+	if len(api.discovered) >= 64 {
+		return errors.New("discovered transit relay set is full")
+	}
+	api.discovered = append(api.discovered, peer)
+	return nil
+}
+
+func sameDescriptorIdentity(peer tkmnet.Descriptor, descriptors []tkmnet.Descriptor) bool {
+	for _, existing := range descriptors {
+		if peer.ID == existing.ID || strings.EqualFold(peer.Onion, existing.Onion) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameDirectoryIdentity(peer tkmnet.Descriptor, directories []tkmnet.PinnedDirectoryPeer) bool {
+	for _, existing := range directories {
+		if peer.ID == existing.Descriptor.ID || strings.EqualFold(peer.Onion, existing.Descriptor.Onion) {
+			return true
+		}
+	}
+	return false
+}
+
 func (api *TkmNameAPI) networkConfig() (string, string, []tkmnet.Descriptor, []tkmnet.PinnedDirectoryPeer) {
 	api.networkMu.RLock()
 	defer api.networkMu.RUnlock()
-	return api.proxy, api.port, append([]tkmnet.Descriptor(nil), api.transit...), append([]tkmnet.PinnedDirectoryPeer(nil), api.directories...)
+	transit := append([]tkmnet.Descriptor(nil), api.transit...)
+	for _, peer := range api.discovered {
+		if !sameDescriptorIdentity(peer, transit) && !sameDirectoryIdentity(peer, api.directories) {
+			transit = append(transit, peer)
+		}
+	}
+	return api.proxy, api.port, transit, append([]tkmnet.PinnedDirectoryPeer(nil), api.directories...)
 }
 
 func (api *TkmNameAPI) networkConfigured() bool {

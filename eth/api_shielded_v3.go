@@ -127,6 +127,8 @@ type ShieldedV3OutputStatus struct {
 	AssetID         uint64           `json:"assetId"`
 }
 
+const maxShieldedV3OutputScanBlocks = uint64(2048)
+
 // Scan data comes exclusively from canonical blocks; no plaintext amount,
 // recipient viewing public key, or spending witness is served by this RPC.
 func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]ShieldedV3OutputStatus, error) {
@@ -134,8 +136,8 @@ func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]S
 		return nil, fmt.Errorf("blockchain unavailable")
 	}
 	from, to := uint64(fromBlock), uint64(toBlock)
-	if to < from || to-from >= 64 {
-		return nil, fmt.Errorf("Shield3 scan requires an inclusive range of at most 64 blocks")
+	if to < from || to-from >= maxShieldedV3OutputScanBlocks {
+		return nil, fmt.Errorf("Shield3 scan requires an inclusive range of at most %d blocks", maxShieldedV3OutputScanBlocks)
 	}
 	head := api.e.blockchain.CurrentBlock()
 	if head == nil {

@@ -119,6 +119,7 @@ var (
 		utils.PrivacyStrictFlag,
 		utils.PrivacyOnionOnlyFlag,
 		utils.TkmnetEnabledFlag,
+		utils.TkmnameEnabledFlag,
 		utils.TkmnetListenFlag,
 		utils.TkmnetKeyFlag,
 		utils.TkmnetHopFlag,
@@ -413,7 +414,7 @@ func geth(ctx *cli.Context) error {
 		return err
 	}
 	defer shield3Service.Close()
-	prover, err := startTkmProver(ctx)
+	prover, err := startTkmProver(ctx, stack)
 	if err != nil {
 		return err
 	}

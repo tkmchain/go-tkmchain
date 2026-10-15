@@ -207,6 +207,32 @@ func (s *Service) RelayID() [LayerNextIDSize]byte {
 	return id
 }
 
+// AddPeer installs a descriptor that passed signature, key-ID, onion, and
+// expiry verification. It is used for peers learned through authenticated
+// TKMNet descriptor gossip; directory authorization remains a separate policy.
+func (s *Service) AddPeer(peer Descriptor) error {
+	if s == nil || !s.cfg.Enabled {
+		return errors.New("tkmnet: relay service is unavailable")
+	}
+	if err := peer.Verify(time.Now()); err != nil {
+		return fmt.Errorf("tkmnet: reject invalid relay peer descriptor: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, exists := s.peers[peer.ID]; exists {
+		if string(current.PublicKey) != string(peer.PublicKey) || string(current.SigningPublicKey) != string(peer.SigningPublicKey) {
+			return errors.New("tkmnet: relay descriptor attempted to replace established keys")
+		}
+		if current.Expires >= peer.Expires {
+			return nil
+		}
+	} else if len(s.peers) >= descriptorCacheLimit {
+		return errors.New("tkmnet: relay peer set is full")
+	}
+	s.peers[peer.ID] = cloneDescriptor(peer)
+	return nil
+}
+
 func (s *Service) acceptLoop(listener net.Listener) {
 	defer s.wg.Done()
 	for {

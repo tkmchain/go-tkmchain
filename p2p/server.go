@@ -411,6 +411,26 @@ func (s *sharedUDPConn) Close() error {
 
 // Start starts running the server.
 // Servers can not be re-used after stopping.
+func newTransportFactory(dialer NodeDialer) func(net.Conn, *ecdsa.PublicKey) transport {
+	if socks, ok := dialer.(*SOCKS5Dialer); ok && socks.onionOnly {
+		// Onion-only inbound sockets arrive through a Tor hidden service and
+		// appear as loopback TCP connections, so both directions need the Tor
+		// handshake window.
+		return func(conn net.Conn, dialDest *ecdsa.PublicKey) transport {
+			return newRLPXWithHandshakeTimeout(conn, dialDest, torHandshakeTimeout)
+		}
+	}
+	if dialer != nil {
+		return func(conn net.Conn, dialDest *ecdsa.PublicKey) transport {
+			if dialDest != nil {
+				return newRLPXWithHandshakeTimeout(conn, dialDest, torHandshakeTimeout)
+			}
+			return newRLPX(conn, dialDest)
+		}
+	}
+	return newRLPX
+}
+
 func (srv *Server) Start() (err error) {
 	srv.lock.Lock()
 	defer srv.lock.Unlock()
@@ -434,7 +454,7 @@ func (srv *Server) Start() (err error) {
 		return errors.New("Server.PrivateKey must be set to a non-nil key")
 	}
 	if srv.newTransport == nil {
-		srv.newTransport = newRLPX
+		srv.newTransport = newTransportFactory(srv.Dialer)
 	}
 	if srv.listenFunc == nil {
 		srv.listenFunc = net.Listen

@@ -9,16 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/internal/shieldedpayoutprover"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/node"
 	"github.com/urfave/cli/v2"
 )
 
@@ -41,7 +43,7 @@ var (
 	}
 	tkmProverBinaryFlag = &cli.PathFlag{
 		Name:  "tkmprover.bin",
-		Usage: "shielded-payout-prover executable (used with --tkmprover)",
+		Usage: "deprecated: --tkmprover now runs inside gtkm; this flag is ignored",
 	}
 	tkmProverKeyURLFlag = &cli.StringFlag{
 		Name:  "tkmprover.key-url",
@@ -56,16 +58,18 @@ var (
 )
 
 type managedTkmProver struct {
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	launch func() (*exec.Cmd, error)
-	cancel context.CancelFunc
-	done   chan struct{}
+	server   *http.Server
+	listener net.Listener
+	client   *ethclient.Client
+	done     chan error
 }
 
-func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
+func startTkmProver(ctx *cli.Context, stack *node.Node) (*managedTkmProver, error) {
 	if !ctx.Bool(tkmProverFlag.Name) {
 		return &managedTkmProver{}, nil
+	}
+	if stack == nil {
+		return nil, errors.New("gtk node is required for the embedded Shield3 prover")
 	}
 	config := ctx.Path(tkmProverConfigFlag.Name)
 	if config == "" {
@@ -79,108 +83,34 @@ func startTkmProver(ctx *cli.Context) (*managedTkmProver, error) {
 		return nil, err
 	}
 
-	binary := ctx.Path(tkmProverBinaryFlag.Name)
-	if binary == "" {
-		if executable, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(executable), "shielded-payout-prover")
-			if _, err := os.Stat(candidate); err == nil {
-				binary = candidate
-			}
-		}
-	}
-	if binary == "" {
-		var err error
-		binary, err = exec.LookPath("shielded-payout-prover")
-		if err != nil {
-			return nil, fmt.Errorf("find shielded-payout-prover: %w (build it with make production or pass --tkmprover.bin)", err)
-		}
-	}
-	if err := validateTkmProverExecutable(binary); err != nil {
-		return nil, err
-	}
-
-	// The executable is resolved and permission-checked before this direct
-	// exec. No shell is involved, so config contents cannot become arguments.
-	launch := func() (*exec.Cmd, error) {
-		cmd := exec.Command(binary, "--config", config) // #nosec G204 -- validated executable and fixed arguments
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			return nil, err
-		}
-		return cmd, nil
-	}
-	cmd, err := launch()
+	proverCfg, err := shieldedpayoutprover.LoadConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("start tkmprover: %w", err)
+		return nil, fmt.Errorf("load embedded tkmprover config: %w", err)
 	}
-	log.Info("TKM shielded prover started", "pid", cmd.Process.Pid, "config", config)
-	monitorCtx, cancel := context.WithCancel(context.Background())
-	prover := &managedTkmProver{cmd: cmd, launch: launch, cancel: cancel, done: make(chan struct{})}
-	go prover.supervise(monitorCtx)
-	return prover, nil
-}
-
-const maxTkmProverRestartDelay = 30 * time.Second
-
-func (p *managedTkmProver) supervise(ctx context.Context) {
-	defer close(p.done)
-	delay := time.Second
-	startedAt := time.Now()
-	for {
-		p.mu.Lock()
-		cmd := p.cmd
-		p.mu.Unlock()
-		if cmd != nil {
-			err := cmd.Wait()
-			p.mu.Lock()
-			if p.cmd == cmd {
-				p.cmd = nil
-			}
-			p.mu.Unlock()
-			if ctx.Err() != nil {
-				return
-			}
-			if time.Since(startedAt) >= time.Minute {
-				delay = time.Second
-			}
-			log.Error("TKM shielded prover exited; restarting", "err", err, "retryIn", delay)
-		}
-
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return
-		case <-timer.C:
-		}
-
-		restarted, err := p.launch()
-		if err != nil {
-			log.Error("Failed to restart TKM shielded prover", "err", err, "retryIn", delay)
-			delay *= 2
-			if delay > maxTkmProverRestartDelay {
-				delay = maxTkmProverRestartDelay
-			}
-			continue
-		}
-		p.mu.Lock()
-		if ctx.Err() != nil {
-			p.mu.Unlock()
-			_ = restarted.Process.Kill()
-			_ = restarted.Wait()
-			return
-		}
-		p.cmd = restarted
-		p.mu.Unlock()
-		log.Info("TKM shielded prover restarted", "pid", restarted.Process.Pid)
-		startedAt = time.Now()
+	listenHost, _, err := net.SplitHostPort(proverCfg.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("invalid embedded tkmprover listener %q: %w", proverCfg.Listen, err)
 	}
+	listenIP := net.ParseIP(listenHost)
+	if listenHost != "localhost" && (listenIP == nil || !listenIP.IsLoopback()) {
+		return nil, fmt.Errorf("embedded tkmprover listener must be loopback-only, got %q", listenHost)
+	}
+	nodeClient := ethclient.NewClient(stack.Attach())
+	prover, err := shieldedpayoutprover.NewProverWithClient(proverCfg, nodeClient)
+	if err != nil {
+		nodeClient.Close()
+		return nil, fmt.Errorf("initialize embedded tkmprover: %w", err)
+	}
+	listener, err := net.Listen("tcp", proverCfg.Listen)
+	if err != nil {
+		nodeClient.Close()
+		return nil, fmt.Errorf("listen for embedded tkmprover on %s: %w", proverCfg.Listen, err)
+	}
+	server := prover.HTTPServer()
+	service := &managedTkmProver{server: server, listener: listener, client: nodeClient, done: make(chan error, 1)}
+	go func() { service.done <- server.Serve(listener) }()
+	log.Info("TKM shielded prover started in gtkm", "listen", listener.Addr(), "config", config)
+	return service, nil
 }
 
 type tkmProverConfig struct {
@@ -348,21 +278,6 @@ func ensureTkmProvingKey(ctx *cli.Context, path string) error {
 	return downloadTkmProvingKey(ctx.Context, path, keyURL, tkmProvingKeySHA256, tkmProvingKeyMaxSize)
 }
 
-func validateTkmProverExecutable(path string) error {
-	if path == "" {
-		return errors.New("shielded-payout-prover executable is not configured")
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve shielded-payout-prover executable: %w", err)
-	}
-	info, err := os.Stat(abs)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-		return fmt.Errorf("shielded-payout-prover is not an executable regular file: %s", abs)
-	}
-	return nil
-}
-
 func validateTkmProvingKeyURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -439,18 +354,21 @@ func downloadTkmProvingKey(ctx context.Context, path, keyURL, expectedSHA256 str
 }
 
 func (p *managedTkmProver) stop() {
-	if p == nil || p.cancel == nil {
+	if p == nil || p.server == nil {
 		return
 	}
-	p.cancel()
-	p.mu.Lock()
-	cmd := p.cmd
-	p.mu.Unlock()
-	if cmd != nil && cmd.Process != nil {
-		if err := cmd.Process.Kill(); err != nil {
-			log.Debug("TKM shielded prover already stopped", "err", err)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := p.server.Shutdown(ctx); err != nil {
+		log.Warn("Graceful shutdown of embedded TKM prover failed", "err", err)
+		_ = p.server.Close()
 	}
-	<-p.done
+	if err := <-p.done; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Warn("Embedded TKM prover stopped with an error", "err", err)
+	}
+	_ = p.listener.Close()
+	if p.client != nil {
+		p.client.Close()
+	}
 	log.Info("TKM shielded prover stopped")
 }

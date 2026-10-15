@@ -37,6 +37,14 @@ const (
 	// total timeout for encryption handshake and protocol
 	// handshake in both directions.
 	handshakeTimeout = 5 * time.Second
+	// torHandshakeTimeout allows for circuit and relay latency when opening an
+	// outbound SOCKS5/Tor peer connection. It is applied only to outbound
+	// connections that use a configured dialer; ordinary TCP handshakes retain
+	// the shorter timeout.
+	// Onion rendezvous can take substantially longer than a normal TCP dial,
+	// especially when both peers are rebuilding Tor circuits. Keep the longer
+	// deadline scoped to outbound Tor peer handshakes.
+	torHandshakeTimeout = 2 * time.Minute
 
 	// This is the timeout for sending the disconnect reason.
 	// This is shorter than the usual timeout because we don't want
@@ -47,13 +55,21 @@ const (
 // rlpxTransport is the transport used by actual (non-test) connections.
 // It wraps an RLPx connection with locks and read/write deadlines.
 type rlpxTransport struct {
-	rmu, wmu sync.Mutex
-	wbuf     bytes.Buffer
-	conn     *rlpx.Conn
+	rmu, wmu         sync.Mutex
+	wbuf             bytes.Buffer
+	conn             *rlpx.Conn
+	handshakeTimeout time.Duration
 }
 
 func newRLPX(conn net.Conn, dialDest *ecdsa.PublicKey) transport {
-	return &rlpxTransport{conn: rlpx.NewConn(conn, dialDest)}
+	return newRLPXWithHandshakeTimeout(conn, dialDest, handshakeTimeout)
+}
+
+func newRLPXWithHandshakeTimeout(conn net.Conn, dialDest *ecdsa.PublicKey, timeout time.Duration) transport {
+	if timeout <= 0 {
+		timeout = handshakeTimeout
+	}
+	return &rlpxTransport{conn: rlpx.NewConn(conn, dialDest), handshakeTimeout: timeout}
 }
 
 func (t *rlpxTransport) ReadMsg() (Msg, error) {
@@ -127,8 +143,17 @@ func (t *rlpxTransport) close(err error) {
 }
 
 func (t *rlpxTransport) doEncHandshake(prv *ecdsa.PrivateKey) (*ecdsa.PublicKey, error) {
-	t.conn.SetDeadline(time.Now().Add(handshakeTimeout))
-	return t.conn.Handshake(prv)
+	if err := t.conn.SetDeadline(time.Now().Add(t.handshakeTimeout)); err != nil {
+		return nil, err
+	}
+	remote, err := t.conn.Handshake(prv)
+	// The handshake deadline is only for the RLPx authentication exchange.
+	// Leaving it installed also limits the lifetime of the authenticated peer,
+	// making Tor connections drop as soon as that deadline elapses.
+	if clearErr := t.conn.SetDeadline(time.Time{}); err == nil && clearErr != nil {
+		return nil, clearErr
+	}
+	return remote, err
 }
 
 func (t *rlpxTransport) doProtoHandshake(our *protoHandshake) (their *protoHandshake, err error) {

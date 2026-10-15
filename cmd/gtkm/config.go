@@ -18,6 +18,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -29,6 +33,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -39,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/syncer"
@@ -120,6 +126,7 @@ type ethstatsConfig struct {
 type tkmnetConfig struct {
 	Enabled        bool                         `toml:",omitempty"`
 	ListenAddr     string                       `toml:",omitempty"`
+	OnionHostname  string                       `toml:",omitempty"`
 	OnionOnly      bool                         `toml:",omitempty"`
 	HopIndex       uint8                        `toml:",omitempty"`
 	PrivateKeyPath string                       `toml:",omitempty"`
@@ -177,8 +184,8 @@ func defaultNodeConfig() node.Config {
 	cfg := node.DefaultConfig
 	cfg.Name = clientIdentifier
 	cfg.Version = version.WithCommit(git.Commit, git.Date)
-	cfg.HTTPModules = append(cfg.HTTPModules, "eth", "miner")
-	cfg.WSModules = append(cfg.WSModules, "eth", "miner")
+	cfg.HTTPModules = append(cfg.HTTPModules, "eth", "miner", "tkmname")
+	cfg.WSModules = append(cfg.WSModules, "eth", "miner", "tkmname")
 	cfg.IPCPath = clientIdentifier + ".ipc"
 	return cfg
 }
@@ -223,6 +230,7 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 }
 
 func applyTkmnetConfig(ctx *cli.Context, cfg *gethConfig) {
+	tkmnameEnabled := ctx.Bool(utils.TkmnameEnabledFlag.Name)
 	if ctx.IsSet(utils.TkmnetEnabledFlag.Name) {
 		cfg.Tkmnet.Enabled = ctx.Bool(utils.TkmnetEnabledFlag.Name)
 	}
@@ -238,6 +246,18 @@ func applyTkmnetConfig(ctx *cli.Context, cfg *gethConfig) {
 			utils.Fatalf("--%s must be 0, 1, or 2", utils.TkmnetHopFlag.Name)
 		}
 		cfg.Tkmnet.HopIndex = uint8(hop)
+	}
+	if tkmnameEnabled {
+		// Username resolution and directory service are carried by TKMNet; this
+		// switch lets operators enable both from one gtkm command.
+		cfg.Tkmnet.Enabled = true
+	}
+	// A normal gtkm invocation with either TKMNet flag should be enough to
+	// provision the node's local relay. NewService creates and persists its
+	// ML-KEM identity at the default datadir path. Keep the listener loopback;
+	// Tor publishes it, and never expose this port on a public interface.
+	if cfg.Tkmnet.Enabled {
+		applyTkmnetRuntimeDefaults(&cfg.Tkmnet, cfg.Node.P2PSOCKS5Proxy)
 	}
 	// Onion-only gtkm instances must never expose a separate clearnet
 	// relay listener. The listener is local and is published only by Tor.
@@ -413,6 +433,7 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 	if !cfg.Tkmnet.Enabled {
 		return
 	}
+	applyTkmnetRuntimeDefaults(&cfg.Tkmnet, cfg.Node.P2PSOCKS5Proxy)
 	keyPath := cfg.Tkmnet.PrivateKeyPath
 	if keyPath == "" {
 		keyPath = filepath.Join(stack.InstanceDir(), "tkmnet", "relay-key")
@@ -421,6 +442,10 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 	if backend != nil {
 		payloadHandler = backend.TkmNameService().HandleNetworkPayload
 	}
+	// Transit and directory endpoints are also relay hops. Include their
+	// authenticated descriptors in the local forwarder automatically, while
+	// preserving any separately configured relay peers.
+	relayPeers := mergeTkmnetRelayPeers(cfg.Tkmnet.RelayPeers, cfg.Tkmnet.TransitPeers, cfg.Tkmnet.DirectoryPeers)
 	relay, err := tkmnet.NewService(tkmnet.ServiceConfig{
 		Enabled:        true,
 		ListenAddr:     cfg.Tkmnet.ListenAddr,
@@ -429,7 +454,7 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 		PrivateKeyPath: keyPath,
 		SOCKS5Proxy:    cfg.Tkmnet.SOCKS5Proxy,
 		RelayPort:      cfg.Tkmnet.RelayPort,
-		RelayPeers:     cfg.Tkmnet.RelayPeers,
+		RelayPeers:     relayPeers,
 		PayloadHandler: payloadHandler,
 		Logger: func(message string, args ...any) {
 			log.Info(message, args...)
@@ -439,10 +464,209 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 		utils.Fatalf("Failed to configure tkmnet: %v", err)
 	}
 	stack.RegisterLifecycle(relay)
+	gossip := tkmnet.NewDescriptorGossip()
+	localRelayID := relay.RelayID()
+	gossip.SetOnAdd(func(descriptor tkmnet.Descriptor) {
+		if descriptor.ID == localRelayID {
+			return
+		}
+		if err := relay.AddPeer(descriptor); err != nil {
+			log.Warn("Could not add gossiped TKMNet relay", "id", hex.EncodeToString(descriptor.ID[:]), "error", err)
+			return
+		}
+		if backend != nil {
+			if err := backend.TkmNameService().AddDiscoveredTransit(descriptor); err != nil {
+				log.Debug("Gossiped TKMNet relay is not eligible as a username transit", "id", hex.EncodeToString(descriptor.ID[:]), "error", err)
+			}
+		}
+	})
+	if onion := tkmnetOnionHostname(cfg, stack); onion != "" {
+		stateDir := filepath.Join(stack.InstanceDir(), "tkmnet")
+		descriptor, err := persistTkmnetDescriptor(relay, onion, stateDir)
+		if err != nil {
+			log.Warn("Could not publish local TKMNet relay descriptor", "error", err)
+		} else {
+			if _, err := gossip.Add(descriptor); err != nil {
+				log.Warn("Could not add local TKMNet descriptor to peer gossip", "error", err)
+			}
+			log.Info("Generated local signed TKMNet descriptor", "onion", descriptor.Onion, "id", hex.EncodeToString(descriptor.ID[:]), "file", filepath.Join(stateDir, "descriptor.json"), "pin", filepath.Join(stateDir, "signing-key.sha256"))
+		}
+	} else {
+		log.Warn("Local TKMNet relay descriptor not generated; configure --p2p.onion-hostname or tkmnet/onion.hostname")
+	}
+	stack.RegisterProtocols(gossip.Protocols())
 	if backend != nil {
 		backend.TkmNameService().ConfigureNetwork(cfg.Tkmnet.SOCKS5Proxy, cfg.Tkmnet.RelayPort, cfg.Tkmnet.TransitPeers, cfg.Tkmnet.DirectoryPeers)
+		if cfg.Tkmnet.Enabled && (len(cfg.Tkmnet.TransitPeers) < 2 || len(cfg.Tkmnet.DirectoryPeers) < 2) {
+			log.Warn("TKMNet username routing is not ready; configure two independent transit relays and two pinned directory operators", "transit", len(cfg.Tkmnet.TransitPeers), "directories", len(cfg.Tkmnet.DirectoryPeers))
+		}
 	}
 	log.Info("Configured tkmnet relay", "listen", cfg.Tkmnet.ListenAddr, "hop", cfg.Tkmnet.HopIndex, "relay", relay.RelayID(), "required", required)
+}
+
+func tkmnetOnionHostname(cfg *gethConfig, stack *node.Node) string {
+	if cfg != nil {
+		if host := strings.TrimSpace(cfg.Tkmnet.OnionHostname); host != "" {
+			return host
+		}
+		if host := strings.TrimSpace(cfg.Node.P2P.OnionHostname); host != "" {
+			return host
+		}
+	}
+	if stack != nil {
+		for _, path := range []string{
+			filepath.Join(stack.InstanceDir(), "tkmnet", "onion.hostname"),
+			filepath.Join(stack.InstanceDir(), "onion.hostname"),
+		} {
+			data, err := os.ReadFile(path)
+			if err == nil {
+				return strings.TrimSpace(string(data))
+			}
+		}
+	}
+	return ""
+}
+
+// persistTkmnetDescriptor generates this node's own signed relay advertisement
+// and its signing-key fingerprint. The fingerprint is public; the ML-DSA seed
+// remains in the private node data directory. Remote operators still need to
+// verify and pin that fingerprint before trusting this descriptor.
+func persistTkmnetDescriptor(relay *tkmnet.Service, onion, stateDir string) (tkmnet.Descriptor, error) {
+	if relay == nil {
+		return tkmnet.Descriptor{}, errors.New("TKMNet relay is unavailable")
+	}
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("create TKMNet state directory: %w", err)
+	}
+	seedPath := filepath.Join(stateDir, "descriptor-signing.seed")
+	seed, err := os.ReadFile(seedPath)
+	if errors.Is(err, os.ErrNotExist) {
+		seed = make([]byte, pqcrypto.MLDSA87SeedSize)
+		if _, err := rand.Read(seed); err != nil {
+			return tkmnet.Descriptor{}, fmt.Errorf("generate descriptor signing seed: %w", err)
+		}
+		file, createErr := os.OpenFile(seedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(createErr, os.ErrExist) {
+			clear(seed)
+			seed, err = os.ReadFile(seedPath)
+		} else if createErr != nil {
+			clear(seed)
+			return tkmnet.Descriptor{}, fmt.Errorf("create descriptor signing seed: %w", createErr)
+		} else {
+			_, err = file.Write(seed)
+			if closeErr := file.Close(); err == nil {
+				err = closeErr
+			}
+		}
+	}
+	if err != nil {
+		clear(seed)
+		return tkmnet.Descriptor{}, fmt.Errorf("load descriptor signing seed: %w", err)
+	}
+	defer clear(seed)
+	if err := os.Chmod(seedPath, 0600); err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("secure descriptor signing seed permissions: %w", err)
+	}
+	if len(seed) != pqcrypto.MLDSA87SeedSize {
+		return tkmnet.Descriptor{}, fmt.Errorf("descriptor signing seed has invalid length %d", len(seed))
+	}
+	key, err := pqcrypto.NewMLDSA87FromSeed(seed)
+	if err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("load descriptor signing key: %w", err)
+	}
+	descriptor := tkmnet.Descriptor{
+		Version: tkmnet.Version, ID: relay.RelayID(), Onion: onion,
+		PublicKey: relay.PublicKey(), SigningPublicKey: pqcrypto.PublicKeyBytes(key),
+		Expires: uint64(time.Now().Add(23 * time.Hour).Unix()),
+	}
+	if err := tkmnet.SignDescriptor(&descriptor, func(message []byte) ([]byte, error) {
+		return pqcrypto.SignMLDSA87(key, message)
+	}); err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("sign relay descriptor: %w", err)
+	}
+	if err := descriptor.Verify(time.Now()); err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("verify generated relay descriptor: %w", err)
+	}
+	encoded, err := json.MarshalIndent(descriptor, "", "  ")
+	if err != nil {
+		return tkmnet.Descriptor{}, fmt.Errorf("encode relay descriptor: %w", err)
+	}
+	if err := writeTkmnetPublicFile(filepath.Join(stateDir, "descriptor.json"), append(encoded, '\n')); err != nil {
+		return tkmnet.Descriptor{}, err
+	}
+	pin := sha256.Sum256(descriptor.SigningPublicKey)
+	if err := writeTkmnetPublicFile(filepath.Join(stateDir, "signing-key.sha256"), []byte(hex.EncodeToString(pin[:])+"\n")); err != nil {
+		return tkmnet.Descriptor{}, err
+	}
+	return descriptor, nil
+}
+
+func writeTkmnetPublicFile(path string, content []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tkmnet-public-*")
+	if err != nil {
+		return fmt.Errorf("create temporary TKMNet public file for %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0644); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("set TKMNet public file permissions for %s: %w", path, err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write TKMNet public file %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync TKMNet public file %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close TKMNet public file %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("install TKMNet public file %s: %w", path, err)
+	}
+	return nil
+}
+
+func mergeTkmnetRelayPeers(relays, transit []tkmnet.Descriptor, directories []tkmnet.PinnedDirectoryPeer) []tkmnet.Descriptor {
+	merged := make([]tkmnet.Descriptor, 0, len(relays)+len(transit)+len(directories))
+	seen := make(map[[32]byte]struct{}, cap(merged))
+	add := func(peer tkmnet.Descriptor) {
+		if _, ok := seen[peer.ID]; ok {
+			return
+		}
+		seen[peer.ID] = struct{}{}
+		merged = append(merged, peer)
+	}
+	for _, peer := range relays {
+		add(peer)
+	}
+	for _, peer := range transit {
+		add(peer)
+	}
+	for _, peer := range directories {
+		add(peer.Descriptor)
+	}
+	return merged
+}
+
+func applyTkmnetRuntimeDefaults(config *tkmnetConfig, p2pProxy string) {
+	if config == nil {
+		return
+	}
+	if config.ListenAddr == "" || config.ListenAddr == "127.0.0.1:0" {
+		config.ListenAddr = "127.0.0.1:39000"
+	}
+	if config.SOCKS5Proxy == "" {
+		config.SOCKS5Proxy = p2pProxy
+	}
+	if config.SOCKS5Proxy == "" {
+		config.SOCKS5Proxy = "socks5://127.0.0.1:9050"
+	}
+	if config.RelayPort == "" {
+		config.RelayPort = "39000"
+	}
 }
 
 // tkmnetRequiredAt is the single startup decision used by gtkm. It evaluates

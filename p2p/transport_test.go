@@ -18,9 +18,11 @@ package p2p
 
 import (
 	"errors"
+	"net"
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -102,6 +104,86 @@ func TestProtocolHandshake(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestRLPXHandshakeUsesConfiguredTimeout(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	prv, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const timeout = 100 * time.Millisecond
+	transport := newRLPXWithHandshakeTimeout(server, nil, timeout)
+	started := time.Now()
+	_, err = transport.doEncHandshake(prv)
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("handshake unexpectedly succeeded without a remote peer")
+	}
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Fatalf("handshake error = %v, want timeout", err)
+	}
+	if elapsed < timeout/2 || elapsed > 2*timeout {
+		t.Fatalf("handshake elapsed %s, want approximately %s", elapsed, timeout)
+	}
+}
+
+func TestRLPXHandshakeDeadlineDoesNotLimitPeerLifetime(t *testing.T) {
+	prv0, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prv1, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd0, fd1, err := pipes.TCPPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fd0.Close()
+	defer fd1.Close()
+
+	const timeout = 100 * time.Millisecond
+	transport0 := newRLPXWithHandshakeTimeout(fd0, &prv1.PublicKey, timeout)
+	transport1 := newRLPXWithHandshakeTimeout(fd1, nil, timeout)
+	handshakeErr := make(chan error, 2)
+	go func() {
+		_, err := transport0.doEncHandshake(prv0)
+		handshakeErr <- err
+	}()
+	go func() {
+		_, err := transport1.doEncHandshake(prv1)
+		handshakeErr <- err
+	}()
+	for range 2 {
+		if err := <-handshakeErr; err != nil {
+			t.Fatalf("RLPx handshake failed: %v", err)
+		}
+	}
+
+	// Wait past the authentication deadline. A live connection must still be
+	// able to complete the separate devp2p protocol handshake.
+	time.Sleep(timeout + 20*time.Millisecond)
+	hs0 := &protoHandshake{Version: 3, ID: crypto.FromECDSAPub(&prv0.PublicKey)[1:]}
+	hs1 := &protoHandshake{Version: 3, ID: crypto.FromECDSAPub(&prv1.PublicKey)[1:]}
+	go func() {
+		_, err := transport0.doProtoHandshake(hs0)
+		handshakeErr <- err
+	}()
+	go func() {
+		_, err := transport1.doProtoHandshake(hs1)
+		handshakeErr <- err
+	}()
+	for range 2 {
+		if err := <-handshakeErr; err != nil {
+			t.Fatalf("protocol handshake failed after auth deadline: %v", err)
+		}
+	}
 }
 
 func TestProtocolHandshakeErrors(t *testing.T) {

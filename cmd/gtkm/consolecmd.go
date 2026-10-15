@@ -73,6 +73,11 @@ func localConsole(ctx *cli.Context) error {
 	stack, _ := makeFullNode(ctx)
 	startNode(ctx, stack, true)
 	defer stack.Close()
+	prover, err := startTkmProver(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer prover.stop()
 
 	// Attach to the newly started node and create the JavaScript console.
 	client := stack.Attach()
