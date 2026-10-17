@@ -21,6 +21,11 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
+// ErrUsernameNotFound is returned when a valid, canonical username handle has
+// no active binding in this directory. Callers can distinguish absence from
+// malformed or unauthenticated records without matching error strings.
+var ErrUsernameNotFound = errors.New("username was not found")
+
 const (
 	UsernameVersion        = uint64(1)
 	UsernameMinLength      = 3
@@ -592,7 +597,7 @@ func (d *UsernameDirectory) Resolve(handle string, now time.Time) (UsernameBindi
 	record, ok := d.records[name]
 	d.mu.RUnlock()
 	if !ok {
-		return UsernameBinding{}, errors.New("username was not found")
+		return UsernameBinding{}, ErrUsernameNotFound
 	}
 	if err := VerifyUsernameBinding(record, d.chainID, now); err != nil {
 		return UsernameBinding{}, err

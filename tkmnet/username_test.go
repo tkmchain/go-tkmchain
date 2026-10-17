@@ -207,4 +207,8 @@ func TestUsernameCoverAndRegistrationFrames(t *testing.T) {
 	if err != nil || !bytes.Equal(recordReply, []byte{4, 5, 6}) {
 		t.Fatalf("record reply round trip failed: %v", err)
 	}
+	missing := UsernameNotFoundReply()
+	if !IsUsernameNotFoundReply(missing) || IsUsernameNotFoundReply(append(missing, 0)) {
+		t.Fatal("explicit username not-found frame did not validate exactly")
+	}
 }

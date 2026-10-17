@@ -1,6 +1,7 @@
 package shield3wallet
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,13 @@ func TestUsernameHandleAndPrivateLookupBatch(t *testing.T) {
 	resolved, err := directory.Resolve(handle, now)
 	if err != nil || resolved.Address != primary.Address || resolved.CodeHash != primary.CodeHash {
 		t.Fatalf("Resolve() returned wrong record: %+v, %v", resolved, err)
+	}
+	missingHandle, err := UsernameHandle("notregistered", 8979)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := directory.Resolve(missingHandle, now); !errors.Is(err, ErrUsernameNotFound) {
+		t.Fatalf("missing username error = %v, want ErrUsernameNotFound", err)
 	}
 	if err := directory.Put(primary, now); err == nil || !strings.Contains(err.Error(), "replayed") {
 		t.Fatalf("replayed update error = %v", err)

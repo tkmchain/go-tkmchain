@@ -257,6 +257,13 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 				results <- lookupResult{err: fmt.Errorf("private username lookup failed: %w", err)}
 				return
 			}
+			if tkmnet.IsUsernameNotFoundReply(response) {
+				// Cover aliases can legitimately be absent from an operator's
+				// directory. Treat an authenticated miss as a response, not a
+				// transport failure, while still requiring the target binding.
+				results <- lookupResult{}
+				return
+			}
 			encoded, err := tkmnet.DecodeUsernameRecordReply(response)
 			if err != nil {
 				results <- lookupResult{err: err}
@@ -290,7 +297,7 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 		}
 	}
 	if resolved.Username == "" {
-		return TkmNameRecord{}, errors.New("private username lookup did not return its target")
+		return TkmNameRecord{}, shield3wallet.ErrUsernameNotFound
 	}
 	return resolved, nil
 }
@@ -597,6 +604,9 @@ func (api *TkmNameAPI) HandleNetworkPayload(_ context.Context, service tkmnet.Se
 		return nil, err
 	}
 	record, err := api.directory.Resolve(handle, time.Now().UTC())
+	if errors.Is(err, shield3wallet.ErrUsernameNotFound) {
+		return tkmnet.UsernameNotFoundReply(), nil
+	}
 	if err != nil {
 		return nil, err
 	}

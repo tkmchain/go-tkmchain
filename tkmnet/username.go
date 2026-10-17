@@ -21,6 +21,7 @@ const (
 	usernameCoverMagic   = "TKC1"
 	usernameRecordMagic  = "TKNR"
 	usernameReplyMagic   = "TKNS"
+	usernameMissingMagic = "TKNN"
 	usernameHealthMagic  = "TKMH"
 )
 
@@ -118,6 +119,19 @@ func UsernameRecordReply(record []byte) ([]byte, error) {
 	copy(response, usernameReplyMagic)
 	copy(response[4:], record)
 	return response, nil
+}
+
+// UsernameNotFoundReply returns an authenticated, encrypted protocol result
+// for an absent alias. Returning an explicit frame keeps a normal miss from
+// being mistaken for a broken relay connection (EOF).
+func UsernameNotFoundReply() []byte {
+	return []byte(usernameMissingMagic)
+}
+
+// IsUsernameNotFoundReply reports whether payload is the explicit absent-name
+// response. Its exact length check rejects trailing or malformed data.
+func IsUsernameNotFoundReply(payload []byte) bool {
+	return len(payload) == len(usernameMissingMagic) && string(payload) == usernameMissingMagic
 }
 
 func DecodeUsernameRecordReply(payload []byte) ([]byte, error) {

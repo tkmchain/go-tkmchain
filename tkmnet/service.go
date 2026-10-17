@@ -310,8 +310,14 @@ func (s *Service) handleConn(conn net.Conn) {
 		} else {
 			return
 		}
+		if err != nil {
+			s.log("tkmnet final service handler failed", "service", route.Service, "error", err)
+		}
 	} else {
 		response, err = s.forward(ctx, route, packet)
+		if err != nil {
+			s.log("tkmnet relay forwarding failed", "nextRelay", fmt.Sprintf("%x", route.NextID[:]), "error", err)
+		}
 	}
 	if err != nil || len(response) == 0 {
 		return

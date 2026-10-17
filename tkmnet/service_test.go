@@ -174,8 +174,12 @@ func TestThreeRelayUsernameRequestRoundTripThroughSOCKS(t *testing.T) {
 				if service != ServiceUsername {
 					return nil, errors.New("wrong service")
 				}
-				if _, err := DecodeUsernameQuery(payload); err != nil {
+				name, err := DecodeUsernameQuery(payload)
+				if err != nil {
 					return nil, err
+				}
+				if name == "missing" {
+					return UsernameNotFoundReply(), nil
 				}
 				return []byte("username response"), nil
 			}
@@ -193,6 +197,13 @@ func TestThreeRelayUsernameRequestRoundTripThroughSOCKS(t *testing.T) {
 	}
 	if string(response) != "username response" {
 		t.Fatalf("three-relay route response = %q", response)
+	}
+	response, err = ExchangeService(context.Background(), "socks5://"+proxyAddr, "39000", []Descriptor{fixtures[0].descriptor, fixtures[1].descriptor, fixtures[2].descriptor}, ServiceUsername, mustUsernameQuery(t, "missing"))
+	if err != nil {
+		t.Fatalf("three-relay route failed to return an explicit missing-name result: %v", err)
+	}
+	if !IsUsernameNotFoundReply(response) {
+		t.Fatalf("missing-name response = %q, want explicit not-found frame", response)
 	}
 }
 
