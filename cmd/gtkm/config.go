@@ -509,19 +509,24 @@ func tkmnetOnionHostname(cfg *gethConfig, stack *node.Node) string {
 		if host := strings.TrimSpace(cfg.Tkmnet.OnionHostname); host != "" {
 			return host
 		}
+	}
+	if stack != nil {
+		for _, path := range []string{filepath.Join(stack.InstanceDir(), "tkmnet", "onion.hostname")} {
+			data, err := os.ReadFile(path)
+			if err == nil && strings.TrimSpace(string(data)) != "" {
+				return strings.TrimSpace(string(data))
+			}
+		}
+	}
+	if cfg != nil {
 		if host := strings.TrimSpace(cfg.Node.P2P.OnionHostname); host != "" {
 			return host
 		}
 	}
 	if stack != nil {
-		for _, path := range []string{
-			filepath.Join(stack.InstanceDir(), "tkmnet", "onion.hostname"),
-			filepath.Join(stack.InstanceDir(), "onion.hostname"),
-		} {
-			data, err := os.ReadFile(path)
-			if err == nil {
-				return strings.TrimSpace(string(data))
-			}
+		data, err := os.ReadFile(filepath.Join(stack.InstanceDir(), "onion.hostname"))
+		if err == nil {
+			return strings.TrimSpace(string(data))
 		}
 	}
 	return ""

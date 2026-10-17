@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
+	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/tkmnet"
 	"github.com/urfave/cli/v2"
@@ -123,6 +124,31 @@ func TestPersistTkmnetDescriptorCreatesStableLocalIdentity(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("descriptor signing seed permissions = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestTkmnetOnionHostnamePrefersServiceHiddenService(t *testing.T) {
+	stack, err := node.New(&node.Config{DataDir: t.TempDir(), Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stack.Close()
+	stateDir := filepath.Join(stack.InstanceDir(), "tkmnet")
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	serviceOnion := strings.Repeat("s", 56) + ".onion\n"
+	if err := os.WriteFile(filepath.Join(stateDir, "onion.hostname"), []byte(serviceOnion), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &gethConfig{}
+	cfg.Node.P2P.OnionHostname = strings.Repeat("p", 56) + ".onion"
+	if got := tkmnetOnionHostname(cfg, stack); got != strings.TrimSpace(serviceOnion) {
+		t.Fatalf("TKMNet descriptor onion = %q, want service onion %q", got, strings.TrimSpace(serviceOnion))
+	}
+	cfg.Tkmnet.OnionHostname = strings.Repeat("c", 56) + ".onion"
+	if got := tkmnetOnionHostname(cfg, stack); got != cfg.Tkmnet.OnionHostname {
+		t.Fatalf("explicit TKMNet onion = %q, want %q", got, cfg.Tkmnet.OnionHostname)
 	}
 }
 

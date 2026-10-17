@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -34,7 +35,7 @@ type TkmNameAPI struct {
 	discovered    []tkmnet.Descriptor
 	directories   []tkmnet.PinnedDirectoryPeer
 	publicationMu sync.Mutex
-	networkReady  bool
+	networkReady  atomic.Bool
 	published     map[string][32]byte
 }
 
@@ -119,7 +120,7 @@ func (api *TkmNameAPI) Register(record TkmNameRecord) (bool, error) {
 	}
 	if api.usernameNetworkActive() {
 		api.publicationMu.Lock()
-		api.networkReady = false
+		api.networkReady.Store(false)
 		delete(api.published, record.Username)
 		api.publicationMu.Unlock()
 		if err := api.syncNetworkDirectory(); err != nil {
@@ -451,9 +452,7 @@ func validateUsernameNetworkConfig(proxy, port string, transit []tkmnet.Descript
 }
 
 func (api *TkmNameAPI) isNetworkReady() bool {
-	api.publicationMu.Lock()
-	defer api.publicationMu.Unlock()
-	return api.networkReady
+	return api.networkReady.Load()
 }
 
 func validatePinnedDirectorySet(peers []tkmnet.PinnedDirectoryPeer, now time.Time) error {
@@ -596,7 +595,7 @@ func (api *TkmNameAPI) HandleNetworkPayload(_ context.Context, service tkmnet.Se
 func (api *TkmNameAPI) syncNetworkDirectory() error {
 	api.publicationMu.Lock()
 	defer api.publicationMu.Unlock()
-	if api.networkReady {
+	if api.networkReady.Load() {
 		return nil
 	}
 	proxy, port, transit, peers := api.networkConfig()
@@ -632,7 +631,7 @@ func (api *TkmNameAPI) syncNetworkDirectory() error {
 			api.published[record.Username] = fingerprint
 		}
 	}
-	api.networkReady = true
+	api.networkReady.Store(true)
 	return nil
 }
 
