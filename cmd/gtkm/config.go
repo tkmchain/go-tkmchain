@@ -496,7 +496,7 @@ func registerTkmnetService(stack *node.Node, cfg *gethConfig, backend *eth.Ether
 	}
 	stack.RegisterProtocols(gossip.Protocols())
 	if backend != nil {
-		backend.TkmNameService().ConfigureNetwork(cfg.Tkmnet.SOCKS5Proxy, cfg.Tkmnet.RelayPort, cfg.Tkmnet.TransitPeers, cfg.Tkmnet.DirectoryPeers)
+		backend.TkmNameService().ConfigureNetwork(cfg.Tkmnet.SOCKS5Proxy, cfg.Tkmnet.RelayPort, cfg.Tkmnet.TransitPeers, cfg.Tkmnet.DirectoryPeers, localRelayID)
 		if cfg.Tkmnet.Enabled && (len(cfg.Tkmnet.TransitPeers) < 2 || len(cfg.Tkmnet.DirectoryPeers) < 2) {
 			log.Warn("TKMNet username routing is not ready; configure two independent transit relays and two pinned directory operators", "transit", len(cfg.Tkmnet.TransitPeers), "directories", len(cfg.Tkmnet.DirectoryPeers))
 		}

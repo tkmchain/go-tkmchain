@@ -31,6 +31,7 @@ type TkmNameAPI struct {
 	networkMu     sync.RWMutex
 	proxy         string
 	port          string
+	localRelayID  [32]byte
 	transit       []tkmnet.Descriptor
 	discovered    []tkmnet.Descriptor
 	directories   []tkmnet.PinnedDirectoryPeer
@@ -190,13 +191,18 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 	if err != nil {
 		return TkmNameRecord{}, err
 	}
-	coverRoute, err := chooseUsernameRoute(transit, coverPeer.Descriptor)
-	if err != nil {
-		return TkmNameRecord{}, err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	coverReply, err := tkmnet.ExchangeService(ctx, proxy, port, coverRoute, tkmnet.ServiceUsername, tkmnet.UsernameCoverRequest())
+	var coverReply []byte
+	if api.isLocalDirectory(coverPeer.Descriptor.ID) {
+		coverReply, err = api.HandleNetworkPayload(ctx, tkmnet.ServiceUsername, tkmnet.UsernameCoverRequest())
+	} else {
+		coverRoute, routeErr := chooseUsernameRoute(transit, coverPeer.Descriptor)
+		if routeErr != nil {
+			return TkmNameRecord{}, routeErr
+		}
+		coverReply, err = tkmnet.ExchangeService(ctx, proxy, port, coverRoute, tkmnet.ServiceUsername, tkmnet.UsernameCoverRequest())
+	}
 	if err != nil {
 		return TkmNameRecord{}, fmt.Errorf("fetch private username cover set: %w", err)
 	}
@@ -231,17 +237,22 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 	for _, query := range queries {
 		query := query
 		go func() {
-			route, err := chooseUsernameRoute(transit, query.Peer)
-			if err != nil {
-				results <- lookupResult{err: err}
-				return
-			}
 			request, err := tkmnet.EncodeUsernameQuery(query.Name)
 			if err != nil {
 				results <- lookupResult{err: err}
 				return
 			}
-			response, err := tkmnet.ExchangeService(ctx, proxy, port, route, tkmnet.ServiceUsername, request)
+			var response []byte
+			if api.isLocalDirectory(query.Peer.ID) {
+				response, err = api.HandleNetworkPayload(ctx, tkmnet.ServiceUsername, request)
+			} else {
+				route, routeErr := chooseUsernameRoute(transit, query.Peer)
+				if routeErr != nil {
+					results <- lookupResult{err: routeErr}
+					return
+				}
+				response, err = tkmnet.ExchangeService(ctx, proxy, port, route, tkmnet.ServiceUsername, request)
+			}
 			if err != nil {
 				results <- lookupResult{err: fmt.Errorf("private username lookup failed: %w", err)}
 				return
@@ -327,13 +338,14 @@ func (api *TkmNameAPI) RegistrationInfo() (TkmNameRegistrationInfo, error) {
 
 // ConfigureNetwork installs the local Tor egress path and pinned directory
 // operator set. Descriptor slices are copied to protect live routing state.
-func (api *TkmNameAPI) ConfigureNetwork(proxy, port string, transit []tkmnet.Descriptor, directories []tkmnet.PinnedDirectoryPeer) {
+func (api *TkmNameAPI) ConfigureNetwork(proxy, port string, transit []tkmnet.Descriptor, directories []tkmnet.PinnedDirectoryPeer, localRelayID [32]byte) {
 	if api == nil {
 		return
 	}
 	api.networkMu.Lock()
 	defer api.networkMu.Unlock()
 	api.proxy, api.port = proxy, port
+	api.localRelayID = localRelayID
 	api.transit = append([]tkmnet.Descriptor(nil), transit...)
 	api.directories = append([]tkmnet.PinnedDirectoryPeer(nil), directories...)
 }
@@ -453,6 +465,12 @@ func validateUsernameNetworkConfig(proxy, port string, transit []tkmnet.Descript
 
 func (api *TkmNameAPI) isNetworkReady() bool {
 	return api.networkReady.Load()
+}
+
+func (api *TkmNameAPI) isLocalDirectory(id [32]byte) bool {
+	api.networkMu.RLock()
+	defer api.networkMu.RUnlock()
+	return api.localRelayID != ([32]byte{}) && api.localRelayID == id
 }
 
 func validatePinnedDirectorySet(peers []tkmnet.PinnedDirectoryPeer, now time.Time) error {
@@ -640,6 +658,10 @@ func (api *TkmNameAPI) probeDirectoryPeers(ctx context.Context, proxy, port stri
 	results := make(chan result, len(peers))
 	for _, peer := range peers {
 		peer := peer
+		if api.isLocalDirectory(peer.Descriptor.ID) {
+			results <- result{}
+			continue
+		}
 		go func() {
 			route, err := chooseUsernameRoute(transit, peer.Descriptor)
 			if err == nil {
@@ -680,6 +702,10 @@ func (api *TkmNameAPI) publishRecord(ctx context.Context, proxy, port string, tr
 	results := make(chan result, len(peers))
 	for _, peer := range peers {
 		peer := peer
+		if api.isLocalDirectory(peer.Descriptor.ID) {
+			results <- result{id: peer.Descriptor.ID}
+			continue
+		}
 		go func() {
 			route, err := chooseUsernameRoute(transit, peer.Descriptor)
 			if err == nil {
@@ -740,6 +766,7 @@ func chooseUsernameRoute(transit []tkmnet.Descriptor, directory tkmnet.Descripto
 	if second >= first {
 		second++
 	}
+	first, second = usernameTransitOrder(first, second)
 	route := []tkmnet.Descriptor{eligible[first], eligible[second], directory}
 	for _, peer := range route {
 		if err := peer.Verify(time.Now()); err != nil {
@@ -747,6 +774,16 @@ func chooseUsernameRoute(transit []tkmnet.Descriptor, directory tkmnet.Descripto
 		}
 	}
 	return route, nil
+}
+
+// usernameTransitOrder keeps the selected relays in their configured order.
+// Relay forwarding tables are provisioned for that order; randomizing it can
+// route through a pair that cannot reach one another in the opposite direction.
+func usernameTransitOrder(first, second int) (int, int) {
+	if second < first {
+		return second, first
+	}
+	return first, second
 }
 
 func (api *TkmNameAPI) syncCanonical() error {

@@ -29,6 +29,17 @@ func TestTkmNameAPIRequiresCompleteFixedBatch(t *testing.T) {
 	}
 }
 
+func TestUsernameTransitOrderIsStable(t *testing.T) {
+	first, second := usernameTransitOrder(1, 0)
+	if first != 0 || second != 1 {
+		t.Fatalf("reversed random selection produced route order (%d, %d), want configured order (0, 1)", first, second)
+	}
+	first, second = usernameTransitOrder(0, 2)
+	if first != 0 || second != 2 {
+		t.Fatalf("configured route order changed to (%d, %d), want (0, 2)", first, second)
+	}
+}
+
 func TestGossipedDescriptorCanBecomeTransitButNotDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	relay, err := tkmnet.NewService(tkmnet.ServiceConfig{
