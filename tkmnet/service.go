@@ -271,7 +271,13 @@ func (s *Service) removeConn(conn net.Conn) {
 
 func (s *Service) handleConn(conn net.Conn) {
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	s.mu.RLock()
+	ctx := s.ctx
+	s.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	setRelayDeadline(conn, ctx)
 	packet, err := ReadPacket(conn)
 	if err != nil {
 		return
@@ -286,12 +292,6 @@ func (s *Service) handleConn(conn net.Conn) {
 	}
 	if err := s.replay.Accept(header.circuitID, header.sequence, header.expires, time.Now()); err != nil {
 		return
-	}
-	s.mu.RLock()
-	ctx := s.ctx
-	s.mu.RUnlock()
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	var response []byte
 	if route.Final {
@@ -342,7 +342,7 @@ func (s *Service) forward(ctx context.Context, route Route, packet []byte) ([]by
 		return nil, fmt.Errorf("tkmnet: onion relay dial failed: %w", err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	setRelayDeadline(conn, ctx)
 	if err := WritePacket(conn, forwarded); err != nil {
 		return nil, fmt.Errorf("tkmnet: forward packet: %w", err)
 	}

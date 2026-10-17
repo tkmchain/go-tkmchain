@@ -20,6 +20,21 @@ type SOCKS5Dialer struct {
 	dialer xproxy.Dialer
 }
 
+// relayIOTimeout must cover Tor circuit establishment. Tor can legitimately
+// spend up to 120 seconds building a circuit; the old 30 second socket
+// deadline turned those slow circuits into EOFs at directory peers.
+const relayIOTimeout = 150 * time.Second
+
+func setRelayDeadline(conn net.Conn, ctx context.Context) {
+	deadline := time.Now().Add(relayIOTimeout)
+	if ctx != nil {
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+			deadline = contextDeadline
+		}
+	}
+	_ = conn.SetDeadline(deadline)
+}
+
 func NewSOCKS5Dialer(proxyURL string) (*SOCKS5Dialer, error) {
 	u, err := url.Parse(proxyURL)
 	if err != nil || u.Scheme != "socks5" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -49,19 +64,22 @@ func (d *SOCKS5Dialer) DialContext(ctx context.Context, onionHost string, port s
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	result := make(chan struct {
+	if contextDialer, ok := d.dialer.(xproxy.ContextDialer); ok {
+		return contextDialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+	}
+	// SOCKS5 currently provides ContextDialer, but preserve a bounded fallback
+	// for alternate proxy implementations that satisfy only Dialer.
+	type result struct {
 		conn net.Conn
 		err  error
-	}, 1)
+	}
+	completed := make(chan result, 1)
 	go func() {
 		conn, err := d.dialer.Dial("tcp", net.JoinHostPort(host, port))
-		result <- struct {
-			conn net.Conn
-			err  error
-		}{conn, err}
+		completed <- result{conn: conn, err: err}
 	}()
 	select {
-	case r := <-result:
+	case r := <-completed:
 		return r.conn, r.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -85,7 +103,7 @@ func ExchangePacket(ctx context.Context, proxyURL string, firstRelay Descriptor,
 		return nil, fmt.Errorf("tkmnet: onion relay connection failed: %w", err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	setRelayDeadline(conn, ctx)
 	if err := WritePacket(conn, packet); err != nil {
 		return nil, err
 	}
