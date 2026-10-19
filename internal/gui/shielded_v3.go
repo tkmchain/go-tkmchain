@@ -30,6 +30,7 @@ type shield3RequestRecord struct {
 	Submitted    bool
 }
 type shield3Request struct {
+	ProofVersion       uint8                            `json:"proofVersion,omitempty"`
 	PrepaidFeeLimitWei string                           `json:"prepaidFeeLimitWei,omitempty"`
 	StampDisclosure    *shield3wallet.StampDisclosure   `json:"stampDisclosure,omitempty"`
 	Scope              string                           `json:"scope,omitempty"`
@@ -53,6 +54,23 @@ type shield3Request struct {
 	RequestID          string                           `json:"requestId"`
 	Username           string                           `json:"username,omitempty"`
 	View               *shield3wallet.ViewKey           `json:"view"`
+}
+
+func hostedShieldedProofVersion(req shield3Request, operation string) (uint8, error) {
+	version := req.ProofVersion
+	if version == 0 {
+		version = 3 // Preserve existing Shield3 callers and request digests.
+	}
+	if version != 3 && version != 4 {
+		return 0, errors.New("unsupported Shield3/Shield4 proof version")
+	}
+	if version == 4 && operation != "send" {
+		return 0, errors.New("Shield4 hosted building supports private sends only")
+	}
+	if version == 4 && req.PrepaidFeeLimitWei != "" {
+		return 0, errors.New("Shield4 hosted send does not accept a prepaid fee limit")
+	}
+	return version, nil
 }
 
 func shield3LocalRequest(r *http.Request, allowedOrigin string) bool {
@@ -134,6 +152,11 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	if decoder.Decode(new(any)) != io.EOF {
 		fail(400, errors.New("trailing Shield3 request data"))
+		return
+	}
+	proofVersion, versionErr := hostedShieldedProofVersion(req, operation)
+	if versionErr != nil {
+		fail(400, versionErr)
 		return
 	}
 	defer clear(req.Seed)
@@ -577,6 +600,12 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 			unsigned, err = shield3wallet.BuildSponsoredStamp(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
 		} else if operation == "register-stamp" {
 			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
+		} else if proofVersion == 4 {
+			if operation != "send" || len(payments) == 0 || len(payments) > 3 {
+				fail(400, errors.New("hosted Shield4 sends require one to three private payments"))
+				return
+			}
+			unsigned, err = shield3wallet.BuildV4Batch(r.Context(), walletRPC, req.Seed, identity, payments)
 		} else if req.PrepaidFeeLimitWei != "" {
 			if operation != "send" {
 				fail(400, errors.New("prepaid note fees are only supported for sends"))
