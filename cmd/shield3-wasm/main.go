@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
 const maxRequestSize = 1 << 20
@@ -40,6 +41,9 @@ type buildRequest struct {
 	Deposit       bool                            `json:"deposit"`
 	AmountWei     string                          `json:"amountWei"`
 	RegisterStamp bool                            `json:"registerStamp"`
+	ProofVersion  uint8                           `json:"proofVersion,omitempty"`
+	Consolidate   bool                            `json:"consolidate,omitempty"`
+	TargetWei     string                          `json:"targetWei,omitempty"`
 }
 
 type buildResult struct {
@@ -99,9 +103,24 @@ func build(raw string) (buildResult, error) {
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		return buildResult{}, fmt.Errorf("invalid browser Shield3 request: %w", err)
+		return buildResult{}, fmt.Errorf("invalid browser Shield3/Shield4 request: %w", err)
 	}
-	if request.ChainID == 0 || request.Stamp == nil || (!request.Deposit && !request.RegisterStamp && len(request.Payments) == 0) {
+	if request.ProofVersion == 0 {
+		request.ProofVersion = 3 // Keep existing browser clients source-compatible.
+	}
+	if request.ProofVersion != 3 && request.ProofVersion != 4 {
+		return buildResult{}, errors.New("unsupported browser shielded proof version")
+	}
+	if request.ProofVersion == 4 && (request.Deposit || request.RegisterStamp) {
+		return buildResult{}, errors.New("Shield4 browser builder supports private sends; use the Shield3 stamp or funding builder for public operations")
+	}
+	if request.Consolidate && (request.ProofVersion != 4 || request.Deposit || request.RegisterStamp || len(request.Payments) != 0 || request.AmountWei != "" || request.TargetWei == "") {
+		return buildResult{}, errors.New("invalid browser Shield4 consolidation request")
+	}
+	if !request.Consolidate && request.TargetWei != "" {
+		return buildResult{}, errors.New("targetWei is only valid for Shield4 consolidation")
+	}
+	if request.ChainID == 0 || request.Stamp == nil || (!request.Deposit && !request.RegisterStamp && !request.Consolidate && len(request.Payments) == 0) {
 		return buildResult{}, errors.New("browser Shield3 request is missing chain, stamp, or payment")
 	}
 	seedText := strings.TrimPrefix(strings.TrimPrefix(request.Seed, "0x"), "0X")
@@ -127,12 +146,38 @@ func build(raw string) (buildResult, error) {
 			return buildResult{}, errors.New("browser Shield3 deposit amount must be a positive integer")
 		}
 		tx, err = shield3wallet.BuildAndSignDeposit(context.Background(), browserRPC{}, seed, identity, amount)
+	} else if request.Consolidate {
+		target, ok := new(big.Int).SetString(strings.TrimSpace(request.TargetWei), 10)
+		if !ok || target.Sign() <= 0 || target.Cmp(shielded3.MaxSendWei()) > 0 {
+			return buildResult{}, errors.New("browser Shield4 consolidation target must be a positive supported amount")
+		}
+		tx, err = shield3wallet.BuildV4Consolidation(context.Background(), browserRPC{}, seed, identity, target)
+		if err == nil {
+			key, keyErr := pqcrypto.NewMLDSA87FromSeed(seed)
+			if keyErr != nil {
+				err = keyErr
+			} else {
+				tx, err = types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(request.ChainID)), key)
+			}
+		}
 	} else {
 		payments, decodeErr := shield3wallet.DecodePayments(request.ChainID, request.Payments)
 		if decodeErr != nil {
 			return buildResult{}, decodeErr
 		}
-		tx, err = shield3wallet.BuildAndSignBatch(context.Background(), browserRPC{}, seed, identity, payments)
+		if request.ProofVersion == 4 {
+			tx, err = shield3wallet.BuildV4Batch(context.Background(), browserRPC{}, seed, identity, payments)
+			if err == nil {
+				key, keyErr := pqcrypto.NewMLDSA87FromSeed(seed)
+				if keyErr != nil {
+					err = keyErr
+				} else {
+					tx, err = types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(request.ChainID)), key)
+				}
+			}
+		} else {
+			tx, err = shield3wallet.BuildAndSignBatch(context.Background(), browserRPC{}, seed, identity, payments)
+		}
 	}
 	if err != nil {
 		return buildResult{}, err

@@ -1,10 +1,12 @@
 package shield3wallet
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"math/big"
+	"sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -15,6 +17,105 @@ import (
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/ethereum/go-ethereum/zk/shielded4"
 )
+
+// BuildV4Consolidation combines the largest confirmed Shield4 notes into a
+// self-owned output. It is used after an explicit send action discovers that
+// the requested amount is spread across too many notes.
+func BuildV4Consolidation(ctx context.Context, rpc RPC, seed []byte, identity *Identity, target *big.Int) (*types.Transaction, error) {
+	if identity == nil || identity.Stamp == nil || target == nil || target.Sign() <= 0 {
+		return nil, errors.New("invalid Shield4 consolidation request")
+	}
+	view := identity.ViewKey()
+	defer view.Clear()
+	scan, err := ScanAsset(ctx, rpc, view, shielded3.AssetTKM)
+	if err != nil {
+		return nil, err
+	}
+	var active status
+	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV3Status"); err != nil {
+		return nil, err
+	}
+	var gasPrice hexutil.Big
+	if err := rpc.CallContext(ctx, &gasPrice, "eth_gasPrice"); err != nil {
+		return nil, err
+	}
+	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), (*big.Int)(&gasPrice))
+	var balance hexutil.Big
+	if err := rpc.CallContext(ctx, &balance, "eth_getBalance", identity.Address, "latest"); err != nil {
+		return nil, err
+	}
+	feeSponsor := new(big.Int)
+	if active.ConfidentialLedger || active.ShieldedOnly {
+		if (*big.Int)(&balance).Cmp(maxGas) < 0 {
+			return nil, errors.New("public balance must cover the network fee before Shield4 notes can be consolidated")
+		}
+	} else if (*big.Int)(&balance).Cmp(maxGas) < 0 {
+		feeSponsor.Set(maxGas)
+	}
+	amount, err := shield4ConsolidationAmount(scan.Notes, target, feeSponsor)
+	if err != nil {
+		return nil, err
+	}
+	self, err := DecodePaymentCode(identity.Code, identity.ChainID)
+	if err != nil {
+		return nil, err
+	}
+	return BuildV4Batch(ctx, rpc, seed, identity, []Payment{{Recipient: self, Amount: amount}})
+}
+
+// shield4ConsolidationAmount is pure so the wallet batching policy can be
+// tested without proof generation or a node. It selects up to four largest
+// notes and subtracts the fee sponsor from the self-payment when the active
+// transaction fee mode charges it from the private balance.
+func shield4ConsolidationAmount(notes []OwnedNote, target, feeSponsor *big.Int) (*big.Int, error) {
+	if target == nil || target.Sign() <= 0 || feeSponsor == nil || feeSponsor.Sign() < 0 {
+		return nil, errors.New("invalid Shield4 consolidation target")
+	}
+	ordered := append([]OwnedNote(nil), notes...)
+	sort.Slice(ordered, func(i, j int) bool {
+		a, errA := parseAmount(ordered[i].ValueWei)
+		b, errB := parseAmount(ordered[j].ValueWei)
+		if errA != nil || errB != nil {
+			return bytes.Compare(ordered[i].Commitment.Bytes(), ordered[j].Commitment.Bytes()) < 0
+		}
+		if cmp := a.Cmp(b); cmp != 0 {
+			return cmp > 0
+		}
+		return bytes.Compare(ordered[i].Commitment.Bytes(), ordered[j].Commitment.Bytes()) < 0
+	})
+	all := new(big.Int)
+	for _, note := range ordered {
+		value, err := parseAmount(note.ValueWei)
+		if err != nil {
+			return nil, err
+		}
+		all.Add(all, value)
+	}
+	needed := new(big.Int).Add(new(big.Int).Set(target), feeSponsor)
+	if all.Cmp(needed) < 0 {
+		return nil, errors.New("confirmed Shield4 notes do not cover the payment and fee reserve; no consolidation was submitted")
+	}
+	if len(ordered) <= shielded4.InputSlots {
+		return nil, errors.New("confirmed Shield4 notes fit the proof input limit; check the spendable balance and fee funding")
+	}
+	count := len(ordered)
+	if count > shielded4.InputSlots {
+		count = shielded4.InputSlots
+	}
+	chunk := new(big.Int)
+	for _, note := range ordered[:count] {
+		value, _ := parseAmount(note.ValueWei)
+		chunk.Add(chunk, value)
+	}
+	amount := new(big.Int).Sub(chunk, feeSponsor)
+	if cap := shielded4.MaxSendWei(); amount.Cmp(cap) > 0 {
+		amount.Set(cap)
+	}
+	if amount.Sign() <= 0 {
+		return nil, errors.New("selected Shield4 notes are too small to cover the consolidation fee reserve")
+	}
+	return amount, nil
+}
 
 // BuildV4 constructs a Shield4 full-chain membership transaction. It only
 // returns an unsigned transaction; the caller still signs and broadcasts it.

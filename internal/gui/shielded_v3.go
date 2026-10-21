@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
 type shield3RequestRecord struct {
@@ -36,6 +37,8 @@ type shield3Request struct {
 	Scope              string                           `json:"scope,omitempty"`
 	RelayURL           string                           `json:"relayURL,omitempty"`
 	Payments           []shield3wallet.PaymentRequest   `json:"payments,omitempty"`
+	Consolidate        bool                             `json:"consolidate,omitempty"`
+	TargetWei          string                           `json:"targetWei,omitempty"`
 	Relay              *shield3wallet.RelayOffer        `json:"relay,omitempty"`
 	RelayTransaction   hexutil.Bytes                    `json:"relayTransaction,omitempty"`
 	RelayFeeLimitWei   string                           `json:"relayFeeLimitWei,omitempty"`
@@ -64,8 +67,8 @@ func hostedShieldedProofVersion(req shield3Request, operation string) (uint8, er
 	if version != 3 && version != 4 {
 		return 0, errors.New("unsupported Shield3/Shield4 proof version")
 	}
-	if version == 4 && operation != "send" {
-		return 0, errors.New("Shield4 hosted building supports private sends only")
+	if version == 4 && operation != "send" && operation != "consolidate" {
+		return 0, errors.New("Shield4 hosted building supports private sends and note consolidation only")
 	}
 	if version == 4 && req.PrepaidFeeLimitWei != "" {
 		return 0, errors.New("Shield4 hosted send does not accept a prepaid fee limit")
@@ -128,7 +131,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "shield", "register-stamp", "register-username", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
+	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "consolidate", "shield", "register-stamp", "register-username", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
@@ -500,8 +503,16 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Recipient, req.AmountWei = req.Payments[0].Recipient, req.Payments[0].AmountWei
 	}
+	if operation == "consolidate" && (proofVersion != 4 || !req.Consolidate || req.AmountWei != "" || req.Recipient != "" || len(req.Payments) != 0) {
+		fail(400, errors.New("invalid Shield4 note consolidation request"))
+		return
+	}
+	if operation != "consolidate" && (req.Consolidate || req.TargetWei != "") {
+		fail(400, errors.New("consolidation fields are only valid for the Shield4 consolidate operation"))
+		return
+	}
 	amount, ok := new(big.Int).SetString(req.AmountWei, 10)
-	if operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" {
+	if operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" || operation == "consolidate" {
 		amount, ok = new(big.Int), true
 	}
 	if !ok {
@@ -509,7 +520,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recipientCode := req.Recipient
-	if operation == "shield" || operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" {
+	if operation == "shield" || operation == "register-stamp" || operation == "sponsor-stamp" || operation == "submit-relay" || operation == "consolidate" {
 		recipientCode = identity.Code
 	}
 	recipient, err := shield3wallet.DecodePaymentCode(recipientCode, identity.ChainID)
@@ -600,6 +611,13 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 			unsigned, err = shield3wallet.BuildSponsoredStamp(r.Context(), g.client, req.Seed, identity, req.Sponsorship)
 		} else if operation == "register-stamp" {
 			unsigned, err = shield3wallet.BuildStamp(r.Context(), g.client, req.Seed, identity)
+		} else if operation == "consolidate" {
+			target, valid := new(big.Int).SetString(req.TargetWei, 10)
+			if !valid || target.Sign() <= 0 || target.Cmp(shielded3.MaxSendWei()) > 0 {
+				fail(400, errors.New("invalid Shield4 consolidation target"))
+				return
+			}
+			unsigned, err = shield3wallet.BuildV4Consolidation(r.Context(), walletRPC, req.Seed, identity, target)
 		} else if proofVersion == 4 {
 			if operation != "send" || len(payments) == 0 || len(payments) > 3 {
 				fail(400, errors.New("hosted Shield4 sends require one to three private payments"))
