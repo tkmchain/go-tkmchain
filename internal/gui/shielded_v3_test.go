@@ -127,13 +127,13 @@ func TestHostedShieldedProofVersionPolicy(t *testing.T) {
 	if version, err := hostedShieldedProofVersion(shield3Request{ProofVersion: 4}, "send"); err != nil || version != 4 {
 		t.Fatalf("Shield4 send version = %d, %v", version, err)
 	}
+	if version, err := hostedShieldedProofVersion(shield3Request{ProofVersion: 4}, "shield"); err != nil || version != 4 {
+		t.Fatalf("Shield4 public funding version = %d, %v", version, err)
+	}
 	for _, req := range []shield3Request{{ProofVersion: 5}, {ProofVersion: 4, PrepaidFeeLimitWei: "1"}} {
 		if _, err := hostedShieldedProofVersion(req, "send"); err == nil {
 			t.Fatalf("accepted invalid Shield4 request policy: %+v", req)
 		}
-	}
-	if _, err := hostedShieldedProofVersion(shield3Request{ProofVersion: 4}, "shield"); err == nil {
-		t.Fatal("accepted Shield4 public funding")
 	}
 }
 

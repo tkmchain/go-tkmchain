@@ -67,8 +67,8 @@ func hostedShieldedProofVersion(req shield3Request, operation string) (uint8, er
 	if version != 3 && version != 4 {
 		return 0, errors.New("unsupported Shield3/Shield4 proof version")
 	}
-	if version == 4 && operation != "send" && operation != "consolidate" {
-		return 0, errors.New("Shield4 hosted building supports private sends and note consolidation only")
+	if version == 4 && operation != "send" && operation != "consolidate" && operation != "shield" {
+		return 0, errors.New("Shield4 hosted building supports private sends, public funding, and note consolidation only")
 	}
 	if version == 4 && req.PrepaidFeeLimitWei != "" {
 		return 0, errors.New("Shield4 hosted send does not accept a prepaid fee limit")
@@ -618,6 +618,12 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			unsigned, err = shield3wallet.BuildV4Consolidation(r.Context(), walletRPC, req.Seed, identity, target)
+		} else if proofVersion == 4 && operation == "shield" {
+			if req.AmountWei == "" || len(payments) != 0 {
+				fail(400, errors.New("Shield4 funding requires one positive amount and no payment list"))
+				return
+			}
+			unsigned, err = shield3wallet.BuildV4(r.Context(), walletRPC, req.Seed, identity, recipient, amount, true)
 		} else if proofVersion == 4 {
 			if operation != "send" || len(payments) == 0 || len(payments) > 3 {
 				fail(400, errors.New("hosted Shield4 sends require one to three private payments"))

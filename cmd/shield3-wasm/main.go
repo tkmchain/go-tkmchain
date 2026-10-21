@@ -145,7 +145,23 @@ func build(raw string) (buildResult, error) {
 		if !ok || amount.Sign() <= 0 {
 			return buildResult{}, errors.New("browser Shield3 deposit amount must be a positive integer")
 		}
-		tx, err = shield3wallet.BuildAndSignDeposit(context.Background(), browserRPC{}, seed, identity, amount)
+		if request.ProofVersion == 4 {
+			var self shield3wallet.PaymentPayload
+			self, err = shield3wallet.DecodePaymentCode(identity.Code, request.ChainID)
+			if err == nil {
+				tx, err = shield3wallet.BuildV4(context.Background(), browserRPC{}, seed, identity, self, amount, true)
+			}
+			if err == nil {
+				key, keyErr := pqcrypto.NewMLDSA87FromSeed(seed)
+				if keyErr != nil {
+					err = keyErr
+				} else {
+					tx, err = types.SignPQTkmTx(tx, types.NewQuantumSigner(new(big.Int).SetUint64(request.ChainID)), key)
+				}
+			}
+		} else {
+			tx, err = shield3wallet.BuildAndSignDeposit(context.Background(), browserRPC{}, seed, identity, amount)
+		}
 	} else if request.Consolidate {
 		target, ok := new(big.Int).SetString(strings.TrimSpace(request.TargetWei), 10)
 		if !ok || target.Sign() <= 0 || target.Cmp(shielded3.MaxSendWei()) > 0 {
