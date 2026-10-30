@@ -18,9 +18,9 @@
 package kzg4844
 
 import (
+	"crypto/sha256"
 	"embed"
 	"errors"
-	"hash"
 	"reflect"
 	"sync/atomic"
 
@@ -190,15 +190,11 @@ func ComputeCellProofs(blob *Blob) ([]Proof, error) {
 	return gokzgComputeCellProofs(blob)
 }
 
-// CalcBlobHashV1 calculates the 'versioned blob hash' of a commitment.
-// The given hasher must be a sha256 hash instance, otherwise the result will be invalid!
-func CalcBlobHashV1(hasher hash.Hash, commit *Commitment) (vh [32]byte) {
-	if hasher.Size() != 32 {
-		panic("wrong hash size")
-	}
-	hasher.Reset()
-	hasher.Write(commit[:])
-	hasher.Sum(vh[:0])
+// CalcBlobHashV1 calculates the protocol-defined SHA-256 versioned blob hash
+// of a commitment. SHA-256 is fixed by EIP-4844; callers cannot substitute a
+// weaker or incompatible hash implementation.
+func CalcBlobHashV1(commit *Commitment) (vh [32]byte) {
+	vh = sha256.Sum256(commit[:])
 	vh[0] = 0x01 // version
 	return vh
 }

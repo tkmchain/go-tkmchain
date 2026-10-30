@@ -18,7 +18,6 @@ package eth
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"math"
 	"math/big"
 	"math/rand"
@@ -789,7 +788,7 @@ func testGetPooledTransaction(t *testing.T, blobTx bool) {
 		emptyBlobs         = []kzg4844.Blob{emptyBlob}
 		emptyBlobCommit, _ = kzg4844.BlobToCommitment(&emptyBlob)
 		emptyBlobProof, _  = kzg4844.ComputeBlobProof(&emptyBlob, emptyBlobCommit)
-		emptyBlobHash      = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
+		emptyBlobHash      = kzg4844.CalcBlobHashV1(&emptyBlobCommit)
 	)
 	backend := newTestBackendWithGenerator(0, true, true, nil)
 	defer backend.close()

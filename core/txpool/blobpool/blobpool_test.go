@@ -19,7 +19,6 @@ package blobpool
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -75,7 +74,7 @@ func init() {
 		testBlobCellProof, _ := kzg4844.ComputeCellProofs(testBlob)
 		testBlobCellProofs = append(testBlobCellProofs, testBlobCellProof)
 
-		testBlobVHash := kzg4844.CalcBlobHashV1(sha256.New(), &testBlobCommit)
+		testBlobVHash := kzg4844.CalcBlobHashV1(&testBlobCommit)
 		testBlobIndices[testBlobVHash] = len(testBlobVHashes)
 		testBlobVHashes = append(testBlobVHashes, testBlobVHash)
 	}

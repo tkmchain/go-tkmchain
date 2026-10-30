@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2981,7 +2980,7 @@ func testFillBlobTransaction(t *testing.T, osaka bool) {
 		emptyBlobCommit, _                 = kzg4844.BlobToCommitment(emptyBlob)
 		emptyBlobProof, _                  = kzg4844.ComputeBlobProof(emptyBlob, emptyBlobCommit)
 		emptyBlobCellProofs, _             = kzg4844.ComputeCellProofs(emptyBlob)
-		emptyBlobHash          common.Hash = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
+		emptyBlobHash          common.Hash = kzg4844.CalcBlobHashV1(&emptyBlobCommit)
 
 		fillEmptyKZGProofs = func(blobs int) []kzg4844.Proof {
 			if osaka {

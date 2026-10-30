@@ -18,7 +18,6 @@ package apitypes
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"testing"
 
@@ -120,7 +119,7 @@ func TestBlobTxs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hash := kzg4844.CalcBlobHashV1(sha256.New(), &commitment)
+	hash := kzg4844.CalcBlobHashV1(&commitment)
 	b := &types.BlobTx{
 		ChainID:    uint256.NewInt(6),
 		Nonce:      8,
@@ -250,7 +249,7 @@ func TestValidateTxSidecar(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		hash := kzg4844.CalcBlobHashV1(sha256.New(), &commitment)
+		hash := kzg4844.CalcBlobHashV1(&commitment)
 		return blob, commitment, proof, hash
 	}
 

@@ -17,7 +17,6 @@
 package fetcher
 
 import (
-	"crypto/sha256"
 	"errors"
 	"math/big"
 	"math/rand"
@@ -1755,7 +1754,7 @@ func makeInvalidBlobTx() *types.Transaction {
 	key, _ := crypto.GenerateKey()
 	blob := &kzg4844.Blob{byte(0xa)}
 	commitment, _ := kzg4844.BlobToCommitment(blob)
-	blobHash := kzg4844.CalcBlobHashV1(sha256.New(), &commitment)
+	blobHash := kzg4844.CalcBlobHashV1(&commitment)
 	cellProof, _ := kzg4844.ComputeCellProofs(blob)
 
 	// Mutate the cell proof

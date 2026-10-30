@@ -18,7 +18,6 @@ package gasprice
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math"
 	"math/big"
@@ -140,7 +139,7 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, cancunBlock *big.Int, pe
 		// Compute empty blob hash.
 		emptyBlob          = kzg4844.Blob{}
 		emptyBlobCommit, _ = kzg4844.BlobToCommitment(&emptyBlob)
-		emptyBlobVHash     = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
+		emptyBlobVHash     = kzg4844.CalcBlobHashV1(&emptyBlobCommit)
 	)
 	// These fixtures synthesize forks at small block numbers. Keep the
 	// production RandomX activations out of the ordering checks used here.

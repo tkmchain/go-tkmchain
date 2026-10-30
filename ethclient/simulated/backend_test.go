@@ -19,7 +19,6 @@ package simulated
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -58,7 +57,7 @@ func newBlobTx(sim *Backend, key *ecdsa.PrivateKey, nonce uint64) (*types.Transa
 	testBlob := &kzg4844.Blob{0x00}
 	testBlobCommit, _ := kzg4844.BlobToCommitment(testBlob)
 	testBlobProof, _ := kzg4844.ComputeBlobProof(testBlob, testBlobCommit)
-	testBlobVHash := kzg4844.CalcBlobHashV1(sha256.New(), &testBlobCommit)
+	testBlobVHash := kzg4844.CalcBlobHashV1(&testBlobCommit)
 
 	head, _ := client.HeaderByNumber(context.Background(), nil) // Should be child's, good enough
 	gasPrice := new(big.Int).Add(head.BaseFee, big.NewInt(params.GWei))

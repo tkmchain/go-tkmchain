@@ -18,6 +18,7 @@ package kzg4844
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	mrand "math/rand"
 	"slices"
 	"testing"
@@ -55,6 +56,15 @@ func switchBackend(t testing.TB, ckzg bool) (switchBack func()) {
 	prev := useCKZG.Load()
 	useCKZG.Store(ckzg)
 	return func() { useCKZG.Store(prev) }
+}
+
+func TestCalcBlobHashV1UsesProtocolSHA256(t *testing.T) {
+	commitment := Commitment{0x12, 0x34, 0x56}
+	want := sha256.Sum256(commitment[:])
+	want[0] = 0x01
+	if got := CalcBlobHashV1(&commitment); got != want {
+		t.Fatalf("blob hash = %x, want %x", got, want)
+	}
 }
 
 func TestCKZGWithPoint(t *testing.T)  { testKZGWithPoint(t, true) }
