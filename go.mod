@@ -4,7 +4,6 @@ go 1.26.6
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
-	github.com/GopeedLab/webview_go v0.0.0-20260423085439-7a2f88b6e9b5
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/VictoriaMetrics/fastcache v1.13.0
 	github.com/aws/aws-sdk-go-v2 v1.21.2
@@ -172,7 +171,7 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.59.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
