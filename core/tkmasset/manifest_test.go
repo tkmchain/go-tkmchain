@@ -64,6 +64,18 @@ func TestParseRuntimeCodeDistinguishesEthereumContract(t *testing.T) {
 	}
 }
 
+func TestTrailerCapacityChecksOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	const trailerHeaderLen = len(Magic) + 1 + 4
+
+	if _, err := trailerCapacity(maxInt-trailerHeaderLen, 1); err == nil {
+		t.Fatal("overflowing trailer capacity accepted")
+	}
+	if got, err := trailerCapacity(maxInt-trailerHeaderLen-1, 1); err != nil || got != maxInt {
+		t.Fatalf("largest valid trailer capacity = %d, err=%v; want %d", got, err, maxInt)
+	}
+}
+
 func TestManifestRejectsInvalidKindAndNFTDecimals(t *testing.T) {
 	bad := testManifest()
 	bad.Kind = Kind(99)

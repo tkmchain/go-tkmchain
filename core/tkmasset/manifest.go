@@ -269,7 +269,11 @@ func AppendTrailer(runtime []byte, m Manifest) ([]byte, error) {
 	// and version from the payload while preserving the canonical encoding for
 	// hashing and validation during parsing.
 	payload := canonical[len(Magic)+1:]
-	result := make([]byte, 0, len(runtime)+len(Magic)+1+4+len(payload))
+	capacity, err := trailerCapacity(len(runtime), len(payload))
+	if err != nil {
+		return nil, err
+	}
+	result := make([]byte, 0, capacity)
 	result = append(result, runtime...)
 	result = append(result, []byte(Magic)...)
 	result = append(result, Version)
@@ -277,6 +281,20 @@ func AppendTrailer(runtime []byte, m Manifest) ([]byte, error) {
 	binary.BigEndian.PutUint32(length[:], uint32(len(payload)))
 	result = append(result, length[:]...)
 	return append(result, payload...), nil
+}
+
+// trailerCapacity computes the allocation size without allowing integer
+// overflow. The payload length is encoded as uint32 in the trailer header.
+func trailerCapacity(runtimeLen, payloadLen int) (int, error) {
+	maxInt := int(^uint(0) >> 1)
+	const trailerHeaderLen = len(Magic) + 1 + 4
+	if runtimeLen < 0 || payloadLen < 0 || uint64(payloadLen) > uint64(^uint32(0)) {
+		return 0, fmt.Errorf("%w: runtime code or manifest too large", ErrInvalidManifest)
+	}
+	if payloadLen > maxInt-trailerHeaderLen || runtimeLen > maxInt-trailerHeaderLen-payloadLen {
+		return 0, fmt.Errorf("%w: runtime code or manifest too large", ErrInvalidManifest)
+	}
+	return runtimeLen + trailerHeaderLen + payloadLen, nil
 }
 
 // ParseRuntimeCode extracts the final TKM manifest trailer. A normal Ethereum
