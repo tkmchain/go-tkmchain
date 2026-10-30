@@ -45,6 +45,24 @@ type Identity struct {
 	Code              string
 }
 
+// RegisteredStampPayload builds the public identity fields needed to check
+// this wallet against its immutable on-chain stamp. Keeping the owner here
+// prevents callers from accidentally checking a zero-valued owner.
+func (i *Identity) RegisteredStampPayload() (PaymentPayload, error) {
+	if i == nil || i.Stamp == nil || i.ChainID == 0 || i.Address == (common.Address{}) || i.Owner == (shielded3.Digest{}) {
+		return PaymentPayload{}, errors.New("incomplete Shield3 identity for stamp verification")
+	}
+	return PaymentPayload{
+		Version:           3,
+		ChainID:           i.ChainID,
+		Address:           i.Address,
+		Owner:             i.Owner,
+		IncomingPublicKey: common.CopyBytes(i.IncomingPublicKey),
+		StampPublicKey:    common.CopyBytes(i.StampPublicKey),
+		Stamp:             *i.Stamp,
+	}, nil
+}
+
 func (i *Identity) Clear() {
 	if i == nil {
 		return

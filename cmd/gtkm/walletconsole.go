@@ -1743,7 +1743,11 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 		return fmt.Errorf("derive sender Shield3 identity: %w", err)
 	}
 	defer identity.Clear()
-	if err := shield3wallet.RequireRegisteredStamp(context.Background(), rpcClient, shield3wallet.PaymentPayload{ChainID: chainID.Uint64(), Address: identity.Address, Stamp: *identity.Stamp}); err != nil {
+	self, err := identity.RegisteredStampPayload()
+	if err != nil {
+		return err
+	}
+	if err := shield3wallet.RequireRegisteredStamp(context.Background(), rpcClient, self); err != nil {
 		return fmt.Errorf("sender: %w", err)
 	}
 	var network struct {

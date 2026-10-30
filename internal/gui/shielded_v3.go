@@ -383,7 +383,12 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 			fail(400, err)
 			return
 		}
-		if err := shield3wallet.RequireRegisteredStamp(r.Context(), g.client, shield3wallet.PaymentPayload{ChainID: chainID.Uint64(), Address: identity.Address, Stamp: *identity.Stamp}); err != nil {
+		stampIdentity, err := identity.RegisteredStampPayload()
+		if err != nil {
+			fail(400, err)
+			return
+		}
+		if err := shield3wallet.RequireRegisteredStamp(r.Context(), g.client, stampIdentity); err != nil {
 			fail(400, fmt.Errorf("Shield3 username registration requires a confirmed address stamp: %w", err))
 			return
 		}

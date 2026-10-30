@@ -21,8 +21,14 @@ func RequireRegisteredStamp(ctx context.Context, rpc RPC, recipient PaymentPaylo
 	if err := rpc.CallContext(ctx, &stamp, "tkmprivacy_antarticalStamp", recipient.Address); err != nil {
 		return err
 	}
-	if !stamp.Registered || stamp.Owner != recipient.Owner || stamp.Commitment != recipient.Stamp.Commitment {
+	if !stamp.Registered {
 		return errors.New("address stamp is not confirmed on this chain; register the original private stamp and wait for confirmation before sending")
+	}
+	if stamp.Owner != recipient.Owner {
+		return errors.New("registered address stamp owner does not match this local Shield3 identity; select the original stamped wallet account")
+	}
+	if stamp.Commitment != recipient.Stamp.Commitment {
+		return errors.New("registered address stamp commitment does not match this local keyfile; restore the original stamped keyfile before sending")
 	}
 	return nil
 }
