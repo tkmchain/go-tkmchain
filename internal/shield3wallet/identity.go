@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -179,14 +180,27 @@ func DecodePaymentCode(value string, chainID uint64) (PaymentPayload, error) {
 	}
 	data, err := base64.RawURLEncoding.Strict().DecodeString(value[len(prefix):])
 	if err != nil {
-		return fail()
+		return PaymentPayload{}, errors.New("Shield3 receiving code is incomplete or malformed; long terminal pastes may be truncated")
+	}
+	// A canonical Shield3 v3 code includes two ML-KEM-1024 public keys, the
+	// encrypted stamp, and ML-DSA-87 public key/signatures. Its RLP payload is
+	// therefore much larger than the common 4 KiB canonical-terminal line cap.
+	// Detect a truncated paste before reporting it as an authentication failure.
+	if len(data) < 20_000 {
+		return PaymentPayload{}, errors.New("Shield3 receiving code is incomplete; paste it into a file and enter file:/path/to/code, or use the recipient's @username")
 	}
 	var code PaymentCode
 	if err = rlp.DecodeBytes(data, &code); err != nil {
 		return fail()
 	}
 	p := code.Payload
-	if p.Version != 3 || p.ChainID != chainID || chainID == 0 || p.Owner == (shielded3.Digest{}) || p.Stamp.ChainID != chainID {
+	if chainID == 0 {
+		return PaymentPayload{}, errors.New("cannot validate Shield3 receiving address: wallet chain ID is unavailable")
+	}
+	if p.ChainID != chainID || p.Stamp.ChainID != chainID {
+		return PaymentPayload{}, fmt.Errorf("Shield3 receiving address is for chain %d; wallet is connected to chain %d", p.ChainID, chainID)
+	}
+	if p.Version != 3 || p.Owner == (shielded3.Digest{}) {
 		return fail()
 	}
 	if _, err = shielded3.DigestFromBytes(p.Owner.Bytes()); err != nil {
@@ -198,12 +212,15 @@ func DecodePaymentCode(value string, chainID uint64) (PaymentPayload, error) {
 		}
 	}
 	address, err := pqcrypto.Address(pqcrypto.AlgorithmMLDSA87, code.PublicKey)
-	if err != nil || address != p.Address || !pqcrypto.VerifyShieldedV3Stamp(code.PublicKey, &p.Stamp) {
+	if err != nil || address != p.Address {
 		return fail()
+	}
+	if !pqcrypto.VerifyShieldedV3Stamp(code.PublicKey, &p.Stamp) {
+		return PaymentPayload{}, errors.New("Shield3 receiving address has an invalid stamp signature or stamp context")
 	}
 	message, err := paymentMessage(p)
 	if err != nil || !pqcrypto.VerifyMLDSA87(code.PublicKey, message, code.Signature) {
-		return fail()
+		return PaymentPayload{}, errors.New("Shield3 receiving address has an invalid payment-code signature")
 	}
 	return p, nil
 }

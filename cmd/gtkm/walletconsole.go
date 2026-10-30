@@ -10,10 +10,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -41,8 +39,9 @@ Interactive terminal wallet for local gtkm nodes.
 
 The wallet connects to the node's local IPC endpoint, keeps private keys in the
 keystore, and signs locally. It never sends a password or private key over RPC.
-Use the Send flow for native TKM or other native account transfers. Shielded
-transfers continue to use the dedicated shielded wallet/prover flow.
+Use Send for native transfers or private Shield4 payments. Private payments are
+proved in this wallet process, signed by the encrypted keystore, and broadcast
+directly to the connected node; no separate prover service receives the seed.
 Use Stamp address before a Shield3 send. The flow encrypts the name and
 country locally, persists the exact stamp in the PQ keyfile, submits the
 owner-proof registration, and waits for immutable on-chain confirmation.
@@ -143,7 +142,9 @@ func interactiveWallet(ctx *cli.Context) error {
 				showWalletError(reader, err)
 			}
 		case "8":
-			continue
+			if err := refreshWalletAddress(reader, rpcClient, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "9":
 			preference, selected, selectErr := chooseWalletLanguage(reader)
 			if selectErr != nil {
@@ -1573,6 +1574,124 @@ func showWalletPortfolio(reader *bufio.Reader, client *ethclient.Client, ks *key
 	pauseWallet(reader)
 }
 
+// refreshWalletAddress checks the selected account against the canonical chain
+// head, compares its immutable local stamp with the on-chain stamp, and scans
+// all Shield3 outputs from activation through that same head. Public balances
+// are read from the current canonical state; replaying every historical state
+// is unnecessary and would fail on pruned nodes.
+func refreshWalletAddress(reader *bufio.Reader, rpcClient *rpc.Client, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if len(walletAccounts) == 0 {
+		return errors.New("no local accounts available")
+	}
+	clearWalletScreen()
+	fmt.Println("REFRESH ADDRESS")
+	fmt.Println("───────────────")
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	head, err := client.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("read canonical chain height: %w", err)
+	}
+	balance, err := client.BalanceAt(ctx, account.Address, new(big.Int).SetUint64(head))
+	if err != nil {
+		return fmt.Errorf("refresh public balance at height %d: %w", head, err)
+	}
+	fmt.Printf("\n  Address: %s\n  Canonical height: #%d\n  Public balance: %s TKM\n", account.Address.Hex(), head, formatTKM(balance))
+
+	var onChain core.AntarticalStampStatus
+	stampErr := rpcClient.CallContext(ctx, &onChain, "tkmprivacy_antarticalStamp", account.Address)
+	if stampErr != nil {
+		fmt.Printf("  Stamp status: could not verify against chain: %v\n", stampErr)
+		pauseWallet(reader)
+		return nil
+	} else if !onChain.Registered {
+		fmt.Println("  Stamp status: not registered on this chain.")
+	} else {
+		fmt.Printf("  Stamp status: registered on-chain (transaction %s).\n", onChain.TransactionHash.Hex())
+		if receipt, receiptErr := client.TransactionReceipt(ctx, onChain.TransactionHash); receiptErr == nil {
+			fmt.Printf("  Registration block: #%d.\n", receipt.BlockNumber.Uint64())
+		}
+	}
+
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return fmt.Errorf("identify account type: %w", err)
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		fmt.Println("  Shield3 scan: unavailable for this legacy account type.")
+		pauseWallet(reader)
+		return nil
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		if onChain.Registered {
+			fmt.Println("  Local stamp: missing. The chain stamp is immutable; restore the original stamped PQ keystore backup.")
+		} else {
+			fmt.Println("  Local stamp: none. Use Stamp address to create and register one.")
+		}
+		pauseWallet(reader)
+		return nil
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate local Shield3 stamp: %w", err)
+	}
+	defer identity.Clear()
+	if !onChain.Registered {
+		fmt.Printf("  Local stamp: valid for this wallet; not confirmed on-chain. Owner %x, commitment %x.\n", identity.Owner, key.Shield3Stamp.Commitment)
+		pauseWallet(reader)
+		return nil
+	}
+	if onChain.Owner != identity.Owner {
+		fmt.Printf("  Stamp mismatch: chain owner %x differs from local owner %x.\n", onChain.Owner, identity.Owner)
+		fmt.Println("  Restore the original stamped PQ keystore; do not register a second stamp.")
+		pauseWallet(reader)
+		return nil
+	}
+	if onChain.Commitment != key.Shield3Stamp.Commitment {
+		fmt.Printf("  Stamp mismatch: chain commitment %x differs from local commitment %x.\n", onChain.Commitment, key.Shield3Stamp.Commitment)
+		fmt.Println("  Restore the original stamped PQ keystore; do not register a second stamp.")
+		pauseWallet(reader)
+		return nil
+	}
+	fmt.Println("  Stamp status: local keyfile owner and commitment match the confirmed chain record.")
+
+	view := identity.ViewKey()
+	defer view.Clear()
+	fmt.Printf("  Scanning Shield3 outputs through height #%d; this can take time on a pruned or busy node...\n", head)
+	scan, err := shield3wallet.Scan(ctx, rpcClient, view)
+	if err != nil {
+		return fmt.Errorf("Shield3 history scan through height %d: %w", head, err)
+	}
+	fmt.Printf("  Shield3 scan: complete through height #%d (%s).\n", scan.HeadNumber, scan.HeadHash.Hex())
+	fmt.Printf("  Shield3 received total: %s TKM\n", formatTKM(parseWalletBigInt(scan.ReceivedWei)))
+	if scan.SpendStatusKnown {
+		fmt.Printf("  Shield3 confirmed spendable: %s TKM (%d unspent notes).\n", formatTKM(parseWalletBigInt(scan.BalanceWei)), len(scan.Notes))
+	} else {
+		fmt.Println("  Shield3 spend status is unavailable for this view key.")
+	}
+	pauseWallet(reader)
+	return nil
+}
+
+func parseWalletBigInt(value string) *big.Int {
+	amount, ok := new(big.Int).SetString(value, 10)
+	if !ok {
+		return new(big.Int)
+	}
+	return amount
+}
+
 func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int, dataDir string) error {
 	clearWalletScreen()
 	fmt.Println(walletText("section.send", "SEND FUNDS"))
@@ -1592,7 +1711,7 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 		return errors.New("invalid account selection")
 	}
 	from := walletAccounts[index-1]
-	toText, err := readWalletLine(reader, "Recipient Shield3 address, @username#checksum, or 0x address")
+	toText, err := readWalletShield3Recipient(reader)
 	if err != nil {
 		return err
 	}
@@ -1604,7 +1723,7 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 	if err != nil || value.Sign() <= 0 {
 		return errors.New("amount must be a positive decimal value")
 	}
-	if strings.HasPrefix(strings.TrimSpace(toText), "@") || strings.HasPrefix(strings.TrimSpace(toText), "tkmshield3.") {
+	if strings.HasPrefix(strings.TrimSpace(toText), "@") || strings.HasPrefix(strings.TrimSpace(toText), "tkmshield3.") || strings.HasPrefix(strings.TrimSpace(toText), "file:") {
 		return sendWalletShield3Payment(reader, client.Client(), ks, from, strings.TrimSpace(toText), value, chainID, dataDir)
 	}
 	if !common.IsHexAddress(toText) {
@@ -1695,7 +1814,11 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 		paymentCode = binding.PaymentCode
 		username = destination
 	} else {
-		paymentCode = destination
+		loadedCode, loadErr := loadShield3RecipientCode(destination)
+		if loadErr != nil {
+			return loadErr
+		}
+		paymentCode = loadedCode
 	}
 	recipient, err := shield3wallet.DecodePaymentCode(paymentCode, chainID.Uint64())
 	if err != nil {
@@ -1756,69 +1879,134 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	if err := rpcClient.Call(&network, "tkmprivacy_shieldedV3Status"); err != nil || !network.Active {
 		return errors.New("Shield3 consensus is not active on this node")
 	}
-	tokenPath := filepath.Join(dataDir, "shield3-wallet.token")
-	tokenBytes, err := os.ReadFile(tokenPath)
+	// Keep the spending seed inside the wallet process. The previous path sent
+	// it over loopback HTTP to GTKm's embedded wallet endpoint before proving.
+	// Build locally, sign the exact transaction with the encrypted keystore,
+	// then broadcast only the signed bytes to the node.
+	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancelBuild()
+	unsigned, err := shield3wallet.BuildV4(buildCtx, rpcClient, key.Seed, identity, recipient, amount, false)
 	if err != nil {
-		return fmt.Errorf("read the embedded Shield3 service token at %s: %w (start gtkm with its default Shield3 service enabled)", tokenPath, err)
+		return fmt.Errorf("build private Shield4 payment locally: %w", err)
 	}
-	token := strings.TrimSpace(string(tokenBytes))
-	clear(tokenBytes)
-	if len(token) < 32 {
-		return errors.New("embedded Shield3 service token is invalid")
-	}
-	requestIDBytes := make([]byte, 24)
-	if _, err := crand.Read(requestIDBytes); err != nil {
-		return fmt.Errorf("create payment request ID: %w", err)
-	}
-	requestID := fmt.Sprintf("wallet-%x", requestIDBytes)
-	clear(requestIDBytes)
-	body, err := json.Marshal(map[string]any{
-		"requestId": requestID,
-		"account":   identity.Address,
-		"seed":      hexutil.Bytes(key.Seed),
-		"stamp":     key.Shield3Stamp,
-		"payments":  []shield3wallet.PaymentRequest{{Recipient: paymentCode, AmountWei: amount.String()}},
-	})
+	signed, err := ks.SignTxWithPassphrase(from, password, unsigned, chainID)
 	if err != nil {
-		return fmt.Errorf("encode Shield3 request: %w", err)
+		return fmt.Errorf("sign private Shield4 payment: %w", err)
 	}
-	defer clear(body)
-	endpoint := (&url.URL{Scheme: "http", Host: "127.0.0.1:8788", Path: "/shield3/send"}).String()
-	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	raw, err := signed.MarshalBinary()
 	if err != nil {
-		return err
+		return fmt.Errorf("encode signed Shield4 payment: %w", err)
 	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-GUI-Token", token)
-	clear([]byte(token))
-	request.Header.Set("Origin", "https://wallet.tkmchain.site")
-	client := &http.Client{Timeout: 10 * time.Minute}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("connect to gtkm's embedded Shield3 service at 127.0.0.1:8788: %w", err)
+	broadcastCtx, cancelBroadcast := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBroadcast()
+	var transactionHash common.Hash
+	if err := rpcClient.CallContext(broadcastCtx, &transactionHash, "eth_sendRawTransaction", hexutil.Encode(raw)); err != nil {
+		return fmt.Errorf("broadcast signed Shield4 payment: %w", err)
 	}
-	defer response.Body.Close()
-	var result struct {
-		TransactionHash common.Hash `json:"transactionHash"`
-		Status          string      `json:"status"`
-		Error           string      `json:"error"`
+	if transactionHash != signed.Hash() {
+		return fmt.Errorf("node returned transaction hash %s, but locally signed transaction hashes to %s", transactionHash, signed.Hash())
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
-		return fmt.Errorf("read Shield3 service response (HTTP %d): %w", response.StatusCode, err)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("Shield3 send failed: %s", result.Error)
-	}
-	if result.TransactionHash == (common.Hash{}) {
-		return errors.New("Shield3 service did not return a transaction hash")
-	}
-	fmt.Println("\nPrivate Shield3 payment submitted.")
+	fmt.Println("\nPrivate Shield4 payment submitted.")
 	if username != "" {
 		fmt.Printf("  Recipient: %s\n", username)
 	}
-	fmt.Printf("  Transaction hash: %s\n  Status: %s\n", result.TransactionHash.Hex(), result.Status)
+	fmt.Printf("  Transaction hash: %s\n  Status: broadcast to the connected node\n", transactionHash.Hex())
 	pauseWallet(reader)
 	return nil
+}
+
+// readWalletShield3Recipient switches a real terminal out of canonical mode
+// while a long Shield3 code is pasted. Linux terminals commonly cap a
+// canonical input line at 4096 bytes, while a valid Shield3 code is much
+// longer. The short prompts elsewhere in the wallet continue using the
+// ordinary buffered line reader.
+func readWalletShield3Recipient(reader *bufio.Reader) (string, error) {
+	const prompt = "Recipient Shield3 address, @username#checksum, file:/path/to/code, or 0x address"
+	stat, err := os.Stdin.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice == 0 || reader.Buffered() != 0 {
+		return readWalletLine(reader, prompt)
+	}
+	save := exec.Command("stty", "-g")
+	save.Stdin = os.Stdin
+	state, err := save.Output()
+	if err != nil {
+		return readWalletLine(reader, prompt)
+	}
+	stateArg := strings.TrimSpace(string(state))
+	if stateArg == "" || strings.ContainsAny(stateArg, " \t\r\n") {
+		return readWalletLine(reader, prompt)
+	}
+	set := exec.Command("stty", "-echo", "-icanon", "-isig", "min", "1", "time", "0")
+	set.Stdin = os.Stdin
+	if err := set.Run(); err != nil {
+		return readWalletLine(reader, prompt)
+	}
+	defer func() {
+		restore := exec.Command("stty", stateArg)
+		restore.Stdin = os.Stdin
+		_ = restore.Run()
+	}()
+	fmt.Printf("%s (pasted code is hidden): ", prompt)
+	value, err := readWalletRawLine(os.Stdin, os.Stdout, 65536)
+	fmt.Fprintln(os.Stdout)
+	return strings.TrimSpace(value), err
+}
+
+func readWalletRawLine(input io.Reader, progress io.Writer, maxBytes int) (string, error) {
+	value := make([]byte, 0, 32768)
+	var one [1]byte
+	for {
+		n, err := input.Read(one[:])
+		if n == 1 {
+			b := one[0]
+			switch b {
+			case '\r', '\n':
+				return string(value), nil
+			case 3:
+				return "", errors.New("recipient input cancelled")
+			case 4:
+				if len(value) == 0 {
+					return "", io.EOF
+				}
+				return string(value), nil
+			case 8, 127:
+				if len(value) > 0 {
+					value = value[:len(value)-1]
+				}
+			default:
+				if len(value) >= maxBytes {
+					return "", errors.New("recipient input exceeds the maximum Shield3 code length")
+				}
+				value = append(value, b)
+			}
+			if len(value)%4096 == 0 && len(value) > 0 {
+				fmt.Fprintf(progress, "\rShield3 recipient input received: %d characters", len(value))
+			}
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+}
+
+func loadShield3RecipientCode(destination string) (string, error) {
+	if !strings.HasPrefix(destination, "file:") {
+		return destination, nil
+	}
+	path := strings.TrimSpace(strings.TrimPrefix(destination, "file:"))
+	if path == "" {
+		return "", errors.New("recipient file path is empty; use file:/path/to/code")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Shield3 recipient code: %w", err)
+	}
+	if len(contents) > 65536 {
+		return "", errors.New("Shield3 recipient code file is too large")
+	}
+	// Allow text editors to wrap the public code across lines. Whitespace is
+	// not part of the base64url alphabet.
+	return strings.Join(strings.Fields(string(contents)), ""), nil
 }
 
 func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
