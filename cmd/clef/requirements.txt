@@ -1,1 +1,1 @@
-tinyrpc==1.1.4
+tinyrpc==1.1.7
