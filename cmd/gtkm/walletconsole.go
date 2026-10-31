@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
@@ -1835,6 +1836,8 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 		fmt.Printf("  To:     Shield3 address %s\n", recipient.Address.Hex())
 	}
 	fmt.Printf("  Amount: %s TKM\n  Fee:    paid from Shield3 notes by the wallet builder\n", formatTKM(amount))
+	fmt.Println("  Note handling: if needed, the wallet will automatically combine confirmed private notes before sending.")
+	fmt.Println("  This may submit private self-transfers and incur additional network fees; no public deposit is created.")
 	confirmation, err := readWalletLine(reader, "Type SEND to build and submit the private payment")
 	if err != nil {
 		return err
@@ -1883,11 +1886,11 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	// it over loopback HTTP to GTKm's embedded wallet endpoint before proving.
 	// Build locally, sign the exact transaction with the encrypted keystore,
 	// then broadcast only the signed bytes to the node.
-	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 10*time.Minute)
+	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancelBuild()
-	unsigned, err := shield3wallet.BuildV4(buildCtx, rpcClient, key.Seed, identity, recipient, amount, false)
+	unsigned, err := buildV4WithAutomaticConsolidation(buildCtx, rpcClient, ks, from, password, chainID, key.Seed, identity, recipient, amount)
 	if err != nil {
-		return fmt.Errorf("build private Shield4 payment locally: %w", err)
+		return fmt.Errorf("build private Shield4 payment: %w", err)
 	}
 	signed, err := ks.SignTxWithPassphrase(from, password, unsigned, chainID)
 	if err != nil {
@@ -1913,6 +1916,173 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	fmt.Printf("  Transaction hash: %s\n  Status: broadcast to the connected node\n", transactionHash.Hex())
 	pauseWallet(reader)
 	return nil
+}
+
+// buildV4WithAutomaticConsolidation makes the ordinary SEND flow recover from
+// fragmented private balances. Consolidation is private and self-directed;
+// it never converts a transparent balance into a note or creates a public
+// deposit. Disjoint merges share the existing canonical note root, so the
+// wallet submits a wave before waiting for confirmations.
+func buildV4WithAutomaticConsolidation(ctx context.Context, rpcClient *rpc.Client, ks *keystore.KeyStore, from accounts.Account, password string, chainID *big.Int, seed []byte, identity *shield3wallet.Identity, recipient shield3wallet.PaymentPayload, amount *big.Int) (*types.Transaction, error) {
+	client := ethclient.NewClient(rpcClient)
+	view := identity.ViewKey()
+	scan, err := shield3wallet.ScanAsset(ctx, rpcClient, view, shielded3.AssetTKM)
+	view.Clear()
+	if err != nil {
+		return nil, fmt.Errorf("scan private notes once before building payment: %w", err)
+	}
+	const maxMergesPerWave = 16
+	for wave := 0; wave < 16; wave++ {
+		unsigned, err := shield3wallet.BuildV4WithKnownNotes(ctx, rpcClient, seed, identity, recipient, amount, scan.Notes)
+		if err == nil {
+			return unsigned, nil
+		}
+		if !strings.Contains(err.Error(), "up to four confirmed Shield3 notes cannot cover") {
+			return nil, err
+		}
+		groups, carry, groupErr := shield3wallet.Shield4ConsolidationGroups(scan.Notes)
+		if groupErr != nil {
+			return nil, fmt.Errorf("plan private consolidation wave: %w", groupErr)
+		}
+		if len(groups) == 0 {
+			return nil, errors.New("the remaining private notes cannot be merged within the current Shield4 output limit")
+		}
+		deferred := make([]shield3wallet.OwnedNote, 0)
+		if len(groups) > maxMergesPerWave {
+			for _, group := range groups[maxMergesPerWave:] {
+				deferred = append(deferred, group...)
+			}
+			groups = groups[:maxMergesPerWave]
+		}
+		carry = append(carry, deferred...)
+		fmt.Printf("\n  Fast private consolidation wave %d: preparing %d independent merges.\n", wave+1, len(groups))
+		type submittedMerge struct {
+			tx      *types.Transaction
+			outputs []shield3wallet.OwnedNote
+			nulls   []shielded3.Digest
+		}
+		submitted := make([]submittedMerge, 0, len(groups))
+		for _, group := range groups {
+			prep, outputs, prepErr := shield3wallet.BuildV4ConsolidationBatchFromNotes(ctx, rpcClient, seed, identity, group)
+			if prepErr != nil {
+				return nil, fmt.Errorf("build private consolidation wave: %w (no public deposit was created)", prepErr)
+			}
+			signed, signErr := ks.SignTxWithPassphrase(from, password, prep, chainID)
+			if signErr != nil {
+				return nil, fmt.Errorf("sign private consolidation: %w", signErr)
+			}
+			consolidation, _, decodeErr := core.DecodeShieldedV4Transaction(signed.Data())
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode private consolidation %s: %w", signed.Hash(), decodeErr)
+			}
+			nulls, nullifierErr := core.ShieldedV4Nullifiers(consolidation)
+			if nullifierErr != nil {
+				return nil, fmt.Errorf("read private consolidation inputs %s: %w", signed.Hash(), nullifierErr)
+			}
+			if sendErr := submitWalletConsolidation(ctx, rpcClient, client, signed); sendErr != nil {
+				return nil, fmt.Errorf("submit private consolidation %s: %w", signed.Hash(), sendErr)
+			}
+			submitted = append(submitted, submittedMerge{tx: signed, outputs: outputs, nulls: nulls})
+		}
+		fmt.Printf("  Submitted %d private merges; waiting for the wave to confirm…\n", len(submitted))
+		receipts := make([]*types.Receipt, len(submitted))
+		for i, merge := range submitted {
+			receipt, waitErr := waitWalletReceipt(ctx, client, merge.tx.Hash())
+			if waitErr != nil {
+				return nil, fmt.Errorf("private consolidation %s is not confirmed; check its hash before retrying: %w", merge.tx.Hash(), waitErr)
+			}
+			if receipt.Status != types.ReceiptStatusSuccessful {
+				return nil, fmt.Errorf("private consolidation %s was included but reverted", merge.tx.Hash())
+			}
+			receipts[i] = receipt
+		}
+		// Recheck every receipt after the wave completes so a reorg during a
+		// later receipt wait cannot leave an orphaned output in the local cache.
+		for i, receipt := range receipts {
+			head, headErr := client.HeaderByNumber(ctx, receipt.BlockNumber)
+			if headErr != nil {
+				return nil, fmt.Errorf("verify consolidation block for %s: %w", submitted[i].tx.Hash(), headErr)
+			}
+			if head.Hash() != receipt.BlockHash {
+				return nil, fmt.Errorf("private consolidation %s was reorganized; retry after the wallet rescans", submitted[i].tx.Hash())
+			}
+		}
+		spent := make(map[shielded3.Digest]struct{})
+		for _, merge := range submitted {
+			for _, nullifier := range merge.nulls {
+				spent[nullifier] = struct{}{}
+			}
+			for j := range merge.outputs {
+				merge.outputs[j].TransactionHash = merge.tx.Hash()
+				carry = append(carry, merge.outputs[j])
+			}
+		}
+		remaining := make([]shield3wallet.OwnedNote, 0, len(carry))
+		for _, note := range scan.Notes {
+			if _, consumed := spent[note.Nullifier]; !consumed {
+				remaining = append(remaining, note)
+			}
+		}
+		scan.Notes = append(remaining, carry...)
+	}
+	return nil, errors.New("automatic consolidation exceeded its safety limit; no payment was submitted")
+}
+
+// submitWalletConsolidation retries only transport failures. The same signed
+// transaction bytes are resent, so a retry has the same hash and nullifiers;
+// before each retry, query the node to detect a submission that succeeded even
+// if its response was lost. This handles a short IPC outage/restart without
+// producing competing merges or asking the user to rebuild the proof.
+func submitWalletConsolidation(ctx context.Context, rpcClient *rpc.Client, client *ethclient.Client, tx *types.Transaction) error {
+	raw, err := tx.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	backoff := []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 5 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt <= len(backoff); attempt++ {
+		var returned common.Hash
+		err = rpcClient.CallContext(ctx, &returned, "eth_sendRawTransaction", hexutil.Encode(raw))
+		if err == nil {
+			if returned != tx.Hash() {
+				return fmt.Errorf("node returned transaction hash %s, expected %s", returned, tx.Hash())
+			}
+			return nil
+		}
+		lastErr = err
+		pendingTx, _, lookupErr := client.TransactionByHash(ctx, tx.Hash())
+		if lookupErr == nil && pendingTx != nil {
+			return nil
+		}
+		if !walletRPCTransportError(err) || attempt == len(backoff) {
+			return err
+		}
+		timer := time.NewTimer(backoff[attempt])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("submission retry canceled after %s: %w", tx.Hash(), ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func walletRPCTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, fragment := range []string{
+		"connection refused", "connection reset", "broken pipe", "closed pipe",
+		"use of closed network connection", "unexpected eof", "eof",
+		"i/o timeout", "network is unreachable", "no such file or directory",
+	} {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // readWalletShield3Recipient switches a real terminal out of canonical mode

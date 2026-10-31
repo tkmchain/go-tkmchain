@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 
@@ -31,36 +32,165 @@ func BuildV4Consolidation(ctx context.Context, rpc RPC, seed []byte, identity *I
 	if err != nil {
 		return nil, err
 	}
+	tx, _, err := buildV4ConsolidationFromNotes(ctx, rpc, seed, identity, scan.Notes, target)
+	return tx, err
+}
+
+// BuildV4ConsolidationFromNotes performs a private self-consolidation using a
+// previously scanned note set and returns the newly created spendable outputs.
+// Callers must only pass notes from a complete, canonical wallet scan; selected
+// nullifiers are rechecked with the node before proof construction.
+func BuildV4ConsolidationFromNotes(ctx context.Context, rpc RPC, seed []byte, identity *Identity, notes []OwnedNote, target *big.Int) (*types.Transaction, []OwnedNote, error) {
+	return buildV4ConsolidationFromNotes(ctx, rpc, seed, identity, notes, target)
+}
+
+// BuildV4ConsolidationBatchFromNotes builds one merge from a disjoint group of
+// up to four already-scanned notes. Multiple transactions built this way may
+// share the same canonical anchor: consensus keeps historical Shield4 roots
+// valid, while nullifiers prevent any input from being spent twice.
+func BuildV4ConsolidationBatchFromNotes(ctx context.Context, rpc RPC, seed []byte, identity *Identity, notes []OwnedNote) (*types.Transaction, []OwnedNote, error) {
+	if identity == nil || identity.Stamp == nil || len(notes) < 2 || len(notes) > shielded4.InputSlots {
+		return nil, nil, errors.New("a Shield4 merge needs two to four distinct notes")
+	}
 	var active status
 	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV3Status"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var gasPrice hexutil.Big
 	if err := rpc.CallContext(ctx, &gasPrice, "eth_gasPrice"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), (*big.Int)(&gasPrice))
 	var balance hexutil.Big
 	if err := rpc.CallContext(ctx, &balance, "eth_getBalance", identity.Address, "latest"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	feeSponsor := new(big.Int)
 	if active.ConfidentialLedger || active.ShieldedOnly {
 		if (*big.Int)(&balance).Cmp(maxGas) < 0 {
-			return nil, errors.New("public balance must cover the network fee before Shield4 notes can be consolidated")
+			return nil, nil, errors.New("public balance must cover the network fee before Shield4 notes can be consolidated")
 		}
 	} else if (*big.Int)(&balance).Cmp(maxGas) < 0 {
 		feeSponsor.Set(maxGas)
 	}
-	amount, err := shield4ConsolidationAmount(scan.Notes, target, feeSponsor)
-	if err != nil {
-		return nil, err
+	total := new(big.Int)
+	for _, note := range notes {
+		value, err := parseAmount(note.ValueWei)
+		if err != nil {
+			return nil, nil, err
+		}
+		if value.Sign() <= 0 {
+			return nil, nil, errors.New("cannot consolidate an empty Shield4 note")
+		}
+		total.Add(total, value)
+	}
+	amount := new(big.Int).Sub(total, feeSponsor)
+	if amount.Sign() <= 0 {
+		return nil, nil, errors.New("selected Shield4 notes cannot cover the consolidation fee")
+	}
+	if cap := shielded4.MaxSendWei(); amount.Cmp(cap) > 0 {
+		return nil, nil, errors.New("selected notes exceed one-output consolidation capacity; use smaller disjoint groups")
 	}
 	self, err := DecodePaymentCode(identity.Code, identity.ChainID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return BuildV4Batch(ctx, rpc, seed, identity, []Payment{{Recipient: self, Amount: amount}})
+	outputs := make([]OwnedNote, 0, 1)
+	known := &ScanResult{Notes: notes}
+	tx, err := buildV4AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, []Payment{{Recipient: self, Amount: amount}}, false, nil, shielded3.AssetTKM, nil, nil, known, &outputs)
+	return tx, outputs, err
+}
+
+// Shield4ConsolidationGroups partitions notes into disjoint four-input merges.
+// It keeps each output within the per-transaction send limit and returns notes
+// that cannot be safely merged in this wave unchanged.
+func Shield4ConsolidationGroups(notes []OwnedNote) ([][]OwnedNote, []OwnedNote, error) {
+	ordered := append([]OwnedNote(nil), notes...)
+	values := make(map[shielded3.Digest]*big.Int, len(ordered))
+	for _, note := range ordered {
+		if _, exists := values[note.Commitment]; exists {
+			return nil, nil, errors.New("duplicate spendable note")
+		}
+		value, err := parseAmount(note.ValueWei)
+		if err != nil {
+			return nil, nil, err
+		}
+		if value.Sign() <= 0 {
+			return nil, nil, errors.New("cannot group an empty Shield4 note")
+		}
+		values[note.Commitment] = value
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		a, b := values[ordered[i].Commitment], values[ordered[j].Commitment]
+		if cmp := a.Cmp(b); cmp != 0 {
+			return cmp > 0
+		}
+		return bytes.Compare(ordered[i].Commitment.Bytes(), ordered[j].Commitment.Bytes()) < 0
+	})
+	var groups [][]OwnedNote
+	var carry []OwnedNote
+	for i := 0; i < len(ordered); {
+		count := len(ordered) - i
+		if count > shielded4.InputSlots {
+			count = shielded4.InputSlots
+		}
+		for count >= 2 {
+			total := new(big.Int)
+			for _, note := range ordered[i : i+count] {
+				total.Add(total, values[note.Commitment])
+			}
+			if total.Cmp(shielded4.MaxSendWei()) <= 0 {
+				groups = append(groups, append([]OwnedNote(nil), ordered[i:i+count]...))
+				i += count
+				break
+			}
+			count--
+		}
+		if count < 2 {
+			carry = append(carry, ordered[i])
+			i++
+		}
+	}
+	return groups, carry, nil
+}
+
+func buildV4ConsolidationFromNotes(ctx context.Context, rpc RPC, seed []byte, identity *Identity, notes []OwnedNote, target *big.Int) (*types.Transaction, []OwnedNote, error) {
+	if identity == nil || identity.Stamp == nil || target == nil || target.Sign() <= 0 {
+		return nil, nil, errors.New("invalid Shield4 consolidation request")
+	}
+	var active status
+	if err := rpc.CallContext(ctx, &active, "tkmprivacy_shieldedV3Status"); err != nil {
+		return nil, nil, err
+	}
+	var gasPrice hexutil.Big
+	if err := rpc.CallContext(ctx, &gasPrice, "eth_gasPrice"); err != nil {
+		return nil, nil, err
+	}
+	maxGas := new(big.Int).Mul(new(big.Int).SetUint64(WalletGas), (*big.Int)(&gasPrice))
+	var balance hexutil.Big
+	if err := rpc.CallContext(ctx, &balance, "eth_getBalance", identity.Address, "latest"); err != nil {
+		return nil, nil, err
+	}
+	feeSponsor := new(big.Int)
+	if active.ConfidentialLedger || active.ShieldedOnly {
+		if (*big.Int)(&balance).Cmp(maxGas) < 0 {
+			return nil, nil, errors.New("public balance must cover the network fee before Shield4 notes can be consolidated")
+		}
+	} else if (*big.Int)(&balance).Cmp(maxGas) < 0 {
+		feeSponsor.Set(maxGas)
+	}
+	amount, err := shield4ConsolidationAmount(notes, target, feeSponsor)
+	if err != nil {
+		return nil, nil, err
+	}
+	self, err := DecodePaymentCode(identity.Code, identity.ChainID)
+	if err != nil {
+		return nil, nil, err
+	}
+	outputs := make([]OwnedNote, 0, 1)
+	known := &ScanResult{Notes: notes}
+	tx, err := buildV4AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, []Payment{{Recipient: self, Amount: amount}}, false, nil, shielded3.AssetTKM, nil, nil, known, &outputs)
+	return tx, outputs, err
 }
 
 // shield4ConsolidationAmount is pure so the wallet batching policy can be
@@ -138,6 +268,15 @@ func BuildV4Batch(ctx context.Context, rpc RPC, seed []byte, identity *Identity,
 	return buildV4(ctx, rpc, seed, identity, payments, false, nil)
 }
 
+// BuildV4WithKnownNotes builds from an already scanned note set. This is
+// intended for a wallet operation that has confirmed a prior transaction and
+// updated its in-memory note set. It rechecks selected nullifiers and obtains
+// fresh Merkle paths, avoiding another scan from the activation block.
+func BuildV4WithKnownNotes(ctx context.Context, rpc RPC, seed []byte, identity *Identity, to PaymentPayload, amount *big.Int, notes []OwnedNote) (*types.Transaction, error) {
+	known := &ScanResult{Notes: notes}
+	return buildV4AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, []Payment{{Recipient: to, Amount: amount}}, false, nil, shielded3.AssetTKM, nil, nil, known, nil)
+}
+
 func BuildV4AssetBatch(ctx context.Context, rpc RPC, seed []byte, identity *Identity, assetID uint64, payments []Payment) (*types.Transaction, error) {
 	return buildV4Asset(ctx, rpc, seed, identity, payments, false, nil, assetID)
 }
@@ -166,6 +305,10 @@ func buildV4AssetWithWithdrawal(ctx context.Context, rpc RPC, seed []byte, ident
 }
 
 func buildV4AssetWithWithdrawalFee(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest, prepaidLimit *big.Int) (*types.Transaction, error) {
+	return buildV4AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, payments, deposit, relay, assetID, withdrawal, prepaidLimit, nil, nil)
+}
+
+func buildV4AssetWithWithdrawalFeeCached(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer, assetID uint64, withdrawal *WithdrawalRequest, prepaidLimit *big.Int, knownScan *ScanResult, generatedNotes *[]OwnedNote) (*types.Transaction, error) {
 	assetID = shielded3.NormalizeAssetID(assetID)
 	if !shielded3.IsSupportedAsset(assetID) {
 		return nil, errors.New("unsupported shielded asset")
@@ -318,13 +461,32 @@ func buildV4AssetWithWithdrawalFee(ctx context.Context, rpc RPC, seed []byte, id
 	} else {
 		view := identity.ViewKey()
 		defer view.Clear()
-		scan, err := ScanAsset(ctx, rpc, view, assetID)
-		if err != nil {
-			return nil, err
+		var scan ScanResult
+		if knownScan != nil {
+			scan = *knownScan
+		} else {
+			scan, err = ScanAsset(ctx, rpc, view, assetID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		chosen, err := selectNotes(scan.Notes, required)
 		if err != nil {
 			return nil, err
+		}
+		if knownScan != nil {
+			for _, note := range chosen {
+				var spent struct {
+					TransactionHash common.Hash `json:"transactionHash"`
+					Pending         bool        `json:"pending"`
+				}
+				if err := rpc.CallContext(ctx, &spent, "tkmprivacy_shieldedV3NullifierStatus", note.Nullifier); err != nil {
+					return nil, fmt.Errorf("recheck cached note %x: %w", note.Commitment, err)
+				}
+				if spent.Pending || spent.TransactionHash != (common.Hash{}) {
+					return nil, errors.New("cached Shield4 note was spent or is pending; rescan the wallet")
+				}
+			}
 		}
 		commitments := make([]shielded4.Digest, len(chosen))
 		for i, n := range chosen {
@@ -409,6 +571,13 @@ func buildV4AssetWithWithdrawalFee(ctx context.Context, rpc RPC, seed []byte, id
 			return nil, err
 		}
 		note := Note{AssetID: assetID, Owner: recipient.Owner, Randomness: random, ValueWei: value.String(), Recipient: recipient.Address, OneTimeKey: oneTimeKey, PaymentTag: paymentTag}
+		if generatedNotes != nil && value.Sign() > 0 {
+			nullifier, err := NoteNullifier(identity.ChainID, note, identity.NullifierKey)
+			if err != nil {
+				return nil, err
+			}
+			*generatedNotes = append(*generatedNotes, OwnedNote{Note: note, Commitment: commitment, Nullifier: nullifier})
+		}
 		envelope.Outputs[slot].Commitment = commitment
 		envelope.Outputs[slot].OneTimeKey = common.CopyBytes(oneTimeKey)
 		plain, err := json.Marshal(note)

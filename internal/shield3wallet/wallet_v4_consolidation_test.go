@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/zk/shielded3"
+	"github.com/ethereum/go-ethereum/zk/shielded4"
 )
 
 func TestShield4ConsolidationUsesLargestFourAndPreservesTargetReserve(t *testing.T) {
@@ -42,5 +43,46 @@ func TestShield4ConsolidationRefusesInsufficientAndAlreadyBoundedNotes(t *testin
 	}
 	if _, err := shield4ConsolidationAmount(bounded, big.NewInt(10), big.NewInt(1)); err == nil {
 		t.Fatal("consolidation should not loop when all notes already fit within the input bound")
+	}
+}
+
+func TestShield4ConsolidationGroupsDisjointNotesIntoWaves(t *testing.T) {
+	notes := make([]OwnedNote, 10)
+	for i := range notes {
+		notes[i] = OwnedNote{Note: Note{ValueWei: "100"}, Commitment: shielded3.Digest{uint64(i + 1)}}
+	}
+	groups, carry, err := Shield4ConsolidationGroups(notes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 3 || len(groups[0]) != 4 || len(groups[1]) != 4 || len(groups[2]) != 2 || len(carry) != 0 {
+		t.Fatalf("unexpected consolidation grouping: group sizes %v, carry %d", func() []int {
+			sizes := make([]int, len(groups))
+			for i := range groups {
+				sizes[i] = len(groups[i])
+			}
+			return sizes
+		}(), len(carry))
+	}
+	seen := make(map[shielded3.Digest]bool)
+	for _, group := range groups {
+		if len(group) > shielded4.InputSlots {
+			t.Fatalf("group has %d inputs", len(group))
+		}
+		for _, note := range group {
+			if seen[note.Commitment] {
+				t.Fatalf("note %x occurs in multiple groups", note.Commitment)
+			}
+			seen[note.Commitment] = true
+		}
+	}
+	for _, note := range carry {
+		if seen[note.Commitment] {
+			t.Fatalf("carried note %x also occurs in a group", note.Commitment)
+		}
+		seen[note.Commitment] = true
+	}
+	if len(seen) != len(notes) {
+		t.Fatalf("grouping retained %d of %d notes", len(seen), len(notes))
 	}
 }
