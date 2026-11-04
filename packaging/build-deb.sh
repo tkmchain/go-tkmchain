@@ -49,6 +49,9 @@ if [[ -x "$binary_dir/shielded-payout-prover" ]]; then
   install -Dm0755 "$binary_dir/shielded-payout-prover" "$root/usr/bin/shielded-payout-prover"
 fi
 install -Dm0644 README.md "$root/usr/share/doc/tkmchain/README.md"
+if [[ -f THIRD_PARTY_NOTICES ]]; then
+  install -Dm0644 THIRD_PARTY_NOTICES "$root/usr/share/doc/tkmchain/THIRD_PARTY_NOTICES"
+fi
 if [[ -f docs/TOR_INSTALLATION.md ]]; then
   install -Dm0644 docs/TOR_INSTALLATION.md "$root/usr/share/doc/tkmchain/TOR_INSTALLATION.md"
 fi

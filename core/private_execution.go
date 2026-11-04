@@ -96,7 +96,7 @@ func validatePrivateExecutionFields(config *params.ChainConfig, number *big.Int,
 		// stateless shape and state transition are checked by the registry.
 		return nil
 	}
-	if HasShieldedV3Prefix(data) || HasShieldedV4Prefix(data) {
+	if HasShieldedV3Prefix(data) || HasShieldedV4Prefix(data) || HasShieldedV5Prefix(data) || HasShieldedV6Prefix(data) {
 		return nil
 	}
 	return ErrPublicExecutionDisabled

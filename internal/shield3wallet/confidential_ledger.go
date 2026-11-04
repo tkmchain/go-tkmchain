@@ -22,6 +22,8 @@ func BuildPrepaidPayment(ctx context.Context, rpc RPC, seed []byte, identity *Id
 		return buildAssetWithWithdrawalFee(ctx, rpc, seed, identity, payments, false, nil, shielded3.AssetTKM, nil, maxFeeWei)
 	case 4:
 		return buildV4AssetWithWithdrawalFee(ctx, rpc, seed, identity, payments, false, nil, shielded3.AssetTKM, nil, maxFeeWei)
+	case 5:
+		return BuildV5PrepaidPayment(ctx, rpc, seed, identity, payments, maxFeeWei)
 	default:
 		return nil, errors.New("unsupported shielded version")
 	}
@@ -37,6 +39,8 @@ func BuildPublicWithdrawal(ctx context.Context, rpc RPC, seed []byte, identity *
 		return buildAssetWithWithdrawalFee(ctx, rpc, seed, identity, nil, false, nil, shielded3.AssetTKM, withdrawal, maxFeeWei)
 	case 4:
 		return buildV4AssetWithWithdrawalFee(ctx, rpc, seed, identity, nil, false, nil, shielded3.AssetTKM, withdrawal, maxFeeWei)
+	case 5:
+		return buildV5AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, nil, false, nil, shielded3.AssetTKM, withdrawal, maxFeeWei, nil, nil)
 	default:
 		return nil, errors.New("unsupported shielded version")
 	}

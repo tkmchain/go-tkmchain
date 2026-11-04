@@ -462,6 +462,12 @@ func ShieldedV3GasData(data []byte) ([]byte, uint64, error) {
 	if HasPrivateTVMPrefix(data) {
 		return PrivateTVMGasData(data)
 	}
+	if HasShieldedV6Prefix(data) {
+		return ShieldedV6GasData(data)
+	}
+	if HasShieldedV5Prefix(data) {
+		return ShieldedV5GasData(data)
+	}
 	if HasShieldedV4Prefix(data) {
 		return ShieldedV4GasData(data)
 	}

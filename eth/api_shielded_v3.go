@@ -161,6 +161,19 @@ func (api *PrivacyAPI) ShieldedV3Outputs(fromBlock, toBlock hexutil.Uint64) ([]S
 				return nil, err
 			}
 			if !ok {
+				v5, v5ok, v5err := core.DecodeShieldedV5Transaction(tx.Data())
+				if v5err != nil {
+					return nil, v5err
+				}
+				if v5ok {
+					for i, out := range v5.Outputs {
+						if len(result) >= 512 {
+							return nil, fmt.Errorf("Shield3 scan exceeds 512 outputs; reduce the block range")
+						}
+						result = append(result, ShieldedV3OutputStatus{hexutil.Uint64(number), block.Hash(), tx.Hash(), hexutil.Uint64(i), out.Commitment, common.CopyBytes(out.Incoming), common.CopyBytes(out.Outgoing), common.CopyBytes(out.Stamp), v5.AssetID})
+					}
+					continue
+				}
 				v4, v4ok, v4err := core.DecodeShieldedV4Transaction(tx.Data())
 				if v4err != nil {
 					return nil, v4err
@@ -208,6 +221,20 @@ func (api *PrivacyAPI) ShieldedV3NullifierStatus(nullifier shielded3.Digest) (Sh
 		for _, group := range []map[common.Address][]*types.Transaction{pending, queued} {
 			for _, transactions := range group {
 				for _, tx := range transactions {
+					if core.HasShieldedV5Prefix(tx.Data()) {
+						e, _, err := core.DecodeShieldedV5Transaction(tx.Data())
+						if err == nil {
+							nullifiers, err := core.ShieldedV5Nullifiers(e)
+							if err == nil {
+								for _, n := range nullifiers {
+									if n == nullifier {
+										return ShieldedV3NullifierStatus{TransactionHash: tx.Hash(), Pending: true}, nil
+									}
+								}
+							}
+						}
+						continue
+					}
 					if core.HasShieldedV4Prefix(tx.Data()) {
 						e, _, err := core.DecodeShieldedV4Transaction(tx.Data())
 						if err == nil {
@@ -261,10 +288,17 @@ func (api *PrivacyAPI) AntarticalStampPath(owner shielded3.Digest) (core.Shielde
 	return core.AntarticalStampPath(st, owner)
 }
 
-// ShieldedV3Paths constructs all selected note paths from one state snapshot.
+// ShieldedV3Paths constructs note paths for the largest supported Shield5
+// spend set from one state snapshot. V3/V4 builders still pass at most four.
 func (api *PrivacyAPI) ShieldedV3Paths(commitments []shielded3.Digest) ([]core.ShieldedV3Path, error) {
-	if len(commitments) == 0 || len(commitments) > shielded3.InputSlots {
-		return nil, fmt.Errorf("requires one to four note commitments")
+	if len(commitments) == 0 || len(commitments) > shielded3.Shield5InputSlots {
+		return nil, fmt.Errorf("requires one to sixteen note commitments")
+	}
+	if len(commitments) > shielded3.InputSlots {
+		head := api.e.blockchain.CurrentBlock()
+		if head == nil || !api.e.blockchain.Config().IsShield5(head.Number, head.Time) {
+			return nil, fmt.Errorf("more than four note paths require active Shield5 consensus")
+		}
 	}
 	st, err := api.e.currentPrivacyState()
 	if err != nil {

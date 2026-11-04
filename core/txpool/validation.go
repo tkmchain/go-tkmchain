@@ -70,7 +70,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
 	maxSize := opts.MaxSize
-	if opts.Config.IsAntartical(head.Number, head.Time) && (core.HasShieldedV4Prefix(tx.Data()) || core.HasShieldedV3Prefix(tx.Data()) || core.HasAntarticalStampPrefix(tx.Data()) || core.HasAddressVotePrefix(tx.Data()) || core.HasValidatorRegistrationPrefix(tx.Data()) || core.HasValidatorSlashPrefix(tx.Data()) || core.HasValidatorExitPrefix(tx.Data()) || core.HasValidatorWithdrawalPrefix(tx.Data()) || core.HasPrivateTVMPrefix(tx.Data())) {
+	if opts.Config.IsAntartical(head.Number, head.Time) && (core.HasShieldedV6Prefix(tx.Data()) || core.HasShieldedV5Prefix(tx.Data()) || core.HasShieldedV4Prefix(tx.Data()) || core.HasShieldedV3Prefix(tx.Data()) || core.HasAntarticalStampPrefix(tx.Data()) || core.HasAddressVotePrefix(tx.Data()) || core.HasValidatorRegistrationPrefix(tx.Data()) || core.HasValidatorSlashPrefix(tx.Data()) || core.HasValidatorExitPrefix(tx.Data()) || core.HasValidatorWithdrawalPrefix(tx.Data()) || core.HasPrivateTVMPrefix(tx.Data())) {
 		maxSize = core.ShieldedV3MaxTxSize
 	}
 	if tx.Size() > maxSize {
@@ -212,6 +212,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	if rules.IsAntartical && core.HasShieldedV4Prefix(tx.Data()) {
 		return core.ValidateShieldedV4Proof(tx)
+	}
+	if opts.Config.IsShield5(head.Number, head.Time) && core.HasShieldedV5Prefix(tx.Data()) {
+		return core.ValidateShieldedV5Proof(tx)
 	}
 	if rules.IsAntartical && core.HasShieldedV3Prefix(tx.Data()) {
 		return core.ValidateShieldedV3Proof(tx)

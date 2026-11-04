@@ -252,7 +252,15 @@ func ValidateAntarticalStampState(st shieldedStateReader, from common.Address, t
 	if value.Sign() > 0 && (to == nil || (*to != params.ShieldedPoolAddress && !IsAntarticalStamped(st, *to))) {
 		return fmt.Errorf("%w: recipient", ErrUnstampedAddress)
 	}
-	if HasShieldedV4Prefix(data) {
+	if HasShieldedV5Prefix(data) {
+		e, _, err := DecodeShieldedV5Transaction(data)
+		if err != nil {
+			return err
+		}
+		if e.WithdrawalValue != nil && e.WithdrawalValue.Sign() > 0 && !IsAntarticalStamped(st, e.WithdrawalRecipient) {
+			return fmt.Errorf("%w: withdrawal recipient", ErrUnstampedAddress)
+		}
+	} else if HasShieldedV4Prefix(data) {
 		e, _, err := DecodeShieldedV4Transaction(data)
 		if err != nil {
 			return err

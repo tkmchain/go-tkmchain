@@ -238,5 +238,5 @@ func (p *StateProcessor) speculativeConflictTranscript(ctx context.Context, bloc
 }
 
 func hasConsensusSideEffects(data []byte) bool {
-	return HasAntarticalStampPrefix(data) || HasPrivateTVMPrefix(data) || HasAccountAbstractionPrefix(data) || HasOracleObservationPrefix(data) || HasCrossChainMessagePrefix(data) || HasAddressVotePrefix(data) || HasValidatorRegistrationPrefix(data) || HasValidatorSlashPrefix(data) || HasValidatorExitPrefix(data) || HasValidatorWithdrawalPrefix(data) || HasShieldedV3Prefix(data) || HasShieldedV4Prefix(data)
+	return HasAntarticalStampPrefix(data) || HasPrivateTVMPrefix(data) || HasAccountAbstractionPrefix(data) || HasOracleObservationPrefix(data) || HasCrossChainMessagePrefix(data) || HasAddressVotePrefix(data) || HasValidatorRegistrationPrefix(data) || HasValidatorSlashPrefix(data) || HasValidatorExitPrefix(data) || HasValidatorWithdrawalPrefix(data) || HasShieldedV3Prefix(data) || HasShieldedV4Prefix(data) || HasShieldedV5Prefix(data) || HasShieldedV6Prefix(data)
 }

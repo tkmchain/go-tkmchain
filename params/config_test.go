@@ -533,6 +533,80 @@ func TestAntarticalForkSchedule(t *testing.T) {
 	}
 }
 
+func TestShield5ForkGateAndOrdering(t *testing.T) {
+	activation := MainnetAntarticalTime + 3600
+	config := *MainnetChainConfig
+	config.Shield5Time = newUint64(activation)
+
+	block := big.NewInt(0)
+	if config.IsShield5(block, activation-1) {
+		t.Fatal("Shield5 active before its scheduled timestamp")
+	}
+	if !config.IsShield5(block, activation) {
+		t.Fatal("Shield5 inactive at its scheduled timestamp")
+	}
+	if err := config.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("valid Shield5 fork order rejected: %v", err)
+	}
+
+	config.Shield5Time = newUint64(MainnetAntarticalTime - 1)
+	if err := config.CheckConfigForkOrder(); err == nil {
+		t.Fatal("Shield5 scheduled before Antartical was accepted")
+	}
+	if MainnetChainConfig.Shield5Time != nil {
+		t.Fatal("mainnet Shield5 activation must remain unset until coordinated")
+	}
+}
+
+func TestShield6ActivationRemainsUnsetOnShippedNetworks(t *testing.T) {
+	for name, config := range map[string]*ChainConfig{
+		"mainnet": MainnetChainConfig,
+		"randomx": RandomXChainConfig,
+		"egypt":   EgyptChainConfig,
+		"test":    TestChainConfig,
+		"dev":     AllDevChainProtocolChanges,
+	} {
+		if config.Shield6Time != nil {
+			t.Errorf("%s Shield6 activation is configured at %d", name, *config.Shield6Time)
+		}
+		if config.IsShield6(big.NewInt(0), ^uint64(0)) {
+			t.Errorf("%s activates Shield6 without an explicit timestamp", name)
+		}
+	}
+}
+
+func TestShield6ForkGateAndOrdering(t *testing.T) {
+	activation := MainnetAntarticalTime + 3600
+	config := *MainnetChainConfig
+	config.Shield6Time = newUint64(activation)
+
+	block := big.NewInt(0)
+	if config.IsShield6(block, activation-1) {
+		t.Fatal("Shield6 active before its scheduled timestamp")
+	}
+	if !config.IsShield6(block, activation) {
+		t.Fatal("Shield6 inactive at its scheduled timestamp")
+	}
+	if err := config.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("valid Shield6 fork order rejected: %v", err)
+	}
+
+	config.Shield6Time = newUint64(MainnetAntarticalTime - 1)
+	if err := config.CheckConfigForkOrder(); err == nil {
+		t.Fatal("Shield6 scheduled before Antartical was accepted")
+	}
+
+	config = *MainnetChainConfig
+	config.Shield6Time = newUint64(activation)
+	config.QuantumResistantTime = nil
+	if err := config.CheckConfigForkOrder(); err == nil {
+		t.Fatal("Shield6 accepted without its quantum-resistant prerequisite")
+	}
+	if MainnetChainConfig.Shield6Time != nil {
+		t.Fatal("mainnet Shield6 activation must remain unset until coordinated")
+	}
+}
+
 func TestTkmnetRequiredForkSchedule(t *testing.T) {
 	if MainnetChainConfig.IsTkmnetRequired(big.NewInt(0), MainnetAntarticalTime-1) {
 		t.Fatal("TKMNet requirement active before Antartical")

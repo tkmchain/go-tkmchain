@@ -104,14 +104,31 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 		}
 	}
 	// The handler starts its normal best-peer synchronizer as soon as the
-	// connection is registered. Stop that background attempt before invoking
-	// the snap-sync cycle under test, otherwise the two calls race and the
-	// explicit cycle can return downloader busy.
+	// protocol peers register. Cancel it, wait for its synchronising flag to
+	// clear, then run the deterministic snap-sync cycle below.
 	empty.handler.downloader.Cancel()
-
-	// Check that snap sync was disabled
-	if err := empty.handler.downloader.RandomXSync(full.chain.CurrentBlock()); err != nil {
-		t.Fatal("sync failed:", err)
+	syncDeadline := time.NewTimer(30 * time.Second)
+	defer syncDeadline.Stop()
+	for empty.handler.downloader.Synchronising() {
+		select {
+		case <-syncDeadline.C:
+			t.Fatal("background sync did not stop after cancellation")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	for {
+		err := empty.handler.downloader.RandomXSync(full.chain.CurrentBlock())
+		if err == nil {
+			break
+		}
+		if err.Error() != "busy" {
+			t.Fatal("sync failed:", err)
+		}
+		select {
+		case <-syncDeadline.C:
+			t.Fatal("sync remained busy after cancellation:", err)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	// Snap sync and mode switching happen asynchronously, poll for completion.
 	timeout := time.NewTimer(15 * time.Second)

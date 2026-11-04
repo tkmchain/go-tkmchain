@@ -79,7 +79,7 @@ CROSS_WINDOWS_EXT = .exe
 
 # Static linking flags for Windows
 WIN_STATIC_LDFLAGS = -static-libgcc -static-libstdc++ -Wl,-Bstatic -lstdc++ -lpthread -Wl,-Bdynamic
-HOST_RANDOMX_LDFLAGS = $(if $(filter Darwin,$(shell uname -s)),-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security,-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm)
+HOST_RANDOMX_LDFLAGS = $(if $(filter Darwin,$(shell uname -s)),-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security,-L$(RANDOMX_BUILD_DIR_HOST) -lrandomx -lstdc++ -lm -Wl,-z,noexecstack)
 DARWIN_AMD64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_AMD64) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 DARWIN_ARM64_RANDOMX_LDFLAGS = -L$(RANDOMX_BUILD_DIR_DARWIN_ARM64) -lrandomx -lc++ -lm -framework CoreFoundation -framework Security
 DARWIN_RANDOMX_LDFLAGS = $(DARWIN_AMD64_RANDOMX_LDFLAGS)
@@ -801,7 +801,7 @@ cross-linux-arm64: randomx-linux shield3-linux-arm64
 			echo "Building $$cmd for Linux ARM64..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM64) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM64) -lrandomx -lstdc++ -lm -Wl,-z,noexecstack" \
 				GOOS=linux GOARCH=arm64 CC=$(AARCH64_CC) CXX=$(AARCH64_CXX) \
 				go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(CROSS_OUTPUT_DIR)/linux/arm64/$$cmd-linux-arm64 ./cmd/$$cmd; \
 		done; \
@@ -821,7 +821,7 @@ cross-linux-arm: randomx-linux-arm shield3-linux-arm
 			echo "Building $$cmd for Linux ARM..."; \
 			CGO_ENABLED=1 \
 				CGO_CFLAGS="-I$(RANDOMX_SRC_DIR)" \
-				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM) -lrandomx -lstdc++ -lm" \
+				CGO_LDFLAGS="-L$(RANDOMX_BUILD_DIR_LINUX_ARM) -lrandomx -lstdc++ -lm -Wl,-z,noexecstack" \
 				GOOS=linux GOARCH=arm GOARM=7 CC=$(ARM_CC) CXX=$(ARM_CXX) \
 				go build $(LDFLAGS) -tags "randomx,cgo,shield3" -o $(CROSS_OUTPUT_DIR)/linux/arm/$$cmd-linux-arm ./cmd/$$cmd; \
 		done; \

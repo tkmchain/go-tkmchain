@@ -219,6 +219,24 @@ func DecodeShieldedTransaction(data []byte) (*ShieldedTransaction, bool, error) 
 // ProcessShieldedTransaction applies consensus shielded commitment state for tx.
 // The seen map should be shared across all transactions in the candidate block.
 func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, statedb *state.StateDB, tx *types.Transaction, seen map[common.Hash]struct{}) error {
+	if HasShieldedV6Prefix(tx.Data()) {
+		if config == nil || !config.IsShield6(blockNumber, blockTime) {
+			return fmt.Errorf("%w: Shield6 is not active", ErrInvalidShieldedTx)
+		}
+		if seen == nil {
+			seen = make(map[common.Hash]struct{})
+		}
+		return processShieldedV6(config, blockNumber, blockTime, statedb, tx, seen)
+	}
+	if HasShieldedV5Prefix(tx.Data()) {
+		if config == nil || !config.IsShield5(blockNumber, blockTime) {
+			return fmt.Errorf("%w: Shield5 is not active", ErrInvalidShieldedTx)
+		}
+		if seen == nil {
+			seen = make(map[common.Hash]struct{})
+		}
+		return processShieldedV5(config, blockNumber, blockTime, statedb, tx, seen)
+	}
 	if err := ValidateShieldedOnlyTransaction(config, blockNumber, blockTime, tx); err != nil {
 		return err
 	}
@@ -280,6 +298,23 @@ func ProcessShieldedTransaction(config *params.ChainConfig, blockNumber *big.Int
 // nullifier and commitment state checks so txpool validation can reject malformed
 // or transparent post-privacy transactions without needing a StateDB.
 func ValidateShieldedTransactionBasics(config *params.ChainConfig, blockNumber *big.Int, blockTime uint64, tx *types.Transaction) error {
+	if tx != nil && HasShieldedV6Prefix(tx.Data()) {
+		if config == nil || !config.IsShield6(blockNumber, blockTime) {
+			return fmt.Errorf("%w: Shield6 is not active", ErrInvalidShieldedTx)
+		}
+		_, err := shieldedV6Basics(config, blockNumber, blockTime, tx)
+		if err != nil {
+			return err
+		}
+		return ValidateShieldedV6Proof(tx)
+	}
+	if tx != nil && HasShieldedV5Prefix(tx.Data()) {
+		if config == nil || !config.IsShield5(blockNumber, blockTime) {
+			return fmt.Errorf("%w: Shield5 is not active", ErrInvalidShieldedTx)
+		}
+		_, err := shieldedV5Basics(config, blockNumber, blockTime, tx)
+		return err
+	}
 	if err := ValidateShieldedOnlyTransaction(config, blockNumber, blockTime, tx); err != nil {
 		return err
 	}
@@ -910,6 +945,19 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 		// this additional amount from the stamped voter after execution.
 		cost.Add(cost, AddressVoteBurnWei())
 	}
+	if HasShieldedV5Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV5Transaction(tx.Data())
+		if err != nil || e.GasSponsorValue == nil {
+			return cost
+		}
+		if e.GasSponsorValue.Sign() > 0 {
+			cost.Sub(cost, e.GasSponsorValue)
+			if cost.Sign() < 0 {
+				return new(big.Int)
+			}
+		}
+		return cost
+	}
 	if HasShieldedV4Prefix(tx.Data()) {
 		e, _, err := DecodeShieldedV4Transaction(tx.Data())
 		if err != nil || e.GasSponsorValue == nil {
@@ -965,6 +1013,16 @@ func ShieldedTransactionPreBalanceCost(tx *types.Transaction) *big.Int {
 func ValidateShieldedTransactionState(statedb *state.StateDB, tx *types.Transaction) error {
 	if statedb == nil || tx == nil {
 		return nil
+	}
+	if HasShieldedV6Prefix(tx.Data()) {
+		return ValidateShieldedV6State(statedb, tx)
+	}
+	if HasShieldedV5Prefix(tx.Data()) {
+		e, _, err := DecodeShieldedV5Transaction(tx.Data())
+		if err != nil {
+			return err
+		}
+		return validateShieldedV5State(statedb, tx, e)
 	}
 	if HasShieldedV4Prefix(tx.Data()) {
 		e, _, err := DecodeShieldedV4Transaction(tx.Data())

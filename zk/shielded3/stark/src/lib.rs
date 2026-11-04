@@ -8,6 +8,13 @@ use triton_vm::prelude::*;
 pub const PUBLIC_WORDS: usize = 108;
 pub const PUBLIC_WORDS_V4: usize = 113;
 pub const SECRET_WORDS: usize = 137;
+// Shield5 is a distinct fixed-capacity relation. The original V3/V4 layouts
+// remain frozen; twelve extra nullifier slots are appended to the V4 public
+// statement and twelve extra note openings to its witness.
+pub const SHIELD5_INPUT_SLOTS: usize = 16;
+pub const PUBLIC_WORDS_V5: usize = PUBLIC_WORDS_V4 + (SHIELD5_INPUT_SLOTS - 4) * 5;
+pub const SECRET_WORDS_V5: usize = SECRET_WORDS + (SHIELD5_INPUT_SLOTS - 4) * 14;
+pub const PATH_DIGESTS_V5: usize = MERKLE_DEPTH * (SHIELD5_INPUT_SLOTS + 4);
 pub const MERKLE_DEPTH: usize = 32;
 pub const PATH_DIGESTS: usize = MERKLE_DEPTH * 8;
 pub const OWNER_PUBLIC_WORDS: usize = 23;
@@ -22,6 +29,7 @@ pub const DOMAIN_NULLIFIER_KEY: u64 = 3005;
 pub const DOMAIN_ONETIME_KEY: u64 = 3006;
 pub const DOMAIN_SHIELD4_PROGRAM: u64 = 4004;
 pub const DOMAIN_SHIELD4_TAG: u64 = 4007;
+pub const DOMAIN_SHIELD5_PROGRAM: u64 = 5005;
 pub const DOMAIN_PRIVATE_TVM_LEAF: u64 = 5001;
 pub const PRIVATE_TVM_PUBLIC_WORDS: usize = 34;
 pub const PRIVATE_TVM_SECRET_WORDS: usize = 21;
@@ -156,7 +164,7 @@ impl Assembly {
 
 /// Frozen spending computation. The verifier derives its digest locally;
 /// neither a prover-supplied program nor a prover-supplied claim is accepted.
-fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
+fn spend_program_with_domain(domain: Option<u64>, shield4: bool, input_slots: usize) -> Program {
     let mut a = Assembly(String::new());
     // Shield4 uses the same audited witness relation but a distinct frozen
     // claim program.  This constant assertion changes the program digest and
@@ -165,14 +173,25 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
     if let Some(domain) = domain {
         a.emit(&format!("push {domain} push {domain} eq assert"));
     }
-    let public_words = if shield4 {
+    let public_words = if input_slots > 4 {
+        PUBLIC_WORDS_V5
+    } else if shield4 {
         PUBLIC_WORDS_V4
     } else {
         PUBLIC_WORDS
     };
-    for (length, base, instruction) in
-        [(public_words, 0, "read_io"), (SECRET_WORDS, 1000, "divine")]
-    {
+    for (length, base, instruction) in [
+        (public_words, 0, "read_io"),
+        (
+            if input_slots > 4 {
+                SECRET_WORDS_V5
+            } else {
+                SECRET_WORDS
+            },
+            1000,
+            "divine",
+        ),
+    ] {
         for i in (0..length).step_by(5) {
             let count = (length - i).min(5);
             a.emit(&format!("{instruction} {count}"));
@@ -213,7 +232,7 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
     a.load(58);
     a.emit("eq assert");
     a.emit("push 0");
-    for count in 0..=4 {
+    for count in 0..=input_slots {
         a.load(87);
         a.emit(&format!("push {count} eq add"));
     }
@@ -236,12 +255,12 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
     a.emit("push 0 eq skiz call private_spend");
     a.load(58);
     a.emit("push 1 eq skiz call public_deposit");
-    // Three additional notes share the same hidden spending owner. The public
+    // Additional notes share the same hidden spending owner. The public
     // input count determines which openings must prove membership and a unique
     // nullifier; inactive slots are zero and consume no VM digest paths.
-    for i in 0..3 {
+    for i in 0..input_slots - 1 {
         a.emit("push 0");
-        for count in i + 2..=4 {
+        for count in i + 2..=input_slots {
             a.load(87);
             a.emit(&format!("push {count} eq add"));
         }
@@ -399,9 +418,9 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
         a.emit(&format!("push 0 push {} write_mem 1 pop 1", 4 + limb));
     }
     a.emit("return");
-    for i in 0..3 {
+    for i in 0..input_slots - 1 {
         let base = 1095 + 14 * i;
-        let nullifier = 72 + 5 * i;
+        let nullifier = if i < 3 { 72 + 5 * i } else { 113 + 5 * (i - 3) };
         a.emit(&format!("extra_spend_{i}:"));
         a.emit(&format!("push {} push 9 call check_range", base + 5));
         a.emit("push 1");
@@ -420,7 +439,9 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
         a.emit(&format!("push {base} call nullifier_hash"));
         a.assert_digest(nullifier);
         // No repeated input, even when a malicious witness opens it twice.
-        for previous in std::iter::once(33).chain((0..i).map(|j| 72 + 5 * j)) {
+        for previous in std::iter::once(33)
+            .chain((0..i).map(|j| if j < 3 { 72 + 5 * j } else { 113 + 5 * (j - 3) }))
+        {
             a.emit("push 1");
             for j in 0..5 {
                 a.load(previous + j);
@@ -477,7 +498,7 @@ fn spend_program_with_domain(domain: Option<u64>, shield4: bool) -> Program {
 }
 
 pub fn spend_program() -> Program {
-    spend_program_with_domain(None, false)
+    spend_program_with_domain(None, false, 4)
 }
 
 /// Shield4 is a separate frozen claim program.  It keeps the same hidden
@@ -485,7 +506,13 @@ pub fn spend_program() -> Program {
 /// while the domain assertion gives the verifier a protocol-specific program
 /// digest and therefore a non-interchangeable proof system.
 pub fn spend_program_v4() -> Program {
-    spend_program_with_domain(Some(DOMAIN_SHIELD4_PROGRAM), true)
+    spend_program_with_domain(Some(DOMAIN_SHIELD4_PROGRAM), true, 4)
+}
+
+/// Shield5 is a separate proof relation with up to sixteen private inputs.
+/// Its program digest and envelope layout are distinct from V3 and V4.
+pub fn spend_program_v5() -> Program {
+    spend_program_with_domain(Some(DOMAIN_SHIELD5_PROGRAM), true, SHIELD5_INPUT_SLOTS)
 }
 
 pub fn canonical_words(words: &[u64], size: usize) -> Result<Vec<BFieldElement>, String> {
@@ -615,6 +642,86 @@ pub fn prove_spend_v4(
 
 pub fn verify_spend_v4(public: &[u64], words: &[u64]) -> Result<(), String> {
     verify_program(spend_program_v4(), public_input_v4(public)?, words)
+}
+
+fn public_input_v5(words: &[u64]) -> Result<Vec<BFieldElement>, String> {
+    if words.len() != PUBLIC_WORDS_V5 {
+        return Err("invalid Shield5 public input length".into());
+    }
+    let count = words[87] as usize;
+    if count > SHIELD5_INPUT_SLOTS || (words[58] == 1) != (count == 0) {
+        return Err("invalid Shield5 input count".into());
+    }
+    // The first four nullifiers retain the frozen V4 offsets. Validate that
+    // prefix using its original parser, then validate the appended V5 slots.
+    let mut base = words[..PUBLIC_WORDS].to_vec();
+    base[87] = count.min(4) as u64;
+    public_input(&base)?;
+    let mut active: Vec<&[u64]> = Vec::new();
+    for i in 0..SHIELD5_INPUT_SLOTS {
+        let offset = if i == 0 {
+            33
+        } else if i < 4 {
+            72 + 5 * (i - 1)
+        } else {
+            113 + 5 * (i - 4)
+        };
+        let nullifier = &words[offset..offset + 5];
+        if i < count {
+            if nullifier.iter().all(|&v| v == 0) || active.contains(&nullifier) {
+                return Err("zero or duplicate Shield5 nullifier".into());
+            }
+            active.push(nullifier);
+        } else if nullifier.iter().any(|&v| v != 0) {
+            return Err("inactive Shield5 nullifier".into());
+        }
+    }
+    if words[58] == 0 && words[108..113].iter().all(|&v| v == 0) {
+        return Err("zero Shield5 linkability tag".into());
+    }
+    if words[58] == 1 && words[108..113].iter().any(|&v| v != 0) {
+        return Err("deposit must not carry a Shield5 linkability tag".into());
+    }
+    canonical_words(words, PUBLIC_WORDS_V5)
+}
+
+fn spending_paths_v5(public: &[u64], path: &[[u64; 5]]) -> Result<Vec<[u64; 5]>, String> {
+    public_input_v5(public)?;
+    if path.len() != PATH_DIGESTS_V5 {
+        return Err("invalid Shield5 Merkle path depth".into());
+    }
+    let count = public[87] as usize;
+    let active_end = count * MERKLE_DEPTH;
+    let input_end = SHIELD5_INPUT_SLOTS * MERKLE_DEPTH;
+    if path[active_end..input_end]
+        .iter()
+        .flatten()
+        .any(|&v| v != 0)
+    {
+        return Err("nonzero inactive Shield5 input path".into());
+    }
+    let mut active = path[..active_end].to_vec();
+    active.extend_from_slice(&path[input_end..]);
+    Ok(active)
+}
+
+pub fn prove_spend_v5(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> Result<Vec<u64>, String> {
+    let active_path = spending_paths_v5(public, path)?;
+    let public = public_input_v5(public)?;
+    let tokens = canonical_words(secret, SECRET_WORDS_V5)?;
+    let digests = active_path
+        .iter()
+        .map(|d| canonical_words(d, 5).map(|w| Digest::new(w.try_into().unwrap())))
+        .collect::<Result<Vec<_>, _>>()?;
+    prove_program(spend_program_v5(), public, tokens, digests)
+}
+
+pub fn verify_spend_v5(public: &[u64], proof: &[u64]) -> Result<(), String> {
+    verify_program(spend_program_v5(), public_input_v5(public)?, proof)
 }
 
 /// Frozen private TVM storage transition relation.
@@ -934,6 +1041,46 @@ pub fn describe_spend_v4(
     let mut tag = vec![DOMAIN_SHIELD4_TAG];
     let owner = &result[..5];
     tag.extend(owner);
+    tag.extend(&secret[5..10]);
+    tag.push(secret[18]);
+    tag.extend(&public[28..33]);
+    let tag = Tip5::hash_varlen(
+        &tag.iter()
+            .copied()
+            .map(BFieldElement::new)
+            .collect::<Vec<_>>(),
+    );
+    result.splice(20..20, tag.values().map(|v| v.value()));
+    Ok(result)
+}
+
+pub fn describe_spend_v5(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> Result<Vec<u64>, String> {
+    if public.len() != PUBLIC_WORDS_V5
+        || secret.len() != SECRET_WORDS_V5
+        || path.len() != PATH_DIGESTS_V5
+    {
+        return Err("invalid Shield5 description witness length".into());
+    }
+    canonical_words(public, PUBLIC_WORDS_V5)?;
+    canonical_words(secret, SECRET_WORDS_V5)?;
+    // Link-tag derivation only needs the first input and the four output stamp
+    // witnesses. Repack those paths into the frozen V4 descriptor layout; the
+    // full V5 spend verifier still checks all active input paths separately.
+    let mut descriptor_public = public[..PUBLIC_WORDS].to_vec();
+    descriptor_public[87] = if public[87] == 0 { 0 } else { 1 };
+    descriptor_public[72..87].fill(0);
+    let mut descriptor_path = vec![[0; 5]; PATH_DIGESTS];
+    descriptor_path[..MERKLE_DEPTH].copy_from_slice(&path[..MERKLE_DEPTH]);
+    let stamp_start_v5 = SHIELD5_INPUT_SLOTS * MERKLE_DEPTH;
+    let stamp_start_v4 = 4 * MERKLE_DEPTH;
+    descriptor_path[stamp_start_v4..].copy_from_slice(&path[stamp_start_v5..]);
+    let mut result = describe_spend(&descriptor_public, &secret[..SECRET_WORDS], &descriptor_path)?;
+    let mut tag = vec![DOMAIN_SHIELD4_TAG];
+    tag.extend(&result[..5]);
     tag.extend(&secret[5..10]);
     tag.push(secret[18]);
     tag.extend(&public[28..33]);

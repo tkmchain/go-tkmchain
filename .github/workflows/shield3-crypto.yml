@@ -1,10 +1,11 @@
-name: Shield3 cryptography
+name: Shield3/Shield6 cryptography
 
 on:
   pull_request:
     paths:
       - 'crypto/pqcrypto/**'
       - 'zk/shielded3/**'
+      - 'zk/shielded6/**'
       - 'core/**'
       - 'accounts/keystore/**'
       - 'eth/**'
@@ -28,6 +29,7 @@ on:
     paths:
       - 'crypto/pqcrypto/**'
       - 'zk/shielded3/**'
+      - 'zk/shielded6/**'
       - 'core/**'
       - 'accounts/keystore/**'
       - 'eth/**'
@@ -109,5 +111,38 @@ jobs:
           # withdrawal replay protection, and a reorged scan head.
           go test -timeout 45m -tags shield3 ./internal/shield3wallet -run '^TestShield4MultiNodeRehearsal$'
           go test -tags shield3 ./core ./eth ./internal/ethapi ./cmd/shielded-payout-prover -run "Shielded|Shield3|Stamped"
+          # Shield6 is intentionally inactive by default. Exercise its CLSAG,
+          # RingCT, accumulator, fork-gate, RPC and wallet construction paths
+          # against the production stamp backend without setting activation.
+          go test -tags shield3 ./zk/shielded6 ./core ./eth -run 'ShieldedV6|Shield6'
+          GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -timeout 10m -tags shield3 ./core -run '^TestShield6TwoNodeDepositSpendReplayAndReorgRehearsal$' -count=1 -v
+          go test -tags shield3 ./internal/shield3wallet -run '^TestBuildAndSignShieldedV6(Deposit|Payment)$'
+          go test -tags shield3 ./cmd/gtkm -run '^TestWaitWalletCanonicalConfirmations$'
+          go test -tags shield3 ./zk/shielded6 -run '^$' -bench 'BenchmarkShield6' -benchmem -count=1
+          go test -tags shield3 ./core -run '^$' -bench '^BenchmarkShield6MaxPaymentEnvelope$' -benchmem -count=3
           go test -race -tags shield3 ./internal/shield3relay ./cmd/shield3-relay
-          go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay
+          go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./zk/shielded6 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay ./cmd/gtkm
+
+  shield6-migration:
+    name: Shield6 native migration rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '1'
+      GOPROXY: 'https://proxy.golang.org|direct'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+      - name: Build and validate native Shield4 verifier
+        run: ./scripts/shield4-build.sh
+      - name: Run real Shield4-to-Shield6 migration on two state replicas
+        run: GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -timeout 45m -tags shield3 ./internal/shield3wallet -run '^TestShield6MigrationNativeRehearsal$' -count=1 -v
+      - name: Verify Shield6 remains inactive on shipped networks
+        run: go test -p=1 ./params -run '^TestShield6ActivationRemainsUnsetOnShippedNetworks$' -count=1

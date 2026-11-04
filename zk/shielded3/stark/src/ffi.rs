@@ -89,9 +89,12 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
         ));
     }
     let v4 = (8..=10).contains(&operation);
+    let v5 = (13..=15).contains(&operation);
     let ownership = operation == 6 || operation == 7;
     let public_count = if ownership {
         OWNER_PUBLIC_WORDS
+    } else if v5 {
+        PUBLIC_WORDS_V5
     } else if v4 {
         PUBLIC_WORDS_V4
     } else {
@@ -100,6 +103,8 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
     let prefix = 8 + public_count * 8;
     let expected_magic = if ownership {
         b"TKMS3OWN" as &[u8]
+    } else if v5 {
+        b"TKMS5STK" as &[u8]
     } else if v4 {
         b"TKMS4STK" as &[u8]
     } else {
@@ -110,7 +115,7 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
     }
     let public = words(&data[8..prefix])?;
     let input = &data[prefix..];
-    if operation == 1 || operation == 7 || operation == 8 {
+    if operation == 1 || operation == 7 || operation == 8 || operation == 13 {
         if input.len() < 4 {
             return Err("truncated proof".into());
         }
@@ -122,6 +127,8 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
             verify_owner(&public, &words(&input[4..])?)?;
         } else if operation == 8 {
             verify_spend_v4(&public, &words(&input[4..])?)?;
+        } else if operation == 13 {
+            verify_spend_v5(&public, &words(&input[4..])?)?;
         } else {
             verify_spend(&public, &words(&input[4..])?)?;
         }
@@ -137,11 +144,13 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
         secret.fill(0);
         return result;
     }
-    if input.len() != (SECRET_WORDS + PATH_DIGESTS * 5) * 8 {
+    let secret_count = if v5 { SECRET_WORDS_V5 } else { SECRET_WORDS };
+    let path_count = if v5 { PATH_DIGESTS_V5 } else { PATH_DIGESTS };
+    if input.len() != (secret_count + path_count * 5) * 8 {
         return Err("invalid witness length".into());
     }
-    let mut secret = words(&input[..SECRET_WORDS * 8])?;
-    let path = words(&input[SECRET_WORDS * 8..])?
+    let mut secret = words(&input[..secret_count * 8])?;
+    let path = words(&input[secret_count * 8..])?
         .chunks_exact(5)
         .map(|d| d.try_into().unwrap())
         .collect::<Vec<_>>();
@@ -156,8 +165,14 @@ pub(crate) fn process(operation: u32, data: &[u8]) -> Result<Vec<u8>, String> {
             out.extend(bytes(&p));
             out
         }),
+        14 => prove_spend_v5(&public, &secret, &path).map(|p| {
+            let mut out = (p.len() as u32).to_le_bytes().to_vec();
+            out.extend(bytes(&p));
+            out
+        }),
         3 => describe_spend(&public, &secret, &path).map(|d| bytes(&d)),
         10 => describe_spend_v4(&public, &secret, &path).map(|d| bytes(&d)),
+        15 => describe_spend_v5(&public, &secret, &path).map(|d| bytes(&d)),
         _ => Err("invalid operation".into()),
     };
     secret.fill(0);
@@ -179,10 +194,9 @@ pub unsafe extern "C" fn tkm_shield3_call(
     if input.is_null()
         || output.is_null()
         || written.is_null()
-        // Shield4 adds five public field words for its linkability tag. Keep
-        // the native ABI bound large enough for that envelope while retaining
-        // the same fixed proof-size cap.
-        || length > 8 + PUBLIC_WORDS_V4 * 8 + 4 + MAX_PROOF_WORDS * 8
+        // Shield5 adds twelve nullifiers and uses a larger fixed witness.
+        // Keep each request bounded independently of untrusted input.
+        || length > 8 + PUBLIC_WORDS_V5 * 8 + (SECRET_WORDS_V5 + PATH_DIGESTS_V5 * 5) * 8 + 4 + MAX_PROOF_WORDS * 8
         || capacity > 4 + MAX_PROOF_WORDS * 8
     {
         return 1;

@@ -143,6 +143,8 @@ type status struct {
 	ConfidentialLedger bool            `json:"confidentialLedger"`
 	Active             bool            `json:"active"`
 	NativeVerifier     bool            `json:"nativeVerifier"`
+	MaxInputs          uint64          `json:"maxInputs"`
+	Shield5Time        *hexutil.Uint64 `json:"shield5Time"`
 	ActivationTime     *hexutil.Uint64 `json:"activationTime"`
 	ShieldedOnly       bool            `json:"shieldedOnly"`
 	ShieldedOnlyTime   *hexutil.Uint64 `json:"shieldedOnlyTime"`
@@ -754,8 +756,15 @@ func buildAssetWithWithdrawalFee(ctx context.Context, rpc RPC, seed []byte, iden
 // Prefer one covering note; otherwise the largest available notes minimize
 // input count. Selection never exceeds the fixed four-input consensus budget.
 func selectNotes(notes []OwnedNote, required *big.Int) ([]OwnedNote, error) {
+	return selectNotesWithLimit(notes, required, shielded3.InputSlots)
+}
+
+func selectNotesWithLimit(notes []OwnedNote, required *big.Int, maxInputs int) ([]OwnedNote, error) {
 	if required == nil || required.Sign() <= 0 {
 		return nil, errors.New("invalid required amount")
+	}
+	if maxInputs < 1 || maxInputs > shielded3.Shield5InputSlots {
+		return nil, errors.New("invalid shielded note input limit")
 	}
 	eligible := make([]OwnedNote, 0, len(notes))
 	seen := map[shielded3.Digest]bool{}
@@ -787,9 +796,9 @@ func selectNotes(notes []OwnedNote, required *big.Int) ([]OwnedNote, error) {
 			return []OwnedNote{n}, nil
 		}
 	}
-	chosen := make([]OwnedNote, 0, shielded3.InputSlots)
+	chosen := make([]OwnedNote, 0, maxInputs)
 	total := new(big.Int)
-	for i := len(eligible) - 1; i >= 0 && len(chosen) < shielded3.InputSlots; i-- {
+	for i := len(eligible) - 1; i >= 0 && len(chosen) < maxInputs; i-- {
 		chosen = append(chosen, eligible[i])
 		v, _ := parseAmount(eligible[i].ValueWei)
 		total.Add(total, v)
@@ -800,5 +809,8 @@ func selectNotes(notes []OwnedNote, required *big.Int) ([]OwnedNote, error) {
 			return chosen, nil
 		}
 	}
-	return nil, errors.New("up to four confirmed Shield3 notes cannot cover this amount and fees; consolidate smaller notes or wait for pending payments")
+	if maxInputs == shielded3.InputSlots {
+		return nil, errors.New("up to four confirmed Shield3 notes cannot cover this amount and fees; use Shield5 after its activation or wait for funds")
+	}
+	return nil, fmt.Errorf("up to %d confirmed Shield5 notes cannot cover this amount and fees; wait for funds or split the payment", maxInputs)
 }

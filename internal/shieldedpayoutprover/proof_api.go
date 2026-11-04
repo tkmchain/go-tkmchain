@@ -190,7 +190,7 @@ func (p *Prover) releaseBuildSlot() {
 }
 
 func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShieldedResponse, error) {
-	return BuildShieldedResponse{}, errors.New("legacy proof-only deposit API is disabled; use the daemon-funded Shield3/Shield4 deposit flow")
+	return BuildShieldedResponse{}, errors.New("legacy proof-only deposit API is disabled; use the daemon-funded Shield3/Shield4/Shield5 deposit flow")
 	/* Legacy V1/V2 construction is intentionally unreachable.
 	if !p.ready() {
 		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
@@ -264,7 +264,7 @@ func (p *Prover) BuildDeposit(ctx context.Context, req DepositRequest) (BuildShi
 }
 
 func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (BuildShieldedResponse, error) {
-	return BuildShieldedResponse{}, errors.New("legacy proof-only transfer API is disabled; use the daemon-backed Shield3/Shield4 wallet flow")
+	return BuildShieldedResponse{}, errors.New("legacy proof-only transfer API is disabled; use the daemon-backed Shield3/Shield4/Shield5 wallet flow")
 	/* Legacy V1/V2 construction is intentionally unreachable.
 	if !p.ready() {
 		return BuildShieldedResponse{}, errors.New("prover is not ready; check /healthz")
@@ -358,7 +358,7 @@ func (p *Prover) BuildTransfer(ctx context.Context, req BuildTransferRequest) (B
 }
 
 func (p *Prover) BuildWithdrawal(context.Context, BuildWithdrawalRequest) (BuildShieldedResponse, error) {
-	return BuildShieldedResponse{}, errors.New("legacy proof-only withdrawal API is disabled; use the daemon-backed Shield3/Shield4 wallet flow")
+	return BuildShieldedResponse{}, errors.New("legacy proof-only withdrawal API is disabled; use the daemon-backed Shield3/Shield4/Shield5 wallet flow")
 }
 
 func shieldedSpendData(requestID string, applicationData string) ([]byte, error) {

@@ -95,7 +95,11 @@ func (p *Prover) nativeCapacity(ctx context.Context) (*nativePayoutCapacity, err
 	} else if balance.Cmp(reserve) < 0 {
 		privateFee.Set(reserve)
 	}
-	max, err := nativeNoteCapacity(scan.Notes, privateFee)
+	inputLimit := shielded3.InputSlots
+	if p.nativeShieldVersion(ctx) == 5 {
+		inputLimit = shielded3.Shield5InputSlots
+	}
+	max, err := nativeNoteCapacityWithLimit(scan.Notes, privateFee, inputLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +107,8 @@ func (p *Prover) nativeCapacity(ctx context.Context) (*nativePayoutCapacity, err
 	// Advertise eventual capacity when the daemon can privately consolidate.
 	// Otherwise a pool would request a public deposit before ever calling the
 	// payout endpoint that performs automatic preparation.
-	if len(scan.Notes) > shielded3.InputSlots {
-		steps := (len(scan.Notes) - shielded3.InputSlots + shielded3.InputSlots - 2) / (shielded3.InputSlots - 1)
+	if len(scan.Notes) > inputLimit {
+		steps := (len(scan.Notes) - inputLimit + inputLimit - 2) / (inputLimit - 1)
 		fees := new(big.Int).Mul(reserve, big.NewInt(int64(steps+1)))
 		if balance.Cmp(fees) >= 0 {
 			total := new(big.Int)
@@ -169,6 +173,13 @@ func (p *Prover) nativeCapacity(ctx context.Context) (*nativePayoutCapacity, err
 }
 
 func nativeNoteCapacity(notes []shield3wallet.OwnedNote, fee *big.Int) (*big.Int, error) {
+	return nativeNoteCapacityWithLimit(notes, fee, shielded3.InputSlots)
+}
+
+func nativeNoteCapacityWithLimit(notes []shield3wallet.OwnedNote, fee *big.Int, inputLimit int) (*big.Int, error) {
+	if inputLimit != shielded3.InputSlots && inputLimit != shielded3.Shield5InputSlots {
+		return nil, errors.New("unsupported private input limit")
+	}
 	values := make([]*big.Int, 0, len(notes))
 	seen := make(map[shielded3.Digest]bool)
 	for _, n := range notes {
@@ -182,7 +193,7 @@ func nativeNoteCapacity(notes []shield3wallet.OwnedNote, fee *big.Int) (*big.Int
 	sort.Slice(values, func(i, j int) bool { return values[i].Cmp(values[j]) > 0 })
 	total := new(big.Int)
 	for i, v := range values {
-		if i == shielded3.InputSlots {
+		if i == inputLimit {
 			break
 		}
 		total.Add(total, v)
@@ -200,7 +211,7 @@ func nativeNoteCapacity(notes []shield3wallet.OwnedNote, fee *big.Int) (*big.Int
 func nativeAmount(raw string) (*big.Int, error) {
 	v, ok := parseBigFlexible(raw)
 	if !ok || v.Sign() <= 0 || v.Cmp(shielded3.MaxSendWei()) > 0 {
-		return nil, errors.New("Shield3/Shield4 amount must be positive and at most 5,000,000 TKM")
+		return nil, errors.New("Shield3/Shield4/Shield5 amount must be positive and at most 5,000,000 TKM")
 	}
 	return v, nil
 }
@@ -220,9 +231,9 @@ func nativeDepositAmount(req DepositRequest) (*big.Int, error) {
 	return nativeAmount(new(big.Int).Quo(r.Num(), r.Denom()).String())
 }
 
-// Native requests bypass the legacy one-note uint64 reservation. The native
-// builder selects up to four real unspent notes; pending nullifiers are
-// excluded by its canonical scan.
+// Native requests bypass the legacy one-note uint64 reservation. The active
+// consensus version determines whether the builder can spend four or sixteen
+// real notes; pending nullifiers are excluded by its canonical scan.
 func (p *Prover) processNativePayout(ctx context.Context, req PayoutRequest, db *RequestDB, version uint64) (string, error) {
 	if payoutReplacementRequested(req) {
 		return "", errors.New("native payout retries must reuse the original signed transaction")
@@ -281,6 +292,8 @@ func (p *Prover) processNativePayout(ctx context.Context, req PayoutRequest, db 
 	var tx *types.Transaction
 	if prepaidLimit != nil {
 		tx, err = shield3wallet.BuildPrepaidPayment(ctx, p.client.Client(), seed, id, []shield3wallet.Payment{{Recipient: recipient, Amount: amount}}, version, prepaidLimit)
+	} else if version == 5 {
+		tx, err = shield3wallet.BuildV5(ctx, p.client.Client(), seed, id, recipient, amount, false)
 	} else if version == 4 {
 		tx, err = shield3wallet.BuildV4(ctx, p.client.Client(), seed, id, recipient, amount, false)
 	} else if version == 3 {
@@ -316,8 +329,8 @@ func (p *Prover) submitNativeRecord(ctx context.Context, rec RequestRecord) (str
 	if err := tx.UnmarshalBinary(raw); err != nil {
 		return "", err
 	}
-	if tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasShieldedV4Prefix(tx.Data())) {
-		return "", errors.New("refusing to rebroadcast a saved non-Shield3/Shield4 payout")
+	if tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasShieldedV4Prefix(tx.Data()) && !core.HasShieldedV5Prefix(tx.Data())) {
+		return "", errors.New("refusing to rebroadcast a saved non-Shield3/Shield4/Shield5 payout")
 	}
 	if tx.Hash().Hex() != rec.TxHash {
 		return "", errors.New("saved native payout hash mismatch")

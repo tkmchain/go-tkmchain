@@ -169,7 +169,25 @@ func ShieldedPaymentMetadata(tx *types.Transaction) (ShieldedPrivacyBoundary, ui
 	var deposit bool
 	var withdrawal *big.Int
 	var mode uint64
-	if HasShieldedV4Prefix(tx.Data()) {
+	if HasShieldedV6Prefix(tx.Data()) {
+		e, ok, err := DecodeShieldedV6Transaction(tx.Data())
+		if err != nil || !ok || e == nil {
+			return "", 0, ErrInvalidShieldedTx
+		}
+		if e.Deposit {
+			return PublicShielding, 0, nil
+		}
+		if e.WithdrawalValue != nil && e.WithdrawalValue.Sign() > 0 {
+			return PublicUnshielding, 0, nil
+		}
+		return PrivatePayment, 0, nil
+	} else if HasShieldedV5Prefix(tx.Data()) {
+		e, ok, err := DecodeShieldedV5Transaction(tx.Data())
+		if err != nil || !ok || e == nil {
+			return "", 0, ErrInvalidShieldedTx
+		}
+		deposit, withdrawal, mode = e.Deposit, e.WithdrawalValue, e.FeeMode
+	} else if HasShieldedV4Prefix(tx.Data()) {
 		e, ok, err := DecodeShieldedV4Transaction(tx.Data())
 		if err != nil || !ok || e == nil {
 			return "", 0, ErrInvalidShieldedTx

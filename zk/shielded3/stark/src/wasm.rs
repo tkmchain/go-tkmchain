@@ -4,7 +4,7 @@
 //! format is byte-for-byte the same bounded request accepted by the native
 //! `tkm_shield3_call` ABI; no alternate proof relation is introduced.
 
-const BUFFER_CAPACITY: usize = 8 + super::PUBLIC_WORDS_V4 * 8 + 4 + super::MAX_PROOF_WORDS * 8;
+const BUFFER_CAPACITY: usize = 8 + super::PUBLIC_WORDS_V5 * 8 + 4 + super::MAX_PROOF_WORDS * 8;
 
 // Fixed buffers keep the browser ABI simple and bounded. The worker clears
 // both buffers after every call; no proof or witness is retained between

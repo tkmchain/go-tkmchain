@@ -46,6 +46,9 @@ jobs:
           go-version: '1.26.6'
           check-latest: true
 
+      - name: Test Shield6 cryptography on release host
+        run: go test -tags shield3 ./zk/shielded6 -count=1
+
       - name: Install Shield3 Rust toolchain
         shell: bash
         run: |
@@ -83,6 +86,7 @@ jobs:
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/tkm-email build/bin/shielded-payout-prover "release/$archive/"
+          cp THIRD_PARTY_NOTICES "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
 
       - name: Build and package Windows binaries
@@ -108,6 +112,7 @@ jobs:
           cp build/bin/gtkm "release/$archive/gtkm.exe"
           cp build/bin/tkm-email.exe "release/$archive/tkm-email.exe"
           cp build/bin/shielded-payout-prover "release/$archive/shielded-payout-prover.exe"
+          cp THIRD_PARTY_NOTICES "release/$archive/"
 
           # Do not publish executables that only work inside the MSYS2 runner.
           for binary in "release/$archive/gtkm.exe" "release/$archive/shielded-payout-prover.exe"; do
@@ -211,13 +216,31 @@ jobs:
       - name: Build and package portable Linux binaries
         run: |
           ./scripts/shield4-build.sh
-          # Exercise the username RPC preflight and interactive-wallet
-          # prerequisites on the exact source revision used for this release.
+          # Exercise the Shield6 crypto, consensus, wallet, and migration
+          # gates on the exact source revision used for this release.
+          go test -tags shield3 ./zk/shielded6 -count=1
+          go test ./params -run '^TestShield6ActivationRemainsUnsetOnShippedNetworks$' -count=1
+          go test -tags shield3 ./core ./eth -run 'ShieldedV6|Shield6|CLSAG' -count=1
+          GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -tags shield3 ./core -run '^TestShield6TwoNodeDepositSpendReplayAndReorgRehearsal$' -count=1 -timeout=10m -v
+          go test -tags shield3 ./internal/shield3wallet -run '^(TestBuildAndSignShieldedV6Payment|TestBuildAndSignShieldedV6Deposit|TestBuildAndSignShieldedV6Withdrawal|TestSelectShieldedV6RingUsesCanonicalCandidates|TestScanShieldedV6FindsSpendableNoteAndDetectsReorg|TestClearShieldedV6SpendCandidatesZeroizesPageNotes|TestScanShieldedV6MatchesPublicSpentKeyImagesLocally)$' -count=1
+          # Record maximum proof verification and wallet envelope construction
+          # cost on the same Linux release runner used for the daemon artifact.
+          GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -tags shield3 ./zk/shielded6 -run '^$' -bench 'BenchmarkShield6Max(OutputRangeProof128|OutputRangeProofVerify|InputCLSAGVerify)$' -benchtime=1x -count=1
+          GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -tags shield3 ./core -run '^$' -bench '^BenchmarkShield6MaxPaymentEnvelope$' -benchtime=1x -count=1
+          # Keep the full legacy-proof-to-Shield6 migration rehearsal visible
+          # as its own release gate. It exercises native proof generation and
+          # can use several GiB, so do not hide or duplicate it in a broad
+          # regex-based test command.
+          GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -tags shield3 ./internal/shield3wallet -run '^TestShield6MigrationNativeRehearsal$' -count=1 -timeout=30m -v
+          go test -tags shield3 ./cmd/gtkm -run 'TestShield6Migration(FeeReserve|DepositBalanceRequired)|TestWaitWalletCanonicalConfirmations' -count=1
           go test ./eth ./cmd/gtkm -run 'TestTkmNameAPI|TestUsernameRPCIncludedInDefaultHTTPAndWSModules|TestUsernameFlagEnablesTKMNetWithoutForkGate' -count=1
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
+          stack_flags="$(readelf -W -l build/bin/gtkm | awk '$1 == "GNU_STACK" { print $7; found=1 } END { if (!found) exit 1 }')"
+          test "$stack_flags" = RW
           archive="gtkm-${RELEASE_TAG}-linux-amd64"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/tkm-email build/bin/shielded-payout-prover "release/$archive/"
+          cp THIRD_PARTY_NOTICES "release/$archive/"
           tar -C release -czf "release/$archive.tar.gz" "$archive"
           ./packaging/build-deb.sh "$RELEASE_TAG" release amd64
 
@@ -305,8 +328,16 @@ jobs:
           ARM_MAKE_CXX: ${{ matrix.make_cxx }}
           ARM_RUST_TARGET: ${{ matrix.rust_target }}
           ARM_DEB_ARCH: ${{ matrix.deb_arch }}
+          # The pinned Triton proof dependency has a high-memory optimized
+          # compile. Serialize Cargo jobs so ARM release builds fit hosted
+          # runner memory without changing the release optimization profile.
+          CARGO_BUILD_JOBS: "1"
         run: |
           set -euo pipefail
+          # The RingCT backend is pure Go, but the crypto dependency graph and
+          # test vectors must still compile for every published Linux target.
+          GOOS=linux GOARCH="$ARM_GOARCH" GOARM="${ARM_GOARM:-}" \
+            go test -tags shield3 -c -o "/tmp/shield6-${ARM_LABEL}.test" ./zk/shielded6
           # Build the architecture-specific Rust static library explicitly. The
           # Go cgo package links this exact path, so fail here with a useful
           # diagnostic instead of waiting for clang to report a missing file.
@@ -316,6 +347,9 @@ jobs:
           VERSION="$RELEASE_TAG" RANDOMX_ARCH=default \
             make "$ARM_MAKE_CC=$ARM_CC" "$ARM_MAKE_CXX=$ARM_CXX" "$ARM_CROSS_TARGET"
           test -s "$native_lib"
+          arm_gtkm="build/dist/linux/$ARM_OUTPUT_DIR/gtkm-linux-$ARM_BINARY_SUFFIX"
+          stack_flags="$(readelf -W -l "$arm_gtkm" | awk '$1 == "GNU_STACK" { print $7; found=1 } END { if (!found) exit 1 }')"
+          test "$stack_flags" = RW
 
           # The pool prover is a separate binary and must carry the same
           # architecture-specific Shield3 verifier as gtkm.
@@ -336,6 +370,7 @@ jobs:
           cp "build/dist/linux/$ARM_OUTPUT_DIR/tkm-email-linux-$ARM_BINARY_SUFFIX" "release/$archive/tkm-email"
           cp "build/dist/linux/$ARM_OUTPUT_DIR/shielded-payout-prover-linux-$ARM_BINARY_SUFFIX" \
             "release/$archive/shielded-payout-prover"
+          cp THIRD_PARTY_NOTICES "release/$archive/"
 
           # Build the native Debian package from the cross-compiled binaries.
           mkdir -p build/bin
@@ -392,6 +427,7 @@ jobs:
           cp build/bin/gtkm-gui-windows-amd64.exe "release/$archive/TKM-Wallet.exe"
           cp build/bin/shielded-payout-prover.exe "release/$archive/"
           cp internal/gui/wallet-engine/licenses/* "release/$archive/licenses/"
+          cp THIRD_PARTY_NOTICES "release/$archive/licenses/"
           cp internal/gui/README.md "release/$archive/README.md"
           printf '%s\n' 'Requires Microsoft Edge WebView2 Runtime. Windows executables have publisher metadata but are not Authenticode signed.' > "release/$archive/INSTALL.txt"
           for binary in "release/$archive/"*.exe; do

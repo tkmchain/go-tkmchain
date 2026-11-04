@@ -692,15 +692,15 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 			// turn that transient disconnect into a year-long ban; keep the ban for
 			// peers that are still registered when validation fails.
 			if d.peers == nil || d.peers.Peer(id) == nil {
-				log.Debug("Skipping invalid-chain ban for disconnected peer", "peer", id[:8], "err", err)
+				log.Debug("Skipping invalid-chain ban for disconnected peer", "peer", shortPeerID(id), "err", err)
 				return err
 			}
 			// Only log the ban at warn level once
-			log.Warn("Peer banned for invalid chain", "peer", id[:8], "duration", "365 days")
+			log.Warn("Peer banned for invalid chain", "peer", shortPeerID(id), "duration", "365 days")
 			d.banPeer(id, 365*24*time.Hour) // 1 year ban (effectively permanent)
 		} else {
 			// Temporary ban for other errors
-			log.Debug("Peer temporarily banned", "peer", id[:8], "err", err, "duration", "1 hour")
+			log.Debug("Peer temporarily banned", "peer", shortPeerID(id), "err", err, "duration", "1 hour")
 			d.banPeer(id, 365*24*time.Hour)
 		}
 	default:
@@ -712,6 +712,13 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 // synchronise will select the peer and use it for synchronising. If an empty string is given
 // it will use the best peer possible and synchronize if its TD is higher than our own. If any of the
 // checks fail an error will be returned. This method is synchronous
+func shortPeerID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode SyncMode) error {
 	// Mock out the synchronisation if testing
 	if d.synchroniseMock != nil {

@@ -17,6 +17,8 @@
 package eth
 
 import (
+	"bytes"
+	"crypto/rand"
 	"fmt"
 	"math/big"
 	"testing"
@@ -27,12 +29,14 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/pqcrypto"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded6"
 )
 
 // testEthHandler is a mock event handler to listen for inbound network requests
@@ -398,6 +402,99 @@ func testSendTransactions(t *testing.T, protocol uint) {
 // Tests that transactions get propagated to all attached peers, either via direct
 // broadcasts or via announcements/retrievals.
 func TestTransactionPropagation69(t *testing.T) { testTransactionPropagation(t, eth.ETH69) }
+
+// TestShield6TransactionP2PPropagation checks that a real, signed Shield6
+// envelope survives the eth protocol's typed-transaction propagation path to
+// multiple peers. Consensus validity is independently exercised by the core
+// block-processor tests; this test protects the network serialization path.
+func TestShield6TransactionP2PPropagation(t *testing.T) {
+	const chainID = uint64(8979)
+	accountKey, err := pqcrypto.NewMLDSA87FromSeed(bytes.Repeat([]byte{0x63}, pqcrypto.MLDSA87SeedSize))
+	if err != nil {
+		t.Fatal("create Shield6 network-test account:", err)
+	}
+	wallet, seed, err := shielded6.CreateWallet(bytes.NewReader(bytes.Repeat([]byte{0x64}, 32)), chainID)
+	if err != nil {
+		t.Fatal("create Shield6 network-test recipient:", err)
+	}
+	clear(seed[:])
+	defer wallet.Clear()
+	to := params.ShieldedPoolAddress
+	unsigned := &types.PQTkmTx{
+		ChainID: big.NewInt(int64(chainID)), Nonce: 0,
+		GasTipCap: big.NewInt(1), GasFeeCap: big.NewInt(2), Gas: 30_000_000,
+		To: &to, Value: big.NewInt(1), PublicKey: pqcrypto.PublicKeyBytes(accountKey),
+	}
+	envelope, err := core.BuildShieldedV6DepositEnvelope(types.NewTx(unsigned), []core.ShieldedV6WalletOutput{{
+		Address: wallet.Address(), Amount: big.NewInt(1),
+	}}, rand.Reader)
+	if err != nil {
+		t.Fatal("build Shield6 deposit envelope:", err)
+	}
+	unsigned.Data = envelope
+	tx, err := types.SignNewPQTkmTx(accountKey, types.NewQuantumSigner(big.NewInt(int64(chainID))), unsigned)
+	if err != nil {
+		t.Fatal("sign Shield6 deposit transaction:", err)
+	}
+	wantWire, err := tx.MarshalBinary()
+	if err != nil {
+		t.Fatal("encode Shield6 deposit transaction:", err)
+	}
+
+	source := newTestHandler(ethconfig.FullSync)
+	defer source.close()
+	sinks := []*testHandler{newTestHandler(ethconfig.FullSync), newTestHandler(ethconfig.FullSync)}
+	defer func() {
+		for _, sink := range sinks {
+			sink.close()
+		}
+	}()
+
+	arrivals := make([]chan core.NewTxsEvent, len(sinks))
+	for i, sink := range sinks {
+		sink.handler.synced.Store(true)
+		arrivals[i] = make(chan core.NewTxsEvent, 1)
+		sub := sink.txpool.SubscribeTransactions(arrivals[i], false)
+		defer sub.Unsubscribe()
+
+		sourcePipe, sinkPipe := p2p.MsgPipe()
+		defer sourcePipe.Close()
+		defer sinkPipe.Close()
+		sourcePeer := eth.NewPeer(eth.ETH69, p2p.NewPeerPipe(enode.ID{byte(i + 1)}, "", nil, sourcePipe), sourcePipe, source.txpool, nil)
+		sinkPeer := eth.NewPeer(eth.ETH69, p2p.NewPeerPipe(enode.ID{byte(i + 10)}, "", nil, sinkPipe), sinkPipe, sink.txpool, nil)
+		defer sourcePeer.Close()
+		defer sinkPeer.Close()
+		go source.handler.runEthPeer(sourcePeer, func(peer *eth.Peer) error {
+			return eth.Handle((*ethHandler)(source.handler), peer)
+		})
+		go sink.handler.runEthPeer(sinkPeer, func(peer *eth.Peer) error {
+			return eth.Handle((*ethHandler)(sink.handler), peer)
+		})
+	}
+	source.txpool.Add([]*types.Transaction{tx}, false)
+
+	for i, arrival := range arrivals {
+		select {
+		case event := <-arrival:
+			if len(event.Txs) != 1 || event.Txs[0].Hash() != tx.Hash() {
+				t.Fatalf("peer %d received transactions %#v, want Shield6 tx %s", i, event.Txs, tx.Hash())
+			}
+			gotWire, err := event.Txs[0].MarshalBinary()
+			if err != nil {
+				t.Fatalf("peer %d encode received Shield6 transaction: %v", i, err)
+			}
+			if !bytes.Equal(gotWire, wantWire) {
+				t.Fatalf("peer %d received a wire transaction different from the signed Shield6 envelope", i)
+			}
+			decoded, recognized, err := core.DecodeShieldedV6Transaction(event.Txs[0].Data())
+			if err != nil || !recognized || decoded.Version != 6 || !decoded.Deposit || len(decoded.RangeProof) == 0 {
+				t.Fatalf("peer %d received malformed Shield6 envelope: recognized=%t err=%v", i, recognized, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Shield6 transaction did not propagate to peer %d", i)
+		}
+	}
+}
 
 func testTransactionPropagation(t *testing.T, protocol uint) {
 	t.Parallel()

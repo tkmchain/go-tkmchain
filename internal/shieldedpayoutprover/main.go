@@ -507,7 +507,7 @@ func (p *Prover) writeHealth(w http.ResponseWriter, includeInventory bool) {
 		// The canonical Shield3 output scan covers every block since privacy
 		// activation and may need more than 45 seconds on a long-running chain.
 		// Timing out here reports zero notes to the pool and stalls otherwise
-		// healthy Shield4 payouts. This is a read-only health path; keep enough
+		// healthy native shielded payouts. This is a read-only health path; keep enough
 		// time for the bounded scan to complete.
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
@@ -732,6 +732,13 @@ func (p *Prover) nativeShieldVersion(ctx context.Context) uint64 {
 		Active         bool `json:"active"`
 		NativeVerifier bool `json:"nativeVerifier"`
 	}
+	if err := p.client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV5Status"); err == nil && status.Active && status.NativeVerifier {
+		return 5
+	}
+	status = struct {
+		Active         bool `json:"active"`
+		NativeVerifier bool `json:"nativeVerifier"`
+	}{}
 	if err := p.client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV4Status"); err == nil && status.Active && status.NativeVerifier {
 		return 4
 	}
@@ -844,7 +851,7 @@ func (p *Prover) ensureSignerStamp(ctx context.Context, seed []byte, identity *s
 	if err != nil {
 		// eth_sendRawTransactionSync can report a timeout or an account-level
 		// duplicate while the registration transaction is already in the pool.
-		// Wait for canonical state before allowing the Shield4 deposit to be
+		// Wait for canonical state before allowing the native shielded deposit to be
 		// built. Never proceed on an unconfirmed stamp.
 		if waitErr := p.waitForSignerStamp(ctx, identity, 20*time.Second); waitErr == nil {
 			return nil
@@ -915,7 +922,9 @@ func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRe
 		StampPublicKey: identity.StampPublicKey, Stamp: *identity.Stamp,
 	}
 	var tx *types.Transaction
-	if version == 4 {
+	if version == 5 {
+		tx, err = shield3wallet.BuildV5(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
+	} else if version == 4 {
 		tx, err = shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
 	} else if version == 3 {
 		tx, err = shield3wallet.Build(ctx, p.client.Client(), seed, identity, recipient, amountWei, true)
@@ -931,7 +940,14 @@ func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRe
 	}
 	var commitment shielded3.Digest
 	var outgoing []byte
-	if version == 4 {
+	if version == 5 {
+		envelope, ok, decodeErr := core.DecodeShieldedV5Transaction(signed.Data())
+		if decodeErr != nil || !ok || envelope == nil {
+			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield5 deposit produced no envelope"))
+		}
+		commitment = shielded3.Digest(envelope.Outputs[0].Commitment)
+		outgoing = envelope.Outputs[0].Outgoing
+	} else if version == 4 {
 		envelope, ok, decodeErr := core.DecodeShieldedV4Transaction(signed.Data())
 		if decodeErr != nil || !ok || envelope == nil {
 			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield4 deposit produced no envelope"))
@@ -973,9 +989,9 @@ func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRe
 	return receipt.TxHash.Hex(), p.finalizeNoteWitness(ctx, note, common.BytesToHash(commitment.Bytes()), receipt.TxHash.Hex()), nil
 }
 
-func (p *Prover) buildSignSubmitV4(ctx context.Context, req PayoutRequest, amountWei *big.Int, chainID *big.Int) (string, error) {
+func (p *Prover) buildSignSubmitNative(ctx context.Context, req PayoutRequest, amountWei *big.Int, chainID *big.Int, version uint64) (string, error) {
 	if strings.TrimSpace(req.RecipientCode) == "" {
-		return "", errors.New("Shield4 payout requires the miner's full tkmshield3 payment code")
+		return "", errors.New("native Shield3/4/5 payout requires the miner's full tkmshield3 payment code")
 	}
 	seed, identity, err := p.signerIdentity(ctx, chainID.Uint64())
 	if err != nil {
@@ -989,7 +1005,14 @@ func (p *Prover) buildSignSubmitV4(ctx context.Context, req PayoutRequest, amoun
 	if !strings.EqualFold(recipient.Address.Hex(), req.To) {
 		return "", errors.New("Shield3 payment code address does not match payout address")
 	}
-	tx, err := shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, false)
+	var tx *types.Transaction
+	if version == 5 {
+		tx, err = shield3wallet.BuildV5(ctx, p.client.Client(), seed, identity, recipient, amountWei, false)
+	} else if version == 4 {
+		tx, err = shield3wallet.BuildV4(ctx, p.client.Client(), seed, identity, recipient, amountWei, false)
+	} else {
+		return "", errors.New("unsupported native shield version")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1080,7 +1103,7 @@ func (p *Prover) ProcessPayout(ctx context.Context, req PayoutRequest) (txHash s
 	if version := p.nativeShieldVersion(ctx); version != 0 {
 		return p.processNativePayout(ctx, req, &db, version)
 	}
-	return "", errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy payout fallback")
+	return "", errors.New("Shield3/Shield4/Shield5 native verifier is not active or reachable; refusing legacy payout fallback")
 }
 
 func (p *Prover) ProcessDeposit(ctx context.Context, req DepositRequest) (DepositResponse, error) {
@@ -1095,7 +1118,7 @@ func (p *Prover) ProcessDeposit(ctx context.Context, req DepositRequest) (Deposi
 	}
 	version := p.nativeShieldVersion(ctx)
 	if version == 0 {
-		return DepositResponse{}, errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy deposit fallback")
+		return DepositResponse{}, errors.New("Shield3/Shield4/Shield5 native verifier is not active or reachable; refusing legacy deposit fallback")
 	}
 	amountWei, err := nativeDepositAmount(req)
 	if err != nil {
@@ -1185,7 +1208,7 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 	}
 	version := p.nativeShieldVersion(ctx)
 	if version == 0 {
-		return "", ShieldedNote{}, errors.New("Shield3/Shield4 native verifier is not active or reachable; refusing legacy deposit fallback")
+		return "", ShieldedNote{}, errors.New("Shield3/Shield4/Shield5 native verifier is not active or reachable; refusing legacy deposit fallback")
 	}
 	return p.buildSignSubmitDepositNative(ctx, req, amountWei, chainID, version)
 	/* legacy V1/V2 construction intentionally disabled below */
@@ -1431,8 +1454,8 @@ func (p *Prover) buildSignSubmit(ctx context.Context, req PayoutRequest, note Sh
 	if err != nil {
 		return "", nil, err
 	}
-	if p.shield4Active(ctx) {
-		txHash, err := p.buildSignSubmitV4(ctx, req, amountWei, chainID)
+	if version := p.nativeShieldVersion(ctx); version != 0 {
+		txHash, err := p.buildSignSubmitNative(ctx, req, amountWei, chainID, version)
 		return txHash, nil, err
 	}
 	proofBlock := new(big.Int)

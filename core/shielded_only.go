@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 )
 
 // ErrPublicPaymentDisabled means a transaction would expose payment principal
@@ -36,6 +37,15 @@ func ValidateShieldedOnlyTransaction(config *params.ChainConfig, number *big.Int
 	if tx == nil {
 		return ErrPublicPaymentDisabled
 	}
+	// Shield6 migration is deliberately two public-boundary transactions:
+	// withdraw a legacy note to its own stamped account, then deposit that
+	// public balance into Shield6. This narrow self-exit is unavailable until
+	// Shield6 activates and does not authorize a payment to another account.
+	if config != nil && config.IsShield6(number, blockTime) {
+		if sender, err := types.Sender(types.MakeSigner(config, number, blockTime), tx); err == nil && isShieldedLegacySelfExit(tx, sender) {
+			return nil
+		}
+	}
 	// Validator registry operations are narrowly scoped consensus-control
 	// envelopes. Registration moves the fixed protocol bond to the reserved
 	// pool; the other operations carry no value. They are not EVM payments and
@@ -45,9 +55,69 @@ func ValidateShieldedOnlyTransaction(config *params.ChainConfig, number *big.Int
 	return err
 }
 
+func isShieldedLegacySelfExit(tx *types.Transaction, sender common.Address) bool {
+	if tx == nil || tx.Type() != types.PQTkmTxType || tx.To() == nil || *tx.To() != params.ShieldedPoolAddress || tx.Value() == nil || tx.Value().Sign() != 0 {
+		return false
+	}
+	var deposit bool
+	var recipient common.Address
+	var withdrawal, sponsor *big.Int
+	var assetID uint64
+	switch {
+	case HasShieldedV5Prefix(tx.Data()):
+		e, ok, err := DecodeShieldedV5Transaction(tx.Data())
+		if err != nil || !ok || e == nil || e.Version != 5 {
+			return false
+		}
+		deposit, recipient, withdrawal, sponsor, assetID = e.Deposit, e.WithdrawalRecipient, e.WithdrawalValue, e.GasSponsorValue, e.AssetID
+	case HasShieldedV4Prefix(tx.Data()):
+		e, ok, err := DecodeShieldedV4Transaction(tx.Data())
+		if err != nil || !ok || e == nil || e.Version != 4 {
+			return false
+		}
+		deposit, recipient, withdrawal, sponsor, assetID = e.Deposit, e.WithdrawalRecipient, e.WithdrawalValue, e.GasSponsorValue, e.AssetID
+	case HasShieldedV3Prefix(tx.Data()):
+		e, ok, err := DecodeShieldedV3Transaction(tx.Data())
+		if err != nil || !ok || e == nil || e.Version != 3 {
+			return false
+		}
+		deposit, recipient, withdrawal, sponsor = e.Deposit, e.WithdrawalRecipient, e.WithdrawalValue, e.GasSponsorValue
+	default:
+		return false
+	}
+	return !deposit && shielded3.NormalizeAssetID(assetID) == shielded3.AssetTKM && withdrawal != nil && withdrawal.Sign() > 0 && withdrawal.BitLen() <= 128 && recipient == sender && sponsor != nil && sponsor.Sign() == 0
+}
+
 func shieldedOnlyFields(txType uint8, to *common.Address, value *big.Int, data []byte) (*big.Int, error) {
 	fail := func(reason string) (*big.Int, error) {
 		return nil, fmt.Errorf("%w: %s", ErrPublicPaymentDisabled, reason)
+	}
+	// Shield6 defines its own explicit, public entry/exit boundaries. Deposits
+	// carry their public value in the outer transaction; withdrawals carry it
+	// in the envelope. Private Shield6 spends and Shield3/4/5 spends stay
+	// zero-value. These exceptions are intentional privacy exits, not ordinary
+	// transparent transfers.
+	if HasShieldedV6Prefix(data) {
+		if txType != types.PQTkmTxType || to == nil || *to != params.ShieldedPoolAddress || value == nil {
+			return fail("Shield6 requires a PQ transaction to the reserved pool")
+		}
+		e, ok, err := DecodeShieldedV6Transaction(data)
+		if err != nil || !ok || e == nil || e.Version != 6 {
+			return fail("malformed Shield6 envelope")
+		}
+		withdrawal := e.WithdrawalValue != nil && e.WithdrawalValue.Sign() > 0
+		if e.Deposit {
+			if value.Sign() <= 0 || withdrawal || e.WithdrawalRecipient != (common.Address{}) || len(e.Inputs) != 0 {
+				return fail("invalid Shield6 public deposit boundary")
+			}
+		} else if withdrawal {
+			if value.Sign() != 0 || e.WithdrawalRecipient == (common.Address{}) || len(e.Inputs) == 0 {
+				return fail("invalid Shield6 public withdrawal boundary")
+			}
+		} else if value.Sign() != 0 || e.WithdrawalRecipient != (common.Address{}) || len(e.Inputs) == 0 {
+			return fail("invalid Shield6 private transfer")
+		}
+		return nil, nil
 	}
 	if txType != types.PQTkmTxType || to == nil || *to != params.ShieldedPoolAddress || value == nil || value.Sign() != 0 {
 		// Registration is the only protocol operation with an outer value. It
@@ -95,6 +165,12 @@ func shieldedOnlyFields(txType uint8, to *common.Address, value *big.Int, data [
 		e, ok, err := DecodeShieldedV3Transaction(data)
 		if err != nil || !ok || e == nil || e.Version != 3 {
 			return fail("malformed Shield3 envelope")
+		}
+		deposit, recipient, withdrawal, sponsor = e.Deposit, e.WithdrawalRecipient, e.WithdrawalValue, e.GasSponsorValue
+	case HasShieldedV5Prefix(data):
+		e, ok, err := DecodeShieldedV5Transaction(data)
+		if err != nil || !ok || e == nil || e.Version != 5 {
+			return fail("malformed Shield5 envelope")
 		}
 		deposit, recipient, withdrawal, sponsor = e.Deposit, e.WithdrawalRecipient, e.WithdrawalValue, e.GasSponsorValue
 	case HasShieldedV4Prefix(data):

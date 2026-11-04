@@ -236,6 +236,100 @@ fn run_v4(public: &[u64], secret: &[u64], path: &[[u64; 5]]) -> bool {
     .is_ok()
 }
 
+fn v5_witness(
+    public: &[u64],
+    secret: &[u64],
+    path: &[[u64; 5]],
+) -> (Vec<u64>, Vec<u64>, Vec<[u64; 5]>) {
+    let mut public_v5 = v4_public(public, secret);
+    public_v5.resize(PUBLIC_WORDS_V5, 0);
+    public_v5[87] = 1;
+    let mut secret_v5 = secret.to_vec();
+    secret_v5.resize(SECRET_WORDS_V5, 0);
+    let mut path_v5 = Vec::with_capacity(PATH_DIGESTS_V5);
+    path_v5.extend_from_slice(&path[..4 * MERKLE_DEPTH]);
+    path_v5.resize(SHIELD5_INPUT_SLOTS * MERKLE_DEPTH, [0; 5]);
+    path_v5.extend_from_slice(&path[4 * MERKLE_DEPTH..8 * MERKLE_DEPTH]);
+    (public_v5, secret_v5, path_v5)
+}
+
+#[test]
+fn shield5_multi_input_proof_uses_separate_relation_and_layout() {
+    use std::time::{Duration, Instant};
+    let (mut public, mut secret, mut path) = fixture();
+    // Add a second real note under the same spending key. Give each leaf a
+    // canonical 32-level path into one shared root and add its value to change.
+    let owner = hash(&[
+        DOMAIN_OWNER,
+        secret[0],
+        secret[1],
+        secret[2],
+        secret[3],
+        secret[4],
+    ]);
+    let second_randomness = [31, 32, 33, 34, 35];
+    let second_value = [1, 0, 0, 0, 0, 0, 0, 0];
+    let second_leaf = note(&public[..4], &owner, &second_randomness, &second_value);
+    let first_leaf = note(&public[..4], &owner, &secret[5..10], &secret[10..18]);
+    let common_path = (1..MERKLE_DEPTH)
+        .map(|i| hash(&[8100, i as u64]))
+        .collect::<Vec<_>>();
+    let mut first_path = vec![second_leaf];
+    first_path.extend_from_slice(&common_path);
+    let mut second_path = vec![first_leaf];
+    second_path.extend_from_slice(&common_path);
+    secret[18] = 0;
+    path[..MERKLE_DEPTH].copy_from_slice(&first_path);
+    path[MERKLE_DEPTH..2 * MERKLE_DEPTH].copy_from_slice(&second_path);
+    // Slot 3 is the existing change output; increase it by the second input.
+    secret[83] += 1;
+    refresh_commitments(&mut public, &secret, &path);
+
+    let (mut public_v5, mut secret_v5, path_v5) = v5_witness(&public, &secret, &path);
+    public_v5[87] = 2;
+    let mut second_nullifier = vec![DOMAIN_NULLIFIER];
+    second_nullifier.extend(&public[..4]);
+    let mut nullifier_key = vec![DOMAIN_NULLIFIER_KEY];
+    nullifier_key.extend(&secret[..5]);
+    second_nullifier.extend(hash(&nullifier_key));
+    second_nullifier.extend(second_randomness);
+    second_nullifier.extend(second_value);
+    public_v5[72..77].copy_from_slice(&hash(&second_nullifier));
+    // Input slot two is the first optional opening after the frozen V4 secret.
+    secret_v5[95..100].copy_from_slice(&second_randomness);
+    secret_v5[100..108].copy_from_slice(&second_value);
+    secret_v5[108] = 1;
+
+    let active_paths = spending_paths_v5(&public_v5, &path_v5).expect("canonical V5 paths");
+    let digests: Vec<Digest> = active_paths
+        .iter()
+        .map(|d| Digest::new(d.map(BFieldElement::new)))
+        .collect();
+    let run = VM::run(
+        spend_program_v5(),
+        PublicInput::new(canonical_words(&public_v5, PUBLIC_WORDS_V5).unwrap()),
+        NonDeterminism::new(canonical_words(&secret_v5, SECRET_WORDS_V5).unwrap())
+            .with_digests(digests),
+    );
+    assert!(run.is_ok(), "valid Shield5 witness rejected: {run:?}");
+
+    let proving_started = Instant::now();
+    let proof = prove_spend_v5(&public_v5, &secret_v5, &path_v5).expect("real Shield5 STARK proof");
+    let proving_elapsed = proving_started.elapsed();
+    println!("Shield5 two-input proof generation: {proving_elapsed:?}");
+    verify_spend_v5(&public_v5, &proof).expect("Shield5 STARK verification");
+    assert!(
+        proving_elapsed < Duration::from_secs(120),
+        "Shield5 proof exceeded the two-minute payment target: {proving_elapsed:?}"
+    );
+    assert!(verify_spend_v4(&public_v5[..PUBLIC_WORDS_V4], &proof).is_err());
+
+    let mut inactive = public_v5.clone();
+    inactive[113] = 1;
+    assert!(verify_spend_v5(&inactive, &proof).is_err());
+    assert_ne!(spend_program_v4().hash(), spend_program_v5().hash());
+}
+
 fn v4_public(public: &[u64], secret: &[u64]) -> Vec<u64> {
     let mut public = public.to_vec();
     let owner = hash(&[
@@ -430,13 +524,11 @@ fn canonical_encoding_and_limits() {
         let mut stream = triton_vm::proof_stream::ProofStream::new();
         stream.enqueue(triton_vm::proof_item::ProofItem::Log2PaddedHeight(exponent));
         let proof = Proof::from(stream);
-        assert!(
-            verify_spend(
-                &public,
-                &proof.0.iter().map(|v| v.value()).collect::<Vec<_>>()
-            )
-            .is_err()
-        );
+        assert!(verify_spend(
+            &public,
+            &proof.0.iter().map(|v| v.value()).collect::<Vec<_>>()
+        )
+        .is_err());
     }
     for bad in [vec![], vec![0], vec![FIELD_MODULUS], vec![1; 128]] {
         assert!(verify_spend(&public, &bad).is_err());

@@ -87,6 +87,10 @@ require (
 )
 
 require (
+	git.gammaspectra.live/P2Pool/blake2b v0.42.1 // indirect
+	git.gammaspectra.live/P2Pool/consensus/v5 v5.0.10
+	git.gammaspectra.live/P2Pool/edwards25519 v0.0.0-20260623010819-f3b0caff06be // indirect
+	git.gammaspectra.live/P2Pool/go-hex v0.0.0-20251214231021-098f65fc1214 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -95,6 +99,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/ingonyama-zk/icicle-gnark/v3 v3.2.2 // indirect
 	github.com/nxadm/tail v1.4.8 // indirect
 	github.com/oapi-codegen/runtime v1.6.0 // indirect
@@ -108,6 +113,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
+	lukechampine.com/uint128 v1.3.0 // indirect
 )
 
 require (

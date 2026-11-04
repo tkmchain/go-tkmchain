@@ -74,6 +74,10 @@ var (
 	// ErrFutureReplacePending is returned if a future transaction replaces a pending
 	// one. Future transactions should only be able to replace other future transactions.
 	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
+
+	// ErrShieldedKeyImagePending is returned when a Shield6 key image is already
+	// reserved by another transaction in this pool.
+	ErrShieldedKeyImagePending = errors.New("Shield6 key image already has a pending spend")
 )
 
 var (
@@ -248,6 +252,9 @@ type LegacyPool struct {
 	queue   *queue
 	all     *lookup     // All transactions to allow lookups
 	priced  *pricedList // All transactions sorted by price
+	// shieldedV6KeyImages reserves each Shield6 nullifier/key image across both
+	// executable and queued transactions. Access is protected by pool.mu.
+	shieldedV6KeyImages map[[32]byte]common.Hash
 
 	reqResetCh      chan *txpoolResetRequest
 	reqPromoteCh    chan *accountSet
@@ -273,19 +280,20 @@ func New(config Config, chain BlockChain) *LegacyPool {
 	// Create the transaction pool with its initial settings
 	signer := types.LatestSigner(chain.Config())
 	pool := &LegacyPool{
-		config:          config,
-		chain:           chain,
-		chainconfig:     chain.Config(),
-		signer:          signer,
-		pending:         make(map[common.Address]*list),
-		queue:           newQueue(config, signer),
-		all:             newLookup(),
-		reqResetCh:      make(chan *txpoolResetRequest),
-		reqPromoteCh:    make(chan *accountSet),
-		queueTxEventCh:  make(chan *types.Transaction),
-		reorgDoneCh:     make(chan chan struct{}),
-		reorgShutdownCh: make(chan struct{}),
-		initDoneCh:      make(chan struct{}),
+		config:              config,
+		chain:               chain,
+		chainconfig:         chain.Config(),
+		signer:              signer,
+		pending:             make(map[common.Address]*list),
+		shieldedV6KeyImages: make(map[[32]byte]common.Hash),
+		queue:               newQueue(config, signer),
+		all:                 newLookup(),
+		reqResetCh:          make(chan *txpoolResetRequest),
+		reqPromoteCh:        make(chan *accountSet),
+		queueTxEventCh:      make(chan *types.Transaction),
+		reorgDoneCh:         make(chan chan struct{}),
+		reorgShutdownCh:     make(chan struct{}),
+		initDoneCh:          make(chan struct{}),
 	}
 	pool.priced = newPricedList(pool.all)
 
@@ -691,6 +699,30 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	}
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
+	keyImages, err := core.ShieldedV6KeyImages(tx)
+	if err != nil {
+		return false, err
+	}
+	// A same-sender, same-nonce replacement may keep its existing key images,
+	// but cannot conflict with any other pending transaction. Check before pool
+	// capacity eviction so a rejected conflicting spend cannot churn unrelated
+	// transactions out of the pool.
+	var replacedHash common.Hash
+	if list := pool.pending[from]; list != nil {
+		if old := list.txs.Get(tx.Nonce()); old != nil {
+			replacedHash = old.Hash()
+		}
+	}
+	if replacedHash == (common.Hash{}) {
+		if list, ok := pool.queue.get(from); ok {
+			if old := list.txs.Get(tx.Nonce()); old != nil {
+				replacedHash = old.Hash()
+			}
+		}
+	}
+	if err := pool.checkShieldedV6KeyImages(keyImages, replacedHash); err != nil {
+		return false, err
+	}
 
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
@@ -785,11 +817,12 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		}
 		// New transaction is better, replace old one
 		if old != nil {
-			pool.all.Remove(old.Hash())
+			pool.removeFromLookup(old.Hash())
 			pool.priced.Removed(1)
 			pendingReplaceMeter.Mark(1)
 		}
 		pool.all.Add(tx)
+		pool.reserveShieldedV6KeyImages(keyImages, hash)
 		pool.priced.Put(tx)
 		pool.queueTxEvent(tx)
 		log.Trace("Pooled new executable transaction", "hash", hash, "from", from, "to", tx.To())
@@ -801,9 +834,58 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	if err != nil {
 		return false, err
 	}
+	pool.reserveShieldedV6KeyImages(keyImages, hash)
 
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replaced, nil
+}
+
+// reserveShieldedV6KeyImages records the key images for a transaction already
+// accepted by the pool. The caller holds pool.mu and has checked for conflicts.
+func (pool *LegacyPool) reserveShieldedV6KeyImages(images [][32]byte, txHash common.Hash) {
+	for _, image := range images {
+		pool.shieldedV6KeyImages[image] = txHash
+	}
+}
+
+// checkShieldedV6KeyImages rejects conflicts except reservations owned by a
+// same-sender/same-nonce transaction that is eligible to be replaced.
+func (pool *LegacyPool) checkShieldedV6KeyImages(images [][32]byte, replaceHash common.Hash) error {
+	for _, image := range images {
+		if owner, exists := pool.shieldedV6KeyImages[image]; exists && owner != replaceHash {
+			return ErrShieldedKeyImagePending
+		}
+	}
+	return nil
+}
+
+// releaseShieldedV6KeyImages frees only reservations owned by the given
+// transaction, so removing a stale replacement cannot erase a newer owner.
+func (pool *LegacyPool) releaseShieldedV6KeyImages(tx *types.Transaction) {
+	if tx == nil {
+		return
+	}
+	images, err := core.ShieldedV6KeyImages(tx)
+	if err != nil {
+		return // malformed envelopes are rejected before entering the pool
+	}
+	hash := tx.Hash()
+	for _, image := range images {
+		if pool.shieldedV6KeyImages[image] == hash {
+			delete(pool.shieldedV6KeyImages, image)
+		}
+	}
+}
+
+// removeFromLookup removes a transaction and its key-image reservations. All
+// call sites run with pool.mu held.
+func (pool *LegacyPool) removeFromLookup(hash common.Hash) *types.Transaction {
+	tx := pool.all.Get(hash)
+	if tx != nil {
+		pool.releaseShieldedV6KeyImages(tx)
+		pool.all.Remove(hash)
+	}
+	return tx
 }
 
 // isGapped reports whether the given transaction is immediately executable.
@@ -868,14 +950,14 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	inserted, old := list.Add(tx, pool.config.PriceBump)
 	if !inserted {
 		// An older transaction was better, discard this
-		pool.all.Remove(hash)
+		pool.removeFromLookup(hash)
 		pool.priced.Removed(1)
 		pendingDiscardMeter.Mark(1)
 		return false
 	}
 	// Otherwise discard any previous transaction and mark this
 	if old != nil {
-		pool.all.Remove(old.Hash())
+		pool.removeFromLookup(old.Hash())
 		pool.priced.Removed(1)
 		pendingReplaceMeter.Mark(1)
 	} else {
@@ -1081,7 +1163,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		}()
 	}
 	// Remove it from the list of known transactions
-	pool.all.Remove(hash)
+	pool.removeFromLookup(hash)
 	if outofbound {
 		pool.priced.Removed(1)
 	}
@@ -1337,6 +1419,13 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 				err = core.ValidateValidatorActionState(pool.currentState, from, tx.Data(), head.Number.Uint64())
 			}
 		}
+		if err == nil && antartical && core.HasShieldedV5Prefix(tx.Data()) {
+			var e *core.ShieldedV5Transaction
+			e, _, err = core.DecodeShieldedV5Transaction(tx.Data())
+			if err == nil {
+				err = core.ValidateShieldedV4Time(&core.ShieldedV4Transaction{Relayed: e.Relayed, ValidUntil: e.ValidUntil, WithdrawalValue: e.WithdrawalValue}, head.Time)
+			}
+		}
 		if err == nil && antartical && core.HasShieldedV4Prefix(tx.Data()) {
 			var e *core.ShieldedV4Transaction
 			e, _, err = core.DecodeShieldedV4Transaction(tx.Data())
@@ -1492,7 +1581,7 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 
 	// remove all removable transactions
 	for _, hash := range dropped {
-		pool.all.Remove(hash)
+		pool.removeFromLookup(hash)
 	}
 	pool.priced.Removed(len(dropped))
 
@@ -1548,7 +1637,7 @@ func (pool *LegacyPool) truncatePending() {
 					for _, tx := range caps {
 						// Drop the transaction from the global pools too
 						hash := tx.Hash()
-						pool.all.Remove(hash)
+						pool.removeFromLookup(hash)
 
 						// Update the account nonce to the dropped transaction
 						pool.pendingNonces.setIfLower(offenders[i], tx.Nonce())
@@ -1573,7 +1662,7 @@ func (pool *LegacyPool) truncatePending() {
 				for _, tx := range caps {
 					// Drop the transaction from the global pools too
 					hash := tx.Hash()
-					pool.all.Remove(hash)
+					pool.removeFromLookup(hash)
 
 					// Update the account nonce to the dropped transaction
 					pool.pendingNonces.setIfLower(addr, tx.Nonce())
@@ -1594,7 +1683,7 @@ func (pool *LegacyPool) truncateQueue() {
 
 	// Remove all removable transactions from the lookup and global price list
 	for _, hash := range removed {
-		pool.all.Remove(hash)
+		pool.removeFromLookup(hash)
 	}
 	pool.priced.Removed(len(removed))
 
@@ -1623,14 +1712,14 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		olds := list.Forward(nonce)
 		for _, tx := range olds {
 			hash := tx.Hash()
-			pool.all.Remove(hash)
+			pool.removeFromLookup(hash)
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
 		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit)
 		for _, tx := range drops {
 			hash := tx.Hash()
-			pool.all.Remove(hash)
+			pool.removeFromLookup(hash)
 			log.Trace("Removed unpayable pending transaction", "hash", hash)
 		}
 		pendingNofundsMeter.Mark(int64(len(drops)))

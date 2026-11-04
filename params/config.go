@@ -217,6 +217,15 @@ type ChainConfig struct {
 	// separate fork: Antartical blocks already contain public deposits.
 	ShieldedOnlyTime       *uint64 `json:"shieldedOnlyTime,omitempty"`
 	ConfidentialLedgerTime *uint64 `json:"confidentialLedgerTime,omitempty"`
+	// Shield5Time activates the batched high-input Shield5 envelope. It is a
+	// separate consensus fork because its envelope and proof statement differ
+	// from Shield4. Mainnet leaves it unset until a coordinated activation time
+	// is selected.
+	Shield5Time *uint64 `json:"shield5Time,omitempty"`
+	// Shield6Time activates CLSAG/RingCT transactions over the dedicated
+	// Shield6 output accumulator. It remains unset until a coordinated network
+	// migration and release rehearsal are complete.
+	Shield6Time *uint64 `json:"shield6Time,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -686,6 +695,17 @@ func (c *ChainConfig) IsConfidentialLedger(num *big.Int, time uint64) bool {
 	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.ConfidentialLedgerTime, time)
 }
 
+// IsShield5 reports whether the high-input batched private-payment envelope
+// is active. It cannot activate before Antartical's privacy rules.
+func (c *ChainConfig) IsShield5(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.Shield5Time, time)
+}
+
+// IsShield6 reports whether the CLSAG/RingCT transaction rules are active.
+func (c *ChainConfig) IsShield6(num *big.Int, time uint64) bool {
+	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.Shield6Time, time)
+}
+
 // IsTkmnetRequired reports whether the TKMNet relay is a mandatory node
 // service for the active chain rules. TKMNet becomes mandatory with the
 // Antartical consensus rules, so existing chain configurations do not need a
@@ -859,6 +879,22 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			return fmt.Errorf("confidential ledger permits explicit public boundaries and cannot use the shielded-only cutoff")
 		}
 	}
+	if c.Shield5Time != nil {
+		if c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil {
+			return fmt.Errorf("shield5Time requires London, privacy, quantum and Antartical forks")
+		}
+		if *c.Shield5Time < *c.AntarticalTime {
+			return fmt.Errorf("unsupported fork ordering: shield5Time enabled at timestamp %v, before antarticalTime at timestamp %v", *c.Shield5Time, *c.AntarticalTime)
+		}
+	}
+	if c.Shield6Time != nil {
+		if c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil {
+			return fmt.Errorf("shield6Time requires London, privacy, quantum and Antartical forks")
+		}
+		if *c.Shield6Time < *c.AntarticalTime {
+			return fmt.Errorf("unsupported fork ordering: shield6Time enabled at timestamp %v, before antarticalTime at timestamp %v", *c.Shield6Time, *c.AntarticalTime)
+		}
+	}
 	if c.ShieldedOnlyTime != nil && (c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil) {
 		return fmt.Errorf("shieldedOnlyTime requires London, privacyCommitmentTime, quantumResistantTime and antarticalTime")
 	}
@@ -928,6 +964,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"amsterdamTime", c.AmsterdamTime},
 		{"ubtTime", c.UBTTime},
 		{"antarticalTime", c.AntarticalTime},
+		{"shield5Time", c.Shield5Time},
+		{"shield6Time", c.Shield6Time},
 		{"shieldedOnlyTime", c.ShieldedOnlyTime},
 		{"confidentialLedgerTime", c.ConfidentialLedgerTime},
 		{"usernameNetworkTime", c.UsernameNetworkTime},
@@ -1130,6 +1168,12 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.AntarticalTime, newcfg.AntarticalTime, headTimestamp) {
 		return newTimestampCompatError("Antartical fork timestamp", c.AntarticalTime, newcfg.AntarticalTime)
+	}
+	if isForkTimestampIncompatible(c.Shield5Time, newcfg.Shield5Time, headTimestamp) {
+		return newTimestampCompatError("Shield5 fork timestamp", c.Shield5Time, newcfg.Shield5Time)
+	}
+	if isForkTimestampIncompatible(c.Shield6Time, newcfg.Shield6Time, headTimestamp) {
+		return newTimestampCompatError("Shield6 fork timestamp", c.Shield6Time, newcfg.Shield6Time)
 	}
 	if isForkTimestampIncompatible(c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime, headTimestamp) {
 		return newTimestampCompatError("Shielded-only fork timestamp", c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime)

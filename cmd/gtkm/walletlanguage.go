@@ -331,6 +331,58 @@ func walletText(key, fallback string) string {
 			"uk": "Ім’я користувача Shield3", "th": "ชื่อผู้ใช้ Shield3",
 			"bn": "Shield3 ব্যবহারকারীর নাম",
 		}[walletActiveLanguage.Code]
+	case "menu.shield6":
+		value = map[string]string{
+			"zh": "显示 Shield6 付款码", "ru": "Показать платёжный код Shield6",
+			"ja": "Shield6 支払いコードを表示", "ko": "Shield6 결제 코드 표시",
+			"es": "Mostrar código de pago Shield6", "pt": "Mostrar código de pagamento Shield6",
+			"fr": "Afficher le code de paiement Shield6", "de": "Shield6-Zahlungscode anzeigen",
+			"ar": "عرض رمز دفع Shield6", "hi": "Shield6 भुगतान कोड दिखाएँ",
+			"id": "Tampilkan kode pembayaran Shield6", "tr": "Shield6 ödeme kodunu göster",
+			"vi": "Hiển thị mã thanh toán Shield6", "it": "Mostra codice di pagamento Shield6",
+			"nl": "Shield6-betaalcode tonen", "pl": "Pokaż kod płatności Shield6",
+			"uk": "Показати платіжний код Shield6", "th": "แสดงรหัสชำระเงิน Shield6",
+			"bn": "Shield6 পেমেন্ট কোড দেখান",
+		}[walletActiveLanguage.Code]
+	case "menu.shield6Migrate":
+		value = map[string]string{
+			"zh": "迁移旧隐私票据到 Shield6", "ru": "Перенести старые приватные записи в Shield6",
+			"ja": "旧プライベートノートを Shield6 に移行", "ko": "기존 프라이빗 노트를 Shield6으로 이전",
+			"es": "Migrar notas antiguas a Shield6", "pt": "Migrar notas antigas para Shield6",
+			"fr": "Migrer les anciennes notes vers Shield6", "de": "Alte Notizen zu Shield6 migrieren",
+			"ar": "ترحيل الملاحظات القديمة إلى Shield6", "hi": "पुराने नोट Shield6 में माइग्रेट करें",
+			"id": "Migrasikan catatan lama ke Shield6", "tr": "Eski notları Shield6'a taşı",
+			"vi": "Di chuyển ghi chú cũ sang Shield6", "it": "Migra le vecchie note a Shield6",
+			"nl": "Migreer oude notities naar Shield6", "pl": "Przenieś stare notatki do Shield6",
+			"uk": "Перенести старі нотатки до Shield6", "th": "ย้ายบันทึกเก่าไปยัง Shield6",
+			"bn": "পুরোনো নোট Shield6-এ স্থানান্তর করুন",
+		}[walletActiveLanguage.Code]
+	case "menu.shield6Deposit":
+		value = map[string]string{
+			"zh": "存入 TKM 到 Shield6", "ru": "Внести TKM в Shield6",
+			"ja": "TKM を Shield6 に入金", "ko": "TKM을 Shield6에 예치",
+			"es": "Depositar TKM en Shield6", "pt": "Depositar TKM no Shield6",
+			"fr": "Déposer des TKM dans Shield6", "de": "TKM in Shield6 einzahlen",
+			"ar": "إيداع TKM في Shield6", "hi": "Shield6 में TKM जमा करें",
+			"id": "Setor TKM ke Shield6", "tr": "Shield6'e TKM yatır",
+			"vi": "Nạp TKM vào Shield6", "it": "Deposita TKM in Shield6",
+			"nl": "Stort TKM in Shield6", "pl": "Wpłać TKM do Shield6",
+			"uk": "Внести TKM до Shield6", "th": "ฝาก TKM เข้า Shield6",
+			"bn": "Shield6-এ TKM জমা দিন",
+		}[walletActiveLanguage.Code]
+	case "menu.shield6Withdraw":
+		value = map[string]string{
+			"zh": "从 Shield6 提取到已盖章地址", "ru": "Вывести из Shield6 на адрес со штампом",
+			"ja": "Shield6 からスタンプ済みアドレスへ出金", "ko": "Shield6에서 스탬프된 주소로 출금",
+			"es": "Retirar de Shield6 a una dirección sellada", "pt": "Sacar do Shield6 para um endereço carimbado",
+			"fr": "Retirer de Shield6 vers une adresse estampillée", "de": "Aus Shield6 an eine gestempelte Adresse auszahlen",
+			"ar": "السحب من Shield6 إلى عنوان مختوم", "hi": "Shield6 से स्टैम्प किए गए पते पर निकासी",
+			"id": "Tarik dari Shield6 ke alamat berstempel", "tr": "Shield6'ten damgalı adrese çek",
+			"vi": "Rút từ Shield6 đến địa chỉ đã đóng dấu", "it": "Preleva da Shield6 verso un indirizzo timbrato",
+			"nl": "Neem op uit Shield6 naar een gestempeld adres", "pl": "Wypłać z Shield6 na ostemplowany adres",
+			"uk": "Вивести з Shield6 на адресу зі штампом", "th": "ถอนจาก Shield6 ไปยังที่อยู่ที่ประทับตรา",
+			"bn": "Shield6 থেকে স্ট্যাম্পযুক্ত ঠিকানায় উত্তোলন",
+		}[walletActiveLanguage.Code]
 	case "section.stamp":
 		value = map[string]string{
 			"zh": "SHIELD3 地址印记", "ru": "ШТАМП АДРЕСА SHIELD3",

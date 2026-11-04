@@ -35,6 +35,13 @@ func (e *notePreparationPending) Error() string {
 
 var errInsufficientPrivateFunds = errors.New("insufficient confirmed private funds; explicitly authorize public shielding to create notes from public balances")
 
+func shieldInputLimit(version uint64) int {
+	if version == 5 {
+		return shielded3.Shield5InputSlots
+	}
+	return shielded3.InputSlots
+}
+
 func validateAutomaticFundingConfig(cfg Config) error {
 	if cfg.AutoPublicFunding {
 		limit, ok := new(big.Int).SetString(cfg.AutoPublicFundingLimitWei, 10)
@@ -55,10 +62,14 @@ func validateAutomaticFundingConfig(cfg Config) error {
 // four inputs. A retry after confirmation repeats only if more merging is
 // needed. No transparent balance is treated as an existing private note.
 func privateNotePreparation(notes []shield3wallet.OwnedNote, target *big.Int) (*big.Int, error) {
+	return privateNotePreparationWithLimit(notes, target, shielded3.InputSlots)
+}
+
+func privateNotePreparationWithLimit(notes []shield3wallet.OwnedNote, target *big.Int, inputLimit int) (*big.Int, error) {
 	if target == nil || target.Sign() <= 0 || target.Cmp(shielded3.MaxSendWei()) > 0 {
 		return nil, errors.New("invalid private note target")
 	}
-	capacity, err := nativeNoteCapacity(notes, new(big.Int))
+	capacity, err := nativeNoteCapacityWithLimit(notes, new(big.Int), inputLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +134,7 @@ func (p *Prover) preparePrivateNotes(ctx context.Context, seed []byte, id *shiel
 		if err != nil {
 			return fmt.Errorf("confirmed note preparation %s; rescan failed: %w", saved.TxHash, err)
 		}
-		if err := requirePreparedNoteCapacity(scan.Notes, target); err != nil {
+		if err := requirePreparedNoteCapacityWithLimit(scan.Notes, target, shieldInputLimit(version)); err != nil {
 			return fmt.Errorf("confirmed note preparation %s is not spendable; refusing duplicate funding: %w", saved.TxHash, err)
 		}
 		db.NotePreparation = nil
@@ -137,7 +148,7 @@ func (p *Prover) preparePrivateNotes(ctx context.Context, seed []byte, id *shiel
 	if err != nil {
 		return err
 	}
-	amount, err := privateNotePreparation(scan.Notes, target)
+	amount, err := privateNotePreparationWithLimit(scan.Notes, target, shieldInputLimit(version))
 	deposit := false
 	if errors.Is(err, errInsufficientPrivateFunds) && p.cfg.AutoPublicFunding {
 		amount, err = publicFundingAmount(scan.Notes, target, p.cfg.AutoPublicFundingLimitWei)
@@ -225,10 +236,14 @@ func (p *Prover) preparePrivateNotes(ctx context.Context, seed []byte, id *shiel
 }
 
 func requirePreparedNoteCapacity(notes []shield3wallet.OwnedNote, target *big.Int) error {
+	return requirePreparedNoteCapacityWithLimit(notes, target, shielded3.InputSlots)
+}
+
+func requirePreparedNoteCapacityWithLimit(notes []shield3wallet.OwnedNote, target *big.Int, inputLimit int) error {
 	if target == nil || target.Sign() <= 0 {
 		return errors.New("invalid note preparation target")
 	}
-	capacity, err := nativeNoteCapacity(notes, new(big.Int))
+	capacity, err := nativeNoteCapacityWithLimit(notes, new(big.Int), inputLimit)
 	if err != nil {
 		return err
 	}

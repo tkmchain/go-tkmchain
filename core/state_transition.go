@@ -400,9 +400,15 @@ func (st *stateTransition) to() common.Address {
 }
 
 func (st *stateTransition) buyGas() error {
-	if st.evm.ChainConfig().IsConfidentialLedger(st.evm.Context.BlockNumber, st.evm.Context.Time) && (HasShieldedV3Prefix(st.msg.Data) || HasShieldedV4Prefix(st.msg.Data)) {
+	if st.evm.ChainConfig().IsConfidentialLedger(st.evm.Context.BlockNumber, st.evm.Context.Time) && (HasShieldedV3Prefix(st.msg.Data) || HasShieldedV4Prefix(st.msg.Data) || HasShieldedV5Prefix(st.msg.Data)) {
 		mode := uint64(0)
-		if HasShieldedV4Prefix(st.msg.Data) {
+		if HasShieldedV5Prefix(st.msg.Data) {
+			e, _, err := DecodeShieldedV5Transaction(st.msg.Data)
+			if err != nil {
+				return err
+			}
+			mode = e.FeeMode
+		} else if HasShieldedV4Prefix(st.msg.Data) {
 			e, _, err := DecodeShieldedV4Transaction(st.msg.Data)
 			if err != nil {
 				return err

@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
+	"github.com/ethereum/go-ethereum/zk/shielded6"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
@@ -40,7 +41,7 @@ Interactive terminal wallet for local gtkm nodes.
 
 The wallet connects to the node's local IPC endpoint, keeps private keys in the
 keystore, and signs locally. It never sends a password or private key over RPC.
-Use Send for native transfers or private Shield4 payments. Private payments are
+Use Send for native transfers or private Shield3/4/5/6 payments. Private payments are
 proved in this wallet process, signed by the encrypted keystore, and broadcast
 directly to the connected node; no separate prover service receives the seed.
 Use Stamp address before a Shield3 send. The flow encrypts the name and
@@ -49,6 +50,9 @@ owner-proof registration, and waits for immutable on-chain confirmation.
 Use Shield3 username to register a checksummed @name for a stamped receiving
 address. The wallet signs the binding locally and shows whether the node has
 replicated it to its configured directory operators.
+Shield6 migration uses two separately confirmed public-boundary transactions:
+a legacy self-withdrawal followed by a Shield6 deposit. A canceled deposit
+leaves the withdrawn value in the same account's public balance.
 Use Stamp sponsorship for an unfunded recipient in another wallet. Exchange
 an offer code and recipient authorization code, then let the funded sponsor
 review and pay the registration gas. Private keys stay in their own wallets.
@@ -118,6 +122,10 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  12) %s\n", walletText("menu.stampSponsor", "Stamp sponsorship"))
 		fmt.Printf("  13) %s\n", walletText("menu.validator", "Validator"))
 		fmt.Printf("  14) %s\n", walletText("menu.username", "Create / manage username"))
+		fmt.Printf("  15) %s\n", walletText("menu.shield6", "Show Shield6 payment code"))
+		fmt.Printf("  16) %s\n", walletText("menu.shield6Migrate", "Migrate legacy notes to Shield6"))
+		fmt.Printf("  17) %s\n", walletText("menu.shield6Deposit", "Deposit TKM to Shield6"))
+		fmt.Printf("  18) %s\n", walletText("menu.shield6Withdraw", "Withdraw Shield6 to stamped address"))
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -180,11 +188,27 @@ func interactiveWallet(ctx *cli.Context) error {
 			if err := walletShield3Username(reader, rpcClient, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
+		case "15":
+			if err := showWalletShield6Address(reader, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
+		case "16":
+			if err := migrateWalletNotesToShield6(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
+		case "17":
+			if err := depositWalletToShield6(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
+		case "18":
+			if err := withdrawWalletFromShield6(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
 		case "0", "q", "Q":
 			fmt.Printf("\n  %s\n", walletText("closed", "Wallet closed."))
 			return nil
 		default:
-			fmt.Println("\n  Choose 1 through 14, or 0.")
+			fmt.Println("\n  Choose 1 through 18, or 0.")
 			pauseWallet(reader)
 		}
 	}
@@ -803,6 +827,84 @@ func waitWalletReceipt(ctx context.Context, client *ethclient.Client, hash commo
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+const shield6MigrationConfirmations = uint64(12)
+
+// shield6MigrationFeeReserve computes the maximum public balance consumed by
+// the legacy withdrawal and the follow-up Shield6 deposit. The shielded value
+// released by the withdrawal is deposited in full, so it cannot also fund the
+// deposit transaction's gas. Check this reserve before broadcasting step one.
+func shield6MigrationFeeReserve(withdrawal *types.Transaction, depositGas uint64, depositFeeCap *big.Int) (*big.Int, error) {
+	if withdrawal == nil || withdrawal.Gas() == 0 || withdrawal.GasFeeCap() == nil || withdrawal.GasFeeCap().Sign() <= 0 || depositGas == 0 || depositFeeCap == nil || depositFeeCap.Sign() <= 0 {
+		return nil, errors.New("invalid Shield6 migration fee reserve inputs")
+	}
+	reserve := new(big.Int).Mul(new(big.Int).SetUint64(withdrawal.Gas()), withdrawal.GasFeeCap())
+	if value := withdrawal.Value(); value != nil && value.Sign() > 0 {
+		reserve.Add(reserve, value)
+	}
+	depositReserve := new(big.Int).Mul(new(big.Int).SetUint64(depositGas), depositFeeCap)
+	return reserve.Add(reserve, depositReserve), nil
+}
+
+func shield6MigrationDepositBalanceRequired(amount *big.Int, gas uint64, feeCap *big.Int) (*big.Int, error) {
+	if amount == nil || amount.Sign() <= 0 || gas == 0 || feeCap == nil || feeCap.Sign() <= 0 {
+		return nil, errors.New("invalid Shield6 migration deposit balance inputs")
+	}
+	reserve := new(big.Int).Mul(new(big.Int).SetUint64(gas), feeCap)
+	return reserve.Add(reserve, amount), nil
+}
+
+type walletReceiptConfirmationClient interface {
+	TransactionReceipt(context.Context, common.Hash) (*types.Receipt, error)
+	HeaderByNumber(context.Context, *big.Int) (*types.Header, error)
+}
+
+// waitWalletCanonicalConfirmations makes the public legacy withdrawal
+// sufficiently stable before the separate Shield6 deposit is submitted. It
+// also checks that the transaction receipt and its block remain canonical on
+// every poll, so a reorg stops the migration before the second transaction.
+func waitWalletCanonicalConfirmations(ctx context.Context, client walletReceiptConfirmationClient, receipt *types.Receipt, confirmations uint64) error {
+	if client == nil || receipt == nil || receipt.BlockNumber == nil || receipt.BlockNumber.Sign() < 0 || receipt.BlockHash == (common.Hash{}) || confirmations == 0 {
+		return errors.New("invalid receipt confirmation request")
+	}
+	target := new(big.Int).Add(receipt.BlockNumber, new(big.Int).SetUint64(confirmations-1))
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		current, err := client.TransactionReceipt(ctx, receipt.TxHash)
+		if err != nil {
+			if err == ethereum.NotFound {
+				return fmt.Errorf("withdrawal receipt disappeared before migration confirmation: %w", err)
+			}
+			return fmt.Errorf("recheck withdrawal receipt: %w", err)
+		}
+		if current == nil || current.BlockNumber == nil || current.BlockNumber.Cmp(receipt.BlockNumber) != 0 || current.BlockHash != receipt.BlockHash {
+			return errors.New("withdrawal receipt changed blocks during migration confirmation; do not submit the Shield6 deposit")
+		}
+		canonical, err := client.HeaderByNumber(ctx, receipt.BlockNumber)
+		if err != nil {
+			return fmt.Errorf("check canonical withdrawal block: %w", err)
+		}
+		if canonical == nil || canonical.Hash() != receipt.BlockHash {
+			return errors.New("legacy withdrawal was reorganized before migration confirmation; do not submit the Shield6 deposit")
+		}
+		head, err := client.HeaderByNumber(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("read chain head while confirming migration: %w", err)
+		}
+		if head == nil || head.Number == nil {
+			return errors.New("chain head is unavailable while confirming migration")
+		}
+		if head.Number.Cmp(target) >= 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -1724,6 +1826,9 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 	if err != nil || value.Sign() <= 0 {
 		return errors.New("amount must be a positive decimal value")
 	}
+	if strings.HasPrefix(strings.TrimSpace(toText), shielded6.PaymentCodePrefix) {
+		return sendWalletShield6Payment(reader, client, ks, from, strings.TrimSpace(toText), value, chainID)
+	}
 	if strings.HasPrefix(strings.TrimSpace(toText), "@") || strings.HasPrefix(strings.TrimSpace(toText), "tkmshield3.") || strings.HasPrefix(strings.TrimSpace(toText), "file:") {
 		return sendWalletShield3Payment(reader, client.Client(), ks, from, strings.TrimSpace(toText), value, chainID, dataDir)
 	}
@@ -1888,28 +1993,28 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	// then broadcast only the signed bytes to the node.
 	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancelBuild()
-	unsigned, err := buildV4WithAutomaticConsolidation(buildCtx, rpcClient, ks, from, password, chainID, key.Seed, identity, recipient, amount)
+	unsigned, err := buildPrivatePaymentWithAutomaticConsolidation(buildCtx, rpcClient, ks, from, password, chainID, key.Seed, identity, recipient, amount)
 	if err != nil {
-		return fmt.Errorf("build private Shield4 payment: %w", err)
+		return fmt.Errorf("build private payment: %w", err)
 	}
 	signed, err := ks.SignTxWithPassphrase(from, password, unsigned, chainID)
 	if err != nil {
-		return fmt.Errorf("sign private Shield4 payment: %w", err)
+		return fmt.Errorf("sign private payment: %w", err)
 	}
 	raw, err := signed.MarshalBinary()
 	if err != nil {
-		return fmt.Errorf("encode signed Shield4 payment: %w", err)
+		return fmt.Errorf("encode signed private payment: %w", err)
 	}
 	broadcastCtx, cancelBroadcast := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBroadcast()
 	var transactionHash common.Hash
 	if err := rpcClient.CallContext(broadcastCtx, &transactionHash, "eth_sendRawTransaction", hexutil.Encode(raw)); err != nil {
-		return fmt.Errorf("broadcast signed Shield4 payment: %w", err)
+		return fmt.Errorf("broadcast signed private payment: %w", err)
 	}
 	if transactionHash != signed.Hash() {
 		return fmt.Errorf("node returned transaction hash %s, but locally signed transaction hashes to %s", transactionHash, signed.Hash())
 	}
-	fmt.Println("\nPrivate Shield4 payment submitted.")
+	fmt.Println("\nPrivate payment submitted.")
 	if username != "" {
 		fmt.Printf("  Recipient: %s\n", username)
 	}
@@ -1918,18 +2023,561 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	return nil
 }
 
-// buildV4WithAutomaticConsolidation makes the ordinary SEND flow recover from
+func showWalletShield6Address(reader *bufio.Reader, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
+		return errors.New("invalid chain ID for Shield6 payment code")
+	}
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("create the account stamp before using its Shield6 address")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate stamped account identity: %w", err)
+	}
+	defer identity.Clear()
+	keys, err := shielded6.DeriveWalletKeys(key.Seed, chainID.Uint64())
+	if err != nil {
+		return err
+	}
+	defer keys.Clear()
+	code, err := shielded6.EncodePaymentCode(keys.Address())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n  Shield6 payment code for %s\n  %s\n", account.Address.Hex(), code)
+	fmt.Println("  Keep the account seed backed up. This code is chain-bound and contains no spend secret.")
+	pauseWallet(reader)
+	return nil
+}
+
+// depositWalletToShield6 creates the first confidential Shield6 note directly
+// from a stamped account's public TKM balance. This is an explicit privacy
+// boundary: the sender and amount are visible in the deposit transaction.
+func depositWalletToShield6(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if client == nil || ks == nil || chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
+		return errors.New("Shield6 deposit requires a connected node and valid chain ID")
+	}
+	if len(walletAccounts) == 0 {
+		return errors.New("no local wallet accounts are available")
+	}
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer statusCancel()
+	var status struct {
+		Active  bool         `json:"active"`
+		ChainID *hexutil.Big `json:"chainId"`
+	}
+	if err := client.Client().CallContext(statusCtx, &status, "tkmprivacy_shieldedV6Status"); err != nil {
+		return fmt.Errorf("check Shield6 activation: %w", err)
+	}
+	if !status.Active || status.ChainID == nil || (*big.Int)(status.ChainID).Cmp(chainID) != 0 {
+		return errors.New("Shield6 is not active on this chain; no deposit transaction was built")
+	}
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return fmt.Errorf("read account algorithm: %w", err)
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("Shield6 deposits require the original stamped ML-DSA-87 account")
+	}
+	amountText, err := readWalletLine(reader, "Public deposit amount in TKM")
+	if err != nil {
+		return err
+	}
+	amount, err := parseWalletAmount(amountText, 18)
+	if err != nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
+		return errors.New("deposit amount must be positive and fit the Shield6 128-bit amount range")
+	}
+	fmt.Println("\nShield6 public deposit")
+	fmt.Printf("  Account: %s\n  Public amount: %s TKM\n", account.Address.Hex(), formatTKM(amount))
+	fmt.Println("  The sender and deposit amount are visible on-chain. The resulting Shield6 note is encrypted to this wallet.")
+	confirmation, err := readWalletLine(reader, "Type DEPOSIT to build and submit")
+	if err != nil {
+		return err
+	}
+	if confirmation != "DEPOSIT" {
+		fmt.Println("  Cancelled. No transaction was built or submitted.")
+		pauseWallet(reader)
+		return nil
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("restore the stamped account keyfile before depositing to Shield6")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate stamped deposit identity: %w", err)
+	}
+	defer identity.Clear()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	payload, err := identity.RegisteredStampPayload()
+	if err != nil {
+		return err
+	}
+	if err := shield3wallet.RequireRegisteredStamp(ctx, client.Client(), payload); err != nil {
+		return fmt.Errorf("sender stamp: %w", err)
+	}
+	shieldKeys, err := shielded6.DeriveWalletKeys(key.Seed, chainID.Uint64())
+	if err != nil {
+		return fmt.Errorf("derive Shield6 wallet: %w", err)
+	}
+	defer shieldKeys.Clear()
+	nonce, err := client.PendingNonceAt(ctx, account.Address)
+	if err != nil {
+		return fmt.Errorf("read pending account nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil || gasPrice == nil || gasPrice.Sign() <= 0 {
+		if err == nil {
+			err = errors.New("network gas price is unavailable")
+		}
+		return fmt.Errorf("read network gas price: %w", err)
+	}
+	gasLimit := uint64(10_000_000)
+	if header, headerErr := client.HeaderByNumber(ctx, nil); headerErr == nil && header.GasLimit > 0 && header.GasLimit < gasLimit {
+		gasLimit = header.GasLimit
+	}
+	feeCap := new(big.Int).Mul(gasPrice, big.NewInt(2))
+	needed, err := shield6MigrationDepositBalanceRequired(amount, gasLimit, feeCap)
+	if err != nil {
+		return err
+	}
+	balance, err := client.PendingBalanceAt(ctx, account.Address)
+	if err != nil {
+		return fmt.Errorf("check public deposit balance: %w", err)
+	}
+	if balance.Cmp(needed) < 0 {
+		return fmt.Errorf("insufficient public balance for deposit and maximum gas reserve: need %s TKM, have %s TKM", formatTKM(needed), formatTKM(balance))
+	}
+	accountKey, err := pqcrypto.NewMLDSA87FromSeed(key.Seed)
+	if err != nil {
+		return err
+	}
+	skeleton := types.NewTx(&types.PQTkmTx{
+		ChainID: new(big.Int).Set(chainID), Nonce: nonce, GasTipCap: new(big.Int).Set(gasPrice),
+		GasFeeCap: feeCap, Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int).Set(amount),
+		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
+	})
+	fmt.Println("\nBuilding Shield6 deposit proof…")
+	signed, err := shield3wallet.BuildAndSignShieldedV6Deposit(ctx, client.Client(), key.Seed, identity, shieldKeys, skeleton, amount, crand.Reader)
+	if err != nil {
+		return fmt.Errorf("build Shield6 deposit: %w", err)
+	}
+	raw, err := signed.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("encode Shield6 deposit transaction: %w", err)
+	}
+	var txHash common.Hash
+	if err := client.Client().CallContext(ctx, &txHash, "eth_sendRawTransaction", hexutil.Encode(raw)); err != nil {
+		return fmt.Errorf("broadcast Shield6 deposit: %w", err)
+	}
+	if txHash != signed.Hash() {
+		return fmt.Errorf("node returned mismatched Shield6 transaction hash %s", txHash.Hex())
+	}
+	fmt.Printf("\nShield6 deposit submitted: %s\nWaiting for inclusion…\n", txHash.Hex())
+	receiptCtx, receiptCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer receiptCancel()
+	receipt, err := waitWalletReceipt(receiptCtx, client, txHash)
+	if err != nil {
+		return fmt.Errorf("Shield6 deposit %s was submitted but confirmation failed: %w", txHash.Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("Shield6 deposit %s was included but failed", txHash.Hex())
+	}
+	code, err := shielded6.EncodePaymentCode(shieldKeys.Address())
+	if err != nil {
+		return fmt.Errorf("deposit confirmed as %s, but payment-code encoding failed: %w", txHash.Hex(), err)
+	}
+	fmt.Printf("\nShield6 deposit confirmed.\n  Transaction: %s\n  Shield6 payment code: %s\n", txHash.Hex(), code)
+	pauseWallet(reader)
+	return nil
+}
+
+func sendWalletShield6Payment(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, from accounts.Account, destination string, amount *big.Int, chainID *big.Int) error {
+	if client == nil || chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 || amount == nil || amount.Sign() <= 0 {
+		return errors.New("invalid Shield6 payment request")
+	}
+	recipient, err := shielded6.DecodePaymentCode(destination, chainID.Uint64())
+	if err != nil {
+		return errors.New("recipient must provide a valid chain-bound Shield6 payment code")
+	}
+	confirmation, err := readWalletLine(reader, "Type SEND to build and submit the Shield6 private payment")
+	if err != nil {
+		return err
+	}
+	if confirmation != "SEND" {
+		fmt.Println("  Cancelled. No proof was generated or transaction submitted.")
+		pauseWallet(reader)
+		return nil
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, from, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("stamp the sender account before using Shield6")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate stamped sender identity: %w", err)
+	}
+	defer identity.Clear()
+	rpcClient := client.Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	stampPayload, err := identity.RegisteredStampPayload()
+	if err != nil {
+		return err
+	}
+	if err := shield3wallet.RequireRegisteredStamp(ctx, rpcClient, stampPayload); err != nil {
+		return fmt.Errorf("sender stamp: %w", err)
+	}
+	shieldKeys, err := shielded6.DeriveWalletKeys(key.Seed, chainID.Uint64())
+	if err != nil {
+		return err
+	}
+	defer shieldKeys.Clear()
+	scan, err := shield3wallet.ScanShieldedV6(ctx, rpcClient, shieldKeys)
+	if err != nil {
+		return fmt.Errorf("scan Shield6 notes: %w", err)
+	}
+	defer func() {
+		for _, owned := range scan.Notes {
+			if owned.Note != nil {
+				owned.Note.Clear()
+			}
+		}
+	}()
+	selected := make([]*shielded6.Note, 0, core.ShieldedV6MaxInputs)
+	selectedTotal := new(big.Int)
+	for i := range scan.Notes {
+		if len(selected) == core.ShieldedV6MaxInputs || selectedTotal.Cmp(amount) >= 0 {
+			break
+		}
+		selected = append(selected, scan.Notes[i].Note)
+		selectedTotal.Add(selectedTotal, scan.Notes[i].Note.Amount)
+	}
+	if selectedTotal.Cmp(amount) < 0 {
+		return fmt.Errorf("Shield6 spendable balance is insufficient: need %s, have %s", formatTKM(amount), formatTKM(selectedTotal))
+	}
+	outputs := []core.ShieldedV6WalletOutput{{Address: recipient, Amount: new(big.Int).Set(amount)}}
+	change := new(big.Int).Sub(selectedTotal, amount)
+	if change.Sign() > 0 {
+		outputs = append(outputs, core.ShieldedV6WalletOutput{Address: shieldKeys.Address(), Amount: change})
+	}
+	nonce, err := client.PendingNonceAt(ctx, from.Address)
+	if err != nil {
+		return fmt.Errorf("read pending account nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return fmt.Errorf("read network gas price: %w", err)
+	}
+	if gasPrice == nil || gasPrice.Sign() <= 0 {
+		return errors.New("network gas price is unavailable")
+	}
+	feeCap := new(big.Int).Mul(gasPrice, big.NewInt(2))
+	tipCap := new(big.Int).Set(gasPrice)
+	gasLimit := uint64(10_000_000)
+	if header, headerErr := client.HeaderByNumber(ctx, nil); headerErr == nil && header.GasLimit > 0 && header.GasLimit < gasLimit {
+		gasLimit = header.GasLimit
+	}
+	accountKey, err := pqcrypto.NewMLDSA87FromSeed(key.Seed)
+	if err != nil {
+		return err
+	}
+	skeleton := types.NewTx(&types.PQTkmTx{
+		ChainID: new(big.Int).Set(chainID), Nonce: nonce, GasTipCap: tipCap, GasFeeCap: feeCap,
+		Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int),
+		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
+	})
+	fmt.Printf("\nBuilding Shield6 private payment: %d input note(s), %d output(s).\n", len(selected), len(outputs))
+	signed, err := shield3wallet.BuildAndSignShieldedV6Payment(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, outputs, crand.Reader)
+	if err != nil {
+		return fmt.Errorf("build Shield6 private payment: %w", err)
+	}
+	raw, err := signed.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("encode Shield6 transaction: %w", err)
+	}
+	var hash common.Hash
+	if err := rpcClient.CallContext(ctx, &hash, "eth_sendRawTransaction", hexutil.Encode(raw)); err != nil {
+		return fmt.Errorf("broadcast Shield6 transaction: %w", err)
+	}
+	if hash != signed.Hash() {
+		return fmt.Errorf("node returned mismatched Shield6 transaction hash %s", hash)
+	}
+	fmt.Printf("\nShield6 private payment broadcast.\n  Transaction hash: %s\n", hash.Hex())
+	pauseWallet(reader)
+	return nil
+}
+
+// migrateWalletNotesToShield6 deliberately treats migration as two public
+// boundaries. It first self-withdraws a legacy note and waits for canonical
+// confirmation; only then does it offer a separately confirmed Shield6
+// deposit. A canceled or failed deposit leaves the withdrawn value in the
+// user's ordinary account and reports the withdrawal hash.
+func migrateWalletNotesToShield6(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if client == nil || ks == nil || chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
+		return errors.New("Shield6 migration requires a connected node and valid chain ID")
+	}
+	if len(walletAccounts) == 0 {
+		return errors.New("no local wallet accounts are available")
+	}
+	rpcClient := client.Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var status struct {
+		Active  bool         `json:"active"`
+		ChainID *hexutil.Big `json:"chainId"`
+	}
+	if err := rpcClient.CallContext(ctx, &status, "tkmprivacy_shieldedV6Status"); err != nil {
+		return fmt.Errorf("check Shield6 activation: %w", err)
+	}
+	if !status.Active || status.ChainID == nil || (*big.Int)(status.ChainID).Cmp(chainID) != 0 {
+		return errors.New("Shield6 is not active on this chain; no migration transaction was built")
+	}
+
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	algorithm, err := ks.AccountAlgorithm(account)
+	if err != nil {
+		return fmt.Errorf("read account algorithm: %w", err)
+	}
+	if algorithm != pqcrypto.AlgorithmMLDSA87 {
+		return errors.New("Shield6 migration requires the original stamped ML-DSA-87 account that owns the legacy notes")
+	}
+	versionText, err := readWalletLine(reader, "Legacy note version (3, 4, or 5)")
+	if err != nil {
+		return err
+	}
+	version, err := strconv.ParseUint(strings.TrimSpace(versionText), 10, 64)
+	if err != nil || version < 3 || version > 5 {
+		return errors.New("legacy note version must be 3, 4, or 5")
+	}
+	amountText, err := readWalletLine(reader, "Amount to migrate in TKM")
+	if err != nil {
+		return err
+	}
+	amount, err := parseWalletAmount(amountText, 18)
+	if err != nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
+		return errors.New("migration amount must be positive and fit the Shield6 128-bit amount range")
+	}
+	fmt.Println("\nShield6 migration has two visible on-chain steps.")
+	fmt.Printf("  Account: %s\n  Legacy proof: Shield%d\n  Public self-withdrawal: %s TKM\n", account.Address.Hex(), version, formatTKM(amount))
+	fmt.Println("  Step 1 returns the selected legacy note value to this same stamped account.")
+	fmt.Println("  Step 2 deposits the confirmed value into a Shield6 note; the amount is public at both boundaries.")
+	confirm, err := readWalletLine(reader, "Type MIGRATE to build and submit the self-withdrawal")
+	if err != nil {
+		return err
+	}
+	if confirm != "MIGRATE" {
+		fmt.Println("  Cancelled. No transaction was built or submitted.")
+		pauseWallet(reader)
+		return nil
+	}
+
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("restore the stamped account keyfile before migrating legacy notes")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate stamped migration identity: %w", err)
+	}
+	defer identity.Clear()
+	withdrawCtx, withdrawCancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer withdrawCancel()
+	withdrawal, err := shield3wallet.BuildPublicWithdrawal(withdrawCtx, rpcClient, key.Seed, identity, account.Address, amount, version, nil)
+	if err != nil {
+		return fmt.Errorf("build legacy self-withdrawal: %w", err)
+	}
+	if withdrawal.To() == nil || *withdrawal.To() != params.ShieldedPoolAddress || withdrawal.Type() != types.PQTkmTxType {
+		return errors.New("legacy wallet builder returned an unexpected migration transaction")
+	}
+	signedWithdrawal, err := ks.SignTxWithPassphrase(account, password, withdrawal, chainID)
+	if err != nil {
+		return fmt.Errorf("sign legacy self-withdrawal: %w", err)
+	}
+	depositGasLimit := uint64(10_000_000)
+	if header, headerErr := client.HeaderByNumber(withdrawCtx, nil); headerErr == nil && header.GasLimit > 0 && header.GasLimit < depositGasLimit {
+		depositGasLimit = header.GasLimit
+	}
+	depositGasPrice, err := client.SuggestGasPrice(withdrawCtx)
+	if err != nil || depositGasPrice == nil || depositGasPrice.Sign() <= 0 {
+		if err == nil {
+			err = errors.New("network gas price is unavailable")
+		}
+		return fmt.Errorf("legacy withdrawal not submitted; cannot reserve Shield6 deposit gas: %w", err)
+	}
+	depositFeeCap := new(big.Int).Mul(depositGasPrice, big.NewInt(2))
+	reserve, err := shield6MigrationFeeReserve(signedWithdrawal, depositGasLimit, depositFeeCap)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal not submitted; compute migration fee reserve: %w", err)
+	}
+	pendingBalance, err := client.PendingBalanceAt(withdrawCtx, account.Address)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal not submitted; check public balance for both migration fees: %w", err)
+	}
+	if pendingBalance.Cmp(reserve) < 0 {
+		shortfall := new(big.Int).Sub(reserve, pendingBalance)
+		return fmt.Errorf("legacy withdrawal not submitted; public balance cannot cover both migration gas reserves (need %s TKM, short by %s TKM)", formatTKM(reserve), formatTKM(shortfall))
+	}
+	if err := client.SendTransaction(withdrawCtx, signedWithdrawal); err != nil {
+		return fmt.Errorf("submit legacy self-withdrawal: %w", err)
+	}
+	withdrawalHash := signedWithdrawal.Hash()
+	fmt.Printf("\nSelf-withdrawal submitted: %s\nWaiting for canonical confirmation...\n", withdrawalHash.Hex())
+	receipt, err := waitWalletReceipt(withdrawCtx, client, withdrawalHash)
+	if err != nil {
+		return fmt.Errorf("legacy self-withdrawal %s was submitted but confirmation failed: %w", withdrawalHash.Hex(), err)
+	}
+	if receipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("legacy self-withdrawal %s was mined but failed; no Shield6 deposit was attempted", withdrawalHash.Hex())
+	}
+	fmt.Printf("Legacy withdrawal confirmed; waiting for %d canonical confirmations before the Shield6 deposit...\n", shield6MigrationConfirmations)
+	if err := waitWalletCanonicalConfirmations(withdrawCtx, client, receipt, shield6MigrationConfirmations); err != nil {
+		return fmt.Errorf("legacy withdrawal %s is not safely confirmed; Shield6 deposit was not submitted: %w", withdrawalHash.Hex(), err)
+	}
+
+	depositConfirm, err := readWalletLine(reader, "Type DEPOSIT to publish the Shield6 deposit amount")
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit not submitted: %w", withdrawalHash.Hex(), err)
+	}
+	if depositConfirm != "DEPOSIT" {
+		fmt.Printf("  Deposit canceled. The withdrawn value remains in %s. Withdrawal hash: %s\n", account.Address.Hex(), withdrawalHash.Hex())
+		pauseWallet(reader)
+		return nil
+	}
+
+	depositCtx, depositCancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer depositCancel()
+	keys, err := shielded6.DeriveWalletKeys(key.Seed, chainID.Uint64())
+	if err != nil {
+		return fmt.Errorf("derive Shield6 deposit wallet: %w", err)
+	}
+	defer keys.Clear()
+	nonce, err := client.PendingNonceAt(depositCtx, account.Address)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; read deposit nonce: %w", withdrawalHash.Hex(), err)
+	}
+	gasPrice, err := client.SuggestGasPrice(depositCtx)
+	if err != nil || gasPrice == nil || gasPrice.Sign() <= 0 {
+		if err == nil {
+			err = errors.New("network gas price is unavailable")
+		}
+		return fmt.Errorf("legacy withdrawal %s is confirmed; read deposit gas price: %w", withdrawalHash.Hex(), err)
+	}
+	gasLimit := depositGasLimit
+	feeCap := new(big.Int).Mul(gasPrice, big.NewInt(2))
+	depositBalanceRequired, err := shield6MigrationDepositBalanceRequired(amount, gasLimit, feeCap)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; calculate Shield6 deposit reserve: %w", withdrawalHash.Hex(), err)
+	}
+	pendingBalance, err = client.PendingBalanceAt(depositCtx, account.Address)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; check public balance before Shield6 deposit: %w", withdrawalHash.Hex(), err)
+	}
+	if pendingBalance.Cmp(depositBalanceRequired) < 0 {
+		shortfall := new(big.Int).Sub(depositBalanceRequired, pendingBalance)
+		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit not submitted because the current public balance cannot cover the deposit amount and gas reserve (need %s TKM, short by %s TKM); funds remain at %s", withdrawalHash.Hex(), formatTKM(depositBalanceRequired), formatTKM(shortfall), account.Address.Hex())
+	}
+	accountKey, err := pqcrypto.NewMLDSA87FromSeed(key.Seed)
+	if err != nil {
+		return err
+	}
+	skeleton := types.NewTx(&types.PQTkmTx{
+		ChainID: new(big.Int).Set(chainID), Nonce: nonce, GasTipCap: new(big.Int).Set(gasPrice),
+		GasFeeCap: feeCap, Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int).Set(amount),
+		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
+	})
+	signedDeposit, err := shield3wallet.BuildAndSignShieldedV6Deposit(depositCtx, rpcClient, key.Seed, identity, keys, skeleton, amount, crand.Reader)
+	if err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
+	}
+	if err := client.SendTransaction(depositCtx, signedDeposit); err != nil {
+		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
+	}
+	depositHash := signedDeposit.Hash()
+	fmt.Printf("\nShield6 deposit submitted: %s\nWaiting for canonical confirmation...\n", depositHash.Hex())
+	depositReceipt, err := waitWalletReceipt(depositCtx, client, depositHash)
+	if err != nil {
+		return fmt.Errorf("Shield6 deposit %s was submitted but confirmation failed; legacy withdrawal was %s: %w", depositHash.Hex(), withdrawalHash.Hex(), err)
+	}
+	if depositReceipt.Status != types.ReceiptStatusSuccessful {
+		return fmt.Errorf("Shield6 deposit %s was mined but failed; the public withdrawal %s remains confirmed", depositHash.Hex(), withdrawalHash.Hex())
+	}
+	fmt.Printf("Shield6 deposit included; waiting for %d canonical confirmations...\n", shield6MigrationConfirmations)
+	if err := waitWalletCanonicalConfirmations(depositCtx, client, depositReceipt, shield6MigrationConfirmations); err != nil {
+		return fmt.Errorf("Shield6 deposit %s is not safely confirmed; legacy withdrawal %s remains confirmed: %w", depositHash.Hex(), withdrawalHash.Hex(), err)
+	}
+	fmt.Printf("\nShield6 migration confirmed.\n  Public self-withdrawal: %s\n  Public Shield6 deposit: %s\n  Shield6 payment code: %s\n", withdrawalHash.Hex(), depositHash.Hex(), mustShield6PaymentCode(keys.Address()))
+	pauseWallet(reader)
+	return nil
+}
+
+func mustShield6PaymentCode(address shielded6.Address) string {
+	code, err := shielded6.EncodePaymentCode(address)
+	if err != nil {
+		return "(could not encode payment code)"
+	}
+	return code
+}
+
+// buildPrivatePaymentWithAutomaticConsolidation makes the ordinary SEND flow recover from
 // fragmented private balances. Consolidation is private and self-directed;
 // it never converts a transparent balance into a note or creates a public
 // deposit. Disjoint merges share the existing canonical note root, so the
 // wallet submits a wave before waiting for confirmations.
-func buildV4WithAutomaticConsolidation(ctx context.Context, rpcClient *rpc.Client, ks *keystore.KeyStore, from accounts.Account, password string, chainID *big.Int, seed []byte, identity *shield3wallet.Identity, recipient shield3wallet.PaymentPayload, amount *big.Int) (*types.Transaction, error) {
+func buildPrivatePaymentWithAutomaticConsolidation(ctx context.Context, rpcClient *rpc.Client, ks *keystore.KeyStore, from accounts.Account, password string, chainID *big.Int, seed []byte, identity *shield3wallet.Identity, recipient shield3wallet.PaymentPayload, amount *big.Int) (*types.Transaction, error) {
 	client := ethclient.NewClient(rpcClient)
 	view := identity.ViewKey()
 	scan, err := shield3wallet.ScanAsset(ctx, rpcClient, view, shielded3.AssetTKM)
 	view.Clear()
 	if err != nil {
 		return nil, fmt.Errorf("scan private notes once before building payment: %w", err)
+	}
+	// Shield5 consumes up to sixteen notes in one proof. When consensus and the
+	// embedded verifier both report it active, use that envelope directly and
+	// skip the old submit-confirm-rescan consolidation loop entirely.
+	var shield5 struct {
+		Active         bool `json:"active"`
+		NativeVerifier bool `json:"nativeVerifier"`
+	}
+	if err := rpcClient.CallContext(ctx, &shield5, "tkmprivacy_shieldedV5Status"); err == nil && shield5.Active && shield5.NativeVerifier {
+		return shield3wallet.BuildV5WithKnownNotes(ctx, rpcClient, seed, identity, recipient, amount, scan.Notes)
 	}
 	const maxMergesPerWave = 16
 	for wave := 0; wave < 16; wave++ {
@@ -2379,6 +3027,144 @@ func parseWalletAmount(input string, decimals int) (*big.Int, error) {
 		return nil, errors.New("invalid amount")
 	}
 	return value, nil
+}
+
+// withdrawWalletFromShield6 is an explicit public privacy exit. The amount
+// and destination are visible by design; remaining value is returned as a
+// confidential Shield6 change note.
+func withdrawWalletFromShield6(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+	if client == nil || ks == nil || chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 || len(walletAccounts) == 0 {
+		return errors.New("Shield6 withdrawal requires a connected node, wallet account, and valid chain ID")
+	}
+	var status struct {
+		Active  bool         `json:"active"`
+		ChainID *hexutil.Big `json:"chainId"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	rpcClient := client.Client()
+	if err := rpcClient.CallContext(ctx, &status, "tkmprivacy_shieldedV6Status"); err != nil {
+		return fmt.Errorf("check Shield6 activation: %w", err)
+	}
+	if !status.Active || status.ChainID == nil || (*big.Int)(status.ChainID).Cmp(chainID) != 0 {
+		return errors.New("Shield6 is not active on this chain")
+	}
+	account, err := chooseWalletAccount(reader, walletAccounts)
+	if err != nil {
+		return err
+	}
+	destinationText, err := readWalletLine(reader, "Stamped public 0x withdrawal address")
+	if err != nil {
+		return err
+	}
+	if !common.IsHexAddress(destinationText) {
+		return errors.New("withdrawal destination must be a valid stamped 0x address")
+	}
+	destination := common.HexToAddress(destinationText)
+	amountText, err := readWalletLine(reader, "Public withdrawal amount in TKM")
+	if err != nil {
+		return err
+	}
+	amount, err := parseWalletAmount(amountText, 18)
+	if err != nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
+		return errors.New("withdrawal amount must be positive and fit the Shield6 128-bit range")
+	}
+	fmt.Println("\nShield6 public withdrawal")
+	fmt.Printf("  Destination: %s\n  Public amount: %s TKM\n", destination.Hex(), formatTKM(amount))
+	fmt.Println("  The recipient and amount will be visible on-chain. Any remaining Shield6 value returns to a private change note; gas is paid from the public account.")
+	confirmation, err := readWalletLine(reader, "Type WITHDRAW to build and submit")
+	if err != nil {
+		return err
+	}
+	if confirmation != "WITHDRAW" {
+		fmt.Println("  Cancelled. No proof was generated or transaction submitted.")
+		pauseWallet(reader)
+		return nil
+	}
+	password := utils.GetPassPhrase("PQ account password", false)
+	defer clearWalletBytes([]byte(password))
+	key, err := walletPQKey(ks, account, password)
+	if err != nil {
+		return err
+	}
+	defer clearWalletBytes(key.Seed)
+	if key.Shield3Stamp == nil {
+		return errors.New("restore the original stamped account keyfile before withdrawing")
+	}
+	identity, err := shield3wallet.NewIdentity(key.Seed, chainID.Uint64(), key.Shield3Stamp)
+	if err != nil {
+		return fmt.Errorf("validate withdrawal sender identity: %w", err)
+	}
+	defer identity.Clear()
+	shieldKeys, err := shielded6.DeriveWalletKeys(key.Seed, chainID.Uint64())
+	if err != nil {
+		return fmt.Errorf("derive Shield6 wallet: %w", err)
+	}
+	defer shieldKeys.Clear()
+	scan, err := shield3wallet.ScanShieldedV6(ctx, rpcClient, shieldKeys)
+	if err != nil {
+		return fmt.Errorf("scan Shield6 notes: %w", err)
+	}
+	defer func() {
+		for _, note := range scan.Notes {
+			if note.Note != nil {
+				note.Note.Clear()
+			}
+		}
+	}()
+	selected := make([]*shielded6.Note, 0, core.ShieldedV6MaxInputs)
+	selectedTotal := new(big.Int)
+	for i := range scan.Notes {
+		if len(selected) == core.ShieldedV6MaxInputs || selectedTotal.Cmp(amount) >= 0 {
+			break
+		}
+		selected = append(selected, scan.Notes[i].Note)
+		selectedTotal.Add(selectedTotal, scan.Notes[i].Note.Amount)
+	}
+	if selectedTotal.Cmp(amount) < 0 {
+		return fmt.Errorf("Shield6 spendable balance is insufficient: need %s, have %s", formatTKM(amount), formatTKM(selectedTotal))
+	}
+	nonce, err := client.PendingNonceAt(ctx, account.Address)
+	if err != nil {
+		return fmt.Errorf("read pending account nonce: %w", err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil || gasPrice == nil || gasPrice.Sign() <= 0 {
+		if err == nil {
+			err = errors.New("network gas price is unavailable")
+		}
+		return fmt.Errorf("read network gas price: %w", err)
+	}
+	feeCap := new(big.Int).Mul(gasPrice, big.NewInt(2))
+	tipCap := new(big.Int).Set(gasPrice)
+	gasLimit := uint64(20_000_000)
+	if header, headerErr := client.HeaderByNumber(ctx, nil); headerErr == nil && header.GasLimit > 0 && header.GasLimit < gasLimit {
+		gasLimit = header.GasLimit
+	}
+	accountKey, err := pqcrypto.NewMLDSA87FromSeed(key.Seed)
+	if err != nil {
+		return err
+	}
+	skeleton := types.NewTx(&types.PQTkmTx{ChainID: new(big.Int).Set(chainID), Nonce: nonce, GasTipCap: tipCap, GasFeeCap: feeCap, Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey)})
+	fmt.Printf("\nBuilding Shield6 withdrawal from %d input note(s)…\n", len(selected))
+	signed, err := shield3wallet.BuildAndSignShieldedV6Withdrawal(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, destination, amount, crand.Reader)
+	if err != nil {
+		return fmt.Errorf("build Shield6 withdrawal: %w", err)
+	}
+	raw, err := signed.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("encode Shield6 withdrawal: %w", err)
+	}
+	var hash common.Hash
+	if err := rpcClient.CallContext(ctx, &hash, "eth_sendRawTransaction", hexutil.Encode(raw)); err != nil {
+		return fmt.Errorf("broadcast Shield6 withdrawal: %w", err)
+	}
+	if hash != signed.Hash() {
+		return fmt.Errorf("node returned mismatched Shield6 transaction hash %s", hash.Hex())
+	}
+	fmt.Printf("\nShield6 withdrawal broadcast.\n  Transaction: %s\n", hash.Hex())
+	pauseWallet(reader)
+	return nil
 }
 
 func formatTKM(value *big.Int) string {
