@@ -462,7 +462,10 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if !st.GetBalance(b.Address).IsZero() {
 		t.Fatal("recipient unexpectedly has public funds")
 	}
-	backAmount := big.NewInt(1_000_000_000_000_000_000)
+	// Leave a small change note in B's wallet. The later relay case adds three
+	// exact 2 TKM notes; the change note must then be selected as the fourth
+	// input to cover relay gas, exercising the multi-input path deterministically.
+	backAmount := new(big.Int).Mul(big.NewInt(37), big.NewInt(500_000_000_000_000_000))
 	backUnsigned, err := Build(ctx, rpc, seedB, b, pa, backAmount, false)
 	if err != nil {
 		t.Fatal(err)
@@ -494,9 +497,10 @@ func TestShield3WalletConsensus(t *testing.T) {
 	if err != nil || other.BalanceWei != "0" {
 		t.Fatal("credited notes to a different owner")
 	}
-	// Four distinct notes require all four inputs for this amount plus relay gas.
+	// These three exact 2 TKM notes cannot cover the 6 TKM relay outputs plus
+	// gas on their own. B's small change note must be selected as the fourth input.
 	for n := 0; n < 3; n++ {
-		unsigned, err := Build(ctx, rpc, seedA, a, pb, big.NewInt(1_000_000_000_000_000_000), false)
+		unsigned, err := Build(ctx, rpc, seedA, a, pb, big.NewInt(2_000_000_000_000_000_000), false)
 		if err != nil {
 			t.Fatal(err)
 		}
