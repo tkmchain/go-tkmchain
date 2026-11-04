@@ -1358,3 +1358,21 @@ GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./core \
   -run '^TestShield6MaxPaymentEnvelopeUnderTwoMinutes$' \
   -count=1 -timeout=5m -v
 ```
+
+### Current-source regression rerun (2026-11-04)
+
+The following bounded tests passed on the current local source revision:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./zk/shielded6 -count=1
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./core -run 'Shield6|ShieldedV6|CLSAG' -count=1 -timeout=10m
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./internal/shield3wallet -run '^(TestBuildAndSignShieldedV6Payment|TestBuildAndSignShieldedV6Deposit|TestBuildAndSignShieldedV6Withdrawal|TestSelectShieldedV6RingUsesCanonicalCandidates|TestScanShieldedV6FindsSpendableNoteAndDetectsReorg|TestClearShieldedV6SpendCandidatesZeroizesPageNotes|TestScanShieldedV6MatchesPublicSpentKeyImagesLocally)$' -count=1 -timeout=10m
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./eth -run 'TestShield6|TestShieldedV6' -count=1 -timeout=10m
+GOMAXPROCS=1 go test -p=1 ./params -run '^(TestShield6ActivationRemainsUnsetOnShippedNetworks|TestShield6ForkGateAndOrdering)$' -count=1
+```
+
+The crypto, consensus, wallet, P2P/RPC, and activation checks all passed. The
+maximum-envelope case is separately recorded above. The memory-intensive
+native legacy-to-Shield6 migration test and cross-platform release artifact
+matrix were not rerun locally; their dedicated CI gates remain required on the
+exact revision intended for release. No Shield6 activation value was set.
