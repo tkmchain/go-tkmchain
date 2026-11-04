@@ -524,11 +524,13 @@ fn canonical_encoding_and_limits() {
         let mut stream = triton_vm::proof_stream::ProofStream::new();
         stream.enqueue(triton_vm::proof_item::ProofItem::Log2PaddedHeight(exponent));
         let proof = Proof::from(stream);
-        assert!(verify_spend(
-            &public,
-            &proof.0.iter().map(|v| v.value()).collect::<Vec<_>>()
-        )
-        .is_err());
+        assert!(
+            verify_spend(
+                &public,
+                &proof.0.iter().map(|v| v.value()).collect::<Vec<_>>()
+            )
+            .is_err()
+        );
     }
     for bad in [vec![], vec![0], vec![FIELD_MODULUS], vec![1; 128]] {
         assert!(verify_spend(&public, &bad).is_err());

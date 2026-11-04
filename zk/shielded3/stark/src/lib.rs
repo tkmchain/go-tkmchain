@@ -1078,7 +1078,11 @@ pub fn describe_spend_v5(
     let stamp_start_v5 = SHIELD5_INPUT_SLOTS * MERKLE_DEPTH;
     let stamp_start_v4 = 4 * MERKLE_DEPTH;
     descriptor_path[stamp_start_v4..].copy_from_slice(&path[stamp_start_v5..]);
-    let mut result = describe_spend(&descriptor_public, &secret[..SECRET_WORDS], &descriptor_path)?;
+    let mut result = describe_spend(
+        &descriptor_public,
+        &secret[..SECRET_WORDS],
+        &descriptor_path,
+    )?;
     let mut tag = vec![DOMAIN_SHIELD4_TAG];
     tag.extend(&result[..5]);
     tag.extend(&secret[5..10]);
