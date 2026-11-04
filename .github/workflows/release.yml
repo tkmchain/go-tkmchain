@@ -26,7 +26,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          # Build the arm64 artifact with Apple's cross-target toolchain on
+          # Intel macOS. Standard Apple Silicon runners are capacity-limited.
+          - runner: macos-15-intel
             platform: macos
             artifact: release-macos
           - runner: windows-latest
@@ -56,6 +58,8 @@ jobs:
           rustup default 1.89.0
           if [[ "$RUNNER_OS" == Windows ]]; then
             rustup target add x86_64-pc-windows-gnu
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            rustup target add aarch64-apple-darwin
           fi
 
       - name: Set up Windows build tools
@@ -81,8 +85,12 @@ jobs:
       - name: Build and package Linux or macOS binaries
         if: runner.os != 'Windows'
         run: |
-          ./scripts/shield4-build.sh
-          VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            VERSION="$RELEASE_TAG" RANDOMX_ARCH=default ./scripts/build-macos-arm64.sh
+          else
+            ./scripts/shield4-build.sh
+            VERSION="$RELEASE_TAG" RANDOMX_ARCH=default make gtkm tkm-email shielded-payout-prover
+          fi
           archive="gtkm-${RELEASE_TAG}-${{ matrix.platform }}"
           mkdir -p "release/$archive"
           cp build/bin/gtkm build/bin/tkm-email build/bin/shielded-payout-prover "release/$archive/"
