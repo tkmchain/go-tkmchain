@@ -33,6 +33,15 @@ signature bytes are excluded from the intent, while the completed range proof
 is included because it exists before signing. This initial envelope has no
 expiry field and supports only native TKM.
 
+Shield6's privacy scope is limited to RingCT spend selection and values. The
+outer PQ account transaction still exposes its sender address, nonce,
+transaction hash, gas limit, fee caps, and fee payment. CLSAG hides which of the
+16 accumulator outputs was spent; it does not hide the outer sender or make
+the transaction unlinkable to that sender. The current wallet also requires a
+stamped sender account to submit the outer transaction. Deposits and
+withdrawals reveal their public boundary amounts and withdrawal destination.
+Do not describe this version as sender-anonymous or fully private.
+
 Amounts use Pedersen commitments. Each 128-bit atomic-unit amount is split into
 two 64-bit limbs; a canonical RLP proof bundle contains one aggregate
 Bulletproofs+ proof for all low limbs and a second for all high limbs. Each
@@ -223,13 +232,14 @@ The repository now contains an initial, inactive Shield6 implementation:
   confirmation before submitting the public Shield6 deposit. The CLI waits for
   12 canonical confirmations of that deposit before reporting completion. If
   the deposit is canceled or fails, the withdrawn value remains in the
-  account's public balance and the CLI reports the withdrawal hash. The flow requires
-  an active Shield6 fork and a stamped sender account. GUI and Android send
-  flows are not wired yet. Recipient stamp
-  authorization also has no Shield6 consensus representation: the current
-  private output contains only the Shield6 one-time key, commitment, and
-  encrypted note. Do not infer recipient stamp enforcement from the sender's
-  stamp check. These are release-blocking gaps.
+  account's public balance and the CLI reports the withdrawal hash. The flow
+  requires an active Shield6 fork and a stamped sender account. GUI and Android
+  send flows are not wired yet. Recipient stamp authorization also has no
+  Shield6 consensus representation: the current private output contains only
+  the Shield6 one-time key, commitment, and encrypted note. Do not infer
+  recipient stamp enforcement from the sender's stamp check. No wallet-only
+  preflight can make that a consensus rule. These remain release-blocking gaps
+  for a chain policy that requires stamped shielded recipients.
 * The `tkmprivacy_shieldedV6Status`, `tkmprivacy_shieldedV6Outputs`,
   `tkmprivacy_shieldedV6OutputsByIndex`, and
   `tkmprivacy_shieldedV6WalletOutputs` RPC methods expose activation and bounded
