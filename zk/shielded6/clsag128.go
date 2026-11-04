@@ -126,7 +126,12 @@ func SignCLSAGs128(message [32]byte, inputs []SigningInput128, sumOutputMasks [S
 			members[j] = [2]curve25519.PublicKey[curve25519.ConstantTimeOperations]{*key, *commitment}
 		}
 		secretPair := crypto.NewKeyPairFromPrivate[curve25519.ConstantTimeOperations](spend)
-		if secretPair.PublicKey.Equal(&members[input.SignerIndex][0]) == 0 {
+		matchesSigner := secretPair.PublicKey.Equal(&members[input.SignerIndex][0]) != 0
+		// NewKeyPairFromPrivate copies the secret scalar. Keep only its public
+		// key after the consistency check; the original scalar is separately
+		// cleared by the signer cleanup below.
+		secretPair.PrivateKey.Set(new(curve25519.Scalar))
+		if !matchesSigner {
 			return nil, fmt.Errorf("input %d secret does not match selected ring member", i)
 		}
 		// The input opening must match the selected real member. This also

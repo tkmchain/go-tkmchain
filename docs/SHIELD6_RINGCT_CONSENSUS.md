@@ -1264,6 +1264,12 @@ domain validation, and rejected scan amounts have their backing words cleared.
 wallet memory-hygiene improvement and does not close the activation blockers
 listed above.
 
+The CLSAG signer now also explicitly wipes the temporary secret scalar copied
+by the upstream keypair constructor after checking that its public key matches
+the selected ring member. The Shield6 crypto suite passed again after this
+change. This reduces one in-memory secret copy; it is not a comprehensive
+side-channel or secure-erasure guarantee.
+
 The Shield6 crypto/wallet test package also cross-compiled successfully on
 2026-11-04 for Linux/arm64, Linux/armv7, macOS/arm64, and Windows/amd64 using
 Go 1.24.6. These checks establish package portability only; they do not replace
