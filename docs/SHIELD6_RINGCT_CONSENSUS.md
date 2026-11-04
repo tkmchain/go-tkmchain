@@ -1318,3 +1318,11 @@ steps, including the Linux daemon build, were skipped after the wallet failure.
 Full macOS, Windows, and ARM daemon release artifacts and a live multi-node
 fork/reorg rehearsal remain outstanding. Shield6 activation remains unset
 pending these checks and the other activation requirements above.
+
+The corrected wallet-test partition was rerun with the race detector and passed
+on this worktree. The Shield6 primitive package then passed in 5.93 seconds,
+and the canonical two-replica deposit/spend/replay/reorg rehearsal passed in
+4.79 seconds, both with one scheduler thread and bounded Go memory. These do
+not replace the complete wallet race suite or hosted release matrix, which
+remain outstanding. No consensus code or activation configuration changed in
+this verification pass.
