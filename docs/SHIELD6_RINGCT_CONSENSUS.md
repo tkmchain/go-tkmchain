@@ -1404,3 +1404,12 @@ removed after inspecting its metadata and dependencies; the running daemon
 binary was not replaced. This closes only the local Linux/amd64 compile/link
 check. The release workflow and all other platform artifacts still need to
 pass on the exact release revision.
+
+An isolated Windows/amd64 cross-build of the same source revision also passed
+with `randomx,cgo,shield3` enabled and the MinGW POSIX toolchain. `file`
+identified a stripped PE32+ x86-64 console executable. `objdump` showed only
+Windows system DLL imports (`kernel32`, `ntdll`, `bcryptprimitives`,
+`advapi32`, `userenv`, `ws2_32`, and `msvcrt`); no MinGW C++ or pthread DLL is
+required. The artifact was removed after inspection and was not run on
+Windows. This is a cross-link check, not Windows runtime validation or a full
+release-workflow result.
