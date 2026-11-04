@@ -1289,3 +1289,19 @@ This is local envelope construction plus self-verification, not end-to-end
 RPC, network propagation, outer ML-DSA signing, or block-inclusion latency.
 Full daemon release builds and the native legacy-to-Shield6 migration rehearsal
 were not rerun on this host; the full build remains a hosted release gate.
+
+### Hosted migration and production-build gate (2026-11-04)
+
+GitHub Actions run [41803812832](https://github.com/tkmchain/go-tkmchain/actions/runs/41803812832)
+passed the isolated native migration rehearsal on commit `a6f19341c`. CI built
+the production native Shield4 verifier, migrated Shield4 state to Shield6 on
+two independent state replicas, and verified that Shield6 remains inactive on
+the shipped networks. This closes the hosted migration-test gate for that
+revision; it is not a live peer-to-peer fork or reorganization rehearsal.
+
+At the time of this update, the run's `native-proof` job is still executing its
+Go/native interoperability checks. Its production Linux GTKM daemon build and
+version check are queued later in that job, so neither is recorded as passed
+yet. Full macOS, Windows, and ARM daemon release artifacts and a live multi-node
+fork/reorg rehearsal also remain outstanding. Shield6 activation remains
+unset pending those checks and the other activation requirements above.
