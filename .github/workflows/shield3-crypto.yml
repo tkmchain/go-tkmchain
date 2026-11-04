@@ -117,7 +117,7 @@ jobs:
             # annotations. Full logs remain available to repository admins.
             while IFS= read -r line; do
               case "$line" in
-                *"WARNING: DATA RACE"*|---\ FAIL:*|FAIL\ *|panic:*|fatal\ error:*)
+                *"WARNING: DATA RACE"*|---\ FAIL:*|FAIL\ *|panic:*|fatal\ error:*|'    '*_test.go:*)
                   echo "::error title=Shield3 wallet race test::${line}"
                   ;;
               esac
