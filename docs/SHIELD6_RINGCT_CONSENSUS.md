@@ -1326,3 +1326,14 @@ and the canonical two-replica deposit/spend/replay/reorg rehearsal passed in
 not replace the complete wallet race suite or hosted release matrix, which
 remain outstanding. No consensus code or activation configuration changed in
 this verification pass.
+
+The same two-replica consensus rehearsal also passed with Go's race detector
+enabled in 41.06 seconds. It exercises the actual consensus transition and
+rollback path under race instrumentation; it is not a substitute for a full
+core race suite or live network rehearsal. Command:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -race -p=1 -tags shield3 ./core \
+  -run '^TestShield6TwoNodeDepositSpendReplayAndReorgRehearsal$' \
+  -count=1 -timeout=5m -v
+```
