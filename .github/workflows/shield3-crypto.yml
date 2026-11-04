@@ -134,7 +134,18 @@ jobs:
           fi
           exit "$status"
       - name: Race-test keystore and desktop wallet
-        run: go test -race -timeout 45m -tags shield3 ./accounts/keystore ./internal/gui
+        shell: bash
+        run: |
+          set +e
+          go test -race -timeout 45m -tags shield3 ./accounts/keystore ./internal/gui >"$RUNNER_TEMP/shield6-keystore-gui-race.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/shield6-keystore-gui-race.log"
+          if [[ "$status" -ne 0 ]]; then
+            grep -E '^--- FAIL:|^FAIL |^panic:|^signal:|^[[:space:]]+.*_test\.go:[0-9]+:|WARNING: DATA RACE' "$RUNNER_TEMP/shield6-keystore-gui-race.log" | while IFS= read -r line; do
+              echo "::error title=Keystore and desktop wallet race test::${line}"
+            done
+          fi
+          exit "$status"
       # This rehearsal uses the rebuilt native archive and covers wallet
       # construction, multi-input spends, relay replay protection,
       # withdrawal replay protection, and a reorged scan head.
