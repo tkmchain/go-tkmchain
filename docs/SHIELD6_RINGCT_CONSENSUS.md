@@ -1344,3 +1344,17 @@ GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -race -p=1 -tags shield3 ./core \
   -run '^TestShield6TwoNodeDepositSpendReplayAndReorgRehearsal$' \
   -count=1 -timeout=5m -v
 ```
+
+The maximum configured private-payment benchmark was rerun on the same shared
+host with bounded Go memory. `TestShield6MaxPaymentEnvelopeUnderTwoMinutes`
+passed at **3.698 seconds per build** for 16 inputs, 16-member rings, and 16
+encrypted outputs. This measures local envelope construction and
+self-verification only; it does not include scanning, account signing, RPC,
+network propagation, or block inclusion, and is not a guarantee for slower
+devices. The benchmark command was:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./core \
+  -run '^TestShield6MaxPaymentEnvelopeUnderTwoMinutes$' \
+  -count=1 -timeout=5m -v
+```
