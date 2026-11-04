@@ -1267,7 +1267,8 @@ listed above.
 The CLSAG signer now also explicitly wipes the temporary secret scalar copied
 by the upstream keypair constructor after checking that its public key matches
 the selected ring member. The Shield6 crypto suite passed again after this
-change. This reduces one in-memory secret copy; it is not a comprehensive
+change, and the full `zk/shielded6` package also passed under `-race` in 60.75
+seconds. This reduces one in-memory secret copy; it is not a comprehensive
 side-channel or secure-erasure guarantee.
 
 The Shield6 crypto/wallet test package also cross-compiled successfully on
