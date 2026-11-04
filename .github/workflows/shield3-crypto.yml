@@ -123,6 +123,15 @@ jobs:
           go test -race -tags shield3 ./internal/shield3relay ./cmd/shield3-relay
           go vet -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./zk/shielded6 ./internal/shield3wallet ./accounts/keystore ./internal/gui ./internal/shield3relay ./cmd/shield3-relay ./cmd/gtkm
 
+      - name: Build production Linux GTKM daemon
+        env:
+          GO_BUILD_P: '2'
+          RANDOMX_ARCH: default
+        run: |
+          make production-gtkm
+          file build/bin/gtkm
+          ./build/bin/gtkm version
+
   shield6-migration:
     name: Shield6 native migration rehearsal
     runs-on: ubuntu-latest
