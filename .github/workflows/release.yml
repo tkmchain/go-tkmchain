@@ -28,7 +28,7 @@ jobs:
         include:
           # Build the arm64 artifact with Apple's cross-target toolchain on
           # Intel macOS. Standard Apple Silicon runners are capacity-limited.
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             platform: macos
             artifact: release-macos
           - runner: windows-latest

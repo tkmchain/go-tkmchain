@@ -270,7 +270,9 @@ jobs:
     # GitHub has been cancelling standard Apple Silicon jobs before runner
     # acquisition due to capacity. The Intel macOS image includes Apple's
     # universal compiler and can produce the same arm64 release artifact.
-    runs-on: macos-15-intel
+    # Use the current Intel image as a separate runner pool after repeated
+    # acquisition failures on macos-15-intel.
+    runs-on: macos-26-intel
     timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: '1'
