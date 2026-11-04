@@ -1395,3 +1395,12 @@ GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./cmd/gtkm \
   -run '^(TestWaitWalletCanonicalConfirmations|TestShield6MigrationRechecksWithdrawalBeforeDeposit|TestShield6MigrationFeeReserve|TestShield6MigrationDepositBalanceRequired)$' \
   -count=1 -timeout=10m
 ```
+
+The same source revision (`e9e2a5751`) also completed an isolated stripped
+Linux/amd64 production daemon build with `randomx,cgo,shield3` tags. The
+temporary binary reported `1.21.82-shielded-gas`, identified as Linux/amd64,
+and linked to the host's `libstdc++`, `libgcc_s`, `libm`, and `libc`. It was
+removed after inspecting its metadata and dependencies; the running daemon
+binary was not replaced. This closes only the local Linux/amd64 compile/link
+check. The release workflow and all other platform artifacts still need to
+pass on the exact release revision.
