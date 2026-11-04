@@ -105,23 +105,32 @@ jobs:
         run: ./scripts/shield4-build.sh
       - name: Race-test PQ, Shield3, and Shield4 crypto
         run: go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./zk/shielded4
-      - name: Race-test wallet builders and scanners
+      - name: Isolate Shield3 wallet consensus race test
         shell: bash
         run: |
           set +e
-          go test -race -timeout 45m -tags shield3 ./internal/shield3wallet >"$RUNNER_TEMP/shield6-wallet-race.log" 2>&1
+          go test -race -timeout 15m -tags shield3 ./internal/shield3wallet -run '^TestShield3WalletConsensus$' -count=1 >"$RUNNER_TEMP/shield6-wallet-consensus-race.log" 2>&1
           status=$?
-          cat "$RUNNER_TEMP/shield6-wallet-race.log"
+          cat "$RUNNER_TEMP/shield6-wallet-consensus-race.log"
           if [[ "$status" -ne 0 ]]; then
             # Surface only actionable test/race summaries in the public check
             # annotations. Full logs remain available to repository admins.
-            while IFS= read -r line; do
-              case "$line" in
-                *"WARNING: DATA RACE"*|---\ FAIL:*|FAIL\ *|panic:*|fatal\ error:*|'    '*_test.go:*)
-                  echo "::error title=Shield3 wallet race test::${line}"
-                  ;;
-              esac
-            done < "$RUNNER_TEMP/shield6-wallet-race.log"
+            grep -E '^--- FAIL:|^FAIL |^panic:|^signal:|^[[:space:]]+.*_test\.go:[0-9]+:|WARNING: DATA RACE' "$RUNNER_TEMP/shield6-wallet-consensus-race.log" | grep -v 'processed canonical transaction' | while IFS= read -r line; do
+              echo "::error title=Shield3 wallet consensus race test::${line}"
+            done
+          fi
+          exit "$status"
+      - name: Race-test remaining wallet builders and scanners
+        shell: bash
+        run: |
+          set +e
+          go test -race -timeout 45m -tags shield3 -skip '^TestShield3WalletConsensus$' ./internal/shield3wallet >"$RUNNER_TEMP/shield6-wallet-race.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/shield6-wallet-race.log"
+          if [[ "$status" -ne 0 ]]; then
+            grep -E '^--- FAIL:|^FAIL |^panic:|^signal:|^[[:space:]]+.*_test\.go:[0-9]+:|WARNING: DATA RACE' "$RUNNER_TEMP/shield6-wallet-race.log" | grep -v 'processed canonical transaction' | while IFS= read -r line; do
+              echo "::error title=Shield3 wallet race test::${line}"
+            done
           fi
           exit "$status"
       - name: Race-test keystore and desktop wallet

@@ -62,7 +62,21 @@ func TestUsernameHandleAndPrivateLookupBatch(t *testing.T) {
 		t.Fatalf("valid binding rejected: %v", err)
 	}
 	tampered := primary
-	tampered.PaymentCode = tampered.PaymentCode[:len(tampered.PaymentCode)-1] + "A"
+	tamperedCode := []byte(tampered.PaymentCode)
+	const paymentCodePrefix = "tkmshield3."
+	if !strings.HasPrefix(tampered.PaymentCode, paymentCodePrefix) || len(tamperedCode) <= len(paymentCodePrefix) {
+		t.Fatal("created Shield3 payment code has no encoded payload")
+	}
+	tamperIndex := len(paymentCodePrefix)
+	if tamperedCode[tamperIndex] == 'A' {
+		tamperedCode[tamperIndex] = 'B'
+	} else {
+		tamperedCode[tamperIndex] = 'A'
+	}
+	tampered.PaymentCode = string(tamperedCode)
+	if tampered.PaymentCode == primary.PaymentCode {
+		t.Fatal("payment-code tampering did not change the payload")
+	}
 	if err := VerifyUsernameBinding(tampered, 8979, now); err == nil {
 		t.Fatal("accepted a modified recipient payment code")
 	}
