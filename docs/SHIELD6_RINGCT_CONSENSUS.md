@@ -1421,3 +1421,26 @@ with only the expected Linux system runtime dependencies (`libstdc++`,
 `libm`, `libgcc_s`, `libc`, and the arm64 ELF loader). The temporary binary
 was removed after inspection and was not run on arm64 hardware. This is a
 cross-link check, not runtime validation or a full release-workflow result.
+
+The native legacy-to-Shield6 migration rehearsal was then run against this
+source revision with the actual Shield4 native prover enabled. It passed on
+two independent in-memory replicas: legacy stamp registration and deposit,
+legacy self-withdrawal, Shield6 wallet creation and deposit, consensus
+application on both replicas, note scanning, accumulator-root agreement, and
+confidential-backing reconciliation all succeeded. The Shield6 migration
+deposit proof took **189 ms**, below the two-minute Shield6 construction
+target. The legacy Shield4 deposit took 56.158 seconds and its withdrawal
+took 1 minute 27.33 seconds; those are legacy migration costs, not Shield6
+proof-construction time. Total rehearsal time was 159.74 seconds.
+
+Command:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=800MiB GOGC=20 go test -p=1 \
+  -tags 'randomx,cgo,shield3' ./internal/shield3wallet \
+  -run '^TestShield6MigrationNativeRehearsal$' -count=1 -timeout=10m -v
+```
+
+This closes the local exact-source migration-rehearsal gate only. It does not
+replace hosted release CI, a live network fork/reorg rehearsal, GUI/Android
+integration, or consensus-verifiable recipient-stamp authorization.
