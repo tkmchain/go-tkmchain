@@ -168,3 +168,51 @@ jobs:
         run: GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -timeout 45m -tags shield3 ./internal/shield3wallet -run '^TestShield6MigrationNativeRehearsal$' -count=1 -v
       - name: Verify Shield6 remains inactive on shipped networks
         run: go test -p=1 ./params -run '^TestShield6ActivationRemainsUnsetOnShippedNetworks$' -count=1
+
+  shield6-linux-armv7:
+    name: Shield6 Linux ARMv7 production cross-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '1'
+      GOPROXY: 'https://proxy.golang.org|direct'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Linux ARMv7 cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils-arm-linux-gnueabihf \
+            cmake \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf
+      - name: Install pinned Rust ARMv7 target
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustup target add armv7-unknown-linux-gnueabihf
+      - name: Build and validate ARMv7 RandomX and Shield4 archives
+        run: |
+          make randomx-linux-arm
+          CC=arm-linux-gnueabihf-gcc \
+            SHIELD4_RUST_TARGET=armv7-unknown-linux-gnueabihf \
+            ./scripts/shield4-build.sh
+      - name: Cross-compile Shield6 crypto tests
+        run: |
+          GOOS=linux GOARCH=arm GOARM=7 \
+            go test -tags shield3 -c -o /tmp/shield6-armv7.test ./zk/shielded6
+      - name: Build production ARMv7 GTKM daemon
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm GOARM=7 \
+            CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++ \
+            CGO_CFLAGS='-Ibuild/_workspace/randomx/src' \
+            CGO_LDFLAGS='-Lbuild/_workspace/randomx/build-linux-arm -lrandomx -lstdc++ -lm -Wl,-z,noexecstack' \
+            go build -p=1 -trimpath -tags 'randomx,cgo,shield3' \
+              -ldflags='-s -w' -o /tmp/gtkm-shield6-linux-armv7 ./cmd/gtkm
+          file /tmp/gtkm-shield6-linux-armv7
+          stack_flags="$(readelf -W -l /tmp/gtkm-shield6-linux-armv7 | awk '$1 == "GNU_STACK" { print $7; found=1 } END { if (!found) exit 1 }')"
+          test "$stack_flags" = RW
