@@ -1376,3 +1376,22 @@ maximum-envelope case is separately recorded above. The memory-intensive
 native legacy-to-Shield6 migration test and cross-platform release artifact
 matrix were not rerun locally; their dedicated CI gates remain required on the
 exact revision intended for release. No Shield6 activation value was set.
+
+### Migration reorg window closure (2026-11-04)
+
+The CLI migration flow now repeats the legacy withdrawal's receipt, canonical
+block-hash, and 12-confirmation checks after Shield6 deposit proof construction
+and immediately before broadcasting the deposit. This closes the time gap
+created by user confirmation and proof generation: if the withdrawal is
+reorganized during that interval, the Shield6 deposit is not submitted. The
+regression test first accepts a canonical 12-confirmation withdrawal, then
+simulates a replacement block before the pre-broadcast check and requires the
+second check to reject it.
+
+The focused CLI tests passed:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 ./cmd/gtkm \
+  -run '^(TestWaitWalletCanonicalConfirmations|TestShield6MigrationRechecksWithdrawalBeforeDeposit|TestShield6MigrationFeeReserve|TestShield6MigrationDepositBalanceRequired)$' \
+  -count=1 -timeout=10m
+```

@@ -66,6 +66,23 @@ func TestWaitWalletCanonicalConfirmations(t *testing.T) {
 	}
 }
 
+func TestShield6MigrationRechecksWithdrawalBeforeDeposit(t *testing.T) {
+	block := &types.Header{Number: big.NewInt(100), Extra: []byte("original canonical block")}
+	receipt := &types.Receipt{TxHash: common.HexToHash("0x02"), BlockNumber: big.NewInt(100), BlockHash: block.Hash()}
+	head := &types.Header{Number: big.NewInt(111)} // 12 confirmations, including block 100.
+	client := walletReceiptConfirmationStub{receipt: receipt, canonical: block, head: head}
+	if err := waitWalletCanonicalConfirmations(context.Background(), client, receipt, shield6MigrationConfirmations); err != nil {
+		t.Fatalf("initial migration confirmation failed: %v", err)
+	}
+
+	// Model a reorg during user confirmation or Shield6 proof construction.
+	client.canonical = &types.Header{Number: big.NewInt(100), Extra: []byte("replacement block")}
+	err := waitWalletCanonicalConfirmations(context.Background(), client, receipt, shield6MigrationConfirmations)
+	if err == nil || !strings.Contains(err.Error(), "reorganized") {
+		t.Fatalf("pre-deposit migration recheck error = %v, want reorg rejection", err)
+	}
+}
+
 func TestShield6MigrationFeeReserve(t *testing.T) {
 	withdrawal := types.NewTx(&types.DynamicFeeTx{
 		ChainID: big.NewInt(8979), Nonce: 4, GasTipCap: big.NewInt(2), GasFeeCap: big.NewInt(5),

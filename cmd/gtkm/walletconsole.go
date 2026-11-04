@@ -2527,6 +2527,14 @@ func migrateWalletNotesToShield6(reader *bufio.Reader, client *ethclient.Client,
 	if err != nil {
 		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
 	}
+	// The user confirmation and deposit proof construction can take long enough
+	// for a previously confirmed legacy withdrawal to be reorganized. Recheck
+	// its receipt, block hash, and confirmation depth immediately before
+	// broadcasting the second transaction; otherwise the migration could mint
+	// a Shield6 deposit against a withdrawal that is no longer canonical.
+	if err := waitWalletCanonicalConfirmations(depositCtx, client, receipt, shield6MigrationConfirmations); err != nil {
+		return fmt.Errorf("legacy withdrawal %s is no longer safely confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
+	}
 	if err := client.SendTransaction(depositCtx, signedDeposit); err != nil {
 		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
 	}
