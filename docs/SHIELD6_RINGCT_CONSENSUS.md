@@ -1299,9 +1299,13 @@ two independent state replicas, and verified that Shield6 remains inactive on
 the shipped networks. This closes the hosted migration-test gate for that
 revision; it is not a live peer-to-peer fork or reorganization rehearsal.
 
-At the time of this update, the run's `native-proof` job is still executing its
-Go/native interoperability checks. Its production Linux GTKM daemon build and
-version check are queued later in that job, so neither is recorded as passed
-yet. Full macOS, Windows, and ARM daemon release artifacts and a live multi-node
-fork/reorg rehearsal also remain outstanding. Shield6 activation remains
-unset pending those checks and the other activation requirements above.
+The same run's `native-proof` job later failed in a combined Go/native test
+step with exit code 1. The public check annotation did not identify which
+command in that step failed, so the run does not establish a passing
+interoperability or production-daemon build gate. Commit `12ecd8c44` splits
+that block into named steps so the rerun identifies the failing suite; run
+[41810651936](https://github.com/tkmchain/go-tkmchain/actions/runs/41810651936)
+is currently rebuilding the native proof artifacts. Its Linux daemon build has
+not yet run. Full macOS, Windows, and ARM daemon release artifacts and a live
+multi-node fork/reorg rehearsal remain outstanding. Shield6 activation remains
+unset pending these checks and the other activation requirements above.
