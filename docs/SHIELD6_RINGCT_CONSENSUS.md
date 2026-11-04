@@ -1444,3 +1444,32 @@ GOMAXPROCS=1 GOMEMLIMIT=800MiB GOGC=20 go test -p=1 \
 This closes the local exact-source migration-rehearsal gate only. It does not
 replace hosted release CI, a live network fork/reorg rehearsal, GUI/Android
 integration, or consensus-verifiable recipient-stamp authorization.
+
+### Hosted Shield6 production gates (2026-11-04)
+
+The workflow was updated to build the Apple Silicon release artifact on
+GitHub's Intel macOS 26 runner after the macOS 15 Intel job was cancelled
+because GitHub could not acquire a hosted runner. The new macOS 26 job passed
+on commit `04d10f49527cf6aaa4aed706a98c4b1d3669337c`: it verified an x86-64
+host, installed the `aarch64-apple-darwin` Rust target, passed Shield6 crypto
+and activation-gate tests, then built and validated arm64 `gtkm`,
+`shielded-payout-prover`, and `tkm-email` artifacts.
+
+The same revision's hosted native-proof workflow completed its Shield6 crypto,
+consensus/RPC, canonical deposit-spend-replay-reorg, wallet signing, migration
+confirmation, maximum proof-verification and payment-construction benchmark,
+race, vet, and Linux/amd64 production daemon steps successfully. The hosted
+Shield4-to-Shield6 two-replica native migration rehearsal also completed
+successfully and verified that shipped networks remain inactive. The Linux
+ARMv7 job completed its RandomX/Shield4 archive validation, Shield6 crypto
+cross-compile, and production daemon build steps successfully.
+
+At the time these results were recorded, GitHub's REST check-run records still
+reported the native-proof and ARMv7 jobs as `in_progress`, despite their final
+`Complete job` steps being marked successful. Therefore their individual
+completed steps are evidence of successful builds and tests, but the overall
+workflow checks have not yet been counted as finalized green checks. No tagged
+release packaging/publishing run or live multi-node Shield6 network fork
+rehearsal has been performed. Shield6 activation remains unset. The recipient
+stamp authorization and GUI/Android limitations described above remain
+release-blocking integration gaps.
