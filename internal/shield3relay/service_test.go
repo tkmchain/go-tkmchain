@@ -87,7 +87,7 @@ func operator(t *testing.T) (*Service, *operatorRPC, []byte, string) {
 		t.Skip("requires -tags shield3")
 	}
 	seed := make([]byte, 32)
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Operator", "Private Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Operator", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}
