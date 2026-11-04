@@ -23,7 +23,7 @@ func TestShield3EndpointScopesDoNotExportMasterStampKey(t *testing.T) {
 		t.Skip("requires native Shield3")
 	}
 	seed := make([]byte, 32)
-	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Private Name", "Private Country")
+	stamp, err := pqcrypto.CreateShieldedV3Stamp(seed, 8979, "Private Name", "New Zealand")
 	if err != nil {
 		t.Fatal(err)
 	}
