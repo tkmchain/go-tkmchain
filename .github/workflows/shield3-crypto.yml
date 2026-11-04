@@ -106,7 +106,24 @@ jobs:
       - name: Race-test PQ, Shield3, and Shield4 crypto
         run: go test -race -timeout 45m -tags shield3 ./crypto/pqcrypto ./zk/shielded3 ./zk/shielded4
       - name: Race-test wallet builders and scanners
-        run: go test -race -timeout 45m -tags shield3 ./internal/shield3wallet
+        shell: bash
+        run: |
+          set +e
+          go test -race -timeout 45m -tags shield3 ./internal/shield3wallet >"$RUNNER_TEMP/shield6-wallet-race.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/shield6-wallet-race.log"
+          if [[ "$status" -ne 0 ]]; then
+            # Surface only actionable test/race summaries in the public check
+            # annotations. Full logs remain available to repository admins.
+            while IFS= read -r line; do
+              case "$line" in
+                *"WARNING: DATA RACE"*|---\ FAIL:*|FAIL\ *|panic:*|fatal\ error:*)
+                  echo "::error title=Shield3 wallet race test::${line}"
+                  ;;
+              esac
+            done < "$RUNNER_TEMP/shield6-wallet-race.log"
+          fi
+          exit "$status"
       - name: Race-test keystore and desktop wallet
         run: go test -race -timeout 45m -tags shield3 ./accounts/keystore ./internal/gui
       # This rehearsal uses the rebuilt native archive and covers wallet
