@@ -1413,3 +1413,11 @@ Windows system DLL imports (`kernel32`, `ntdll`, `bcryptprimitives`,
 required. The artifact was removed after inspection and was not run on
 Windows. This is a cross-link check, not Windows runtime validation or a full
 release-workflow result.
+
+An isolated Linux/arm64 production cross-build of the same source revision
+also passed with `randomx,cgo,shield3`. It linked the arm64 RandomX and
+Shield3 static archives, and `readelf` identified an AArch64 ELF executable
+with only the expected Linux system runtime dependencies (`libstdc++`,
+`libm`, `libgcc_s`, `libc`, and the arm64 ELF loader). The temporary binary
+was removed after inspection and was not run on arm64 hardware. This is a
+cross-link check, not runtime validation or a full release-workflow result.
