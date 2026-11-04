@@ -1302,10 +1302,19 @@ revision; it is not a live peer-to-peer fork or reorganization rehearsal.
 The same run's `native-proof` job later failed in a combined Go/native test
 step with exit code 1. The public check annotation did not identify which
 command in that step failed, so the run does not establish a passing
-interoperability or production-daemon build gate. Commit `12ecd8c44` splits
-that block into named steps so the rerun identifies the failing suite; run
+interoperability or production-daemon build gate. Commit `12ecd8c44` split
+that block into named steps. Run
 [41810651936](https://github.com/tkmchain/go-tkmchain/actions/runs/41810651936)
-is currently rebuilding the native proof artifacts. Its Linux daemon build has
-not yet run. Full macOS, Windows, and ARM daemon release artifacts and a live
-multi-node fork/reorg rehearsal remain outstanding. Shield6 activation remains
-unset pending these checks and the other activation requirements above.
+completed: the isolated migration rehearsal passed, while the wallet race
+suite failed. Its public annotation did not include failing test names. A
+bounded local race-test partition reproduced two stale test assertions: the
+stamp disclosure fixture expected a country different from the one it created,
+and the username test rejected an exact retry even though the directory
+intentionally accepts byte-identical retries after network timeouts. The tests
+now check the created country, accept an exact retry, and separately reject a
+conflicting same-sequence update. That focused partition passes under `-race`.
+The complete wallet race suite and a hosted rerun remain required; later CI
+steps, including the Linux daemon build, were skipped after the wallet failure.
+Full macOS, Windows, and ARM daemon release artifacts and a live multi-node
+fork/reorg rehearsal remain outstanding. Shield6 activation remains unset
+pending these checks and the other activation requirements above.

@@ -152,7 +152,7 @@ func TestStampOnlyDisclosureCannotRecognizeOutput(t *testing.T) {
 	}
 	defer clear(disclosure.RecordKey)
 	result, err := VerifyStampDisclosure(disclosure)
-	if err != nil || result.Name != "Private Name" || result.Country != "Private Country" || result.Address != identity.Address {
+	if err != nil || result.Name != "Private Name" || result.Country != "New Zealand" || result.Address != identity.Address {
 		t.Fatal("stamp record did not open", err)
 	}
 	context := pqcrypto.ShieldedV3Context{ChainID: 8979, Purpose: pqcrypto.ShieldedV3Stamp, Commitment: identity.Stamp.Commitment}

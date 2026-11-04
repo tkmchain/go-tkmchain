@@ -91,8 +91,18 @@ func TestUsernameHandleAndPrivateLookupBatch(t *testing.T) {
 	if _, err := directory.Resolve(missingHandle, now); !errors.Is(err, ErrUsernameNotFound) {
 		t.Fatalf("missing username error = %v, want ErrUsernameNotFound", err)
 	}
-	if err := directory.Put(primary, now); err == nil || !strings.Contains(err.Error(), "replayed") {
-		t.Fatalf("replayed update error = %v", err)
+	// Retrying the exact signed update is idempotent so callers can recover
+	// safely after a network timeout without creating a false replay failure.
+	if err := directory.Put(primary, now); err != nil {
+		t.Fatalf("exact update retry failed: %v", err)
+	}
+	// A different binding with the same sequence is a replay and must fail.
+	conflictingRetry, err := CreateUsernameBinding(seed, "alice", identity.Code, 8979, 1, expires.Add(time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := directory.Put(conflictingRetry, now); err == nil || !strings.Contains(err.Error(), "replayed") {
+		t.Fatalf("conflicting same-sequence update error = %v", err)
 	}
 	db := memorydb.New()
 	persistent, err := NewPersistentUsernameDirectory(8979, db)
