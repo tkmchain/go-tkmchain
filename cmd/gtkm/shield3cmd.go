@@ -84,6 +84,7 @@ func slicesConcat(groups ...[]cli.Flag) []cli.Flag {
 	return out
 }
 
+//nolint:unused // Retained legacy wallet command compatibility.
 func runHeadlessShield3Wallet(ctx *cli.Context) error {
 	host := ctx.String(shield3WalletHostFlag.Name)
 	if host == "" {

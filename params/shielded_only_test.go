@@ -13,6 +13,7 @@ func TestShieldedOnlyForkSchedule(t *testing.T) {
 				t.Fatal("cutoff must not strand live-network funding")
 			}
 			cfg := *network
+			cfg.ConfidentialLedgerTime = nil // Exercise the alternative cutoff policy.
 			cfg.ShieldedOnlyTime = newUint64(MainnetShieldedOnlyTime)
 			if cfg.ShieldedOnlyTime == nil || *cfg.ShieldedOnlyTime != MainnetShieldedOnlyTime {
 				t.Fatal("missing shielded-only schedule")
@@ -40,6 +41,7 @@ func TestShieldedOnlyForkSchedule(t *testing.T) {
 
 func TestShieldedOnlyConfigCompatibility(t *testing.T) {
 	scheduled := *MainnetChainConfig
+	scheduled.ConfidentialLedgerTime = nil
 	scheduled.ShieldedOnlyTime = newUint64(MainnetShieldedOnlyTime)
 	stored := scheduled
 	stored.ShieldedOnlyTime = nil
@@ -66,6 +68,7 @@ func TestShieldedOnlyRequiresEarlierPrivacyForks(t *testing.T) {
 		func(c *ChainConfig) { c.ShieldedOnlyTime = newUint64(MainnetAntarticalTime - 1) },
 	} {
 		cfg := *MainnetChainConfig
+		cfg.ConfidentialLedgerTime = nil
 		cfg.ShieldedOnlyTime = newUint64(MainnetShieldedOnlyTime)
 		mutate(&cfg)
 		if err := cfg.CheckConfigForkOrder(); err == nil {

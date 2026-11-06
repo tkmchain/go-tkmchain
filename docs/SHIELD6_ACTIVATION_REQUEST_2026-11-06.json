@@ -1,0 +1,33 @@
+{
+  "schema": "shield6-activation-request/v2",
+  "status": "scheduled-in-release-source",
+  "appliedToConsensusSource": true,
+  "chainId": 8979,
+  "originalRequestTimeUTC": "2026-11-06T14:03:23Z",
+  "originalRequestedActivationUTC": "2026-11-06T15:03:23Z",
+  "activationUTC": "2026-11-06T18:16:54Z",
+  "activationUnix": 1793989014,
+  "forks": {
+    "shield6Time": 1793989014,
+    "shield6RecipientTime": 1793989014,
+    "confidentialLedgerTime": 1793989014
+  },
+  "setupMethod": "single-operator-groth16-setup",
+  "independentContributors": false,
+  "independentAudit": false,
+  "testParametersReused": false,
+  "productionOutputManifest": "https://pool.tkmchain.site/shield6-parameters/v1.21.83/manifest.json",
+  "productionRegistrationManifest": "https://pool.tkmchain.site/shield6-parameters/v1.21.83/registration-manifest.json",
+  "outputCircuitSHA256": "a3426a12b2e63f581f4d792662d7dd2d1e3d6d1fa8b5b6dbca174d2110d2a50b",
+  "registrationCircuitSHA256": "0040720811ae44399e005fe617b7f6673fea63c458fdaf55eacf5b410eaa53c3",
+  "githubRepository": "tkmchain/go-tkmchain",
+  "sourceBranch": "v1.21.3",
+  "releaseTag": "v1.21.83",
+  "notes": [
+    "Replaces the expired original target with one hour of lead after local validation readiness.",
+    "Shield6, recipient proofs and confidential backing are scheduled together; proofless envelopes are rejected after recipient activation.",
+    "Fresh OS-random single-operator parameters passed canonical payment and real TCP/reorg validation against these exact consensus pins.",
+    "This is not an independent multiparty ceremony or cryptographic audit.",
+    "Runtime activation requires nodes to install this release before the timestamp; this source record is not a claim of network-wide deployment."
+  ]
+}

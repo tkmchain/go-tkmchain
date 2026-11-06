@@ -78,7 +78,8 @@ func runGeth(t *testing.T, args ...string) *testgeth {
 	// mainnet checkpoint set. These command tests intentionally use isolated
 	// temporary chains, so opt out explicitly instead of weakening production
 	// defaults or making the fixtures depend on mainnet data.
-	args = append([]string{"--bootnodes", "", "--privacy.onion-only=false", "--checkpoints=false"}, args...)
+	// RPC/console fixtures must not contend for the production wallet port.
+	args = append([]string{"--bootnodes", "", "--privacy.onion-only=false", "--checkpoints=false", "--shield3.service=false"}, args...)
 	tt := &testgeth{}
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
 	for i, arg := range args {

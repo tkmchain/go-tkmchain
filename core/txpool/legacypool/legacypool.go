@@ -1426,6 +1426,13 @@ func (pool *LegacyPool) pruneInvalidShieldedTransactions() {
 				err = core.ValidateShieldedV4Time(&core.ShieldedV4Transaction{Relayed: e.Relayed, ValidUntil: e.ValidUntil, WithdrawalValue: e.WithdrawalValue}, head.Time)
 			}
 		}
+		if err == nil && antartical && core.HasShieldedV6Prefix(tx.Data()) {
+			var envelope *core.ShieldedV6Transaction
+			envelope, _, err = core.DecodeShieldedV6Transaction(tx.Data())
+			if err == nil {
+				err = core.ValidateShieldedV6Time(envelope, head.Time)
+			}
+		}
 		if err == nil && antartical && core.HasShieldedV4Prefix(tx.Data()) {
 			var e *core.ShieldedV4Transaction
 			e, _, err = core.DecodeShieldedV4Transaction(tx.Data())

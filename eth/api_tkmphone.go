@@ -1117,6 +1117,7 @@ func (svc *TkmPhoneService) OpenBucket(operator common.Address, bucketID uint64,
 	return out, nil
 }
 
+//nolint:unused // Retained phone-service test helper.
 func (svc *TkmPhoneService) operatorInventoryForTest(operator common.Address) ([]PhoneNumber, error) {
 	svc.lock.RLock()
 	defer svc.lock.RUnlock()

@@ -27,6 +27,8 @@ import (
 // fetchHeadersByHash is a blocking version of Peer.RequestHeadersByHash which
 // handles all the cancellation, interruption and timeout mechanisms of a data
 // retrieval to allow blocking API calls.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (d *Downloader) fetchHeadersByHash(p *peerConnection, hash common.Hash, amount int, skip int, reverse bool) ([]*types.Header, []common.Hash, error) {
 	// Create the response sink and send the network request
 	start := time.Now()

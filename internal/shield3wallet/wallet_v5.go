@@ -63,6 +63,7 @@ func BuildActiveBatch(ctx context.Context, rpc RPC, seed []byte, identity *Ident
 	return BuildV4Batch(ctx, rpc, seed, identity, payments)
 }
 
+//nolint:unused // Retained legacy wallet transport/construction helper.
 func buildV5(ctx context.Context, rpc RPC, seed []byte, identity *Identity, payments []Payment, deposit bool, relay *RelayOffer) (*types.Transaction, error) {
 	return buildV5AssetWithWithdrawalFeeCached(ctx, rpc, seed, identity, payments, deposit, relay, shielded3.AssetTKM, nil, nil, nil, nil)
 }

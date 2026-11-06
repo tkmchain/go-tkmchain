@@ -375,6 +375,7 @@ func shieldedSpendData(requestID string, applicationData string) ([]byte, error)
 	return data, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) proofTransactionContext(ctx context.Context, from, nonceRaw, gasPriceRaw string) (*big.Int, uint64, *big.Int, error) {
 	chainID, err := p.client.ChainID(ctx)
 	if err != nil {
@@ -400,6 +401,7 @@ func (p *Prover) proofTransactionContext(ctx context.Context, from, nonceRaw, ga
 	return chainID, nonce, gasPrice, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) shieldedGasSponsorValue(ctx context.Context, chainID *big.Int, sender common.Address, gasPrice *big.Int) (*big.Int, error) {
 	if !p.shieldedGasSponsorshipActive(ctx, chainID) {
 		return new(big.Int), nil

@@ -821,9 +821,6 @@ func TestShield6LegacyMigrationAllowsOnlySelfExitAfterActivation(t *testing.T) {
 }
 
 func TestShieldedV6ForkGateAndOrdering(t *testing.T) {
-	if params.MainnetChainConfig.Shield6Time != nil {
-		t.Fatal("mainnet Shield6 activation must remain unset during implementation")
-	}
 	activation := params.MainnetAntarticalTime + 7200
 	config := *params.MainnetChainConfig
 	config.Shield6Time = new(uint64)

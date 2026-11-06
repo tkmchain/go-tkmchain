@@ -26,6 +26,7 @@ func (p *Prover) activeShieldedVersion(ctx context.Context, chainID *big.Int) ui
 	return core.ShieldedTxVersionV1
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) shieldedGasSponsorshipActive(ctx context.Context, chainID *big.Int) bool {
 	if chainID == nil || params.MainnetChainConfig == nil || params.MainnetChainConfig.ChainID == nil || chainID.Cmp(params.MainnetChainConfig.ChainID) != 0 {
 		return false
@@ -163,6 +164,7 @@ func (p *Prover) buildDepositV2(ctx context.Context, req DepositRequest, amountW
 	}, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, amountWei, chainID *big.Int, nonce uint64, gasPrice *big.Int) (BuildShieldedResponse, error) {
 	if p.pkV2 == nil || p.r1csV2 == nil {
 		return BuildShieldedResponse{}, errors.New("recipient-bound V2 proving key is not ready")
@@ -355,6 +357,7 @@ func (p *Prover) buildTransferV2(ctx context.Context, req BuildTransferRequest, 
 	}, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalRequest, amountWei, chainID *big.Int, nonce uint64, gasPrice *big.Int) (BuildShieldedResponse, error) {
 	spendData, err := shieldedSpendData(req.RequestID, req.ApplicationData)
 	if err != nil {
@@ -550,6 +553,7 @@ func (p *Prover) buildWithdrawalV2(ctx context.Context, req BuildWithdrawalReque
 	}, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func optionalPositiveBig(value *big.Int) *big.Int {
 	if value == nil || value.Sign() <= 0 {
 		return nil

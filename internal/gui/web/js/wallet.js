@@ -120,6 +120,7 @@
   }
 
   async function renderSend(container) {
+    if((await rpc("tkmprivacy_shieldedV6Status",[]).catch(()=>({active:false}))).recipientProofsRequired)return GUI.renderShield6Send(container,shield3Unlock);
     if((await rpc("tkmprivacy_shieldedV3Status",[]).catch(()=>({active:false}))).active)return renderShield3Send(container);
     container.body.innerHTML = '';
     const accounts = await walletAccounts();
@@ -252,6 +253,7 @@
   }
 
   async function renderViewHelpers(container) {
+    if((await rpc("tkmprivacy_shieldedV6Status",[]).catch(()=>({active:false}))).recipientProofsRequired)return GUI.renderShield6Receive(container,shield3Unlock,consensusStampGate);
     if((await rpc("tkmprivacy_shieldedV3Status",[]).catch(()=>({active:false}))).active)return renderShield3Receive(container);
     container.body.innerHTML = '';
     const accounts = await walletAccounts();

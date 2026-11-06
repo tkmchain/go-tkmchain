@@ -7,19 +7,111 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing version tag to build and publish
+        description: Version label to package (publishing requires the existing tag)
         required: true
+        type: string
+      validation_only:
+        description: Build and validate all packages without publishing a release
+        required: true
+        default: true
+        type: boolean
+      source_ref:
+        description: Optional source ref for validation only (resolved once to an exact commit)
+        required: false
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
   GOFLAGS: "-buildvcs=false"
 
 jobs:
+  resolve-source:
+    name: Resolve exact release validation source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Validate invocation
+        env:
+          SOURCE_OVERRIDE: ${{ inputs.source_ref }}
+          VALIDATION_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_only }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$SOURCE_OVERRIDE" && "$VALIDATION_ONLY" != true ]]; then
+            echo 'A source override is permitted only for nonpublishing validation.' >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo 'The release label must contain only letters, digits, dots, underscores, pluses and hyphens.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.source_ref || inputs.release_tag }}
+          persist-credentials: false
+      - name: Record exact source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  shield6-validation:
+    name: Validate Shield6 consensus and TCP reorg before packaging
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GOMAXPROCS: '1'
+      GOMEMLIMIT: 1300MiB
+      GOGC: '20'
+      CARGO_BUILD_JOBS: '1'
+      RAYON_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install native proof toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          ./scripts/shield4-build.sh
+      - name: Verify crypto, consensus, real pools, TCP sync and reorg
+        run: go test -p=1 -tags shield3 ./zk/shielded6 ./core ./eth ./core/txpool/legacypool ./params -run 'Shield6|ShieldedV6|CLSAG|ConfidentialLedger|ActivationRemainsUnset' -count=1 -timeout=10m
+      - name: Download authenticated production parameters
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_shield6*.py'
+          python3 scripts/shield6-release-parameters.py --output "$RUNNER_TEMP/shield6-production-parameters"
+      - name: Verify the recipient-binding constrained relation
+        env:
+          GOMEMLIMIT: 4GiB
+          GOMAXPROCS: '2'
+        run: go test -short -p=1 -tags shield3 ./zk/shielded6/recipient -count=1 -timeout=15m
+      - name: Verify proof-bearing recipient consensus integration
+        env:
+          GOMEMLIMIT: 4GiB
+          GOMAXPROCS: '2'
+          SHIELD6_RECIPIENT_INTEGRATION: '1'
+          SHIELD6_RECIPIENT_PRODUCTION_PARAMETERS: ${{ runner.temp }}/shield6-production-parameters
+          SHIELD6_RECIPIENT_NETWORK_FIXTURE: ${{ runner.temp }}/shield6-recipient-network.json
+        run: go test -p=1 -tags shield3 ./core -run '^TestShield6RecipientEndToEnd$' -count=1 -timeout=90m -v
+      - name: Verify real recipient proofs through TCP propagation and reorgs
+        env:
+          SHIELD6_RECIPIENT_NETWORK_FIXTURE: ${{ runner.temp }}/shield6-recipient-network.json
+        run: go test -p=1 -tags shield3 ./eth -run '^TestShield6RecipientTCPSpendAndReorg$' -count=1 -timeout=10m -v
+      - name: Verify wallet and CLI integration
+        run: go test -p=1 -tags shield3 ./internal/shield3wallet ./cmd/gtkm ./cmd/shielded-ceremony -run 'ShieldedV6|Shield6|GenerateLocal' -skip 'MigrationNativeRehearsal' -count=1 -timeout=10m
+      - name: Verify native legacy migration separately
+        run: go test -p=1 -tags shield3 ./internal/shield3wallet -run '^TestShield6MigrationNativeRehearsal$' -count=1 -timeout=15m
+      - name: Race-test Shield6 wallet construction and scanning
+        run: go test -race -p=1 -tags shield3 ./internal/shield3wallet -run 'ShieldedV6|Shield6' -skip 'MigrationNativeRehearsal' -count=1 -timeout=10m
+
   build:
+    needs: [resolve-source, shield6-validation]
     name: Build ${{ matrix.platform }} binaries
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -40,7 +132,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -146,6 +238,7 @@ jobs:
           retention-days: 1
 
   build-debian13:
+    needs: [resolve-source, shield6-validation]
     name: Build portable Linux binaries
     runs-on: ubuntu-latest
     container:
@@ -195,7 +288,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
 
       - name: Configure Git safe directory
         run: |
@@ -263,6 +356,7 @@ jobs:
           retention-days: 1
 
   build-linux-arm:
+    needs: [resolve-source, shield6-validation]
     name: Build Linux ${{ matrix.label }} binaries
     runs-on: ubuntu-latest
     strategy:
@@ -298,7 +392,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -398,13 +492,14 @@ jobs:
           retention-days: 1
 
   build-windows-gui:
+    needs: [resolve-source, shield6-validation]
     name: Build Windows GUI wallet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
@@ -453,6 +548,7 @@ jobs:
           retention-days: 1
 
   build-android:
+    needs: [resolve-source, shield6-validation]
     name: Build signed Android wallet
     runs-on: ubuntu-latest
     # Use the pipe fallback so transient proxy/DNS failures fall back to the
@@ -463,22 +559,35 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
       - name: Prepare Android release signing
         env:
-          KEYSTORE_BASE64: ${{ secrets.TKM_ANDROID_KEYSTORE_BASE64 }}
-          KEY_ALIAS: ${{ secrets.TKM_ANDROID_KEY_ALIAS }}
-          KEYSTORE_PASSWORD: ${{ secrets.TKM_ANDROID_KEYSTORE_PASSWORD }}
+          KEYSTORE_BASE64: ${{ !inputs.validation_only && secrets.TKM_ANDROID_KEYSTORE_BASE64 || '' }}
+          KEY_ALIAS: ${{ !inputs.validation_only && secrets.TKM_ANDROID_KEY_ALIAS || '' }}
+          KEYSTORE_PASSWORD: ${{ !inputs.validation_only && secrets.TKM_ANDROID_KEYSTORE_PASSWORD || '' }}
+          VALIDATION_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_only }}
         run: |
+          set -euo pipefail
           umask 077
-          if [[ -z "$KEYSTORE_BASE64" || -z "$KEY_ALIAS" || -z "$KEYSTORE_PASSWORD" ]]; then
-            echo 'Configure TKM_ANDROID_KEYSTORE_BASE64, TKM_ANDROID_KEY_ALIAS and TKM_ANDROID_KEYSTORE_PASSWORD repository secrets before releasing.' >&2
-            exit 1
-          fi
           signing_dir="$RUNNER_TEMP/tkm-signing"
           mkdir -p "$signing_dir"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$signing_dir/release.p12"
-          printf '%s' "$KEYSTORE_PASSWORD" > "$signing_dir/password"
+          if [[ "$VALIDATION_ONLY" == true ]]; then
+            # Exercise release APK signing without using the production key.
+            KEY_ALIAS=validation-only
+            openssl rand -hex 24 > "$signing_dir/password"
+            keytool -genkeypair -noprompt -storetype PKCS12 \
+              -keystore "$signing_dir/release.p12" \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 3072 -validity 2 \
+              -dname 'CN=Validation Only, O=Do Not Distribute' \
+              -storepass:file "$signing_dir/password" \
+              -keypass:file "$signing_dir/password"
+          elif [[ -z "$KEYSTORE_BASE64" || -z "$KEY_ALIAS" || -z "$KEYSTORE_PASSWORD" ]]; then
+            echo 'Configure TKM_ANDROID_KEYSTORE_BASE64, TKM_ANDROID_KEY_ALIAS and TKM_ANDROID_KEYSTORE_PASSWORD repository secrets before releasing.' >&2
+            exit 1
+          else
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$signing_dir/release.p12"
+            printf '%s' "$KEYSTORE_PASSWORD" > "$signing_dir/password"
+          fi
           {
             echo "TKM_ANDROID_KEYSTORE=$signing_dir/release.p12"
             echo "TKM_ANDROID_KEY_ALIAS=$KEY_ALIAS"
@@ -564,13 +673,14 @@ jobs:
           retention-days: 1
 
   build-browser-shield3:
+    needs: [resolve-source, shield6-validation]
     name: Build browser-native Shield3 prover
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-source.outputs.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
@@ -590,15 +700,40 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  shield6-parameters:
+    name: Package authenticated Shield6 production parameters
+    needs: [resolve-source, shield6-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.sha }}
+          persist-credentials: false
+      - name: Download and verify pinned public artifacts
+        run: python3 scripts/shield6-release-parameters.py --output shield6-parameters
+      - name: Package parameters and provenance
+        run: |
+          cp params/shield6_production.json shield6-parameters/release-metadata.json
+          tar -czf "Shield6-parameters-v2-${RELEASE_TAG}.tar.gz" shield6-parameters
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-shield6-parameters
+          path: Shield6-parameters-v2-*.tar.gz
+          if-no-files-found: error
+
   release:
-    name: Publish GitHub release
+    name: Validate release assets and optionally publish
+    permissions:
+      contents: write
     needs:
+      - resolve-source
       - build
       - build-debian13
       - build-linux-arm
       - build-windows-gui
       - build-android
       - build-browser-shield3
+      - shield6-parameters
     runs-on: ubuntu-latest
 
     steps:
@@ -608,6 +743,14 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Record source provenance
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.sha }}
+          VALIDATION_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_only }}
+        run: |
+          printf '%s\n' "$SOURCE_SHA" > release-assets/SOURCE_COMMIT
+          printf '%s\n' "$VALIDATION_ONLY" > release-assets/VALIDATION_ONLY
+
       - name: List downloaded assets
         run: |
           ls -la release-assets/
@@ -615,9 +758,18 @@ jobs:
 
       - name: Generate release checksums
         working-directory: release-assets
-        run: sha256sum *.tar.gz *.zip *.apk *.deb > SHA256SUMS
+        run: sha256sum *.tar.gz *.zip *.apk *.deb SOURCE_COMMIT VALIDATION_ONLY > SHA256SUMS
+
+      - name: Upload validated release assets and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-release-assets
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Create GitHub release
+        if: github.event_name == 'push' || !inputs.validation_only
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -629,3 +781,5 @@ jobs:
             release-assets/*.apk
             release-assets/*.deb
             release-assets/SHA256SUMS
+            release-assets/SOURCE_COMMIT
+            release-assets/VALIDATION_ONLY

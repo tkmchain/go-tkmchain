@@ -235,7 +235,6 @@ func (api *TkmNameAPI) Resolve(handle string) (TkmNameRecord, error) {
 	}
 	results := make(chan lookupResult, len(queries))
 	for _, query := range queries {
-		query := query
 		go func() {
 			request, err := tkmnet.EncodeUsernameQuery(query.Name)
 			if err != nil {
@@ -667,7 +666,6 @@ func (api *TkmNameAPI) probeDirectoryPeers(ctx context.Context, proxy, port stri
 	type result struct{ err error }
 	results := make(chan result, len(peers))
 	for _, peer := range peers {
-		peer := peer
 		if api.isLocalDirectory(peer.Descriptor.ID) {
 			results <- result{}
 			continue
@@ -711,7 +709,6 @@ func (api *TkmNameAPI) publishRecord(ctx context.Context, proxy, port string, tr
 	}
 	results := make(chan result, len(peers))
 	for _, peer := range peers {
-		peer := peer
 		if api.isLocalDirectory(peer.Descriptor.ID) {
 			results <- result{id: peer.Descriptor.ID}
 			continue

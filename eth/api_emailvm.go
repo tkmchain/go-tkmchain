@@ -678,21 +678,21 @@ func (api *EmailVMAPI) DeliverOTP(to string, code string) (EmailMessage, error) 
 	return api.service.deliverOTPLocked(to, code, uint64(time.Now().Unix()))
 }
 
-func (s *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint64) (EmailMessage, error) {
+func (svc *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint64) (EmailMessage, error) {
 	now := time.Now()
 	cutoff := now.Add(-time.Minute)
-	events := s.otpRate[to][:0]
-	for _, event := range s.otpRate[to] {
+	events := svc.otpRate[to][:0]
+	for _, event := range svc.otpRate[to] {
 		if event.After(cutoff) {
 			events = append(events, event)
 		}
 	}
 	if len(events) >= emailVMOTPPerMailboxPerMinute {
-		s.otpRate[to] = events
+		svc.otpRate[to] = events
 		return EmailMessage{}, errors.New("OTP delivery rate limit exceeded")
 	}
-	s.otpRate[to] = append(events, now)
-	mailbox, ok := s.mailboxes[to]
+	svc.otpRate[to] = append(events, now)
+	mailbox, ok := svc.mailboxes[to]
 	if !ok {
 		return EmailMessage{}, errors.New("mailbox not found")
 	}
@@ -702,12 +702,12 @@ func (s *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint
 	nonce := crypto.Keccak256([]byte("TKMCHAT_OTP_NONCE_V1"), []byte(to), []byte(code), new(big.Int).SetUint64(timestamp).Bytes())[:24]
 	ciphertext := []byte("TKMChat confirmation code: " + code)
 	id := crypto.Keccak256Hash([]byte("TKMCHAT_OTP_MESSAGE_V1"), []byte(to), nonce, ciphertext)
-	if message, exists := s.messages[id]; exists {
+	if message, exists := svc.messages[id]; exists {
 		return cloneEmailMessage(message), nil
 	}
 	headBlock := uint64(0)
-	if s.eth != nil && s.eth.blockchain != nil {
-		if head := s.eth.blockchain.CurrentBlock(); head != nil {
+	if svc.eth != nil && svc.eth.blockchain != nil {
+		if head := svc.eth.blockchain.CurrentBlock(); head != nil {
 			headBlock = head.Number.Uint64()
 		}
 	}
@@ -715,11 +715,11 @@ func (s *EmailVMService) deliverOTPLocked(to string, code string, timestamp uint
 		ID: id, From: "tkmchat@tkm", To: to, Ciphertext: ciphertext, Nonce: nonce,
 		BodyHash: crypto.Keccak256Hash(ciphertext), Block: hexutil.Uint64(headBlock), Timestamp: hexutil.Uint64(timestamp),
 	}
-	s.messages[id] = message
-	s.inboxIndex[to] = append(s.inboxIndex[to], id)
-	s.outboxIndex["tkmchat@tkm"] = append(s.outboxIndex["tkmchat@tkm"], id)
-	s.dirtyMessages[id] = struct{}{}
-	if err := s.saveLocked(); err != nil {
+	svc.messages[id] = message
+	svc.inboxIndex[to] = append(svc.inboxIndex[to], id)
+	svc.outboxIndex["tkmchat@tkm"] = append(svc.outboxIndex["tkmchat@tkm"], id)
+	svc.dirtyMessages[id] = struct{}{}
+	if err := svc.saveLocked(); err != nil {
 		return EmailMessage{}, err
 	}
 	return cloneEmailMessage(message), nil

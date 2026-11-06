@@ -4,9 +4,16 @@ import {normalizeKeystore} from './vendor/keystore.js';
 import {decodeShieldedPaymentCode, deriveShieldedIdentity, clearShieldedIdentity, scanShieldedNotes, shieldedBalance} from './vendor/shielded.js';
 import {TkmChainAPI} from './vendor/api.js';
 import {sendTKM as sendV2} from './shield2-send.js';
-import {shield3Status,sendShield3,shield3Scan} from './shield3.js';
+import {shield3Status,sendShield3,shield3Scan,shield6Operation,shield6Status} from './shield3.js';
+export {shield6Operation,shield6RequestStatus,shield6Status} from './shield3.js';
 export {shield3Status,shield3Identity,shield3ViewKeys,shield3ViewScan,shield3ViewStamp,shield3FetchRelayOffer,shield3Scan,shield3Funds, shield3RegisterStamp,shield3RegisterUsername,shield3StampSponsorship,shield3Relay,shield3ReviewRelayOffer,shield3Disclosure,validateShield3Amount,validateShield3Payments,validateShield3Recipient} from './shield3.js';
-export async function sendTKM(options){const status=await shield3Status(options);return status.active?sendShield3(options):sendV2(options)}
+export async function sendTKM(options){
+ if((await shield6Status(options)).recipientProofsRequired){
+  if(options.intent.payments)throw Error('Shield6 currently supports one payment recipient plus change.');
+  const result=await shield6Operation({...options,operation:'send',recipient:options.intent.recipient_address,amount:options.intent.amount});
+  options.onSubmitted?.(0,result.transactionHash);return [result.transactionHash];
+ }
+ const status=await shield3Status(options);return status.active?sendShield3(options):sendV2(options)}
 export {decodeShieldedPaymentCode};
 
 // TKM PQ recovery v1 encodes the raw 32-byte ML-DSA seed as 24 BIP39 words.
@@ -26,6 +33,7 @@ export async function recoveryPhraseForKeyfile(keystore, password) {
 export function keyfileFromHex(hex) { return JSON.parse(ethers.toUtf8String(hex)); }
 export function validateRecipient(code) { return decodeShieldedPaymentCode(String(code).trim(),8979); }
 export async function scanWallet({keystore,password,rpcURL,rpcToken,onProgress}) {
+ if((await shield6Status({rpcURL,rpcToken})).recipientProofsRequired){const result=await shield6Operation({operation:'scan',keystore,password,rpcToken});return ethers.formatEther(result.balanceWei)}
  if((await shield3Status({rpcURL,rpcToken})).active){const result=await shield3Scan({keystore,password,rpcToken});return ethers.formatEther(result.balanceWei)}
     const normalized=normalizeKeystore(keystore), seed=await decryptPQKeystore(normalized,password);
     let identity,provider;

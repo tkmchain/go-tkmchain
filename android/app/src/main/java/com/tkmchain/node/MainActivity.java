@@ -39,6 +39,8 @@ import java.util.TimeZone;
 
 public class MainActivity extends Activity {
 
+    private static final int IMPORT_SHIELD6_PARAMETERS = 6102;
+
     private static final String NODE_BINARY = "libgtkm.so";
     private static final String PROVER_BINARY = "libshielded-payout-prover.so";
     private static final String BOOTSTRAP_URL = "https://tkmchain.site/tkm-mainnet.rlp.gz";
@@ -160,6 +162,21 @@ public class MainActivity extends Activity {
         bar.addView(bootstrapBtn);
         root.addView(bar);
 
+        Button importWallet = new Button(this);
+        importWallet.setText("Import Shield6 wallet files");
+        importWallet.setAllCaps(false);
+        importWallet.setMinHeight(dp(44));
+        importWallet.setOnClickListener(v -> new android.app.AlertDialog.Builder(this)
+                .setTitle("Import wallet proving files")
+                .setMessage("Choose the reviewed release folder. The wallet checks file hashes and network keys before using these files.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Choose folder", (dialog, which) -> {
+                    Intent choose = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    choose.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivityForResult(choose, IMPORT_SHIELD6_PARAMETERS);
+                }).show());
+        root.addView(importWallet);
+
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -195,6 +212,24 @@ public class MainActivity extends Activity {
         });
 
         setContentView(root);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode != IMPORT_SHIELD6_PARAMETERS || resultCode != RESULT_OK || result == null || result.getData() == null) return;
+        android.net.Uri folder = result.getData();
+        new Thread(() -> {
+            try {
+                Shield6Parameters.install(getContentResolver(), folder, dataDir,
+                        message -> main.post(() -> status.setText(message)));
+                main.post(() -> status.setText("Wallet files installed. Restart the node to load them."));
+            } catch (Exception error) {
+                main.post(() -> new android.app.AlertDialog.Builder(this)
+                        .setTitle("Wallet import failed").setMessage(error.getMessage())
+                        .setPositiveButton("OK", null).show());
+            }
+        }, "shield6-parameter-import").start();
     }
 
     private boolean prepareAssets() {
@@ -524,6 +559,8 @@ public class MainActivity extends Activity {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(dataDir);
         builder.environment().put("LD_LIBRARY_PATH", nativeBinDir.getAbsolutePath());
+        builder.environment().put("TKM_SHIELD6_RECIPIENT_PARAMETERS",
+                new File(dataDir, "shield6-recipient").getAbsolutePath());
         builder.redirectErrorStream(true);
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
         Process process = builder.start();

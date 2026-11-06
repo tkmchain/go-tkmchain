@@ -31,13 +31,18 @@ import (
 // response to a locally already timed out request. Timeouts are not penalized
 // as a peer might be temporarily overloaded, however, they still must reply
 // to each request. Failing to do so is considered a protocol violation.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 var timeoutGracePeriod = 2 * time.Minute
 
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 var errCanceled = errors.New("sync canceled")
 
 // typedQueue is an interface defining the adaptor needed to translate the type
 // specific downloader/queue schedulers into the type-agnostic general concurrent
 // fetcher algorithm calls.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 type typedQueue interface {
 	// waker returns a notification channel that gets pinged in case more fetches
 	// have been queued up, so the fetcher might assign it to idle peers.
@@ -78,6 +83,8 @@ type typedQueue interface {
 // concurrentFetch iteratively downloads scheduled block parts, taking available
 // peers, reserving a chunk of fetch requests for each and waiting for delivery
 // or timeouts.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (d *Downloader) concurrentFetch(queue typedQueue) error {
 	// Create a delivery channel to accept responses from all peers
 	responses := make(chan *eth.Response)
@@ -363,6 +370,8 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 }
 
 // validityErrorOfRequest returns err if it is related to block validity, and nil otherwise.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func validityErrorOfRequest(err error) error {
 	if errors.Is(err, errInvalidBody) || errors.Is(err, errInvalidReceipt) {
 		return err

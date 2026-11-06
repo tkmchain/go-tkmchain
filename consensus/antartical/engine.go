@@ -1,7 +1,6 @@
 package antartical
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -202,7 +201,7 @@ func (r *EngineRegistry) ConformantNames() []string {
 	for name := range r.engines {
 		names = append(names, name)
 	}
-	sort.Slice(names, func(i, j int) bool { return bytes.Compare([]byte(names[i]), []byte(names[j])) < 0 })
+	sort.Slice(names, func(i, j int) bool { return strings.Compare(names[i], names[j]) < 0 })
 	return names
 }
 

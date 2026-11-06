@@ -10,6 +10,8 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/ethereum/go-ethereum/zk/shielded6"
 )
 
@@ -21,15 +23,22 @@ const (
 )
 
 type ShieldedV6Status struct {
-	Active             bool            `json:"active"`
-	ChainID            *hexutil.Big    `json:"chainId,omitempty"`
-	ActivationTime     *hexutil.Uint64 `json:"activationTime,omitempty"`
-	Accumulator        common.Hash     `json:"accumulatorRoot"`
-	OutputCount        hexutil.Uint64  `json:"outputCount"`
-	SpentKeyImageCount hexutil.Uint64  `json:"spentKeyImageCount"`
-	RingSize           uint64          `json:"ringSize"`
-	MaxInputs          uint64          `json:"maxInputs"`
-	MaxOutputs         uint64          `json:"maxOutputs"`
+	Active                     bool            `json:"active"`
+	ChainID                    *hexutil.Big    `json:"chainId,omitempty"`
+	ActivationTime             *hexutil.Uint64 `json:"activationTime,omitempty"`
+	Accumulator                common.Hash     `json:"accumulatorRoot"`
+	OutputCount                hexutil.Uint64  `json:"outputCount"`
+	SpentKeyImageCount         hexutil.Uint64  `json:"spentKeyImageCount"`
+	RingSize                   uint64          `json:"ringSize"`
+	MaxInputs                  uint64          `json:"maxInputs"`
+	MaxOutputs                 uint64          `json:"maxOutputs"`
+	RecipientProofsRequired    bool            `json:"recipientProofsRequired"`
+	RecipientKeyHash           common.Hash     `json:"recipientKeyHash"`
+	RegistrationKeyHash        common.Hash     `json:"registrationKeyHash"`
+	BindingCount               hexutil.Uint64  `json:"bindingCount"`
+	HeadTime                   hexutil.Uint64  `json:"headTime"`
+	RecipientProvingKeyHash    common.Hash     `json:"recipientProvingKeyHash"`
+	RegistrationProvingKeyHash common.Hash     `json:"registrationProvingKeyHash"`
 }
 
 type ShieldedV6OutputView struct {
@@ -73,6 +82,12 @@ func (api *PrivacyAPI) ShieldedV6Status() (ShieldedV6Status, error) {
 		return status, fmt.Errorf("chain head unavailable")
 	}
 	status.Active = cfg.IsShield6(head.Number, head.Time)
+	status.HeadTime = hexutil.Uint64(head.Time)
+	status.RecipientProofsRequired = cfg.IsShield6Recipients(head.Number, head.Time)
+	status.RecipientKeyHash = cfg.Shield6RecipientKeyHash
+	status.RegistrationKeyHash = cfg.Shield6RegistrationKeyHash
+	status.RecipientProvingKeyHash = cfg.Shield6RecipientProvingKeyHash
+	status.RegistrationProvingKeyHash = cfg.Shield6RegistrationProvingKeyHash
 	state, err := api.e.currentPrivacyState()
 	if err != nil {
 		return status, err
@@ -80,7 +95,55 @@ func (api *PrivacyAPI) ShieldedV6Status() (ShieldedV6Status, error) {
 	status.OutputCount = hexutil.Uint64(core.ShieldedV6OutputCount(state))
 	status.SpentKeyImageCount = hexutil.Uint64(core.ShieldedV6KeyImageCount(state))
 	status.Accumulator = core.ShieldedV6OutputRoot(state)
+	status.BindingCount = hexutil.Uint64(core.ShieldedV6BindingCount(state))
 	return status, nil
+}
+
+// ShieldedV6BindingPath is used by receivers to create their private payment
+// code. Payers carry that path in the code and never query a receiver owner.
+func (api *PrivacyAPI) ShieldedV6BindingPath(owner shielded3.Digest) (core.ShieldedV3Path, error) {
+	if api == nil || api.e == nil || api.e.blockchain == nil {
+		return core.ShieldedV3Path{}, fmt.Errorf("blockchain unavailable")
+	}
+	if _, err := shielded3.DigestFromBytes(owner.Bytes()); err != nil {
+		return core.ShieldedV3Path{}, err
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return core.ShieldedV3Path{}, err
+	}
+	return core.ShieldedV6BindingPath(st, owner)
+}
+
+func (api *PrivacyAPI) ShieldedV6RecipientRootsKnown(roots []core.ShieldedV6RecipientRoots) (bool, error) {
+	if api == nil || api.e == nil || api.e.blockchain == nil {
+		return false, fmt.Errorf("blockchain unavailable")
+	}
+	if len(roots) == 0 || len(roots) > core.ShieldedV6MaxOutputs {
+		return false, fmt.Errorf("invalid recipient root count")
+	}
+	st, err := api.e.currentPrivacyState()
+	if err != nil {
+		return false, err
+	}
+	cfg := api.e.blockchain.Config()
+	if cfg.ChainID == nil || !cfg.ChainID.IsUint64() {
+		return false, fmt.Errorf("invalid chain ID")
+	}
+	for _, r := range roots {
+		if _, err := shielded3.DigestFromBytes(r.StampRoot.Bytes()); err != nil {
+			return false, err
+		}
+		if _, err := shielded3.DigestFromBytes(r.BindingRoot.Bytes()); err != nil {
+			return false, err
+		}
+		if r.Anchor != core.ShieldedV6RecipientAnchor(cfg.ChainID.Uint64(), r.StampRoot, r.BindingRoot) ||
+			st.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("stamp/root", r.StampRoot.Bytes())) == (common.Hash{}) ||
+			st.GetState(params.ShieldedPoolAddress, core.ShieldedV3StateSlot("shield6-binding/root", r.BindingRoot.Bytes())) == (common.Hash{}) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ShieldedV6SpentKeyImages returns a bounded page of canonical key images.

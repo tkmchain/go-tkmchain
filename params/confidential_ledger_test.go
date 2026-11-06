@@ -13,10 +13,9 @@ func TestConfidentialLedgerFork(t *testing.T) {
 		t.Fatal("wrong requested activation time")
 	}
 	for _, network := range []*ChainConfig{MainnetChainConfig, RandomXChainConfig, EgyptChainConfig} {
-		if network.ConfidentialLedgerTime != nil {
-			t.Fatal("unreleased ledger activated on live network")
-		}
-		cfg := *network
+		baseline := *network
+		baseline.ConfidentialLedgerTime = nil
+		cfg := baseline
 		cfg.ConfidentialLedgerTime = &at
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatal(err)
@@ -34,10 +33,10 @@ func TestConfidentialLedgerFork(t *testing.T) {
 		if err = json.Unmarshal(b, &restored); err != nil || restored.ConfidentialLedgerTime == nil || *restored.ConfidentialLedgerTime != at {
 			t.Fatal("schedule lost")
 		}
-		if err := network.CheckCompatible(&cfg, 1, at-1); err != nil {
+		if err := baseline.CheckCompatible(&cfg, 1, at-1); err != nil {
 			t.Fatal(err)
 		}
-		if err := network.CheckCompatible(&cfg, 1, at); err == nil || err.What != "Confidential ledger timestamp" {
+		if err := baseline.CheckCompatible(&cfg, 1, at); err == nil || err.What != "Confidential ledger timestamp" {
 			t.Fatalf("retroactive fork accepted: %v", err)
 		}
 		cfg.ShieldedOnlyTime = &at

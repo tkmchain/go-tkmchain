@@ -19,6 +19,9 @@ func BuildShieldedV6DepositEnvelope(tx *types.Transaction, outputs []ShieldedV6W
 	if tx == nil || random == nil || len(outputs) == 0 || len(outputs) > ShieldedV6MaxOutputs {
 		return nil, ErrInvalidShieldedTx
 	}
+	ephemerals := make([][32]byte, len(outputs))
+	defer clear(ephemerals)
+
 	chainID := tx.ChainId()
 	to := tx.To()
 	if tx.Type() != types.PQTkmTxType || chainID == nil || !chainID.IsUint64() || to == nil || *to != params.ShieldedPoolAddress || tx.Value() == nil || tx.Value().Sign() <= 0 || tx.Value().BitLen() > 128 {
@@ -64,7 +67,7 @@ func BuildShieldedV6DepositEnvelope(tx *types.Transaction, outputs []ShieldedV6W
 	}
 	clear(mask[:])
 	for i, output := range outputs {
-		record, err := shielded6.CreateOutput(output.Address, uint64(i), shielded6.AssetTKM, amounts[i], witnesses[i], random)
+		record, err := createShieldedV6RecipientOutput(output, uint64(i), amounts[i], witnesses[i], random, &ephemerals[i])
 		if err != nil {
 			return nil, err
 		}
@@ -72,6 +75,12 @@ func BuildShieldedV6DepositEnvelope(tx *types.Transaction, outputs []ShieldedV6W
 		if envelope.Outputs[i].Commitment != wide[i].Commitment || envelope.Outputs[i].AmountLimbs != wide[i].Limbs {
 			return nil, ErrInvalidShieldedTx
 		}
+	}
+	if err := prepareShieldedV6Recipients(tx, envelope, outputs, false); err != nil {
+		return nil, err
+	}
+	if err := proveShieldedV6Recipients(tx, envelope, outputs, ephemerals); err != nil {
+		return nil, err
 	}
 	return EncodeShieldedV6Transaction(envelope)
 }
@@ -85,13 +94,15 @@ type ShieldedV6WalletInput struct {
 	Ring        [shielded6.RingSize]shielded6.RingMember
 	RingIndices [shielded6.RingSize]uint64
 	SignerIndex uint64
+	ValidUntil  uint64
 }
 
 // ShieldedV6WalletOutput describes one payment output. Change is an ordinary
 // output and must be supplied explicitly by the caller when needed.
 type ShieldedV6WalletOutput struct {
-	Address shielded6.Address
-	Amount  *big.Int
+	Address   shielded6.Address
+	Amount    *big.Int
+	Recipient *ShieldedV6WalletRecipient
 }
 
 // BuildShieldedV6Envelope creates the confidential range proofs, encrypted
@@ -108,6 +119,9 @@ func BuildShieldedV6Envelope(tx *types.Transaction, inputs []ShieldedV6WalletInp
 	if tx == nil || random == nil || len(inputs) == 0 || len(inputs) > ShieldedV6MaxInputs || len(outputs) == 0 || len(outputs) > ShieldedV6MaxOutputs {
 		return nil, ErrInvalidShieldedTx
 	}
+	ephemerals := make([][32]byte, len(outputs))
+	defer clear(ephemerals)
+
 	chainID := tx.ChainId()
 	to := tx.To()
 	if tx.Type() != types.PQTkmTxType || chainID == nil || !chainID.IsUint64() || to == nil || *to != params.ShieldedPoolAddress || tx.Value() == nil || tx.Value().Sign() != 0 {
@@ -177,7 +191,7 @@ func BuildShieldedV6Envelope(tx *types.Transaction, inputs []ShieldedV6WalletInp
 		envelope.Inputs[i].RingIndices = inputs[i].RingIndices
 	}
 	for i, output := range outputs {
-		walletOutput, err := shielded6.CreateOutput(output.Address, uint64(i), shielded6.AssetTKM, amounts[i], outputWitnesses[i], random)
+		walletOutput, err := createShieldedV6RecipientOutput(output, uint64(i), amounts[i], outputWitnesses[i], random, &ephemerals[i])
 		if err != nil {
 			return nil, err
 		}
@@ -185,6 +199,9 @@ func BuildShieldedV6Envelope(tx *types.Transaction, inputs []ShieldedV6WalletInp
 		if envelope.Outputs[i].Commitment != wideCommitments[i].Commitment || envelope.Outputs[i].AmountLimbs != wideCommitments[i].Limbs {
 			return nil, ErrInvalidShieldedTx
 		}
+	}
+	if err := prepareShieldedV6Recipients(tx, envelope, outputs, false); err != nil {
+		return nil, err
 	}
 	intent, err := ShieldedV6Intent(tx, envelope)
 	if err != nil {
@@ -233,6 +250,9 @@ func BuildShieldedV6Envelope(tx *types.Transaction, inputs []ShieldedV6WalletInp
 			return nil, err
 		}
 	}
+	if err := proveShieldedV6Recipients(tx, envelope, outputs, ephemerals); err != nil {
+		return nil, err
+	}
 	return EncodeShieldedV6Transaction(envelope)
 }
 
@@ -243,9 +263,20 @@ func BuildShieldedV6Envelope(tx *types.Transaction, inputs []ShieldedV6WalletInp
 // recipient to be stamped and verifies the ring members against canonical
 // pre-transaction state.
 func BuildShieldedV6WithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV6WalletInput, outputs []ShieldedV6WalletOutput, recipient common.Address, withdrawal *big.Int, random io.Reader) ([]byte, error) {
+	return buildShieldedV6WithdrawalEnvelope(tx, inputs, outputs, recipient, withdrawal, random, false)
+}
+
+func BuildShieldedV6BoundWithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV6WalletInput, outputs []ShieldedV6WalletOutput, recipient common.Address, withdrawal *big.Int, random io.Reader) ([]byte, error) {
+	return buildShieldedV6WithdrawalEnvelope(tx, inputs, outputs, recipient, withdrawal, random, true)
+}
+
+func buildShieldedV6WithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV6WalletInput, outputs []ShieldedV6WalletOutput, recipient common.Address, withdrawal *big.Int, random io.Reader, forceBound bool) ([]byte, error) {
 	if tx == nil || random == nil || len(inputs) == 0 || len(inputs) > ShieldedV6MaxInputs || len(outputs) > ShieldedV6MaxOutputs || recipient == (common.Address{}) || withdrawal == nil || withdrawal.Sign() <= 0 || withdrawal.BitLen() > 128 {
 		return nil, ErrInvalidShieldedTx
 	}
+	ephemerals := make([][32]byte, len(outputs))
+	defer clear(ephemerals)
+
 	chainID, to := tx.ChainId(), tx.To()
 	if tx.Type() != types.PQTkmTxType || chainID == nil || !chainID.IsUint64() || to == nil || *to != params.ShieldedPoolAddress || tx.Value() == nil || tx.Value().Sign() != 0 {
 		return nil, ErrInvalidShieldedTx
@@ -320,7 +351,7 @@ func BuildShieldedV6WithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV
 		envelope.Inputs[i].RingIndices = inputs[i].RingIndices
 	}
 	for i, output := range outputs {
-		record, err := shielded6.CreateOutput(output.Address, uint64(i), shielded6.AssetTKM, amounts[i], witnesses[i], random)
+		record, err := createShieldedV6RecipientOutput(output, uint64(i), amounts[i], witnesses[i], random, &ephemerals[i])
 		if err != nil {
 			return nil, err
 		}
@@ -328,6 +359,12 @@ func BuildShieldedV6WithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV
 		if envelope.Outputs[i].Commitment != wide[i].Commitment || envelope.Outputs[i].AmountLimbs != wide[i].Limbs {
 			return nil, ErrInvalidShieldedTx
 		}
+	}
+	if forceBound && len(outputs) == 0 {
+		envelope.ValidUntil = inputs[0].ValidUntil
+	}
+	if err := prepareShieldedV6Recipients(tx, envelope, outputs, forceBound); err != nil {
+		return nil, err
 	}
 	intent, err := ShieldedV6Intent(tx, envelope)
 	if err != nil {
@@ -376,6 +413,9 @@ func BuildShieldedV6WithdrawalEnvelope(tx *types.Transaction, inputs []ShieldedV
 		if err := shielded6.VerifyCLSAG(intent, inputs[i].Ring[:], signed[i].KeyImage, signed[i].PseudoOutput, signed[i].Signature[:]); err != nil {
 			return nil, err
 		}
+	}
+	if err := proveShieldedV6Recipients(tx, envelope, outputs, ephemerals); err != nil {
+		return nil, err
 	}
 	return EncodeShieldedV6Transaction(envelope)
 }

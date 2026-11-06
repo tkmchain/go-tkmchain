@@ -17,7 +17,7 @@ import (
 )
 
 func TestCalculateBlockRewardHalvesAfterFourYears(t *testing.T) {
-	fourYearsInBlocks := uint64(4 * 365 * 24 * 60 * 60 / TargetBlockTimeSeconds)
+	fourYearsInBlocks := 4 * 365 * 24 * 60 * 60 / TargetBlockTimeSeconds
 	if BlocksPerHalving != fourYearsInBlocks {
 		t.Fatalf("halving period mismatch: have %d blocks, want %d", BlocksPerHalving, fourYearsInBlocks)
 	}

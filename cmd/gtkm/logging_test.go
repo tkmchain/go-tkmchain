@@ -36,7 +36,7 @@ import (
 func runSelf(args ...string) ([]byte, error) {
 	cmd := &exec.Cmd{
 		Path: reexec.Self(),
-		Args: append([]string{"geth-test"}, args...),
+		Args: append([]string{"geth-test", "--language", "en"}, args...),
 	}
 	return cmd.CombinedOutput()
 }
@@ -46,7 +46,12 @@ func split(input io.Reader) []string {
 	scanner := bufio.NewScanner(input)
 	scanner.Split(bufio.ScanLines)
 	for scanner.Scan() {
-		output = append(output, strings.TrimSpace(scanner.Text()))
+		line := strings.TrimSpace(scanner.Text())
+		// Compare logtest records independently of the daemon's startup banner.
+		if strings.Contains(line, "Daemon interface language selected") {
+			continue
+		}
+		output = append(output, line)
 	}
 	return output
 }

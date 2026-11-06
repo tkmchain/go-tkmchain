@@ -664,7 +664,6 @@ func (w *worker) drainSealedBlocks() {
 }
 
 func (w *worker) persistSealedBlock(block *types.Block) bool {
-
 	// Short circuit when receiving empty result.
 	if block == nil {
 		return false

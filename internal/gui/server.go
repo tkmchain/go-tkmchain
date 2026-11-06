@@ -40,6 +40,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/zk/shielded6/recipient"
+
 	"github.com/ethereum/go-ethereum/internal/shield3wallet"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -50,13 +52,14 @@ var webAssets embed.FS
 
 // Options controls how the GUI is launched.
 type Options struct {
-	WalletStateDir  string                             // local durable Shield3 submission records
-	ProverConfig    string                             // private local proof-only prover configuration
-	RelayTransport  shield3wallet.RelayTransportConfig // explicit Tor/relay transport
-	BootstrapDir    string                             // verified chain archives are stored here
-	BootstrapURL    string                             // official chain archive URL
-	BootstrapSHA256 string                             // expected archive digest
-	BootstrapSOCKS5 string                             // Tor SOCKS5 proxy for the archive download
+	Shield6ParametersDir string                             // authenticated local recipient circuit/setup artifacts
+	WalletStateDir       string                             // local durable Shield3 submission records
+	ProverConfig         string                             // private local proof-only prover configuration
+	RelayTransport       shield3wallet.RelayTransportConfig // explicit Tor/relay transport
+	BootstrapDir         string                             // verified chain archives are stored here
+	BootstrapURL         string                             // official chain archive URL
+	BootstrapSHA256      string                             // expected archive digest
+	BootstrapSOCKS5      string                             // Tor SOCKS5 proxy for the archive download
 
 	Title         string // window title
 	Width, Height int    // initial desktop window size
@@ -80,10 +83,12 @@ type GUI struct {
 	listener net.Listener
 	token    string
 
-	closed          chan struct{}
-	once            sync.Once
-	shield3Mu       sync.Mutex
-	shield3Requests map[string]*shield3RequestRecord
+	closed                    chan struct{}
+	once                      sync.Once
+	shield3Mu                 sync.Mutex
+	shield3Requests           map[string]*shield3RequestRecord
+	shield6Prover             *recipient.PreparedProver
+	shield6RegistrationProver *recipient.PreparedProver
 }
 
 // New creates a GUI that proxies RPC to the given client. The dashboard is

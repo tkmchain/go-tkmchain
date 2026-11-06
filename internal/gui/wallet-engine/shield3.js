@@ -21,6 +21,10 @@ export function validateShield3Payments(payments) {
  return {requests,total};
 }
 
+export async function shield6Status({rpcURL,rpcToken}) {
+ const response=await fetch(rpcURL,{method:'POST',headers:{'Content-Type':'application/json','X-GUI-Token':rpcToken},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tkmprivacy_shieldedV6Status',params:[]})});
+ const result=await response.json();if(result.error){if(result.error.code===-32601)return {active:false};throw Error(result.error.message)};return result.result;
+}
 export async function shield3Status({rpcURL,rpcToken}) {
  const response=await fetch(rpcURL,{method:'POST',headers:{'Content-Type':'application/json','X-GUI-Token':rpcToken},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tkmprivacy_shieldedV3Status',params:[]})});
  const result=await response.json();if(result.error){if(result.error.code===-32601)return {active:false};throw Error(result.error.message)};return result.result;
@@ -40,6 +44,25 @@ async function privateOperation(operation,options,extra={}) {
  try{return await walletRequest(operation,{seed:ethers.hexlify(seed),stamp:normalized.shield3Stamp,account:ethers.getAddress('0x'+normalized.address.replace(/^0x/,'')),...extra},options)}finally{seed.fill(0)}
 }
 export function shield3Identity(options){return privateOperation('identity',options)}
+export async function shield6Operation(options) {
+ const operation=options.operation;
+ if(!['identity','scan','send','shield','register-stamp','withdraw'].includes(operation))throw Error('Unsupported Shield6 operation.');
+ const spending=['send','shield','register-stamp','withdraw'].includes(operation);
+ if(spending&&!options.requestId)throw Error('A stable Shield6 request ID is required.');
+ const extra={proofVersion:6,requestId:options.requestId,recipient:options.recipient};
+ if(operation==='send'||operation==='shield'||operation==='withdraw') {
+  const amount=ethers.parseUnits(String(options.amount),18);
+  if(amount<=0n||amount>=(1n<<128n))throw Error('Amount must fit the Shield6 128-bit range.');
+  extra.amountWei=amount.toString();
+ }
+ if(operation==='send'&&!options.recipient?.startsWith('tkmshield6r.'))throw Error('Use a recipient-stamped Shield6 payment code.');
+ if(operation==='withdraw')extra.recipient=ethers.getAddress(options.recipient);
+ const release=acquireWalletOperation();
+ try{return await privateOperation(operation,options,extra)}finally{release()}
+}
+export function shield6RequestStatus(options) {
+ return walletRequest('relay-status',{proofVersion:6,requestId:options.requestId,account:options.account},options);
+}
 export function shield3ViewKeys(options){return privateOperation('viewkeys',options,{scope:options.scope||'incoming'})}
 export function shield3ViewScan(options){return walletRequest('view-scan',{view:options.view},options)}
 export function shield3ViewStamp(options){return walletRequest('view-stamp',{stampDisclosure:options.stampDisclosure},options)}

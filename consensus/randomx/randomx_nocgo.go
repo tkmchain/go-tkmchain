@@ -407,7 +407,6 @@ func (rx *RandomX) FinalizeKyotoEmptyBlockForRoot(chain consensus.ChainHeaderRea
 		}},
 	}
 	for _, king := range historicalRotatingKingAddresses() {
-		king := king
 		candidates = append(candidates, candidate{
 			name: "historical-rotating-slot-kyoto-50-50-" + king.Hex(),
 			apply: func(s vm.StateDB) {

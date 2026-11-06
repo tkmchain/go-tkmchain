@@ -142,6 +142,7 @@ func relayRequestSize(request any, minimum int) (int, error) {
 	return target, nil
 }
 
+//nolint:unused // Retained legacy wallet transport/construction helper.
 func relayHTTP(ctx context.Context, endpoint, path string, request, result any) error {
 	return relayHTTPWithConfig(ctx, endpoint, path, request, result, DirectRelayTransport)
 }

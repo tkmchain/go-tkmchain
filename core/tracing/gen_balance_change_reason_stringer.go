@@ -23,8 +23,8 @@ func _() {
 	_ = x[BalanceIncreaseSelfdestruct-12]
 	_ = x[BalanceDecreaseSelfdestruct-13]
 	_ = x[BalanceDecreaseSelfdestructBurn-14]
-	_ = x[BalanceChangeRevert-15]
 	_ = x[BalanceDecreaseAddressVoteBurn-16]
+	_ = x[BalanceChangeRevert-15]
 }
 
 const _BalanceChangeReason_name = "UnspecifiedBalanceIncreaseRewardMineUncleBalanceIncreaseRewardMineBlockBalanceIncreaseWithdrawalBalanceIncreaseGenesisBalanceBalanceIncreaseRewardTransactionFeeBalanceDecreaseGasBuyBalanceIncreaseGasReturnBalanceIncreaseDaoContractBalanceDecreaseDaoAccountTransferTouchAccountBalanceIncreaseSelfdestructBalanceDecreaseSelfdestructBalanceDecreaseSelfdestructBurnRevertBalanceDecreaseAddressVoteBurn"

@@ -17,38 +17,42 @@
 package miner
 
 import (
-        "math/big"
+	"math/big"
 
-        "github.com/ethereum/go-ethereum/common"
-        "github.com/ethereum/go-ethereum/core/stateless"
-        "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/stateless"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // generateParams contains the parameters for generating work
+//
+//nolint:unused // Retained payload API compatibility for the RandomX PoW node.
 type generateParams struct {
-        timestamp   uint64
-        forceTime   bool
-        parentHash  common.Hash
-        coinbase    common.Address
-        random      common.Hash
-        withdrawals types.Withdrawals
-        beaconRoot  *common.Hash // Optional, for compatibility
-        slotNum     *uint64      // Optional, for compatibility
-        noTxs       bool
-        extra       []byte // Extra data for RandomX
-        
-        // Testing overrides
-        forceOverrides    bool
-        overrideExtraData []byte
-        overrideTxs       []*types.Transaction
+	timestamp   uint64
+	forceTime   bool
+	parentHash  common.Hash
+	coinbase    common.Address
+	random      common.Hash
+	withdrawals types.Withdrawals
+	beaconRoot  *common.Hash // Optional, for compatibility
+	slotNum     *uint64      // Optional, for compatibility
+	noTxs       bool
+	extra       []byte // Extra data for RandomX
+
+	// Testing overrides
+	forceOverrides    bool
+	overrideExtraData []byte
+	overrideTxs       []*types.Transaction
 }
 
 // newPayloadResult contains the result of generating work
+//
+//nolint:unused // Retained payload API compatibility for the RandomX PoW node.
 type newPayloadResult struct {
-        block    *types.Block
-        fees     *big.Int
-        sidecars []*types.BlobTxSidecar
-        requests [][]byte
-        witness  *stateless.Witness
-        err      error
+	block    *types.Block
+	fees     *big.Int
+	sidecars []*types.BlobTxSidecar
+	requests [][]byte
+	witness  *stateless.Witness
+	err      error
 }

@@ -14,9 +14,10 @@ import (
 )
 
 type speculativeTransaction struct {
-	receipt  *types.Receipt
-	delta    *state.SpeculativeDelta
-	gas      *GasPool
+	receipt *types.Receipt
+	delta   *state.SpeculativeDelta
+	gas     *GasPool
+	//nolint:unused // Retained compatibility helper.
 	access   antartical.AccessSet
 	peakGas  uint64
 	gasLimit uint64

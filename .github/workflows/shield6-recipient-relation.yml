@@ -1,0 +1,102 @@
+name: Shield6 recipient-binding relation
+
+on:
+  pull_request:
+    paths:
+      - 'core/shielded_v6*.go'
+      - 'core/shielded_only.go'
+      - 'core/shielded_tx.go'
+      - 'core/antartical_stamp*.go'
+      - 'core/txpool/**'
+      - 'params/**'
+      - 'eth/*shielded_v6*.go'
+      - 'internal/shield3wallet/**'
+      - 'internal/shield6test/**'
+      - 'internal/gui/**'
+      - 'cmd/gtkm/**'
+      - 'cmd/shielded-ceremony/**'
+      - 'android/**'
+      - 'zk/shielded6/**'
+      - 'zk/shielded3/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield6-recipient-relation.yml'
+  push:
+    paths:
+      - 'core/shielded_v6*.go'
+      - 'core/shielded_only.go'
+      - 'core/shielded_tx.go'
+      - 'core/antartical_stamp*.go'
+      - 'core/txpool/**'
+      - 'params/**'
+      - 'eth/*shielded_v6*.go'
+      - 'internal/shield3wallet/**'
+      - 'internal/shield6test/**'
+      - 'internal/gui/**'
+      - 'cmd/gtkm/**'
+      - 'cmd/shielded-ceremony/**'
+      - 'android/**'
+      - 'zk/shielded6/**'
+      - 'zk/shielded3/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/shield6-recipient-relation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  constrained-relation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 4GiB
+      GOGC: '30'
+      CARGO_BUILD_JOBS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build native Tip5 reference
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          ./scripts/shield4-build.sh
+      - name: Verify constraints and native interoperability
+        # Groth16.Setup inside the test is ephemeral test-only material.
+        # No generated setup/key is uploaded or enabled for consensus.
+        run: go test -short -p=1 -tags shield3 ./zk/shielded6/recipient -count=1 -timeout=15m -v
+      - name: Verify real recipient proofs through registration, payment and canonical state
+        env:
+          SHIELD6_RECIPIENT_INTEGRATION: '1'
+          SHIELD6_RECIPIENT_PRODUCTION_PARAMETERS: ${{ runner.temp }}/shield6-production-parameters
+          SHIELD6_RECIPIENT_NETWORK_FIXTURE: ${{ runner.temp }}/shield6-recipient-network.json
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_shield6*.py'
+          python3 scripts/shield6-release-parameters.py --output "$RUNNER_TEMP/shield6-production-parameters"
+          go test -p=1 -tags shield3 ./core -run '^TestShield6RecipientEndToEnd$' -count=1 -timeout=90m -v
+      - name: Verify the same real recipient proofs over TCP and canonical reorgs
+        env:
+          SHIELD6_RECIPIENT_NETWORK_FIXTURE: ${{ runner.temp }}/shield6-recipient-network.json
+        run: go test -p=1 -tags shield3 ./eth -run '^TestShield6RecipientTCPSpendAndReorg$' -count=1 -timeout=10m -v
+      - name: Verify registry, wallet, RPC and GUI integration
+        run: go test -p=1 -tags shield3 ./core ./params ./eth ./internal/shield3wallet ./internal/gui ./cmd/gtkm ./cmd/shielded-ceremony -run 'Recipient|Shield6|ShieldedV6' -skip 'MigrationNativeRehearsal|RecipientEndToEnd' -count=1 -timeout=15m
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test and rebuild shared desktop and Android wallet engine
+        working-directory: internal/gui/wallet-engine
+        run: |
+          npm ci
+          npm test
+          npm run build
+          git diff --exit-code -- ../web/engine/wallet.js
+      - name: Verify existing Shield6 wallet and cryptography remain compatible
+        run: go test -p=1 -tags shield3 ./zk/shielded6 -count=1 -timeout=10m
+      - name: Race-test proof verification and decoding
+        run: go test -race -p=1 -tags shield3 ./zk/shielded6/recipient -run 'TestRecipientProofAllocationGuard|TestRecipientVerifierCommitmentMetadata' -count=1 -timeout=5m
+      - name: Vet recipient relation and output construction
+        run: go vet -tags shield3 ./zk/shielded6 ./zk/shielded6/recipient

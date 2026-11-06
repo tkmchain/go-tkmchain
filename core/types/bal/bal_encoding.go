@@ -209,7 +209,6 @@ func (e *AccountAccess) validate(rules params.Rules) error {
 	return nil
 }
 
-
 // Copy returns a deep copy of the account access
 func (e *AccountAccess) Copy() AccountAccess {
 	res := AccountAccess{

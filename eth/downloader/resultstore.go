@@ -26,6 +26,8 @@ import (
 
 // resultStore implements a structure for maintaining fetchResults, tracking their
 // download-progress and delivering (finished) results.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 type resultStore struct {
 	items        []*fetchResult // Downloaded but not yet delivered fetch results
 	resultOffset uint64         // Offset of the first cached fetch result in the block chain
@@ -45,6 +47,7 @@ type resultStore struct {
 	lock sync.RWMutex
 }
 
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func newResultStore(size int) *resultStore {
 	return &resultStore{
 		resultOffset:      0,
@@ -55,6 +58,8 @@ func newResultStore(size int) *resultStore {
 
 // SetThrottleThreshold updates the throttling threshold based on the requested
 // limit and the total queue capacity. It returns the (possibly capped) threshold
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) SetThrottleThreshold(threshold uint64) uint64 {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -76,6 +81,8 @@ func (r *resultStore) SetThrottleThreshold(threshold uint64) uint64 {
 //	throttled - if true, the store is at capacity, this particular header is not prio now
 //	item      - the result to store data into
 //	err       - any error that occurred
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) AddFetch(header *types.Header, snapSync bool) (stale, throttled bool, item *fetchResult, err error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -96,6 +103,8 @@ func (r *resultStore) AddFetch(header *types.Header, snapSync bool) (stale, thro
 // is true, that means the header has already been delivered 'upstream'. This method
 // does not bubble up the 'throttle' flag, since it's moot at the point in time when
 // the item is downloaded and ready for delivery
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) GetDeliverySlot(headerNumber uint64) (*fetchResult, bool, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
@@ -106,6 +115,8 @@ func (r *resultStore) GetDeliverySlot(headerNumber uint64) (*fetchResult, bool, 
 
 // getFetchResult returns the fetchResult corresponding to the given item, and
 // the index where the result is stored.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) getFetchResult(headerNumber uint64) (item *fetchResult, index int, stale, throttle bool, err error) {
 	index = int(int64(headerNumber) - int64(r.resultOffset))
 	throttle = index >= int(r.throttleThreshold)
@@ -126,6 +137,8 @@ func (r *resultStore) getFetchResult(headerNumber uint64) (item *fetchResult, in
 
 // HasCompletedItems returns true if there are processable items available
 // this method is cheaper than countCompleted
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) HasCompletedItems() bool {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
@@ -143,6 +156,8 @@ func (r *resultStore) HasCompletedItems() bool {
 // the first non-complete item.
 //
 // The method assumes (at least) rlock is held.
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) countCompleted() int {
 	// We iterate from the already known complete point, and see
 	// if any more has completed since last count
@@ -161,6 +176,8 @@ func (r *resultStore) countCompleted() int {
 }
 
 // GetCompleted returns the next batch of completed fetchResults
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) GetCompleted(limit int) []*fetchResult {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -185,6 +202,8 @@ func (r *resultStore) GetCompleted(limit int) []*fetchResult {
 }
 
 // Prepare initialises the offset with the given block number
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (r *resultStore) Prepare(offset uint64) {
 	r.lock.Lock()
 	defer r.lock.Unlock()

@@ -149,4 +149,3 @@ func (d *Downloader) commitBlock(b *types.Block, receipts []*types.Receipt) erro
 	}
 	return d.chain.InsertBlock(b, receipts)
 }
-

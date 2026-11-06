@@ -41,7 +41,7 @@ func readShield3Submission(path string) (*shield3RequestRecord, error) {
 		return nil, errors.New("invalid saved wallet submission")
 	}
 	var tx types.Transaction
-	if err := tx.UnmarshalBinary(record.Raw); err != nil || tx.Hash() != record.Hash || tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasAntarticalStampPrefix(tx.Data())) {
+	if err := tx.UnmarshalBinary(record.Raw); err != nil || tx.Hash() != record.Hash || tx.Type() != types.PQTkmTxType || (!core.HasShieldedV3Prefix(tx.Data()) && !core.HasAntarticalStampPrefix(tx.Data()) && !core.HasShieldedV6Prefix(tx.Data())) {
 		return nil, errors.New("invalid saved wallet transaction")
 	}
 	if record.Unsigned {

@@ -255,6 +255,8 @@ func (r *ValidatorRecord) activeAt(height uint64) bool {
 }
 
 func validatorRecordKey(addr common.Address) []byte { return addr.Bytes() }
+
+//nolint:unused // Retained compatibility helper.
 func validatorRecordSlot(addr common.Address) common.Hash {
 	return ShieldedV3StateSlot("validator/record", validatorRecordKey(addr))
 }

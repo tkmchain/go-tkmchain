@@ -13,8 +13,9 @@ package randomx
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"

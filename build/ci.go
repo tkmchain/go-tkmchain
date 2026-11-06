@@ -461,8 +461,17 @@ func downloadSpecTestFixtures(csdb *download.ChecksumDB, cachedir string) string
 	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
 		log.Fatal(err)
 	}
-	if err := build.ExtractArchive(archivePath, executionSpecTestsDir); err != nil {
+	// Keep all cases in the three fixture trees consumed by tests/init_test.go.
+	// Engine API and sync fixtures are unused by this suite and occupy several GB.
+	fixtureDirs := []string{"fixtures/blockchain_tests", "fixtures/state_tests", "fixtures/transaction_tests"}
+	if err := build.ExtractArchive(archivePath, executionSpecTestsDir, fixtureDirs...); err != nil {
 		log.Fatal(err)
+	}
+	for _, dir := range fixtureDirs {
+		info, err := os.Stat(filepath.Join(executionSpecTestsDir, dir))
+		if err != nil || !info.IsDir() {
+			log.Fatalf("Required execution-spec fixture directory is missing: %s", dir)
+		}
 	}
 	return filepath.Join(cachedir, base)
 }

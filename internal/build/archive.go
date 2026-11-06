@@ -188,7 +188,8 @@ func (a *TarballArchive) Close() error {
 }
 
 // ExtractArchive unpacks a .zip or .tar.gz archive to the destination directory.
-func ExtractArchive(archive string, dest string) error {
+// Optional slash-separated directory prefixes restrict extraction to their files.
+func ExtractArchive(archive string, dest string, prefixes ...string) error {
 	ar, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -197,16 +198,16 @@ func ExtractArchive(archive string, dest string) error {
 
 	switch {
 	case strings.HasSuffix(archive, ".tar.gz"):
-		return extractTarball(ar, dest)
+		return extractTarball(ar, dest, prefixes...)
 	case strings.HasSuffix(archive, ".zip"):
-		return extractZip(ar, dest)
+		return extractZip(ar, dest, prefixes...)
 	default:
 		return fmt.Errorf("unhandled archive type %s", archive)
 	}
 }
 
 // extractTarball unpacks a .tar.gz file.
-func extractTarball(ar io.Reader, dest string) error {
+func extractTarball(ar io.Reader, dest string, prefixes ...string) error {
 	gzr, err := gzip.NewReader(ar)
 	if err != nil {
 		return err
@@ -225,7 +226,7 @@ func extractTarball(ar io.Reader, dest string) error {
 		}
 		// We only care about regular files, directory modes
 		// and special file types are not supported.
-		if header.Typeflag == tar.TypeReg {
+		if header.Typeflag == tar.TypeReg && archivePathSelected(header.Name, prefixes) {
 			armode := header.FileInfo().Mode()
 			err := extractFile(header.Name, armode, tr, dest)
 			if err != nil {
@@ -236,7 +237,7 @@ func extractTarball(ar io.Reader, dest string) error {
 }
 
 // extractZip unpacks the given .zip file.
-func extractZip(ar *os.File, dest string) error {
+func extractZip(ar *os.File, dest string, prefixes ...string) error {
 	info, err := ar.Stat()
 	if err != nil {
 		return err
@@ -247,7 +248,7 @@ func extractZip(ar *os.File, dest string) error {
 	}
 
 	for _, zf := range zr.File {
-		if !zf.Mode().IsRegular() {
+		if !zf.Mode().IsRegular() || !archivePathSelected(zf.Name, prefixes) {
 			continue
 		}
 
@@ -262,6 +263,19 @@ func extractZip(ar *os.File, dest string) error {
 		}
 	}
 	return nil
+}
+
+func archivePathSelected(name string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	name = strings.TrimPrefix(name, "./")
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, strings.TrimSuffix(prefix, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFile extracts a single file from an archive.

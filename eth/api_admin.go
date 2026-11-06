@@ -160,7 +160,7 @@ func (api *AdminAPI) BanPeer(peerID string, hours int) (bool, error) {
 	duration := time.Duration(hours) * time.Hour
 
 	api.eth.Downloader().BanPeer(peerID, duration)
-	
+
 	log.Info("Peer banned via admin API", "peer", peerID, "duration", hours)
 	return true, nil
 }
@@ -211,11 +211,11 @@ func (api *AdminAPI) ClearAllBans() (int, error) {
 
 	banned := api.eth.Downloader().GetBannedPeers()
 	count := len(banned)
-	
+
 	for _, peerID := range banned {
 		api.eth.Downloader().UnbanPeer(peerID)
 	}
-	
+
 	log.Warn("All bans cleared via admin API", "count", count)
 	return count, nil
 }
@@ -225,16 +225,16 @@ func (api *AdminAPI) GetNodeInfo() (map[string]interface{}, error) {
 	if api.eth == nil {
 		return nil, errors.New("ethereum service not available")
 	}
-	
+
 	info := map[string]interface{}{
 		"networkID": api.eth.networkID,
 	}
-	
+
 	if api.eth.p2pServer != nil {
 		nodeInfo := api.eth.p2pServer.NodeInfo()
 		info["nodeURL"] = nodeInfo.Enode
 		info["listenAddr"] = nodeInfo.ListenAddr
 	}
-	
+
 	return info, nil
 }

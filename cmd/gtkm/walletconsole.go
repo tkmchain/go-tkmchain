@@ -32,10 +32,12 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/zk/shielded3"
 	"github.com/ethereum/go-ethereum/zk/shielded6"
+	shield6recipient "github.com/ethereum/go-ethereum/zk/shielded6/recipient"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/urfave/cli/v2"
 )
 
+//nolint:unused // Retained legacy wallet command compatibility.
 const walletInteractiveUsage = `
 Interactive terminal wallet for local gtkm nodes.
 
@@ -88,12 +90,12 @@ func interactiveWallet(ctx *cli.Context) error {
 		return fmt.Errorf("read chain ID: %w", err)
 	}
 	reader := bufio.NewReader(os.Stdin)
-	languagePreference, language, languageOverride, languageErr := walletLanguageFromFlag(ctx)
+	_, language, languageOverride, languageErr := walletLanguageFromFlag(ctx)
 	if languageErr != nil {
 		return languageErr
 	}
 	if !languageOverride {
-		languagePreference, language, languageErr = configureWalletLanguage(reader, cfg.DataDir)
+		_, language, languageErr = configureWalletLanguage(reader, cfg.DataDir)
 		if languageErr != nil {
 			return fmt.Errorf("choose wallet language: %w", languageErr)
 		}
@@ -126,6 +128,7 @@ func interactiveWallet(ctx *cli.Context) error {
 		fmt.Printf("  16) %s\n", walletText("menu.shield6Migrate", "Migrate legacy notes to Shield6"))
 		fmt.Printf("  17) %s\n", walletText("menu.shield6Deposit", "Deposit TKM to Shield6"))
 		fmt.Printf("  18) %s\n", walletText("menu.shield6Withdraw", "Withdraw Shield6 to stamped address"))
+		fmt.Println("  19) Register Shield6 recipient keys")
 		fmt.Printf("  0) %s\n", walletText("menu.exit", "Exit"))
 		choice, err := readWalletLine(reader, "\n  "+walletText("select", "Select an option"))
 		if err != nil {
@@ -160,9 +163,8 @@ func interactiveWallet(ctx *cli.Context) error {
 				showWalletError(reader, selectErr)
 				continue
 			}
-			languagePreference = preference
 			walletActiveLanguage = selected
-			if saveErr := saveWalletLanguage(cfg.DataDir, languagePreference); saveErr != nil {
+			if saveErr := saveWalletLanguage(cfg.DataDir, preference); saveErr != nil {
 				showWalletError(reader, saveErr)
 				continue
 			}
@@ -189,7 +191,7 @@ func interactiveWallet(ctx *cli.Context) error {
 				showWalletError(reader, err)
 			}
 		case "15":
-			if err := showWalletShield6Address(reader, ks, accounts, chainID); err != nil {
+			if err := showWalletShield6Address(reader, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
 		case "16":
@@ -202,6 +204,10 @@ func interactiveWallet(ctx *cli.Context) error {
 			}
 		case "18":
 			if err := withdrawWalletFromShield6(reader, client, ks, accounts, chainID); err != nil {
+				showWalletError(reader, err)
+			}
+		case "19":
+			if err := registerWalletShield6Recipient(reader, client, ks, accounts, chainID); err != nil {
 				showWalletError(reader, err)
 			}
 		case "0", "q", "Q":
@@ -758,7 +764,7 @@ func buyWalletPhoneNumber(reader *bufio.Reader, rpcClient *rpc.Client, client *e
 	if err != nil {
 		return fmt.Errorf("read network fee: %w", err)
 	}
-	gas := uint64(params.TxGas)
+	gas := params.TxGas
 	if estimated, estimateErr := client.EstimateGas(ctx, ethereum.CallMsg{From: account.Address, To: &record.Operator, Value: price, GasPrice: gasPrice}); estimateErr == nil {
 		gas = estimated
 	}
@@ -1826,7 +1832,7 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 	if err != nil || value.Sign() <= 0 {
 		return errors.New("amount must be a positive decimal value")
 	}
-	if strings.HasPrefix(strings.TrimSpace(toText), shielded6.PaymentCodePrefix) {
+	if strings.HasPrefix(strings.TrimSpace(toText), shielded6.PaymentCodePrefix) || strings.HasPrefix(strings.TrimSpace(toText), shield6recipient.PaymentCodePrefix) {
 		return sendWalletShield6Payment(reader, client, ks, from, strings.TrimSpace(toText), value, chainID)
 	}
 	if strings.HasPrefix(strings.TrimSpace(toText), "@") || strings.HasPrefix(strings.TrimSpace(toText), "tkmshield3.") || strings.HasPrefix(strings.TrimSpace(toText), "file:") {
@@ -1853,7 +1859,7 @@ func sendFromWallet(reader *bufio.Reader, client *ethclient.Client, ks *keystore
 	if err != nil {
 		return fmt.Errorf("read network fee: %w", err)
 	}
-	gas := uint64(params.TxGas)
+	gas := params.TxGas
 	if estimated, estimateErr := client.EstimateGas(ctx, ethereum.CallMsg{From: from.Address, To: &to, Value: value, GasPrice: gasPrice}); estimateErr == nil {
 		gas = estimated
 	}
@@ -2023,7 +2029,7 @@ func sendWalletShield3Payment(reader *bufio.Reader, rpcClient *rpc.Client, ks *k
 	return nil
 }
 
-func showWalletShield6Address(reader *bufio.Reader, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
+func showWalletShield6Address(reader *bufio.Reader, client *ethclient.Client, ks *keystore.KeyStore, walletAccounts []accounts.Account, chainID *big.Int) error {
 	if chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 {
 		return errors.New("invalid chain ID for Shield6 payment code")
 	}
@@ -2052,6 +2058,23 @@ func showWalletShield6Address(reader *bufio.Reader, ks *keystore.KeyStore, walle
 	}
 	defer keys.Clear()
 	code, err := shielded6.EncodePaymentCode(keys.Address())
+	if client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		var status struct {
+			Required bool `json:"recipientProofsRequired"`
+		}
+		if statusErr := client.Client().CallContext(ctx, &status, "tkmprivacy_shieldedV6Status"); statusErr != nil {
+			return statusErr
+		}
+		if status.Required {
+			stamped, codeErr := shield3wallet.ShieldedV6PaymentCode(ctx, client.Client(), identity, keys)
+			if codeErr != nil {
+				return codeErr
+			}
+			code, err = shield6recipient.EncodePaymentCode(stamped)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -2180,7 +2203,11 @@ func depositWalletToShield6(reader *bufio.Reader, client *ethclient.Client, ks *
 		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
 	})
 	fmt.Println("\nBuilding Shield6 deposit proof…")
-	signed, err := shield3wallet.BuildAndSignShieldedV6Deposit(ctx, client.Client(), key.Seed, identity, shieldKeys, skeleton, amount, crand.Reader)
+	proofClient, proofErr := walletShield6RecipientClient(ctx, client.Client(), nil)
+	if proofErr != nil {
+		return proofErr
+	}
+	signed, err := shield3wallet.BuildAndSignShieldedV6Deposit(ctx, client.Client(), key.Seed, identity, shieldKeys, skeleton, amount, crand.Reader, proofClient)
 	if err != nil {
 		return fmt.Errorf("build Shield6 deposit: %w", err)
 	}
@@ -2218,7 +2245,17 @@ func sendWalletShield6Payment(reader *bufio.Reader, client *ethclient.Client, ks
 	if client == nil || chainID == nil || !chainID.IsUint64() || chainID.Sign() <= 0 || amount == nil || amount.Sign() <= 0 {
 		return errors.New("invalid Shield6 payment request")
 	}
-	recipient, err := shielded6.DecodePaymentCode(destination, chainID.Uint64())
+	var stampedCode *shield6recipient.PaymentCode
+	var recipient shielded6.Address
+	var err error
+	if strings.HasPrefix(destination, shield6recipient.PaymentCodePrefix) {
+		decoded, decodeErr := shield6recipient.DecodePaymentCode(destination, chainID.Uint64())
+		err = decodeErr
+		recipient = decoded.Address
+		stampedCode = &decoded
+	} else {
+		recipient, err = shielded6.DecodePaymentCode(destination, chainID.Uint64())
+	}
 	if err != nil {
 		return errors.New("recipient must provide a valid chain-bound Shield6 payment code")
 	}
@@ -2272,18 +2309,11 @@ func sendWalletShield6Payment(reader *bufio.Reader, client *ethclient.Client, ks
 			}
 		}
 	}()
-	selected := make([]*shielded6.Note, 0, core.ShieldedV6MaxInputs)
-	selectedTotal := new(big.Int)
-	for i := range scan.Notes {
-		if len(selected) == core.ShieldedV6MaxInputs || selectedTotal.Cmp(amount) >= 0 {
-			break
-		}
-		selected = append(selected, scan.Notes[i].Note)
-		selectedTotal.Add(selectedTotal, scan.Notes[i].Note.Amount)
+	selected, selectedTotal, err := shield3wallet.SelectShieldedV6Notes(scan.Notes, amount)
+	if err != nil {
+		return err
 	}
-	if selectedTotal.Cmp(amount) < 0 {
-		return fmt.Errorf("Shield6 spendable balance is insufficient: need %s, have %s", formatTKM(amount), formatTKM(selectedTotal))
-	}
+	defer func() { clear(selectedTotal.Bits()); selectedTotal.SetInt64(0) }()
 	outputs := []core.ShieldedV6WalletOutput{{Address: recipient, Amount: new(big.Int).Set(amount)}}
 	change := new(big.Int).Sub(selectedTotal, amount)
 	if change.Sign() > 0 {
@@ -2316,7 +2346,22 @@ func sendWalletShield6Payment(reader *bufio.Reader, client *ethclient.Client, ks
 		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
 	})
 	fmt.Printf("\nBuilding Shield6 private payment: %d input note(s), %d output(s).\n", len(selected), len(outputs))
-	signed, err := shield3wallet.BuildAndSignShieldedV6Payment(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, outputs, crand.Reader)
+	var codes []shield6recipient.PaymentCode
+	if stampedCode != nil {
+		codes = append(codes, *stampedCode)
+		if change.Sign() > 0 {
+			self, codeErr := shield3wallet.ShieldedV6PaymentCode(ctx, rpcClient, identity, shieldKeys)
+			if codeErr != nil {
+				return codeErr
+			}
+			codes = append(codes, self)
+		}
+	}
+	proofClient, err := walletShield6RecipientClient(ctx, rpcClient, codes)
+	if err != nil {
+		return err
+	}
+	signed, err := shield3wallet.BuildAndSignShieldedV6Payment(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, outputs, crand.Reader, proofClient)
 	if err != nil {
 		return fmt.Errorf("build Shield6 private payment: %w", err)
 	}
@@ -2523,7 +2568,11 @@ func migrateWalletNotesToShield6(reader *bufio.Reader, client *ethclient.Client,
 		GasFeeCap: feeCap, Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int).Set(amount),
 		Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey),
 	})
-	signedDeposit, err := shield3wallet.BuildAndSignShieldedV6Deposit(depositCtx, rpcClient, key.Seed, identity, keys, skeleton, amount, crand.Reader)
+	proofClient, proofErr := walletShield6RecipientClient(depositCtx, rpcClient, nil)
+	if proofErr != nil {
+		return proofErr
+	}
+	signedDeposit, err := shield3wallet.BuildAndSignShieldedV6Deposit(depositCtx, rpcClient, key.Seed, identity, keys, skeleton, amount, crand.Reader, proofClient)
 	if err != nil {
 		return fmt.Errorf("legacy withdrawal %s is confirmed; Shield6 deposit was not submitted and funds remain in %s: %w", withdrawalHash.Hex(), account.Address.Hex(), err)
 	}
@@ -2909,7 +2958,7 @@ func migrateECDSAWallet(reader *bufio.Reader, client *ethclient.Client, ks *keys
 		GasPrice: gasPrice,
 		Data:     migration.MigrationData,
 	}
-	gas := uint64(params.TxGas) + uint64(len(migration.MigrationData))*16
+	gas := params.TxGas + uint64(len(migration.MigrationData))*16
 	if estimated, estimateErr := client.EstimateGas(ctx, call); estimateErr == nil && estimated > gas {
 		gas = estimated
 	}
@@ -3120,18 +3169,11 @@ func withdrawWalletFromShield6(reader *bufio.Reader, client *ethclient.Client, k
 			}
 		}
 	}()
-	selected := make([]*shielded6.Note, 0, core.ShieldedV6MaxInputs)
-	selectedTotal := new(big.Int)
-	for i := range scan.Notes {
-		if len(selected) == core.ShieldedV6MaxInputs || selectedTotal.Cmp(amount) >= 0 {
-			break
-		}
-		selected = append(selected, scan.Notes[i].Note)
-		selectedTotal.Add(selectedTotal, scan.Notes[i].Note.Amount)
+	selected, selectedTotal, err := shield3wallet.SelectShieldedV6Notes(scan.Notes, amount)
+	if err != nil {
+		return err
 	}
-	if selectedTotal.Cmp(amount) < 0 {
-		return fmt.Errorf("Shield6 spendable balance is insufficient: need %s, have %s", formatTKM(amount), formatTKM(selectedTotal))
-	}
+	defer func() { clear(selectedTotal.Bits()); selectedTotal.SetInt64(0) }()
 	nonce, err := client.PendingNonceAt(ctx, account.Address)
 	if err != nil {
 		return fmt.Errorf("read pending account nonce: %w", err)
@@ -3155,7 +3197,11 @@ func withdrawWalletFromShield6(reader *bufio.Reader, client *ethclient.Client, k
 	}
 	skeleton := types.NewTx(&types.PQTkmTx{ChainID: new(big.Int).Set(chainID), Nonce: nonce, GasTipCap: tipCap, GasFeeCap: feeCap, Gas: gasLimit, To: &params.ShieldedPoolAddress, Value: new(big.Int), Algorithm: pqcrypto.AlgorithmMLDSA87, PublicKey: pqcrypto.PublicKeyBytes(accountKey)})
 	fmt.Printf("\nBuilding Shield6 withdrawal from %d input note(s)…\n", len(selected))
-	signed, err := shield3wallet.BuildAndSignShieldedV6Withdrawal(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, destination, amount, crand.Reader)
+	proofClient, proofErr := walletShield6RecipientClient(ctx, rpcClient, nil)
+	if proofErr != nil {
+		return proofErr
+	}
+	signed, err := shield3wallet.BuildAndSignShieldedV6Withdrawal(ctx, rpcClient, key.Seed, identity, shieldKeys, skeleton, selected, destination, amount, crand.Reader, proofClient)
 	if err != nil {
 		return fmt.Errorf("build Shield6 withdrawal: %w", err)
 	}

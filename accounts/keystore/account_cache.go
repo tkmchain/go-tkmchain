@@ -137,6 +137,8 @@ func (ac *accountCache) deleteLocked(removed accounts.Account) {
 }
 
 // deleteByFile removes an account referenced by the given path.
+//
+//nolint:unused // Retained compatibility helper.
 func (ac *accountCache) deleteByFile(path string) {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()

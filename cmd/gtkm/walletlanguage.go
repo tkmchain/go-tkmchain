@@ -100,7 +100,7 @@ var walletDaemonTranslations = map[string]map[string]string{
 	"ko": {"daemon.starting": "RandomX 메인넷을 시작합니다…", "daemon.language": "데몬 인터페이스 언어가 선택되었습니다"},
 	"es": {"daemon.starting": "Iniciando la red principal de RandomX…", "daemon.language": "Idioma de interfaz del demonio seleccionado"},
 	"pt": {"daemon.starting": "Iniciando a rede principal RandomX…", "daemon.language": "Idioma da interface do daemon selecionado"},
-	"fr": {"daemon.starting": "Démarrage du réseau principal RandomX…", "daemon.language": "Langue de l’interface du démon sélectionnée"},
+	"fr": {"daemon.starting": "Démarrage du réseau principal RandomX…", "daemon.language": "Langue de l’interface du démon sélectionnée"}, //nolint:misspell // Non-English UI translation.
 	"de": {"daemon.starting": "RandomX-Mainnet wird gestartet…", "daemon.language": "Sprache der Daemon-Oberfläche ausgewählt"},
 	"ar": {"daemon.starting": "جارٍ تشغيل شبكة RandomX الرئيسية…", "daemon.language": "تم اختيار لغة واجهة الخدمة"},
 	"hi": {"daemon.starting": "RandomX मेननेट शुरू हो रहा है…", "daemon.language": "डेमन इंटरफ़ेस भाषा चुनी गई"},
@@ -236,7 +236,7 @@ var walletProtocolLogTranslations = map[string]map[string]string{
 	"id": {"Phone hardfork difficulty adjustment": "Penyesuaian tingkat kesulitan hard fork Phone", "Egypt emergency difficulty adjustment applied": "Penyesuaian tingkat kesulitan darurat Egypt diterapkan", "Emergency difficulty adjustment applied": "Penyesuaian tingkat kesulitan darurat diterapkan"},
 	"tr": {"Phone hardfork difficulty adjustment": "Phone hard fork zorluk ayarı", "Egypt emergency difficulty adjustment applied": "Egypt acil zorluk ayarı uygulandı", "Emergency difficulty adjustment applied": "Acil zorluk ayarı uygulandı"},
 	"vi": {"Phone hardfork difficulty adjustment": "Điều chỉnh độ khó hard fork Phone", "Egypt emergency difficulty adjustment applied": "Đã áp dụng điều chỉnh độ khó khẩn cấp của Egypt", "Emergency difficulty adjustment applied": "Đã áp dụng điều chỉnh độ khó khẩn cấp"},
-	"it": {"Phone hardfork difficulty adjustment": "Adeguamento della difficoltà dell’hard fork Phone", "Egypt emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà Egypt", "Emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà"},
+	"it": {"Phone hardfork difficulty adjustment": "Adeguamento della difficoltà dell’hard fork Phone", "Egypt emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà Egypt", "Emergency difficulty adjustment applied": "Applicato l’adeguamento di emergenza della difficoltà"}, //nolint:misspell // Non-English UI translation.
 	"nl": {"Phone hardfork difficulty adjustment": "Moeilijkheidsaanpassing van de Phone-hard fork", "Egypt emergency difficulty adjustment applied": "Egypt-noodaanpassing van de moeilijkheid toegepast", "Emergency difficulty adjustment applied": "Noodaanpassing van de moeilijkheid toegepast"},
 	"pl": {"Phone hardfork difficulty adjustment": "Dostosowanie trudności hard forka Phone", "Egypt emergency difficulty adjustment applied": "Zastosowano awaryjne dostosowanie trudności Egypt", "Emergency difficulty adjustment applied": "Zastosowano awaryjne dostosowanie trudności"},
 	"uk": {"Phone hardfork difficulty adjustment": "Налаштування складності хардфорку Phone", "Egypt emergency difficulty adjustment applied": "Застосовано аварійне налаштування складності Egypt", "Emergency difficulty adjustment applied": "Застосовано аварійне налаштування складності"},
@@ -312,7 +312,7 @@ func walletText(key, fallback string) string {
 			"es": "Sello de dirección Shield3", "pt": "Selo de endereço Shield3",
 			"fr": "Cachet d’adresse Shield3", "de": "Shield3-Adressstempel",
 			"ar": "ختم عنوان Shield3", "hi": "Shield3 पता स्टाम्प",
-			"id": "Stempel alamat Shield3", "tr": "Shield3 adres damgası",
+			"id": "Stempel alamat Shield3", "tr": "Shield3 adres damgası", //nolint:misspell // Non-English UI translation.
 			"vi": "Dấu địa chỉ Shield3", "it": "Timbro indirizzo Shield3",
 			"nl": "Shield3-adresstempel", "pl": "Stempel adresu Shield3",
 			"uk": "Штамп адреси Shield3", "th": "ตราประทับที่อยู่ Shield3",
@@ -379,7 +379,7 @@ func walletText(key, fallback string) string {
 			"ar": "السحب من Shield6 إلى عنوان مختوم", "hi": "Shield6 से स्टैम्प किए गए पते पर निकासी",
 			"id": "Tarik dari Shield6 ke alamat berstempel", "tr": "Shield6'ten damgalı adrese çek",
 			"vi": "Rút từ Shield6 đến địa chỉ đã đóng dấu", "it": "Preleva da Shield6 verso un indirizzo timbrato",
-			"nl": "Neem op uit Shield6 naar een gestempeld adres", "pl": "Wypłać z Shield6 na ostemplowany adres",
+			"nl": "Neem op uit Shield6 naar een gestempeld adres", "pl": "Wypłać z Shield6 na ostemplowany adres", //nolint:misspell // Non-English UI translation.
 			"uk": "Вивести з Shield6 на адресу зі штампом", "th": "ถอนจาก Shield6 ไปยังที่อยู่ที่ประทับตรา",
 			"bn": "Shield6 থেকে স্ট্যাম্পযুক্ত ঠিকানায় উত্তোলন",
 		}[walletActiveLanguage.Code]
@@ -390,7 +390,7 @@ func walletText(key, fallback string) string {
 			"es": "SELLO DE DIRECCIÓN SHIELD3", "pt": "SELO DE ENDEREÇO SHIELD3",
 			"fr": "CACHET D’ADRESSE SHIELD3", "de": "SHIELD3-ADRESSSTEMPEL",
 			"ar": "ختم عنوان SHIELD3", "hi": "SHIELD3 पता स्टाम्प",
-			"id": "STEMPEL ALAMAT SHIELD3", "tr": "SHIELD3 ADRES DAMGASI",
+			"id": "STEMPEL ALAMAT SHIELD3", "tr": "SHIELD3 ADRES DAMGASI", //nolint:misspell // Non-English UI translation.
 			"vi": "DẤU ĐỊA CHỈ SHIELD3", "it": "TIMBRO INDIRIZZO SHIELD3",
 			"nl": "SHIELD3-ADRESSTEMPEL", "pl": "STEMPEL ADRESU SHIELD3",
 			"uk": "ШТАМП АДРЕСИ SHIELD3", "th": "ตราประทับที่อยู่ SHIELD3",

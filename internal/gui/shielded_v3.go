@@ -134,7 +134,7 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	operation := strings.TrimPrefix(r.URL.Path, "/shield3/")
 	switch operation {
-	case "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "consolidate", "shield", "register-stamp", "register-username", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
+	case "withdraw", "view-stamp", "fetch-relay-offer", "submit-relay-draft", "relay-status", "review-relay-offer", "relay-offer", "fee-sponsored-relay-offer", "prepare-relay", "review-relay", "submit-relay", "export-disclosure", "verify-disclosure", "disclosure-key", "identity", "validate", "scan", "viewkeys", "view-scan", "send", "consolidate", "shield", "register-stamp", "register-username", "stamp-offer", "authorize-stamp", "review-sponsorship", "sponsor-stamp":
 	default:
 		fail(404, errors.New("unsupported Shield3 operation"))
 		return
@@ -158,6 +158,18 @@ func (g *GUI) handleShield3(w http.ResponseWriter, r *http.Request) {
 	}
 	if decoder.Decode(new(any)) != io.EOF {
 		fail(400, errors.New("trailing Shield3 request data"))
+		return
+	}
+	if req.ProofVersion == 6 {
+		defer clear(req.Seed)
+		if req.View != nil {
+			defer req.View.Clear()
+		}
+		g.handleShield6(w, r, req, operation)
+		return
+	}
+	if operation == "withdraw" {
+		fail(404, errors.New("withdrawal requires Shield6"))
 		return
 	}
 	proofVersion, versionErr := hostedShieldedProofVersion(req, operation)

@@ -635,6 +635,7 @@ func (s *Ethereum) privacyShieldedOutputTx(commitment common.Hash, payloadHash c
 	return nil, common.Hash{}, 0, core.ShieldedOutput{}, fmt.Errorf("privacy commitment %s is not present in canonical shielded transaction %s", commitment.Hex(), txHash.Hex())
 }
 
+//nolint:unused // Retained legacy privacy fee helper.
 func (s *Ethereum) privacyFeePayment(paymentHash common.Hash) (*types.Transaction, common.Hash, uint64, error) {
 	if s.blockchain == nil {
 		return nil, common.Hash{}, 0, fmt.Errorf("blockchain is not available")

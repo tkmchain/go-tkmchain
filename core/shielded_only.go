@@ -102,8 +102,14 @@ func shieldedOnlyFields(txType uint8, to *common.Address, value *big.Int, data [
 			return fail("Shield6 requires a PQ transaction to the reserved pool")
 		}
 		e, ok, err := DecodeShieldedV6Transaction(data)
-		if err != nil || !ok || e == nil || e.Version != 6 {
+		if err != nil || !ok || e == nil || (e.Version != 6 && e.Version != ShieldedV6BoundVersion && e.Version != ShieldedV6BindingVersion) {
 			return fail("malformed Shield6 envelope")
+		}
+		if e.Version == ShieldedV6BindingVersion {
+			if value.Sign() != 0 || !validShieldedV6BindingShape(e) {
+				return fail("invalid Shield6 key registration")
+			}
+			return nil, nil
 		}
 		withdrawal := e.WithdrawalValue != nil && e.WithdrawalValue.Sign() > 0
 		if e.Deposit {

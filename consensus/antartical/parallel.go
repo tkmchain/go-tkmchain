@@ -49,7 +49,6 @@ func ExecuteOptimisticResults[T any, R any](items []T, access []AccessSet, run f
 		var mu sync.Mutex
 		var firstErr error
 		for _, index := range wave {
-			index := index
 			wg.Add(1)
 			go func() {
 				defer wg.Done()

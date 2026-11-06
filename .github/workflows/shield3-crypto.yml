@@ -13,6 +13,7 @@ on:
       - 'miner/**'
       - 'internal/ethapi/**'
       - 'cmd/shielded-payout-prover/**'
+      - 'cmd/gtkm/**'
       - 'Makefile'
       - 'android/build.sh'
       - '.github/workflows/release.yml'
@@ -37,6 +38,7 @@ on:
       - 'miner/**'
       - 'internal/ethapi/**'
       - 'cmd/shielded-payout-prover/**'
+      - 'cmd/gtkm/**'
       - 'Makefile'
       - 'android/build.sh'
       - '.github/workflows/release.yml'
@@ -160,10 +162,10 @@ jobs:
         run: go test -tags shield3 ./zk/shielded6 ./core ./eth -run 'ShieldedV6|Shield6'
       - name: Rehearse Shield6 canonical deposit, spend, replay, and reorg
         run: GOMAXPROCS=1 GOMEMLIMIT=1300MiB GOGC=20 go test -p=1 -timeout 10m -tags shield3 ./core -run '^TestShield6TwoNodeDepositSpendReplayAndReorgRehearsal$' -count=1 -v
-      - name: Test Shield6 wallet deposit and payment signing
-        run: go test -tags shield3 ./internal/shield3wallet -run '^TestBuildAndSignShieldedV6(Deposit|Payment)$'
-      - name: Test migration confirmation handling
-        run: go test -tags shield3 ./cmd/gtkm -run '^TestWaitWalletCanonicalConfirmations$'
+      - name: Test Shield6 wallet construction, scanning, and selection
+        run: go test -tags shield3 ./internal/shield3wallet -run 'ShieldedV6'
+      - name: Test Shield6 CLI and migration confirmation handling
+        run: go test -tags shield3 ./cmd/gtkm -run 'TestWaitWalletCanonicalConfirmations|Shield6'
       - name: Benchmark maximum Shield6 proof verification
         run: go test -tags shield3 ./zk/shielded6 -run '^$' -bench 'BenchmarkShield6' -benchmem -count=1
       - name: Benchmark maximum Shield6 payment construction

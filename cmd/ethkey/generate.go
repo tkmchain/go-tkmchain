@@ -101,9 +101,9 @@ If you want to encrypt an existing private key, it can be specified by setting
 			var key *keystore.PQKey
 			var err error
 			if seedSpec := ctx.String(pqSeedFlag.Name); seedSpec != "" {
-				seed, err := loadPQSeed(seedSpec)
-				if err != nil {
-					utils.Fatalf("Can't load PQ seed: %v", err)
+				seed, loadErr := loadPQSeed(seedSpec)
+				if loadErr != nil {
+					utils.Fatalf("Can't load PQ seed: %v", loadErr)
 				}
 				key, err = keystore.NewPQKeyFromSeed(seed)
 				clear(seed)

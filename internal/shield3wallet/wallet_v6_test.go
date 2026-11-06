@@ -194,6 +194,44 @@ func TestBuildAndSignShieldedV6Payment(t *testing.T) {
 	if err != nil || from != identity.Address {
 		t.Fatalf("wallet builder signed with the wrong account: from=%s err=%v", from, err)
 	}
+	// Build a second spendable input and require the signed multi-input path
+	// to retain a single RPC batch (the latency regression fixed here).
+	_, _, secondWitnesses, err := shielded6.ProveRangeProof128WithWitness([]*big.Int{amount}, cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRecord, err := shielded6.CreateOutput(keys.Address(), 1, shielded6.AssetTKM, amount, secondWitnesses[0], cryptorand.Reader)
+	clear(secondWitnesses[0].Mask[:])
+	clear(secondWitnesses[0].LimbMasks[0][:])
+	clear(secondWitnesses[0].LimbMasks[1][:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondNote, owned, err := shielded6.ScanOutput(keys, 1, 1, secondRecord)
+	if err != nil || !owned {
+		t.Fatalf("scan second input: owned=%v err=%v", owned, err)
+	}
+	defer secondNote.Clear()
+	fake.rings[1] = shieldedV6RingRPCOutput{Index: 1, OneTimeKey: secondRecord.OneTimeKey[:], Commitment: secondRecord.Commitment[:]}
+	fake.ringBatchCalls = 0
+	combinedAmount := new(big.Int).Mul(amount, big.NewInt(2))
+	combined, err := BuildAndSignShieldedV6Payment(context.Background(), fake, accountSeed, identity, keys, skeleton, []*shielded6.Note{note, secondNote}, []core.ShieldedV6WalletOutput{{Address: keys.Address(), Amount: combinedAmount}}, cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.ringBatchCalls != 1 {
+		t.Fatalf("two-input payment used %d batches", fake.ringBatchCalls)
+	}
+	combinedEnvelope, _, err := core.DecodeShieldedV6Transaction(combined.Data())
+	if err != nil || len(combinedEnvelope.Inputs) != 2 {
+		t.Fatalf("invalid combined envelope: %v", err)
+	}
+	if err := core.ValidateShieldedV6Proof(combined); err != nil {
+		t.Fatalf("combined proof: %v", err)
+	}
+	if from, err := types.Sender(signer, combined); err != nil || from != identity.Address {
+		t.Fatalf("combined sender: %s %v", from, err)
+	}
 }
 
 func TestBuildAndSignShieldedV6Deposit(t *testing.T) {
@@ -513,4 +551,223 @@ func TestScanShieldedV6MatchesPublicSpentKeyImagesLocally(t *testing.T) {
 		t.Fatal("public pending key-image set did not exclude the locally owned note")
 	}
 	clear(image[:])
+}
+
+// Observe the public request without supplying real-member markers to RPC.
+type shieldedV6RingBatchRPC struct {
+	*shieldedV6ScanRPC
+	calls     int
+	requested []hexutil.Uint64
+	mutate    func(string, any)
+}
+
+func (f *shieldedV6RingBatchRPC) CallContext(ctx context.Context, result any, method string, args ...any) error {
+	f.calls++
+	if method == "tkmprivacy_shieldedV6OutputsByIndex" {
+		f.requested = append([]hexutil.Uint64(nil), args[0].([]hexutil.Uint64)...)
+	}
+	if err := f.shieldedV6ScanRPC.CallContext(ctx, result, method, args...); err != nil {
+		return err
+	}
+	if f.mutate != nil {
+		f.mutate(method, result)
+	}
+	return nil
+}
+
+func newShieldedV6RingBatchRPC(t *testing.T, count uint64) *shieldedV6RingBatchRPC {
+	t.Helper()
+	f := &shieldedV6RingBatchRPC{shieldedV6ScanRPC: &shieldedV6ScanRPC{
+		status: shieldedV6RPCStatus{Active: true, ChainID: (*hexutil.Big)(big.NewInt(8979)), OutputCount: hexutil.Uint64(count), Accumulator: common.HexToHash("0x9876")},
+		rings:  make(map[uint64]shieldedV6RingRPCOutput, count),
+	}}
+	for i := uint64(0); i < count; i++ {
+		seed := make([]byte, 32)
+		seed[0], seed[1], seed[31] = byte(i), byte(i>>8), 0x72
+		keys, _, err := shielded6.CreateWallet(bytes.NewReader(seed), 8979)
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitment, err := shielded6.Commitment128(new(big.Int).SetUint64(i+1), [shielded6.ScalarSize]byte{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.rings[i] = shieldedV6RingRPCOutput{Index: hexutil.Uint64(i), OneTimeKey: common.CopyBytes(keys.SpendPublic[:]), Commitment: common.CopyBytes(commitment[:])}
+		keys.Clear()
+	}
+	return f
+}
+
+func TestSelectShieldedV6RingsBoundedBatch(t *testing.T) {
+	for _, count := range []uint64{shielded6.RingSize, 257} {
+		f := newShieldedV6RingBatchRPC(t, count)
+		real := make([]uint64, core.ShieldedV6MaxInputs)
+		for i := range real {
+			real[i] = uint64(i)
+		}
+		rings, err := selectShieldedV6Rings(context.Background(), f, 8979, real, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.calls != 3 || f.ringBatchCalls != 1 {
+			t.Fatalf("%d inputs used %d calls and %d batches, want 3 and 1", len(real), f.calls, f.ringBatchCalls)
+		}
+		if len(f.requested) < shielded6.RingSize || len(f.requested) > 256 {
+			t.Fatalf("request exceeds bounded RPC size: %d", len(f.requested))
+		}
+		requested := make(map[uint64]bool)
+		for _, index := range f.requested {
+			if requested[uint64(index)] {
+				t.Fatalf("duplicate requested index %d", index)
+			}
+			requested[uint64(index)] = true
+		}
+		if len(rings) != len(real) {
+			t.Fatalf("got %d rings", len(rings))
+		}
+		for i, ring := range rings {
+			if ring.Root != f.status.Accumulator || ring.Indices[ring.SignerIndex] != real[i] {
+				t.Fatalf("ring %d has incorrect root or signer", i)
+			}
+			seen := make(map[uint64]bool)
+			for j, index := range ring.Indices {
+				if seen[index] || !requested[index] {
+					t.Fatalf("invalid index %d in ring %d", index, i)
+				}
+				seen[index] = true
+				want := f.rings[index]
+				if !bytes.Equal(ring.Members[j].OneTimeKey[:], want.OneTimeKey) || !bytes.Equal(ring.Members[j].Commitment[:], want.Commitment) {
+					t.Fatalf("ring %d member %d does not match canonical output", i, j)
+				}
+			}
+		}
+	}
+}
+
+func TestSelectShieldedV6RingsRejectsChangedOrMalformedBatch(t *testing.T) {
+	for _, name := range []string{"root", "count", "chain", "inactive", "short", "reordered", "point"} {
+		t.Run(name, func(t *testing.T) {
+			f := newShieldedV6RingBatchRPC(t, shielded6.RingSize)
+			statusCalls := 0
+			f.mutate = func(method string, result any) {
+				if method == "tkmprivacy_shieldedV6Status" {
+					statusCalls++
+					if statusCalls == 2 {
+						s := result.(*shieldedV6RPCStatus)
+						switch name {
+						case "root":
+							s.Accumulator[0] ^= 1
+						case "count":
+							s.OutputCount++
+						case "chain":
+							s.ChainID = (*hexutil.Big)(big.NewInt(1))
+						case "inactive":
+							s.Active = false
+						}
+					}
+				}
+				if method == "tkmprivacy_shieldedV6OutputsByIndex" {
+					page := result.(*[]shieldedV6RingRPCOutput)
+					switch name {
+					case "short":
+						*page = (*page)[:len(*page)-1]
+					case "reordered":
+						(*page)[0], (*page)[1] = (*page)[1], (*page)[0]
+					case "point":
+						(*page)[0].OneTimeKey = make([]byte, shielded6.PointSize)
+					}
+				}
+			}
+			rings, err := selectShieldedV6Rings(context.Background(), f, 8979, []uint64{1, 2}, nil)
+			if err == nil || rings != nil {
+				t.Fatalf("accepted %s batch", name)
+			}
+		})
+	}
+}
+
+func TestSelectShieldedV6RingsRejectsInvalidInputsAndCancellation(t *testing.T) {
+	f := newShieldedV6RingBatchRPC(t, shielded6.RingSize)
+	for _, indices := range [][]uint64{nil, {1, 1}, {shielded6.RingSize}, make([]uint64, core.ShieldedV6MaxInputs+1)} {
+		if rings, err := selectShieldedV6Rings(context.Background(), f, 8979, indices, nil); err == nil || rings != nil {
+			t.Fatalf("accepted invalid indices %v", indices)
+		}
+	}
+	f.calls = 0
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := selectShieldedV6Rings(ctx, f, 8979, []uint64{1}, nil); !errors.Is(err, context.Canceled) || f.calls != 0 {
+		t.Fatalf("cancelled request: err=%v calls=%d", err, f.calls)
+	}
+	if rings, err := selectShieldedV6Rings(context.Background(), f, 8979, []uint64{1}, bytes.NewReader(nil)); err == nil || rings != nil {
+		t.Fatal("entropy failure accepted")
+	}
+}
+
+func TestSelectShieldedV6NotesMinimizesInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		values      []int64
+		amount      int64
+		wantIndices []uint64
+		wantTotal   int64
+	}{
+		{"later large note", []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 50}, 40, []uint64{16}, 50},
+		{"smallest sufficient single", []int64{100, 70, 40, 2}, 35, []uint64{2}, 40},
+		{"fewest combined", []int64{1, 2, 20, 30, 4}, 45, []uint64{3, 2}, 50},
+		{"exact single", []int64{100, 40, 60}, 40, []uint64{1}, 40},
+		{"insufficient", []int64{2, 3}, 6, nil, 0},
+		{"fragmented", []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, 17, nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notes := make([]ShieldedV6OwnedNote, len(tc.values))
+			for i, value := range tc.values {
+				notes[i].Note = &shielded6.Note{ChainID: 8979, AssetID: shielded6.AssetTKM, Index: uint64(i), Amount: big.NewInt(value)}
+			}
+			selected, total, err := SelectShieldedV6Notes(notes, big.NewInt(tc.amount))
+			if tc.wantIndices == nil {
+				if err == nil || selected != nil || total != nil {
+					t.Fatal("accepted unspendable balance")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(selected) != len(tc.wantIndices) || total.Int64() != tc.wantTotal {
+				t.Fatalf("got %d inputs with total %s", len(selected), total)
+			}
+			for i, index := range tc.wantIndices {
+				if selected[i] != notes[index].Note {
+					t.Fatalf("input %d: want note %d", i, index)
+				}
+			}
+			total.SetInt64(0)
+			for i, value := range tc.values {
+				if notes[i].Note.Index != uint64(i) || notes[i].Note.Amount.Int64() != value {
+					t.Fatal("selection mutated scan notes")
+				}
+			}
+		})
+	}
+}
+
+func TestSelectShieldedV6NotesRejectsInvalidData(t *testing.T) {
+	valid := func(index uint64) ShieldedV6OwnedNote {
+		return ShieldedV6OwnedNote{Note: &shielded6.Note{ChainID: 8979, AssetID: shielded6.AssetTKM, Index: index, Amount: big.NewInt(1)}}
+	}
+	for _, amount := range []*big.Int{nil, new(big.Int), big.NewInt(-1), new(big.Int).Lsh(big.NewInt(1), 128)} {
+		if _, _, err := SelectShieldedV6Notes([]ShieldedV6OwnedNote{valid(0)}, amount); err == nil {
+			t.Fatal("accepted invalid amount")
+		}
+	}
+	otherChain := valid(1)
+	otherChain.Note.ChainID++
+	negative := valid(1)
+	negative.Note.Amount.SetInt64(-1)
+	for _, notes := range [][]ShieldedV6OwnedNote{{{}}, {valid(0), valid(0)}, {valid(0), otherChain}, {valid(0), negative}} {
+		if _, _, err := SelectShieldedV6Notes(notes, big.NewInt(1)); err == nil {
+			t.Fatal("accepted invalid notes")
+		}
+	}
 }

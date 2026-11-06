@@ -48,13 +48,15 @@ var (
 	MaxReceiptFetch = 256 // Amount of transaction receipts to allow fetching per request
 	MaxStateFetch   = 384 // Amount of node state values to allow fetching per request
 
-	MaxForkAncestry  = 3 * params.EpochDuration // Maximum chain reorganisation
-	rttMinEstimate   = 2 * time.Second          // Minimum round-trip time to target for download requests
-	rttMaxEstimate   = 20 * time.Second         // Maximum round-trip time to target for download requests
-	rttMinConfidence = 0.1                      // Worse confidence factor in our estimated RTT value
-	ttlScaling       = 3                        // Constant scaling factor for RTT -> TTL conversion
-	ttlLimit         = time.Minute              // Maximum TTL allowance to prevent reaching crazy timeouts
+	MaxForkAncestry = 3 * params.EpochDuration // Maximum chain reorganisation
+	//nolint:unused // Retained upstream fetch pipeline compatibility.
+	rttMinEstimate   = 2 * time.Second  // Minimum round-trip time to target for download requests
+	rttMaxEstimate   = 20 * time.Second // Maximum round-trip time to target for download requests
+	rttMinConfidence = 0.1              // Worse confidence factor in our estimated RTT value
+	ttlScaling       = 3                // Constant scaling factor for RTT -> TTL conversion
+	ttlLimit         = time.Minute      // Maximum TTL allowance to prevent reaching crazy timeouts
 
+	//nolint:unused // Retained upstream fetch pipeline compatibility.
 	qosTuningPeers   = 5    // Number of peers to tune based on (best peers)
 	qosConfidenceCap = 10   // Number of peers above which not to modify RTT confidence
 	qosTuningImpact  = 0.25 // Impact that a new tuning target has on the previous value
@@ -74,17 +76,18 @@ var (
 )
 
 var (
-	errBusy                    = errors.New("busy")
-	errUnknownPeer             = errors.New("peer is unknown or unhealthy")
-	errBadPeer                 = errors.New("action from bad peer ignored")
-	errStallingPeer            = errors.New("peer is stalling")
-	errUnsyncedPeer            = errors.New("unsynced peer")
-	errNoPeers                 = errors.New("no peers to keep download active")
-	errTimeout                 = errors.New("timeout")
-	errEmptyHeaderSet          = errors.New("empty header set by peer")
-	errPeersUnavailable        = errors.New("no peers available or all tried for download")
-	errInvalidAncestor         = errors.New("retrieved ancestor is invalid")
-	errInvalidChain            = errors.New("retrieved hash chain is invalid")
+	errBusy             = errors.New("busy")
+	errUnknownPeer      = errors.New("peer is unknown or unhealthy")
+	errBadPeer          = errors.New("action from bad peer ignored")
+	errStallingPeer     = errors.New("peer is stalling")
+	errUnsyncedPeer     = errors.New("unsynced peer")
+	errNoPeers          = errors.New("no peers to keep download active")
+	errTimeout          = errors.New("timeout")
+	errEmptyHeaderSet   = errors.New("empty header set by peer")
+	errPeersUnavailable = errors.New("no peers available or all tried for download")
+	errInvalidAncestor  = errors.New("retrieved ancestor is invalid")
+	errInvalidChain     = errors.New("retrieved hash chain is invalid")
+	//nolint:unused // Retained upstream fetch pipeline compatibility.
 	errInvalidBlock            = errors.New("retrieved block is invalid")
 	errInvalidBody             = errors.New("retrieved block body is invalid")
 	errInvalidReceipt          = errors.New("retrieved receipt is invalid")
@@ -879,7 +882,6 @@ func (d *Downloader) spawnSync(fetchers []func() error) error {
 	errc := make(chan error, len(fetchers))
 	d.cancelWg.Add(len(fetchers))
 	for _, fn := range fetchers {
-		fn := fn
 		go func() { defer d.cancelWg.Done(); errc <- fn() }()
 	}
 	// Wait for the first error, then terminate the others.
@@ -1415,6 +1417,8 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 }
 
 // Save bans to database
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (d *Downloader) saveBans() {
 	if d.stateDB == nil {
 		return
@@ -1450,6 +1454,8 @@ func (d *Downloader) saveBans() {
 }
 
 // Load bans from database
+//
+//nolint:unused // Retained upstream fetch pipeline compatibility.
 func (d *Downloader) loadBans() {
 	if d.stateDB == nil {
 		return
@@ -1598,7 +1604,6 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 	expire func() map[string]int, pending func() int, inFlight func() bool, throttle func() bool, reserve func(*peerConnection, int) (*fetchRequest, bool, error),
 	fetchHook func([]*types.Header), fetch func(*peerConnection, *fetchRequest) error, cancel func(*fetchRequest), capacity func(*peerConnection) int,
 	idle func() ([]*peerConnection, int), setIdle func(*peerConnection, int, time.Duration), kind string) error {
-
 	// Create a ticker to detect expired retrieval tasks
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

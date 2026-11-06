@@ -18,6 +18,7 @@ package params
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"math/big"
 
@@ -106,31 +107,40 @@ var RandomXChainConfig = &ChainConfig{
 	ShanghaiTime:        newUint64(0),
 	// EIP-4844 blob transactions become part of the Antartical gas model.
 	// Keeping this on the same timestamp prevents a second activation boundary.
-	CancunTime:                   newUint64(MainnetAntarticalTime),
-	PragueTime:                   nil,
-	OsakaTime:                    nil,
-	BPO1Time:                     nil,
-	BPO2Time:                     nil,
-	BPO3Time:                     nil,
-	BPO4Time:                     nil,
-	BPO5Time:                     nil,
-	AmsterdamTime:                nil,
-	UBTTime:                      nil,
-	EDATime:                      newUint64(0),
-	KyotoTime:                    newUint64(MainnetKyotoTime),
-	PhoneTime:                    newUint64(MainnetPhoneTime),
-	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
-	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
-	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
-	AntarticalTime:               newUint64(MainnetAntarticalTime),
-	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
-	ValidatorTransactionTime:     newUint64(MainnetValidatorTransactionTime),
-	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
-	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
-	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
-	RotatingKingRotationInterval: 100,
-	ShieldedGroth16VerifyingKey:  MainnetShieldedGroth16VerifyingKey,
-	RandomX:                      DefaultRandomXConfig(),
+	CancunTime:                        newUint64(MainnetAntarticalTime),
+	PragueTime:                        nil,
+	OsakaTime:                         nil,
+	BPO1Time:                          nil,
+	BPO2Time:                          nil,
+	BPO3Time:                          nil,
+	BPO4Time:                          nil,
+	BPO5Time:                          nil,
+	AmsterdamTime:                     nil,
+	UBTTime:                           nil,
+	EDATime:                           newUint64(0),
+	KyotoTime:                         newUint64(MainnetKyotoTime),
+	PhoneTime:                         newUint64(MainnetPhoneTime),
+	PrivacyCommitmentTime:             newUint64(MainnetPrivacyQuantumTime),
+	QuantumResistantTime:              newUint64(MainnetPrivacyQuantumTime),
+	PQMigrationRecoveryTime:           newUint64(MainnetPQMigrationRecoveryTime),
+	AntarticalTime:                    newUint64(MainnetAntarticalTime),
+	Shield6Time:                       newUint64(MainnetShield6Time),
+	Shield6RecipientTime:              newUint64(MainnetShield6Time),
+	ConfidentialLedgerTime:            newUint64(MainnetShield6Time),
+	Shield6RecipientKey:               MainnetShield6RecipientKey,
+	Shield6RecipientKeyHash:           MainnetShield6RecipientKeyHash,
+	Shield6RecipientProvingKeyHash:    MainnetShield6RecipientProvingKeyHash,
+	Shield6RegistrationKey:            MainnetShield6RegistrationKey,
+	Shield6RegistrationKeyHash:        MainnetShield6RegistrationKeyHash,
+	Shield6RegistrationProvingKeyHash: MainnetShield6RegistrationProvingKeyHash,
+	UsernameNetworkTime:               newUint64(MainnetUsernameNetworkTime),
+	ValidatorTransactionTime:          newUint64(MainnetValidatorTransactionTime),
+	DepositContractAddress:            common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
+	MainKingAddress:                   common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+	PostQuantumMainKingAddress:        common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
+	RotatingKingRotationInterval:      100,
+	ShieldedGroth16VerifyingKey:       MainnetShieldedGroth16VerifyingKey,
+	RandomX:                           DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
 	},
@@ -223,9 +233,19 @@ type ChainConfig struct {
 	// is selected.
 	Shield5Time *uint64 `json:"shield5Time,omitempty"`
 	// Shield6Time activates CLSAG/RingCT transactions over the dedicated
-	// Shield6 output accumulator. It remains unset until a coordinated network
-	// migration and release rehearsal are complete.
+	// Shield6 output accumulator. Production activation is paired with recipient
+	// proofs and the confidential ledger in the mainnet release configuration.
 	Shield6Time *uint64 `json:"shield6Time,omitempty"`
+	// Shield6RecipientTime enables proof-bearing envelopes and owner-authorized
+	// private key registration. The pinned key is consensus configuration,
+	// never RPC input.
+	Shield6RecipientTime              *uint64       `json:"shield6RecipientTime,omitempty"`
+	Shield6RecipientKey               hexutil.Bytes `json:"shield6RecipientKey,omitempty"`
+	Shield6RecipientKeyHash           common.Hash   `json:"shield6RecipientKeyHash,omitempty"`
+	Shield6RegistrationKey            hexutil.Bytes `json:"shield6RegistrationKey,omitempty"`
+	Shield6RegistrationKeyHash        common.Hash   `json:"shield6RegistrationKeyHash,omitempty"`
+	Shield6RecipientProvingKeyHash    common.Hash   `json:"shield6RecipientProvingKeyHash,omitempty"`
+	Shield6RegistrationProvingKeyHash common.Hash   `json:"shield6RegistrationProvingKeyHash,omitempty"`
 
 	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
@@ -340,31 +360,40 @@ var MainnetChainConfig = &ChainConfig{
 	GrayGlacierBlock:    nil,
 	ShanghaiTime:        newUint64(0),
 	// Mainnet blob gas is activated together with Antartical.
-	CancunTime:                   newUint64(MainnetAntarticalTime),
-	PragueTime:                   nil,
-	OsakaTime:                    nil,
-	BPO1Time:                     nil,
-	BPO2Time:                     nil,
-	BPO3Time:                     nil,
-	BPO4Time:                     nil,
-	BPO5Time:                     nil,
-	AmsterdamTime:                nil,
-	UBTTime:                      nil,
-	EDATime:                      newUint64(0),
-	KyotoTime:                    newUint64(MainnetKyotoTime),
-	PhoneTime:                    newUint64(MainnetPhoneTime),
-	PrivacyCommitmentTime:        newUint64(MainnetPrivacyQuantumTime),
-	QuantumResistantTime:         newUint64(MainnetPrivacyQuantumTime),
-	PQMigrationRecoveryTime:      newUint64(MainnetPQMigrationRecoveryTime),
-	AntarticalTime:               newUint64(MainnetAntarticalTime),
-	UsernameNetworkTime:          newUint64(MainnetUsernameNetworkTime),
-	ValidatorTransactionTime:     newUint64(MainnetValidatorTransactionTime),
-	DepositContractAddress:       common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
-	MainKingAddress:              common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
-	PostQuantumMainKingAddress:   common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
-	RotatingKingRotationInterval: 100,
-	ShieldedGroth16VerifyingKey:  MainnetShieldedGroth16VerifyingKey,
-	RandomX:                      DefaultRandomXConfig(),
+	CancunTime:                        newUint64(MainnetAntarticalTime),
+	PragueTime:                        nil,
+	OsakaTime:                         nil,
+	BPO1Time:                          nil,
+	BPO2Time:                          nil,
+	BPO3Time:                          nil,
+	BPO4Time:                          nil,
+	BPO5Time:                          nil,
+	AmsterdamTime:                     nil,
+	UBTTime:                           nil,
+	EDATime:                           newUint64(0),
+	KyotoTime:                         newUint64(MainnetKyotoTime),
+	PhoneTime:                         newUint64(MainnetPhoneTime),
+	PrivacyCommitmentTime:             newUint64(MainnetPrivacyQuantumTime),
+	QuantumResistantTime:              newUint64(MainnetPrivacyQuantumTime),
+	PQMigrationRecoveryTime:           newUint64(MainnetPQMigrationRecoveryTime),
+	AntarticalTime:                    newUint64(MainnetAntarticalTime),
+	Shield6Time:                       newUint64(MainnetShield6Time),
+	Shield6RecipientTime:              newUint64(MainnetShield6Time),
+	ConfidentialLedgerTime:            newUint64(MainnetShield6Time),
+	Shield6RecipientKey:               MainnetShield6RecipientKey,
+	Shield6RecipientKeyHash:           MainnetShield6RecipientKeyHash,
+	Shield6RecipientProvingKeyHash:    MainnetShield6RecipientProvingKeyHash,
+	Shield6RegistrationKey:            MainnetShield6RegistrationKey,
+	Shield6RegistrationKeyHash:        MainnetShield6RegistrationKeyHash,
+	Shield6RegistrationProvingKeyHash: MainnetShield6RegistrationProvingKeyHash,
+	UsernameNetworkTime:               newUint64(MainnetUsernameNetworkTime),
+	ValidatorTransactionTime:          newUint64(MainnetValidatorTransactionTime),
+	DepositContractAddress:            common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
+	MainKingAddress:                   common.HexToAddress("0xc40f4a0b4df81f8f67a88b179a8b2271107a9ac2"),
+	PostQuantumMainKingAddress:        common.HexToAddress("0xb14bBd5BD6E2e7CD74E88931ef439D253Eb6B58f"),
+	RotatingKingRotationInterval:      100,
+	ShieldedGroth16VerifyingKey:       MainnetShieldedGroth16VerifyingKey,
+	RandomX:                           DefaultRandomXConfig(),
 	BlobScheduleConfig: &BlobScheduleConfig{
 		Cancun: DefaultCancunBlobConfig,
 	},
@@ -706,6 +735,10 @@ func (c *ChainConfig) IsShield6(num *big.Int, time uint64) bool {
 	return c != nil && c.IsAntartical(num, time) && c.IsPrivacyCommitments(num, time) && isTimestampForked(c.Shield6Time, time)
 }
 
+func (c *ChainConfig) IsShield6Recipients(num *big.Int, time uint64) bool {
+	return c != nil && c.IsShield6(num, time) && isTimestampForked(c.Shield6RecipientTime, time)
+}
+
 // IsTkmnetRequired reports whether the TKMNet relay is a mandatory node
 // service for the active chain rules. TKMNet becomes mandatory with the
 // Antartical consensus rules, so existing chain configurations do not need a
@@ -871,12 +904,29 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if c == nil {
 		return nil
 	}
+	if c.Shield6RecipientTime != nil {
+		if c.Shield6Time == nil || *c.Shield6RecipientTime < *c.Shield6Time {
+			return fmt.Errorf("shield6RecipientTime requires Shield6 at or before recipient-proof activation")
+		}
+		if len(c.Shield6RecipientKey) == 0 || len(c.Shield6RecipientKey) > 64<<10 || c.Shield6RecipientKeyHash == (common.Hash{}) || common.Hash(sha256.Sum256(c.Shield6RecipientKey)) != c.Shield6RecipientKeyHash {
+			return fmt.Errorf("shield6RecipientTime requires an authenticated bounded verification key and SHA-256 pin")
+		}
+		if c.Shield6RecipientProvingKeyHash == (common.Hash{}) || c.Shield6RegistrationProvingKeyHash == (common.Hash{}) {
+			return fmt.Errorf("recipient proof activation requires authenticated proving-key hashes")
+		}
+		if len(c.Shield6RegistrationKey) == 0 || len(c.Shield6RegistrationKey) > 64<<10 || c.Shield6RegistrationKeyHash == (common.Hash{}) || common.Hash(sha256.Sum256(c.Shield6RegistrationKey)) != c.Shield6RegistrationKeyHash {
+			return fmt.Errorf("shield6RecipientTime requires a pinned recipient key-control verification key")
+		}
+	}
 	if c.ConfidentialLedgerTime != nil {
 		if c.AntarticalTime == nil || c.PrivacyCommitmentTime == nil || c.QuantumResistantTime == nil || c.LondonBlock == nil {
 			return fmt.Errorf("confidentialLedgerTime requires London, privacy, quantum and Antartical forks")
 		}
 		if c.ShieldedOnlyTime != nil {
 			return fmt.Errorf("confidential ledger permits explicit public boundaries and cannot use the shielded-only cutoff")
+		}
+		if *c.ConfidentialLedgerTime < *c.AntarticalTime {
+			return fmt.Errorf("confidentialLedgerTime cannot precede antarticalTime")
 		}
 	}
 	if c.Shield5Time != nil {
@@ -965,9 +1015,10 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{"ubtTime", c.UBTTime},
 		{"antarticalTime", c.AntarticalTime},
 		{"shield5Time", c.Shield5Time},
-		{"shield6Time", c.Shield6Time},
+		// Shield6, recipient authorization and the confidential ledger have
+		// independent activation dates. Their prerequisites are checked above;
+		// they may be deployed after the already-active username fork.
 		{"shieldedOnlyTime", c.ShieldedOnlyTime},
-		{"confidentialLedgerTime", c.ConfidentialLedgerTime},
 		{"usernameNetworkTime", c.UsernameNetworkTime},
 	}
 	lastName = ""
@@ -1174,6 +1225,13 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headBlock uint64, hea
 	}
 	if isForkTimestampIncompatible(c.Shield6Time, newcfg.Shield6Time, headTimestamp) {
 		return newTimestampCompatError("Shield6 fork timestamp", c.Shield6Time, newcfg.Shield6Time)
+	}
+	if isForkTimestampIncompatible(c.Shield6RecipientTime, newcfg.Shield6RecipientTime, headTimestamp) {
+		return newTimestampCompatError("Shield6 recipient-proof fork timestamp", c.Shield6RecipientTime, newcfg.Shield6RecipientTime)
+	}
+	if (c.IsShield6Recipients(new(big.Int).SetUint64(headBlock), headTimestamp) || newcfg.IsShield6Recipients(new(big.Int).SetUint64(headBlock), headTimestamp)) &&
+		(c.Shield6RecipientKeyHash != newcfg.Shield6RecipientKeyHash || !bytes.Equal(c.Shield6RecipientKey, newcfg.Shield6RecipientKey) || c.Shield6RecipientProvingKeyHash != newcfg.Shield6RecipientProvingKeyHash || c.Shield6RegistrationProvingKeyHash != newcfg.Shield6RegistrationProvingKeyHash || c.Shield6RegistrationKeyHash != newcfg.Shield6RegistrationKeyHash || !bytes.Equal(c.Shield6RegistrationKey, newcfg.Shield6RegistrationKey)) {
+		return newTimestampCompatError("Shield6 recipient verification key", c.Shield6RecipientTime, newcfg.Shield6RecipientTime)
 	}
 	if isForkTimestampIncompatible(c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime, headTimestamp) {
 		return newTimestampCompatError("Shielded-only fork timestamp", c.ShieldedOnlyTime, newcfg.ShieldedOnlyTime)

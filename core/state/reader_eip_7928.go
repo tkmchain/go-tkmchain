@@ -71,13 +71,16 @@ import (
 // Instead, it directly utilizes the readerTracker, wrapped around the
 // base reader, to construct the access list.
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 type fetchTask struct {
 	addr  common.Address
 	slots []common.Hash
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func (t *fetchTask) weight() int { return 1 + len(t.slots) }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 type prefetchStateReader struct {
 	StateReader
 
@@ -100,6 +103,7 @@ func newPrefetchStateReader(reader StateReader, accessList map[common.Address][]
 	return newPrefetchStateReaderInternal(reader, tasks, nThreads)
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func newPrefetchStateReaderInternal(reader StateReader, tasks []*fetchTask, nThreads int) *prefetchStateReader {
 	r := &prefetchStateReader{
 		StateReader: reader,
@@ -112,6 +116,7 @@ func newPrefetchStateReaderInternal(reader StateReader, tasks []*fetchTask, nThr
 	return r
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func (r *prefetchStateReader) Close() {
 	r.closeOnce.Do(func() {
 		close(r.term)
@@ -119,6 +124,7 @@ func (r *prefetchStateReader) Close() {
 	})
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func (r *prefetchStateReader) Wait() error {
 	select {
 	case <-r.term:
@@ -128,6 +134,7 @@ func (r *prefetchStateReader) Wait() error {
 	}
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func (r *prefetchStateReader) prefetch() {
 	defer close(r.done)
 
@@ -162,6 +169,7 @@ func (r *prefetchStateReader) prefetch() {
 	wg.Wait()
 }
 
+//nolint:unused // Retained EIP-7928 prefetch pipeline; its constructor is currently disabled.
 func (r *prefetchStateReader) process(start, limit int) {
 	var total = 0
 	for _, t := range r.tasks {

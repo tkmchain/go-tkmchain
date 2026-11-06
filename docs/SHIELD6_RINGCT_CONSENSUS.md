@@ -9,10 +9,13 @@ up post-quantum security for Shield6 spend authorization. It does not change
 the security of ML-DSA account transactions or ML-KEM-encrypted wallet
 records.
 
-This document is a protocol specification target, not an activation notice.
-No Shield6 activation timestamp is configured, and nodes must not accept a
-Shield6 transaction until the complete implementation and chain migration are
-ready and a fork time is set consistently.
+The production activation schedule and exact parameter pins are recorded in
+[`params/shield6_production.json`](../params/shield6_production.json).
+Shield6, recipient proofs and confidential backing activate together. See
+[`SHIELD6_PRODUCTION_PARAMETERS.md`](SHIELD6_PRODUCTION_PARAMETERS.md) for the
+single-operator setup provenance and installation instructions. Historical
+implementation notes below describe earlier states of the candidate and do not
+override the released consensus configuration.
 
 ## Transaction relation
 
@@ -1474,12 +1477,60 @@ successfully and verified that shipped networks remain inactive. The Linux
 ARMv7 job completed its RandomX/Shield4 archive validation, Shield6 crypto
 cross-compile, and production daemon build steps successfully.
 
-At the time these results were recorded, GitHub's REST check-run records still
-reported the native-proof and ARMv7 jobs as `in_progress`, despite their final
-`Complete job` steps being marked successful. Therefore their individual
-completed steps are evidence of successful builds and tests, but the overall
-workflow checks have not yet been counted as finalized green checks. No tagged
-release packaging/publishing run or live multi-node Shield6 network fork
-rehearsal has been performed. Shield6 activation remains unset. The recipient
-stamp authorization and GUI/Android limitations described above remain
-release-blocking integration gaps.
+GitHub Actions run `41873522065` is now finalized with all four Shield6 gates
+green: native migration rehearsal, native-proof, macOS arm64 production build,
+and Linux ARMv7 production build. The full tagged release packaging/publishing
+workflow and a live multi-node Shield6 network fork rehearsal have not been
+performed. Shield6 activation remains unset. Recipient-stamp authorization and
+GUI/Android limitations described above remain release-blocking integration
+gaps.
+
+The recipient-stamp gap has a dedicated protocol analysis in
+[`SHIELD6_RECIPIENT_STAMP_BINDING.md`](SHIELD6_RECIPIENT_STAMP_BINDING.md).
+It describes the missing zero-knowledge relation between a hidden stamped
+identity and the Edwards25519 stealth output, plus the proof and test gates
+required before activation. This analysis does not claim that the proof has
+been implemented.
+
+### Current-tree verification follow-up (2026-11-04)
+
+On commit `bf5a51dd7`, the focused Shield6 primitive, consensus/state, RPC,
+transaction-pool, and activation-gate suite passed:
+
+```bash
+GOMAXPROCS=1 GOMEMLIMIT=700MiB GOGC=20 go test -p=1 -tags shield3 \
+  ./zk/shielded6 ./core ./eth ./params \
+  -run 'Shield6|ShieldedV6|CLSAG|ConfidentialLedger|ActivationRemainsUnset' \
+  -count=1 -timeout=10m
+```
+
+Focused wallet payment, deposit, withdrawal, ring selection, scan/reorg, and
+local key-image matching tests passed when run without the native migration
+rehearsal. The matching `cmd/gtkm` Shield6 test filter also passed.
+
+The native migration rehearsal was deliberately interrupted after its Rust
+proof process reached approximately 3.3 GiB RSS on this shared host, which was
+already running the node and miner and had swap in use. That interrupted run is
+inconclusive and is not a test pass. The prior hosted migration gate recorded
+above remains the available successful result; repeat native migration only on
+an isolated runner with sufficient memory. No consensus or activation code
+changed in this verification follow-up.
+
+
+### Recipient authorization candidate (current worktree)
+
+`zk/shielded6/recipient/README.md` specifies the implemented inactive V2
+recipient relations, one-time key-control registration, versioned key registry,
+proof-bearing envelope 7, registration envelope 8, gas bounds and clients.
+Both new envelope types have an intent-bound one-hour maximum lifetime based
+on canonical header time. Expiry is checked on admission, canonical execution
+and txpool head pruning. Historical version 6 keeps its original encoding and
+is rejected after the new recipient fork. Proof/root/list sizes are checked
+before decoded-slice allocation, and the maximum Shield6 payload is 256 KiB.
+
+Both production verification keys, their independent setup provenance and the
+recipient activation time remain unset. The older V6 TCP/network and envelope
+speed results above do not validate these proof-bearing envelopes. Current
+large proof setup did not finish on the shared node/miner host; a successful
+isolated full-proof integration and supported-device speed measurements remain
+required before activation. No production release was performed.

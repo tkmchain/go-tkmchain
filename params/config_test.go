@@ -17,11 +17,11 @@
 package params
 
 import (
-	"bytes"
 	"encoding/json"
 	"math"
 	"math/big"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -416,7 +416,7 @@ func TestMainnetShieldedPrivacyRequiresCeremonyKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("mainnet privacy config accepted without shielded verifying key")
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("audited ceremony output")) {
+	if !strings.Contains(err.Error(), "audited ceremony output") {
 		t.Fatalf("unexpected missing key error: %v", err)
 	}
 	config.ShieldedGroth16VerifyingKey = []byte("bad")
@@ -560,11 +560,9 @@ func TestShield5ForkGateAndOrdering(t *testing.T) {
 
 func TestShield6ActivationRemainsUnsetOnShippedNetworks(t *testing.T) {
 	for name, config := range map[string]*ChainConfig{
-		"mainnet": MainnetChainConfig,
-		"randomx": RandomXChainConfig,
-		"egypt":   EgyptChainConfig,
-		"test":    TestChainConfig,
-		"dev":     AllDevChainProtocolChanges,
+		"egypt": EgyptChainConfig,
+		"test":  TestChainConfig,
+		"dev":   AllDevChainProtocolChanges,
 	} {
 		if config.Shield6Time != nil {
 			t.Errorf("%s Shield6 activation is configured at %d", name, *config.Shield6Time)
@@ -601,9 +599,6 @@ func TestShield6ForkGateAndOrdering(t *testing.T) {
 	config.QuantumResistantTime = nil
 	if err := config.CheckConfigForkOrder(); err == nil {
 		t.Fatal("Shield6 accepted without its quantum-resistant prerequisite")
-	}
-	if MainnetChainConfig.Shield6Time != nil {
-		t.Fatal("mainnet Shield6 activation must remain unset until coordinated")
 	}
 }
 

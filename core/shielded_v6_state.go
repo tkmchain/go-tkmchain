@@ -205,6 +205,25 @@ func validateShieldedV6State(st *state.StateDB, tx *types.Transaction, e *Shield
 	if st == nil || tx == nil || e == nil {
 		return ErrInvalidShieldedTx
 	}
+	if e.Version == ShieldedV6BindingVersion {
+		if _, err := validateShieldedV6BindingBasics(tx, e); err != nil {
+			return err
+		}
+		from, err := types.Sender(types.NewQuantumSigner(tx.ChainId()), tx)
+		if err != nil {
+			return err
+		}
+		owner, err := validateShieldedV6BindingRegistration(st, from, e.Binding.Commitment)
+		if err == nil && owner != e.Binding.Owner {
+			return ErrInvalidShieldedTx
+		}
+		return err
+	}
+	if len(e.Outputs) > 0 {
+		if err := validateShieldedV6RecipientRoots(st, tx, e); err != nil {
+			return err
+		}
+	}
 	count := ShieldedV6OutputCount(st)
 	if count > uint64(1)<<ShieldedV6OutputTreeDepth {
 		return fmt.Errorf("%w: corrupt Shield6 output count", ErrInvalidShieldedTx)
@@ -255,6 +274,9 @@ func processShieldedV6(config *params.ChainConfig, number *big.Int, time uint64,
 	}
 	if err := ValidateAntarticalStampState(st, from, tx.To(), tx.Value(), tx.Data()); err != nil {
 		return err
+	}
+	if e.Version == ShieldedV6BindingVersion {
+		return processShieldedV6Binding(st, tx, from, e)
 	}
 	if e.WithdrawalValue != nil && e.WithdrawalValue.Sign() > 0 && !IsAntarticalStamped(st, e.WithdrawalRecipient) {
 		return fmt.Errorf("%w: Shield6 public withdrawal recipient is not stamped", ErrInvalidShieldedTx)

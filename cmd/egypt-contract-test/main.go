@@ -41,7 +41,9 @@ func (a *assembler) op(ops ...vm.OpCode) {
 		a.code = append(a.code, byte(op))
 	}
 }
-func (a *assembler) push1(v byte)   { a.code = append(a.code, byte(vm.PUSH1), v) }
+func (a *assembler) push1(v byte) { a.code = append(a.code, byte(vm.PUSH1), v) }
+
+//nolint:unused // Retained compatibility helper.
 func (a *assembler) push2(v uint16) { a.code = append(a.code, byte(vm.PUSH2), byte(v>>8), byte(v)) }
 func (a *assembler) push4(v []byte) {
 	a.code = append(a.code, byte(vm.PUSH4))
@@ -390,6 +392,9 @@ func runProfileChecks(chainID *big.Int, assetID, manifestHash, runtimeHash commo
 		panic(fmt.Errorf("asset registry commitment: %w", err))
 	}
 	extra, err := antartical.AttachAssetRegistryCommitmentAtVersion([]byte("egypt-header"), registryRoot, profileVersion)
+	if err != nil {
+		panic(fmt.Errorf("asset registry header commitment: %w", err))
+	}
 	if got, found, err := antartical.AssetRegistryCommitmentFromHeaderExtra(extra); err != nil || !found || got != registryRoot {
 		panic(fmt.Errorf("asset registry header commitment: found=%t got=%s want=%s err=%v", found, got, registryRoot, err))
 	}

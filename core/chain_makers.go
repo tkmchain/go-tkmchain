@@ -22,6 +22,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/antartical"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
@@ -44,11 +45,12 @@ type BlockGen struct {
 	header  *types.Header
 	statedb *state.StateDB
 
-	gasPool     *GasPool
-	txs         []*types.Transaction
-	receipts    []*types.Receipt
-	uncles      []*types.Header
-	withdrawals []*types.Withdrawal
+	gasPool            *GasPool
+	txs                []*types.Transaction
+	receipts           []*types.Receipt
+	shieldedNullifiers map[common.Hash]struct{}
+	uncles             []*types.Header
+	withdrawals        []*types.Withdrawal
 
 	engine consensus.Engine
 }
@@ -116,6 +118,16 @@ func (b *BlockGen) addTx(bc *BlockChain, vmConfig vm.Config, tx *types.Transacti
 		blockContext = NewEVMBlockContext(b.header, bc, &b.header.Coinbase)
 		evm          = vm.NewEVM(blockContext, b.statedb, b.cm.config, vmConfig)
 	)
+	// Shield6 state transitions run before EVM execution in both the miner
+	// and block processor; generated blocks must apply the same hook.
+	if HasShieldedV6Prefix(tx.Data()) {
+		if b.shieldedNullifiers == nil {
+			b.shieldedNullifiers = make(map[common.Hash]struct{})
+		}
+		if err := ProcessShieldedTransaction(b.cm.config, b.header.Number, b.header.Time, b.statedb, tx, b.shieldedNullifiers); err != nil {
+			panic(err)
+		}
+	}
 	b.statedb.SetTxContext(tx.Hash(), len(b.txs))
 	receipt, err := ApplyTransaction(evm, b.gasPool, b.statedb, b.header, tx)
 	if err != nil {
@@ -371,6 +383,12 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			b.header.Difficulty = big.NewInt(2)
 		}
 
+		// Match the production pre-execution system transition. Generated
+		// Antartical blocks must import with the same anchor-contract root.
+		if err := EnsureTKMBlockHashAnchor(statedb, config, b.header.Number, b.header.Time, b.header.ParentHash); err != nil {
+			panic(err)
+		}
+
 		// Mutate the state and block according to any hard-fork specs
 		if daoBlock := config.DAOForkBlock; daoBlock != nil {
 			limit := new(big.Int).Add(daoBlock, params.DAOForkExtraRange)
@@ -395,6 +413,20 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		// Execute any user modifications to the block
 		if gen != nil {
 			gen(i, b)
+		}
+
+		// Attach the same header commitment as the production miner after
+		// the callback has selected the block's extra-data prefix.
+		if config.RandomX != nil && config.IsAntartical(b.header.Number, b.header.Time) {
+			previous, _, err := antartical.BlockHashAnchorFromHeaderExtra(parent.Extra())
+			if err != nil {
+				panic(err)
+			}
+			anchor := antartical.BlockHashAnchor{Height: parent.NumberU64(), Hash: parent.Hash(), Rolling: antartical.BlockHashAnchorCommitment(previous.Rolling, parent.NumberU64(), parent.Hash())}
+			b.header.Extra, err = antartical.AttachBlockHashAnchor(b.header.Extra, anchor)
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		requests := b.collectRequests(false)

@@ -104,7 +104,7 @@ require (
 	github.com/nxadm/tail v1.4.8 // indirect
 	github.com/oapi-codegen/runtime v1.6.0 // indirect
 	github.com/ronanh/intcomp v1.1.1 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
+	github.com/rs/zerolog v1.34.0
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect

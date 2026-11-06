@@ -148,6 +148,19 @@ type shield6OutputAAD struct {
 // witness must be the witness used by ProveRangeProof128WithWitness for this
 // amount; the function checks that its total and limb commitments agree.
 func CreateOutput(address Address, outputPosition, assetID uint64, amount *big.Int, witness WideWitness, random io.Reader) (OutputRecord, error) {
+	return createOutput(address, outputPosition, assetID, amount, witness, random, nil)
+}
+
+// CreateOutputWithEphemeral constructs a V1-compatible output with a supplied
+// canonical, nonzero sender scalar. This lets a recipient-binding prover keep
+// the exact entropy witness. Callers must use fresh cryptographic randomness
+// for every output, keep the scalar private, and clear it after proving.
+func CreateOutputWithEphemeral(address Address, outputPosition, assetID uint64, amount *big.Int, witness WideWitness, ephemeralSecret [32]byte, random io.Reader) (OutputRecord, error) {
+	defer clear(ephemeralSecret[:])
+	return createOutput(address, outputPosition, assetID, amount, witness, random, &ephemeralSecret)
+}
+
+func createOutput(address Address, outputPosition, assetID uint64, amount *big.Int, witness WideWitness, random io.Reader, ephemeralSecret *[32]byte) (OutputRecord, error) {
 	var output OutputRecord
 	if err := address.Validate(); err != nil || assetID != shield6NativeAssetID || amount == nil || amount.Sign() < 0 || amount.BitLen() > 128 || random == nil {
 		return output, ErrInvalidWalletOutput
@@ -194,7 +207,16 @@ func CreateOutput(address Address, outputPosition, assetID uint64, amount *big.I
 	}
 	var ephemeral curve25519.Scalar
 	defer ephemeral.Set(new(curve25519.Scalar))
-	curve25519.RandomScalar(&ephemeral, random)
+	if ephemeralSecret == nil {
+		curve25519.RandomScalar(&ephemeral, random)
+	} else {
+		if _, err := ephemeral.SetCanonicalBytes(ephemeralSecret[:]); err != nil {
+			return output, ErrInvalidWalletOutput
+		}
+	}
+	if ephemeral.Equal(new(curve25519.Scalar)) == 1 {
+		return output, ErrInvalidWalletOutput
+	}
 	ephemeralPublic := new(curve25519.PublicKey[curve25519.ConstantTimeOperations]).ScalarBaseMult(&ephemeral)
 	shared := new(curve25519.PublicKey[curve25519.ConstantTimeOperations]).ScalarMult(&ephemeral, viewPublic)
 	var identity curve25519.PublicKey[curve25519.ConstantTimeOperations]

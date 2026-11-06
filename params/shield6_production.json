@@ -1,0 +1,55 @@
+{
+  "schema": "shield6-production-parameters/v1",
+  "relationVersion": 2,
+  "chainId": 8979,
+  "releaseTag": "v1.21.83",
+  "activationUnix": 1793989014,
+  "activationUTC": "2026-11-06T18:16:54Z",
+  "sourceURL": "https://pool.tkmchain.site/shield6-parameters/v1.21.83",
+  "setupMethod": "single-operator-groth16-setup",
+  "independentContributors": false,
+  "independentAudit": false,
+  "testParametersReused": false,
+  "files": {
+    "recipient.r1cs": {
+      "sha256": "a3426a12b2e63f581f4d792662d7dd2d1e3d6d1fa8b5b6dbca174d2110d2a50b",
+      "size": 95711900
+    },
+    "recipient.pk": {
+      "sha256": "caacd815f1c18172c7faa9c0a64c615543979af31e1bebf3d57b93ac778b64cf",
+      "size": 431129859
+    },
+    "recipient.vk": {
+      "sha256": "b886cb6016714aa81f67ce69b072bf3bac80d22fbd11a37a23c8972116190e69",
+      "size": 1520
+    },
+    "manifest.json": {
+      "sha256": "a8acd6aee4f2efb18bcf08a0d20a223c579ac48c0cbefb9bdd15473f4a3646d2",
+      "size": 927
+    },
+    "registration.r1cs": {
+      "sha256": "0040720811ae44399e005fe617b7f6673fea63c458fdaf55eacf5b410eaa53c3",
+      "size": 25263244
+    },
+    "registration.pk": {
+      "sha256": "4cdf9ce4d4013b58f6b9da2997c64b6134e17c5fb9e6494cb36722dac2b2d3c3",
+      "size": 96214745
+    },
+    "registration.vk": {
+      "sha256": "6b49266796cfe21018111a45ad50c16f3755ed551eccf4a2e5e72c703db7d328",
+      "size": 1520
+    },
+    "registration-manifest.json": {
+      "sha256": "c66d673d68be06947f466923a6a7fc135f97618a67610107383da48b5d0a8d39",
+      "size": 915
+    },
+    "recipient-provenance.json": {
+      "sha256": "af8991cfdc6cafd9bc680cd0843c612d0ac6d02dfe62016cfc6cc343feb05092",
+      "size": 1449
+    },
+    "registration-provenance.json": {
+      "sha256": "99ff2dd33a685cf631a60eb659d83ad2fa551523f8e32713f391b76eb9b841a1",
+      "size": 1440
+    }
+  }
+}

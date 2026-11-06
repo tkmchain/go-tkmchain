@@ -417,6 +417,7 @@ type parsedHeader struct {
 	expires   uint64
 }
 
+//nolint:unused // Retained compatibility helper.
 func encodeHeader(service ServiceID, hopIndex uint8, circuitID [CircuitIDSize]byte, sequence, expires uint64) []byte {
 	return encodeHeaderVersion(Version, service, hopIndex, circuitID, sequence, expires)
 }

@@ -945,14 +945,14 @@ func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRe
 		if decodeErr != nil || !ok || envelope == nil {
 			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield5 deposit produced no envelope"))
 		}
-		commitment = shielded3.Digest(envelope.Outputs[0].Commitment)
+		commitment = envelope.Outputs[0].Commitment
 		outgoing = envelope.Outputs[0].Outgoing
 	} else if version == 4 {
 		envelope, ok, decodeErr := core.DecodeShieldedV4Transaction(signed.Data())
 		if decodeErr != nil || !ok || envelope == nil {
 			return "", ShieldedNote{}, firstErr(decodeErr, errors.New("Shield4 deposit produced no envelope"))
 		}
-		commitment = shielded3.Digest(envelope.Outputs[0].Commitment)
+		commitment = envelope.Outputs[0].Commitment
 		outgoing = envelope.Outputs[0].Outgoing
 	} else {
 		envelope, ok, decodeErr := core.DecodeShieldedV3Transaction(signed.Data())
@@ -989,6 +989,7 @@ func (p *Prover) buildSignSubmitDepositNative(ctx context.Context, req DepositRe
 	return receipt.TxHash.Hex(), p.finalizeNoteWitness(ctx, note, common.BytesToHash(commitment.Bytes()), receipt.TxHash.Hex()), nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) buildSignSubmitNative(ctx context.Context, req PayoutRequest, amountWei *big.Int, chainID *big.Int, version uint64) (string, error) {
 	if strings.TrimSpace(req.RecipientCode) == "" {
 		return "", errors.New("native Shield3/4/5 payout requires the miner's full tkmshield3 payment code")
@@ -1042,6 +1043,7 @@ func (p *Prover) operationContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), timeout+30*time.Minute)
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func isAcceptedButUnminedError(err error) bool {
 	if err == nil {
 		return false
@@ -1212,7 +1214,7 @@ func (p *Prover) buildSignSubmitDeposit(ctx context.Context, req DepositRequest,
 	}
 	return p.buildSignSubmitDepositNative(ctx, req, amountWei, chainID, version)
 	/* legacy V1/V2 construction intentionally disabled below */
-	proofBlock := new(big.Int)
+	proofBlock := new(big.Int) //nolint:govet // Intentionally unreachable legacy reference after the native-only return.
 	signerAddr := common.HexToAddress(p.cfg.SignerAddress)
 	nonce, err := p.client.PendingNonceAt(ctx, signerAddr)
 	if err != nil {
@@ -1449,6 +1451,7 @@ func (p *Prover) buildDepositDraft(req DepositRequest, amountWei *big.Int, asset
 	return draftEnvelope{Envelope: envelope, Data: data, OutputRoot: outputRoot}, assignment, note, commitment, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) buildSignSubmit(ctx context.Context, req PayoutRequest, note ShieldedNote, amountWei *big.Int) (string, *ShieldedNote, error) {
 	chainID, err := p.client.ChainID(ctx)
 	if err != nil {
@@ -1759,6 +1762,7 @@ func (p *Prover) buildDraftEnvelope(req PayoutRequest, note ShieldedNote, amount
 	return draftEnvelope{Envelope: envelope, Data: data, OutputRoot: outputRoot, ChangeCommitment: changeCommitment, ChangeNote: changeNote}, assignment, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func (p *Prover) unsignedTx(chainID *big.Int, nonce uint64, gasPrice *big.Int, data []byte) *types.Transaction {
 	return p.unsignedTxWithValue(chainID, nonce, gasPrice, new(big.Int), data)
 }
@@ -1923,6 +1927,7 @@ func selectSpendableNote(store NoteStore, amount *big.Int) int {
 	return -1
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func selectReplacementNote(store NoteStore, noteID string, requestID string) int {
 	noteID = strings.TrimSpace(noteID)
 	requestID = strings.TrimSpace(requestID)
@@ -1955,6 +1960,7 @@ func weiToAntdFloat(wei *big.Int) float64 {
 	return value
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func antdToWeiInt(amount float64) *big.Int {
 	wei := new(big.Float).Mul(big.NewFloat(amount), big.NewFloat(1e18))
 	i, _ := wei.Int(nil)
@@ -1981,6 +1987,7 @@ func payoutReplacementRequested(req PayoutRequest) bool {
 	return strings.TrimSpace(req.Nonce) != "" || strings.TrimSpace(req.GasPriceWei) != ""
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func depositAmountWei(req DepositRequest) (*big.Int, error) {
 	if strings.TrimSpace(req.AmountWei) != "" {
 		amount, ok := parseBigFlexible(req.AmountWei)
@@ -1999,6 +2006,7 @@ func depositAmountWei(req DepositRequest) (*big.Int, error) {
 	return amount, nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func payoutNonce(req PayoutRequest, fallback uint64) (uint64, error) {
 	raw := strings.TrimSpace(req.Nonce)
 	if raw == "" {
@@ -2011,6 +2019,7 @@ func payoutNonce(req PayoutRequest, fallback uint64) (uint64, error) {
 	return nonce.Uint64(), nil
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func payoutGasPriceWei(req PayoutRequest, fallback *big.Int) (*big.Int, error) {
 	raw := strings.TrimSpace(req.GasPriceWei)
 	if raw == "" {
@@ -2426,6 +2435,7 @@ func firstErr(a, b error) error {
 	return b
 }
 
+//nolint:unused // Retained legacy proof construction; current submission selects native protocols.
 func firstChangeNote(notes []ShieldedNote) *ShieldedNote {
 	if len(notes) == 0 {
 		return nil

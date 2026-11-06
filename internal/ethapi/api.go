@@ -2075,7 +2075,7 @@ func (api *TKMPaymentAPI) AutoMigrateToPQWithPassphrases(ctx context.Context, ar
 		return nil, err
 	}
 	args.To = &result.PQAccount
-	input := hexutil.Bytes(result.MigrationData)
+	input := result.MigrationData
 	args.Input = &input
 	hash, err := api.SendTransactionWithPassphrase(ctx, args, legacyPassphrase)
 	if err != nil {

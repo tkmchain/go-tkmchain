@@ -255,8 +255,8 @@ func TestTkmPhoneMainKingBucketsGateNumberIssuance(t *testing.T) {
 func TestTkmPhoneBucketAndNumberTransactionProvenancePersistToPhoneDir(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	phoneDir := t.TempDir()
-	svc, mainKing, operator, buyer, mainKingD, operatorKey := newTestTkmPhoneService(t)
-	svc = NewTkmPhoneServiceWithDBAndDir(nil, mainKing, big.NewInt(8979), db, phoneDir)
+	_, mainKing, operator, buyer, mainKingD, operatorKey := newTestTkmPhoneService(t)
+	svc := NewTkmPhoneServiceWithDBAndDir(nil, mainKing, big.NewInt(8979), db, phoneDir)
 	seed := crypto.Keccak256Hash([]byte("provenance-buckets"))
 	if _, err := svc.GenerateBuckets(seed, common.Hash{}, nil); err == nil || !strings.Contains(err.Error(), "bucket creation transaction hash is required") {
 		t.Fatalf("GenerateBuckets without creation tx error = %v, want required creation tx", err)

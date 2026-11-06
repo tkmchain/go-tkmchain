@@ -84,6 +84,7 @@ func fuzz(data []byte) int {
 
 var minDifficulty = big.NewInt(0x2000)
 
+//nolint:unused // Retained difficulty-fuzzer helper.
 type calculator func(time uint64, parent *types.Header) *big.Int
 
 func (f *fuzzer) fuzz() int {

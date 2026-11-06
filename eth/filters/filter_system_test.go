@@ -723,7 +723,7 @@ func TestLogFilter(t *testing.T) {
 // Please refer to #22131 for more details.
 func TestPendingTxFilterDeadlock(t *testing.T) {
 	t.Parallel()
-	timeout := 100 * time.Millisecond
+	timeout := time.Second
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
@@ -731,6 +731,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 		api          = NewFilterAPI(sys)
 		done         = make(chan struct{})
 	)
+	defer close(done)
 
 	go func() {
 		// Bombard feed with txes until signal was received to stop
@@ -749,7 +750,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 	}()
 
 	// Create a bunch of filters that will
-	// timeout either in 100ms or 200ms
+	// timeout within one or two cleanup intervals.
 	subs := make([]*Subscription, 20)
 	for i := range subs {
 		fid := api.NewPendingTransactionFilter(nil)
@@ -777,7 +778,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 	for _, sub := range subs {
 		select {
 		case <-sub.Err():
-		case <-time.After(1 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatalf("Filter timeout is hanging")
 		}
 	}

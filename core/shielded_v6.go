@@ -16,7 +16,7 @@ import (
 
 const (
 	ShieldedV6Magic                  = "TKMSHIELD6"
-	ShieldedV6MaxTxSize              = ShieldedV3MaxTxSize
+	ShieldedV6MaxTxSize              = 256 << 10
 	ShieldedV6MaxCiphertext          = 4096
 	ShieldedV6MaxInputs              = 16
 	ShieldedV6MaxOutputs             = 16
@@ -31,6 +31,7 @@ const (
 	// Repeated key-image appends update the same nonzero count slot. After its
 	// first write in a transaction, a warm nonzero-to-nonzero SSTORE costs 2,900.
 	ShieldedV6StateUpdateGas uint64 = 2_900
+	ShieldedV6MaxLifetime    uint64 = 3600
 )
 
 type ShieldedV6Input struct {
@@ -83,6 +84,9 @@ type ShieldedV6Transaction struct {
 	Inputs              []ShieldedV6Input
 	Outputs             []ShieldedV6Output
 	RangeProof          []byte
+	Recipients          *ShieldedV6RecipientProofs     `rlp:"optional,nil"`
+	Binding             *ShieldedV6BindingRegistration `rlp:"optional,nil"`
+	ValidUntil          uint64                         `rlp:"optional"`
 }
 
 func HasShieldedV6Prefix(data []byte) bool {
@@ -107,6 +111,9 @@ func DecodeShieldedV6Transaction(data []byte) (*ShieldedV6Transaction, bool, err
 	if uint64(len(data)) > ShieldedV6MaxTxSize {
 		return nil, true, ErrInvalidShieldedTx
 	}
+	if err := shieldedV6Preflight(data[len(ShieldedV6Magic):]); err != nil {
+		return nil, true, fmt.Errorf("%w: malformed or unbounded Shield6 envelope", ErrInvalidShieldedTx)
+	}
 	var e ShieldedV6Transaction
 	if err := rlp.DecodeBytes(data[len(ShieldedV6Magic):], &e); err != nil {
 		return nil, true, fmt.Errorf("%w: malformed Shield6 envelope", ErrInvalidShieldedTx)
@@ -116,7 +123,17 @@ func DecodeShieldedV6Transaction(data []byte) (*ShieldedV6Transaction, bool, err
 
 func shieldedV6IntentEnvelope(e *ShieldedV6Transaction) *ShieldedV6Transaction {
 	clean := *e
+	if e.Binding != nil {
+		binding := *e.Binding
+		binding.Proof = nil
+		clean.Binding = &binding
+	}
 	clean.Inputs = append([]ShieldedV6Input(nil), e.Inputs...)
+	if e.Recipients != nil {
+		bundle := *e.Recipients
+		bundle.Proofs = nil
+		clean.Recipients = &bundle
+	}
 	for i := range clean.Inputs {
 		// CLSAG signing derives the key image and pseudo-output together with
 		// its signature. They are still bound by the CLSAG challenge itself;
@@ -177,8 +194,28 @@ func shieldedV6Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 	if err != nil {
 		return nil, err
 	}
-	if e == nil || e.Version != 6 {
-		return fail("expected Shield6 envelope version 6")
+	if e == nil {
+		return fail("missing Shield6 envelope")
+	}
+	bound := config.IsShield6Recipients(number, time)
+	if bound {
+		if err := ValidateShieldedV6Time(e, time); err != nil {
+			return fail("recipient envelope expired or lifetime exceeds one hour")
+		}
+		if e.Version == ShieldedV6BindingVersion {
+			if _, err := validateShieldedV6BindingBasics(tx, e); err != nil {
+				return nil, err
+			}
+			if err := ValidateShieldedV6RegistrationProof(config, tx, e); err != nil {
+				return nil, err
+			}
+			return e, nil
+		}
+		if e.Version != ShieldedV6BoundVersion || e.Binding != nil {
+			return fail("recipient proofs are mandatory")
+		}
+	} else if e.Version != 6 || e.Recipients != nil || e.Binding != nil || e.ValidUntil != 0 {
+		return fail("recipient-proof envelope is not active")
 	}
 	if e.AssetID != shielded3.AssetTKM {
 		return fail("Shield6 currently accepts only the native TKM asset domain")
@@ -258,6 +295,11 @@ func shieldedV6Basics(config *params.ChainConfig, number *big.Int, time uint64, 
 		}
 		seenOutputs[output.OneTimeKey] = struct{}{}
 	}
+	if bound {
+		if err := ValidateShieldedV6RecipientProof(config, tx, e); err != nil {
+			return nil, err
+		}
+	}
 	return e, nil
 }
 
@@ -268,6 +310,10 @@ func ValidateShieldedV6Proof(tx *types.Transaction) error {
 	e, ok, err := DecodeShieldedV6Transaction(tx.Data())
 	if err != nil || !ok || e == nil {
 		return ErrInvalidShieldedTx
+	}
+	if e.Version == ShieldedV6BindingVersion {
+		_, err := validateShieldedV6BindingBasics(tx, e)
+		return err
 	}
 	wideCommitments := make([]shielded6.WideCommitment, len(e.Outputs))
 	outputCommitments := make([][shielded6.PointSize]byte, len(e.Outputs))
@@ -311,10 +357,50 @@ func ShieldedV6GasData(data []byte) ([]byte, uint64, error) {
 	if err != nil || !ok {
 		return data, 0, err
 	}
+	if e.Version != 6 && e.Version != ShieldedV6BoundVersion && e.Version != ShieldedV6BindingVersion {
+		return nil, 0, ErrInvalidShieldedTx
+	}
+	if e.Version == ShieldedV6BindingVersion {
+		if !validShieldedV6BindingShape(e) {
+			return nil, 0, ErrInvalidShieldedTx
+		}
+		if len(e.Binding.Proof) == 0 || len(e.Binding.Proof) > ShieldedV6MaxRecipientProof {
+			return nil, 0, ErrInvalidShieldedTx
+		}
+		// 33 nodes, two digest slots and one presence slot each; owner index,
+		// opaque commitment (2), count, known-root marker and current root (2).
+		clean := *e
+		binding := *e.Binding
+		binding.Proof = nil
+		clean.Binding = &binding
+		encoded, err := EncodeShieldedV6Transaction(&clean)
+		if err != nil {
+			return nil, 0, err
+		}
+		return encoded, ShieldedV6BaseVerifyGas + 106*ShieldedV6StateWriteGas + ShieldedV6RecipientVerifyGas + uint64(len(e.Binding.Proof))*100, nil
+	}
 	if len(e.Inputs) > ShieldedV6MaxInputs || len(e.Outputs) > ShieldedV6MaxOutputs || len(e.RangeProof) > shielded6.MaxRangeProofBundleSize || (len(e.Inputs) == 0 && !e.Deposit) || (len(e.Outputs) == 0 && (e.WithdrawalValue == nil || e.WithdrawalValue.Sign() == 0)) {
 		return nil, 0, ErrInvalidShieldedTx
 	}
+	if e.Binding != nil || (e.Version == ShieldedV6BoundVersion && e.Recipients == nil) || (e.Version == 6 && (e.Recipients != nil || e.ValidUntil != 0)) {
+		return nil, 0, ErrInvalidShieldedTx
+	}
 	clean := *e
+	var recipientGas uint64
+	if e.Recipients != nil {
+		if e.Version != ShieldedV6BoundVersion || len(e.Recipients.Proofs) != len(e.Outputs) || len(e.Recipients.Roots) != len(e.Outputs) {
+			return nil, 0, ErrInvalidShieldedTx
+		}
+		bundle := *e.Recipients
+		bundle.Proofs = nil
+		clean.Recipients = &bundle
+		for _, proof := range e.Recipients.Proofs {
+			if len(proof) == 0 || len(proof) > ShieldedV6MaxRecipientProof {
+				return nil, 0, ErrInvalidShieldedTx
+			}
+			recipientGas += ShieldedV6RecipientVerifyGas + uint64(len(proof))*100
+		}
+	}
 	clean.RangeProof = nil
 	clean.Inputs = append([]ShieldedV6Input(nil), e.Inputs...)
 	for i := range clean.Inputs {
@@ -351,7 +437,7 @@ func ShieldedV6GasData(data []byte) ([]byte, uint64, error) {
 		boundaryStateGas = 3 * ShieldedV6StateWriteGas
 	}
 	gas := ShieldedV6BaseVerifyGas
-	for _, cost := range []uint64{inputGas, outputGas, proofGas, inputStateGas, outputStateGas, boundaryStateGas} {
+	for _, cost := range []uint64{inputGas, outputGas, proofGas, inputStateGas, outputStateGas, boundaryStateGas, recipientGas} {
 		if ^uint64(0)-gas < cost {
 			return nil, 0, ErrGasUintOverflow
 		}

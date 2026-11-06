@@ -26,9 +26,13 @@ import (
 // pendingTTL indicates the period of time a generated pending block should
 // exist to serve RPC requests before being discarded if the parent block
 // has not changed yet. The value is chosen to align with the recommit interval.
+//
+//nolint:unused // Retained payload API compatibility for the RandomX PoW node.
 const pendingTTL = 2 * time.Second
 
 // pending wraps a pending block with additional metadata.
+//
+//nolint:unused // Retained payload API compatibility for the RandomX PoW node.
 type pending struct {
 	created    time.Time
 	parentHash common.Hash
@@ -40,6 +44,8 @@ type pending struct {
 // returned if the parentHash is not matched or the result is already too old.
 //
 // Note, don't modify the returned payload result.
+//
+//nolint:unused // Retained PoS pending-payload compatibility; production uses RandomX PoW.
 func (p *pending) resolve(parentHash common.Hash) *newPayloadResult {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -57,6 +63,8 @@ func (p *pending) resolve(parentHash common.Hash) *newPayloadResult {
 }
 
 // update refreshes the cached pending block with newly created one.
+//
+//nolint:unused // Retained PoS pending-payload compatibility; production uses RandomX PoW.
 func (p *pending) update(parent common.Hash, result *newPayloadResult) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -67,6 +75,8 @@ func (p *pending) update(parent common.Hash, result *newPayloadResult) {
 }
 
 // clear invalidates the cached pending block.
+//
+//nolint:unused // Retained PoS pending-payload compatibility; production uses RandomX PoW.
 func (p *pending) clear(parentHash common.Hash) {
 	p.lock.Lock()
 	defer p.lock.Unlock()

@@ -25,11 +25,17 @@ const (
 )
 
 type shieldedV6RPCStatus struct {
-	Active             bool           `json:"active"`
-	ChainID            *hexutil.Big   `json:"chainId"`
-	OutputCount        hexutil.Uint64 `json:"outputCount"`
-	SpentKeyImageCount hexutil.Uint64 `json:"spentKeyImageCount"`
-	Accumulator        common.Hash    `json:"accumulatorRoot"`
+	Active                     bool           `json:"active"`
+	ChainID                    *hexutil.Big   `json:"chainId"`
+	OutputCount                hexutil.Uint64 `json:"outputCount"`
+	SpentKeyImageCount         hexutil.Uint64 `json:"spentKeyImageCount"`
+	Accumulator                common.Hash    `json:"accumulatorRoot"`
+	RecipientProofsRequired    bool           `json:"recipientProofsRequired"`
+	RecipientKeyHash           common.Hash    `json:"recipientKeyHash"`
+	RegistrationKeyHash        common.Hash    `json:"registrationKeyHash"`
+	HeadTime                   hexutil.Uint64 `json:"headTime"`
+	RecipientProvingKeyHash    common.Hash    `json:"recipientProvingKeyHash"`
+	RegistrationProvingKeyHash common.Hash    `json:"registrationProvingKeyHash"`
 }
 
 type shieldedV6RPCOutput struct {
@@ -89,56 +95,87 @@ type ShieldedV6Ring struct {
 // randomized request order so the RPC server receives no explicit real/decoy
 // marker. The root and output count are checked again before returning.
 func SelectShieldedV6Ring(ctx context.Context, rpc RPC, chainID, realIndex uint64, random io.Reader) (ShieldedV6Ring, error) {
-	var result ShieldedV6Ring
-	if rpc == nil || chainID == 0 {
-		return result, errors.New("Shield6 ring selection requires RPC and chain ID")
+	rings, err := selectShieldedV6Rings(ctx, rpc, chainID, []uint64{realIndex}, random)
+	if err != nil {
+		return ShieldedV6Ring{}, err
+	}
+	return rings[0], nil
+}
+
+// selectShieldedV6Rings resolves all input rings against one accumulator
+// snapshot. At most MaxInputs*RingSize unique indices fit in the RPC's
+// 256-output limit. Shuffle the deduplicated union so neither a real member
+// nor its ring grouping is distinguished in the request.
+func selectShieldedV6Rings(ctx context.Context, rpc RPC, chainID uint64, realIndices []uint64, random io.Reader) ([]ShieldedV6Ring, error) {
+	if rpc == nil || chainID == 0 || len(realIndices) == 0 || len(realIndices) > core.ShieldedV6MaxInputs {
+		return nil, errors.New("Shield6 ring selection requires RPC, chain ID, and bounded inputs")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if random == nil {
 		random = cryptorand.Reader
 	}
 	var before shieldedV6RPCStatus
 	if err := rpc.CallContext(ctx, &before, "tkmprivacy_shieldedV6Status"); err != nil {
-		return result, err
+		return nil, err
 	}
 	if !before.Active || before.ChainID == nil || (*big.Int)(before.ChainID).Cmp(new(big.Int).SetUint64(chainID)) != 0 {
-		return result, errors.New("Shield6 is not active on the requested chain")
+		return nil, errors.New("Shield6 is not active on the requested chain")
 	}
 	count := uint64(before.OutputCount)
-	if count < shielded6.RingSize || realIndex >= count {
-		return result, errors.New("Shield6 accumulator does not contain enough outputs for a ring")
+	if count < shielded6.RingSize {
+		return nil, errors.New("Shield6 accumulator does not contain enough outputs for a ring")
 	}
-	selectedPositions := make(map[uint64]struct{}, shielded6.RingSize-1)
-	population := count - 1
-	for j := population - (shielded6.RingSize - 1); j < population; j++ {
-		bound := new(big.Int).SetUint64(j + 1)
-		n, err := cryptorand.Int(random, bound)
-		if err != nil {
-			return result, err
+	selectedRings := make([][]uint64, len(realIndices))
+	seenReal := make(map[uint64]struct{}, len(realIndices))
+	union := make(map[uint64]struct{}, len(realIndices)*shielded6.RingSize)
+	indices := make([]uint64, 0, len(realIndices)*shielded6.RingSize)
+	for input, realIndex := range realIndices {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		candidate := n.Uint64()
-		if _, exists := selectedPositions[candidate]; exists {
-			candidate = j
+		if realIndex >= count {
+			return nil, errors.New("Shield6 input index is outside the accumulator")
 		}
-		selectedPositions[candidate] = struct{}{}
-	}
-	if len(selectedPositions) != shielded6.RingSize-1 {
-		return result, errors.New("Shield6 decoy selection produced a duplicate index")
-	}
-	indices := make([]uint64, 0, shielded6.RingSize)
-	indices = append(indices, realIndex)
-	for position := range selectedPositions {
-		index := position
-		if index >= realIndex {
-			index++
+		if _, duplicate := seenReal[realIndex]; duplicate {
+			return nil, errors.New("Shield6 ring selection contains a duplicate input")
 		}
-		indices = append(indices, index)
+		seenReal[realIndex] = struct{}{}
+		selected := make(map[uint64]struct{}, shielded6.RingSize-1)
+		population := count - 1
+		for j := population - (shielded6.RingSize - 1); j < population; j++ {
+			n, err := cryptorand.Int(random, new(big.Int).SetUint64(j+1))
+			if err != nil {
+				return nil, err
+			}
+			candidate := n.Uint64()
+			if _, exists := selected[candidate]; exists {
+				candidate = j
+			}
+			selected[candidate] = struct{}{}
+		}
+		ring := make([]uint64, 0, shielded6.RingSize)
+		ring = append(ring, realIndex)
+		for position := range selected {
+			index := position
+			if index >= realIndex {
+				index++
+			}
+			ring = append(ring, index)
+		}
+		selectedRings[input] = ring
+		for _, index := range ring {
+			if _, exists := union[index]; !exists {
+				union[index] = struct{}{}
+				indices = append(indices, index)
+			}
+		}
 	}
-	// Randomize RPC request order so the real member is not a distinguished
-	// first/last lookup. Fisher-Yates uses rejection-sampled crypto/rand.Int.
 	for i := len(indices) - 1; i > 0; i-- {
 		n, err := cryptorand.Int(random, new(big.Int).SetInt64(int64(i+1)))
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		j := int(n.Int64())
 		indices[i], indices[j] = indices[j], indices[i]
@@ -149,41 +186,45 @@ func SelectShieldedV6Ring(ctx context.Context, rpc RPC, chainID, realIndex uint6
 	}
 	var page []shieldedV6RingRPCOutput
 	if err := rpc.CallContext(ctx, &page, "tkmprivacy_shieldedV6OutputsByIndex", request); err != nil {
-		return result, fmt.Errorf("fetch Shield6 ring candidates: %w", err)
+		return nil, fmt.Errorf("fetch Shield6 ring candidates: %w", err)
 	}
 	if len(page) != len(indices) {
-		return result, errors.New("node returned an incomplete Shield6 ring-candidate batch")
+		return nil, errors.New("node returned an incomplete Shield6 ring-candidate batch")
 	}
-	candidates := make([]struct {
-		index  uint64
-		member shielded6.RingMember
-	}, len(indices))
+	members := make(map[uint64]shielded6.RingMember, len(indices))
 	for i, index := range indices {
 		if uint64(page[i].Index) != index || len(page[i].OneTimeKey) != shielded6.PointSize || len(page[i].Commitment) != shielded6.PointSize {
-			return result, fmt.Errorf("node returned a malformed Shield6 ring member at %d", index)
+			return nil, fmt.Errorf("node returned a malformed Shield6 ring member at %d", index)
 		}
-		candidates[i].index = index
-		copy(candidates[i].member.OneTimeKey[:], page[i].OneTimeKey)
-		copy(candidates[i].member.Commitment[:], page[i].Commitment)
+		var member shielded6.RingMember
+		copy(member.OneTimeKey[:], page[i].OneTimeKey)
+		copy(member.Commitment[:], page[i].Commitment)
+		members[index] = member
 	}
 	var after shieldedV6RPCStatus
 	if err := rpc.CallContext(ctx, &after, "tkmprivacy_shieldedV6Status"); err != nil {
-		return result, err
+		return nil, err
 	}
 	if !after.Active || after.Accumulator != before.Accumulator || after.OutputCount != before.OutputCount || after.ChainID == nil || (*big.Int)(after.ChainID).Cmp(new(big.Int).SetUint64(chainID)) != 0 {
-		return result, errors.New("Shield6 accumulator changed during ring selection; retry")
+		return nil, errors.New("Shield6 accumulator changed during ring selection; retry")
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].index < candidates[j].index })
-	ordered := make([]shielded6.IndexedRingMember, len(candidates))
-	for i, candidate := range candidates {
-		ordered[i] = shielded6.IndexedRingMember{Index: candidate.index, Member: candidate.member}
+	results := make([]ShieldedV6Ring, len(realIndices))
+	for input, selected := range selectedRings {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		sort.Slice(selected, func(i, j int) bool { return selected[i] < selected[j] })
+		ordered := make([]shielded6.IndexedRingMember, len(selected))
+		for i, index := range selected {
+			ordered[i] = shielded6.IndexedRingMember{Index: index, Member: members[index]}
+		}
+		ring, ringIndices, signer, err := shielded6.SelectRing(realIndices[input], ordered, random)
+		if err != nil {
+			return nil, err
+		}
+		results[input] = ShieldedV6Ring{Members: ring, Indices: ringIndices, SignerIndex: signer, Root: before.Accumulator}
 	}
-	ring, ringIndices, signer, err := shielded6.SelectRing(realIndex, ordered, random)
-	if err != nil {
-		return result, err
-	}
-	result.Members, result.Indices, result.SignerIndex, result.Root = ring, ringIndices, signer, before.Accumulator
-	return result, nil
+	return results, nil
 }
 
 // ScanShieldedV6 fetches bounded canonical output pages, scans encrypted notes
@@ -405,12 +446,61 @@ func clearShieldedV6SpendCandidates(candidates []shieldedV6SpendCandidate) {
 	}
 }
 
+// SelectShieldedV6Notes chooses the fewest inputs needed to cover amount,
+// preferring the smallest sufficient single note. It sorts a copy so scan
+// order and caller-owned notes remain unchanged. The caller retains ownership
+// of the returned notes and total and must clear them after use.
+func SelectShieldedV6Notes(notes []ShieldedV6OwnedNote, amount *big.Int) ([]*shielded6.Note, *big.Int, error) {
+	if amount == nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
+		return nil, nil, errors.New("Shield6 payment amount must be positive and fit 128 bits")
+	}
+	candidates := make([]*shielded6.Note, 0, len(notes))
+	seen := make(map[uint64]struct{}, len(notes))
+	var single *shielded6.Note
+	var chainID uint64
+	for _, owned := range notes {
+		note := owned.Note
+		if note == nil || note.ChainID == 0 || note.AssetID != shielded6.AssetTKM || note.Amount == nil || note.Amount.Sign() <= 0 || note.Amount.BitLen() > 128 {
+			return nil, nil, errors.New("invalid Shield6 spendable note")
+		}
+		if chainID != 0 && chainID != note.ChainID {
+			return nil, nil, errors.New("Shield6 notes belong to different chains")
+		}
+		chainID = note.ChainID
+		if _, duplicate := seen[note.Index]; duplicate {
+			return nil, nil, errors.New("duplicate Shield6 spendable note")
+		}
+		seen[note.Index] = struct{}{}
+		if note.Amount.Cmp(amount) >= 0 && (single == nil || note.Amount.Cmp(single.Amount) < 0) {
+			single = note
+		}
+		candidates = append(candidates, note)
+	}
+	if single != nil {
+		return []*shielded6.Note{single}, new(big.Int).Set(single.Amount), nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Amount.Cmp(candidates[j].Amount) > 0 })
+	total := new(big.Int)
+	for i, note := range candidates {
+		if i == core.ShieldedV6MaxInputs {
+			break
+		}
+		total.Add(total, note.Amount)
+		// A single change output must remain representable in 128 bits.
+		if total.Cmp(amount) >= 0 {
+			return candidates[:i+1], total, nil
+		}
+	}
+	clearShieldedV6WalletBigInt(total)
+	return nil, nil, errors.New("Shield6 spendable notes cannot cover the amount within the 16-input limit; fund or consolidate notes")
+}
+
 // BuildAndSignShieldedV6Payment creates a complete private Shield6 payment
 // using the canonical accumulator, then signs the outer account transaction
 // with the wallet's ML-DSA-87 key. The caller supplies an unsigned PQ
 // transaction skeleton containing nonce, fee caps, gas limit and public key.
 // Notes and keys remain caller-owned and must be cleared by the caller.
-func BuildAndSignShieldedV6Payment(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, notes []*shielded6.Note, outputs []core.ShieldedV6WalletOutput, random io.Reader) (*types.Transaction, error) {
+func BuildAndSignShieldedV6Payment(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, notes []*shielded6.Note, outputs []core.ShieldedV6WalletOutput, random io.Reader, recipientClients ...*ShieldedV6RecipientClient) (*types.Transaction, error) {
 	if rpc == nil || identity == nil || keys == nil || skeleton == nil || len(notes) == 0 || len(notes) > core.ShieldedV6MaxInputs || len(outputs) == 0 || len(outputs) > core.ShieldedV6MaxOutputs {
 		return nil, errors.New("invalid Shield6 wallet payment request")
 	}
@@ -462,7 +552,7 @@ func BuildAndSignShieldedV6Payment(ctx context.Context, rpc RPC, accountSeed []b
 	if random == nil {
 		random = cryptorand.Reader
 	}
-	inputs := make([]core.ShieldedV6WalletInput, len(notes))
+	realIndices := make([]uint64, len(notes))
 	seenIndices := make(map[uint64]struct{}, len(notes))
 	for i, note := range notes {
 		if note == nil || note.ChainID != identity.ChainID || note.AssetID != shielded6.AssetTKM || note.Amount == nil || note.Amount.Sign() <= 0 {
@@ -472,21 +562,29 @@ func BuildAndSignShieldedV6Payment(ctx context.Context, rpc RPC, accountSeed []b
 			return nil, errors.New("Shield6 payment contains the same note more than once")
 		}
 		seenIndices[note.Index] = struct{}{}
-		var ring ShieldedV6Ring
-		ring, err := SelectShieldedV6Ring(ctx, rpc, identity.ChainID, note.Index, random)
-		if err != nil {
-			return nil, fmt.Errorf("select Shield6 input ring %d: %w", i, err)
-		}
+		realIndices[i] = note.Index
+	}
+	rings, err := selectShieldedV6Rings(ctx, rpc, identity.ChainID, realIndices, random)
+	if err != nil {
+		return nil, err
+	}
+	inputs := make([]core.ShieldedV6WalletInput, len(notes))
+	for i, ring := range rings {
 		if ring.Root != status.Accumulator {
 			return nil, errors.New("Shield6 accumulator changed during payment construction; rescan and retry")
 		}
-		// Do not ask RPC about the selected input's key image: that would
-		// identify the real note. The wallet scan matches confirmed public key
-		// images locally; any race is safely rejected by txpool/consensus.
-		inputs[i] = core.ShieldedV6WalletInput{Note: note, Ring: ring.Members, RingIndices: ring.Indices, SignerIndex: ring.SignerIndex}
+		// Key images are matched locally during scanning, never sent as queries.
+		inputs[i] = core.ShieldedV6WalletInput{Note: notes[i], Ring: ring.Members, RingIndices: ring.Indices, SignerIndex: ring.SignerIndex}
+	}
+	outputs, err = prepareShieldedV6ClientRecipients(ctx, rpc, status, identity, keys, outputs, recipientClients)
+	if err != nil {
+		return nil, err
 	}
 	data, err := core.BuildShieldedV6Envelope(skeleton, inputs, outputs, random)
 	if err != nil {
+		return nil, err
+	}
+	if err := recheckShieldedV6RecipientBuild(ctx, rpc, status, data); err != nil {
 		return nil, err
 	}
 	unsigned := types.NewTx(&types.PQTkmTx{
@@ -517,7 +615,7 @@ func BuildAndSignShieldedV6Payment(ctx context.Context, rpc RPC, accountSeed []b
 // boundary; the resulting note output is encrypted for the Shield6 wallet.
 // The caller must wait for any legacy self-withdrawal to confirm before using
 // its public balance here.
-func BuildAndSignShieldedV6Deposit(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, amount *big.Int, random io.Reader) (*types.Transaction, error) {
+func BuildAndSignShieldedV6Deposit(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, amount *big.Int, random io.Reader, recipientClients ...*ShieldedV6RecipientClient) (*types.Transaction, error) {
 	if rpc == nil || identity == nil || keys == nil || skeleton == nil || amount == nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
 		return nil, errors.New("invalid Shield6 deposit request")
 	}
@@ -570,8 +668,15 @@ func BuildAndSignShieldedV6Deposit(ctx context.Context, rpc RPC, accountSeed []b
 	if random == nil {
 		random = cryptorand.Reader
 	}
-	data, err := core.BuildShieldedV6DepositEnvelope(skeleton, []core.ShieldedV6WalletOutput{{Address: keys.Address(), Amount: new(big.Int).Set(amount)}}, random)
+	outputs, err := prepareShieldedV6ClientRecipients(ctx, rpc, status, identity, keys, []core.ShieldedV6WalletOutput{{Address: keys.Address(), Amount: new(big.Int).Set(amount)}}, recipientClients)
 	if err != nil {
+		return nil, err
+	}
+	data, err := core.BuildShieldedV6DepositEnvelope(skeleton, outputs, random)
+	if err != nil {
+		return nil, err
+	}
+	if err := recheckShieldedV6RecipientBuild(ctx, rpc, status, data); err != nil {
 		return nil, err
 	}
 	unsigned := types.NewTx(&types.PQTkmTx{
@@ -601,7 +706,7 @@ func BuildAndSignShieldedV6Deposit(ctx context.Context, rpc RPC, accountSeed []b
 // amount and recipient are necessarily visible; any remainder is returned as
 // a confidential Shield6 change output. The caller must provide already
 // scanned spendable notes and an unsigned PQ transaction skeleton.
-func BuildAndSignShieldedV6Withdrawal(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, notes []*shielded6.Note, recipient common.Address, amount *big.Int, random io.Reader) (*types.Transaction, error) {
+func BuildAndSignShieldedV6Withdrawal(ctx context.Context, rpc RPC, accountSeed []byte, identity *Identity, keys *shielded6.WalletKeys, skeleton *types.Transaction, notes []*shielded6.Note, recipient common.Address, amount *big.Int, random io.Reader, recipientClients ...*ShieldedV6RecipientClient) (*types.Transaction, error) {
 	if rpc == nil || identity == nil || keys == nil || skeleton == nil || len(notes) == 0 || len(notes) > core.ShieldedV6MaxInputs || recipient == (common.Address{}) || amount == nil || amount.Sign() <= 0 || amount.BitLen() > 128 {
 		return nil, errors.New("invalid Shield6 withdrawal request")
 	}
@@ -678,19 +783,37 @@ func BuildAndSignShieldedV6Withdrawal(ctx context.Context, rpc RPC, accountSeed 
 	if change.Sign() > 0 {
 		outputs = append(outputs, core.ShieldedV6WalletOutput{Address: keys.Address(), Amount: change})
 	}
-	inputs := make([]core.ShieldedV6WalletInput, len(notes))
+	realIndices := make([]uint64, len(notes))
 	for i, note := range notes {
-		ring, err := SelectShieldedV6Ring(ctx, rpc, identity.ChainID, note.Index, random)
-		if err != nil {
-			return nil, fmt.Errorf("select Shield6 withdrawal ring %d: %w", i, err)
-		}
+		realIndices[i] = note.Index
+	}
+	rings, err := selectShieldedV6Rings(ctx, rpc, identity.ChainID, realIndices, random)
+	if err != nil {
+		return nil, err
+	}
+	inputs := make([]core.ShieldedV6WalletInput, len(notes))
+	for i, ring := range rings {
 		if ring.Root != status.Accumulator {
 			return nil, errors.New("Shield6 accumulator changed during withdrawal construction; rescan and retry")
 		}
-		inputs[i] = core.ShieldedV6WalletInput{Note: note, Ring: ring.Members, RingIndices: ring.Indices, SignerIndex: ring.SignerIndex}
+		inputs[i] = core.ShieldedV6WalletInput{Note: notes[i], Ring: ring.Members, RingIndices: ring.Indices, SignerIndex: ring.SignerIndex}
+		if status.RecipientProofsRequired {
+			inputs[i].ValidUntil = uint64(status.HeadTime) + core.ShieldedV6MaxLifetime
+		}
 	}
-	data, err := core.BuildShieldedV6WithdrawalEnvelope(skeleton, inputs, outputs, recipient, amount, random)
+	outputs, err = prepareShieldedV6ClientRecipients(ctx, rpc, status, identity, keys, outputs, recipientClients)
 	if err != nil {
+		return nil, err
+	}
+	build := core.BuildShieldedV6WithdrawalEnvelope
+	if status.RecipientProofsRequired {
+		build = core.BuildShieldedV6BoundWithdrawalEnvelope
+	}
+	data, err := build(skeleton, inputs, outputs, recipient, amount, random)
+	if err != nil {
+		return nil, err
+	}
+	if err := recheckShieldedV6RecipientBuild(ctx, rpc, status, data); err != nil {
 		return nil, err
 	}
 	unsigned := types.NewTx(&types.PQTkmTx{

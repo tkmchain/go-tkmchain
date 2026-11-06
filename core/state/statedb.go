@@ -893,6 +893,7 @@ func (s *StateDB) GetRefund() uint64 {
 	return s.refund
 }
 
+//nolint:unused // Retained compatibility helper.
 type removedAccountWithBalance struct {
 	address common.Address
 	balance *uint256.Int
